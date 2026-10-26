@@ -32,6 +32,14 @@ impl Log for ConsoleLogger {
 }
 
 pub fn init_logging() {
+    // Without this hook, panics abort with an opaque "unreachable executed"
+    // in the browser console instead of a message and backtrace.
+    console_error_panic_hook::set_once();
+
     log::set_logger(&ConsoleLogger).ok();
-    log::set_max_level(log::LevelFilter::Info);
+    log::set_max_level(if cfg!(debug_assertions) {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
+    });
 }

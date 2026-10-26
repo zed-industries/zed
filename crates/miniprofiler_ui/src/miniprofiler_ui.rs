@@ -28,8 +28,8 @@ use workspace::{
 };
 use zed_actions::OpenPerformanceProfiler;
 
-const NANOS_PER_MS: u128 = 1_000_000;
-const VISIBLE_WINDOW_NANOS: u128 = 10 * 1_000_000_000;
+const NANOS_PER_MS: u128 = Duration::from_millis(1).as_nanos();
+const VISIBLE_WINDOW_NANOS: u128 = Duration::from_secs(10).as_nanos();
 const REMOTE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -664,7 +664,7 @@ impl Render for ProfilerWindow {
                                 }
                             })
                             .p_4()
-                            .on_scroll_wheel(cx.listener(|this, _, _, cx| {
+                            .on_scroll(cx.listener(|this, _, _, cx| {
                                 this.autoscroll = false;
                                 cx.notify();
                             }))

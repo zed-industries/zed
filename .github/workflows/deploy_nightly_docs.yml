@@ -5,6 +5,7 @@ on:
   push:
     branches:
     - main
+permissions: {}
 jobs:
   deploy_docs:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

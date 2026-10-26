@@ -2,7 +2,6 @@ mod fake_git_repo_tests;
 
 use std::{
     collections::BTreeSet,
-    ffi::OsString,
     io::Write,
     path::{Path, PathBuf},
     pin::Pin,
@@ -17,6 +16,56 @@ use gpui::{BackgroundExecutor, TestAppContext};
 use serde_json::json;
 use tempfile::TempDir;
 use util::path;
+
+#[gpui::test]
+async fn test_watcher_diagnostics_do_not_change_event_delivery(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    let root = Path::new(path!("/root"));
+    let file = root.join("file");
+    fs.create_dir(root).await.unwrap();
+    let (mut events, watcher) = fs.watch(root, Duration::ZERO).await;
+    let recording = fs.record_watcher_diagnostics().unwrap();
+    assert_eq!(
+        recording.snapshot().watchers[0].roots[0].path,
+        root.to_string_lossy()
+    );
+    assert!(recording.snapshot().events.is_empty());
+
+    fs.write(&file, b"first").await.unwrap();
+    let batch = events.next().await.unwrap();
+    assert!(batch.iter().any(|event| event.path == file));
+    assert!(recording.snapshot().events.iter().any(|event| {
+        event.operation == "event" && event.paths.contains(&file.to_string_lossy().into_owned())
+    }));
+
+    fs.simulate_watcher_overflow(root);
+    let batch = events.next().await.unwrap();
+    assert!(
+        batch
+            .iter()
+            .any(|event| event.kind == Some(PathEventKind::Rescan))
+    );
+    assert!(recording.snapshot().events.iter().any(|event| event.rescan));
+
+    drop(recording);
+    fs.write(&file, b"second").await.unwrap();
+    let batch = events.next().await.unwrap();
+    assert!(batch.iter().any(|event| event.path == file));
+    assert!(
+        fs.record_watcher_diagnostics()
+            .unwrap()
+            .snapshot()
+            .events
+            .is_empty()
+    );
+    drop(events);
+    drop(watcher);
+    assert!(
+        fs.record_watcher_diagnostics().unwrap().snapshot().watchers[0]
+            .roots
+            .is_empty()
+    );
+}
 
 #[gpui::test]
 async fn test_fake_fs(executor: BackgroundExecutor) {
@@ -592,6 +641,222 @@ async fn test_realfs_rename_ignore_if_exists_leaves_source_and_target_unchanged(
 }
 
 #[gpui::test]
+async fn test_fake_fs_rename_ignore_if_exists_leaves_source_and_target_unchanged(
+    executor: BackgroundExecutor,
+) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "source.txt": "from source",
+            "target.txt": "from target",
+        }),
+    )
+    .await;
+
+    let handle = fs
+        .open_handle(Path::new(path!("/root/source.txt")))
+        .await
+        .unwrap();
+
+    let result = fs
+        .rename(
+            Path::new(path!("/root/source.txt")),
+            Path::new(path!("/root/target.txt")),
+            RenameOptions {
+                ignore_if_exists: true,
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_ok());
+
+    assert_eq!(
+        fs.load(Path::new(path!("/root/source.txt"))).await.unwrap(),
+        "from source"
+    );
+    assert_eq!(
+        fs.load(Path::new(path!("/root/target.txt"))).await.unwrap(),
+        "from target"
+    );
+
+    // A handle held across an ignored rename must keep reporting the path the
+    // file is actually at, not the one it never went to.
+    assert_eq!(
+        handle.current_path(&(fs.clone() as Arc<dyn Fs>)).unwrap(),
+        PathBuf::from(path!("/root/source.txt"))
+    );
+}
+
+async fn assert_copy_and_remove_semantics(root: &Path, fs: &dyn Fs) {
+    let source = root.join("source.txt");
+    let target = root.join("target.txt");
+    let overwrite = CopyOptions {
+        overwrite: true,
+        ignore_if_exists: false,
+    };
+
+    let target_inode_before = fs.metadata(&target).await.unwrap().unwrap().inode;
+    fs.copy_file(&source, &target, overwrite).await.unwrap();
+    assert_eq!(fs.load(&target).await.unwrap(), "from source");
+
+    cfg_select! {
+        unix => assert_eq!(
+            fs.metadata(&target).await.unwrap().unwrap().inode,
+            target_inode_before
+        ),
+        _ => { let _ = target_inode_before; }
+    }
+
+    fs.copy_file(&source, &target, CopyOptions::default())
+        .await
+        .unwrap_err();
+    fs.copy_file(
+        &source,
+        &target,
+        CopyOptions {
+            overwrite: false,
+            ignore_if_exists: true,
+        },
+    )
+    .await
+    .unwrap();
+
+    fs.copy_file(&source, &root.join("dir"), overwrite)
+        .await
+        .unwrap_err();
+    assert!(fs.is_dir(&root.join("dir")).await);
+}
+
+/// Removing a symlink to a directory removes the link, not the directory.
+async fn assert_remove_file_unlinks_symlink(root: &Path, fs: &dyn Fs) {
+    let link = root.join("link");
+    fs.remove_file(&link, RemoveOptions::default())
+        .await
+        .unwrap();
+    assert!(fs.metadata(&link).await.unwrap().is_none());
+    assert!(fs.is_dir(&root.join("dir")).await);
+    assert_eq!(
+        fs.load(&root.join("dir").join("inner.txt")).await.unwrap(),
+        "inner"
+    );
+}
+
+#[gpui::test]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+async fn test_realfs_copy_and_remove_semantics(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let executor = cx.executor();
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    std::fs::write(root.join("source.txt"), "from source").unwrap();
+    std::fs::write(root.join("target.txt"), "from target").unwrap();
+    std::fs::create_dir(root.join("dir")).unwrap();
+    std::fs::write(root.join("dir").join("inner.txt"), "inner").unwrap();
+
+    let fs = RealFs::new(None, executor);
+    assert_copy_and_remove_semantics(root, fs.as_ref()).await;
+
+    // Creating symlinks requires elevated privileges on Windows, so like the
+    // watcher tests above, skip that part when it is not possible.
+    match make_dir_symlink(&root.join("dir"), &root.join("link")) {
+        Ok(()) => assert_remove_file_unlinks_symlink(root, fs.as_ref()).await,
+        Err(error) => eprintln!("skipping symlink removal check (cannot symlink: {error})"),
+    }
+}
+
+#[gpui::test]
+async fn test_fake_fs_copy_and_remove_semantics(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "source.txt": "from source",
+            "target.txt": "from target",
+            "dir": { "inner.txt": "inner" },
+        }),
+    )
+    .await;
+    fs.insert_symlink(path!("/root/link"), PathBuf::from(path!("/root/dir")))
+        .await;
+
+    let root = Path::new(path!("/root"));
+    assert_copy_and_remove_semantics(root, fs.as_ref()).await;
+    assert_remove_file_unlinks_symlink(root, fs.as_ref()).await;
+}
+
+#[gpui::test]
+async fn test_fake_fs_rename_onto_itself_keeps_the_file(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a.txt": "content",
+        }),
+    )
+    .await;
+
+    let path = Path::new(path!("/root/a.txt"));
+    let result = fs
+        .rename(
+            path,
+            path,
+            RenameOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_ok());
+    assert_eq!(fs.load(path).await.unwrap(), "content");
+}
+
+#[gpui::test]
+#[cfg(unix)]
+async fn test_realfs_executable_metadata(executor: BackgroundExecutor) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tempdir = TempDir::new().unwrap();
+    let path = tempdir.path();
+    let non_executable_path = path.join("non-executable.sh");
+    let executable_path = path.join("executable.sh");
+    let symlink_path = path.join("executable-symlink.sh");
+
+    std::fs::write(&non_executable_path, "#!/bin/sh\n").unwrap();
+    std::fs::write(&executable_path, "#!/bin/sh\n").unwrap();
+    let mut permissions = std::fs::metadata(&executable_path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable_path, permissions).unwrap();
+
+    let fs = RealFs::new(None, executor);
+    gpui::block_on(fs.create_symlink(&symlink_path, PathBuf::from("executable.sh"))).unwrap();
+
+    let non_executable_metadata = fs
+        .metadata(&non_executable_path)
+        .await
+        .expect("metadata call succeeds")
+        .expect("metadata returned");
+    assert!(!non_executable_metadata.is_executable);
+
+    let executable_metadata = fs
+        .metadata(&executable_path)
+        .await
+        .expect("metadata call succeeds")
+        .expect("metadata returned");
+    assert!(executable_metadata.is_executable);
+
+    let symlink_metadata = fs
+        .metadata(&symlink_path)
+        .await
+        .expect("metadata call succeeds")
+        .expect("metadata returned");
+    assert!(symlink_metadata.is_symlink);
+    assert!(symlink_metadata.is_executable);
+}
+
+#[gpui::test]
 #[cfg(unix)]
 async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
     let tempdir = TempDir::new().unwrap();
@@ -648,15 +913,11 @@ async fn test_fake_fs_trash(executor: BackgroundExecutor) {
     .await;
 
     // Trashing a file.
-    let root_path = PathBuf::from(path!("/root"));
     let path = path!("/root/file_a.txt").as_ref();
-    let trashed_entry = fs
-        .trash(path, Default::default())
+    fs.trash(path, Default::default())
         .await
         .expect("should be able to trash {path:?}");
 
-    assert_eq!(trashed_entry.name, "file_a.txt");
-    assert_eq!(trashed_entry.original_parent, root_path);
     assert_eq!(
         fs.files(),
         vec![
@@ -666,32 +927,19 @@ async fn test_fake_fs_trash(executor: BackgroundExecutor) {
         ]
     );
 
-    let trash_entries = fs.trash_entries();
-    assert_eq!(trash_entries.len(), 1);
-    assert_eq!(trash_entries[0].name, "file_a.txt");
-    assert_eq!(trash_entries[0].original_parent, root_path);
-
     // Trashing a directory.
     let path = path!("/root/src").as_ref();
-    let trashed_entry = fs
-        .trash(
-            path,
-            RemoveOptions {
-                recursive: true,
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("should be able to trash {path:?}");
+    fs.trash(
+        path,
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("should be able to trash {path:?}");
 
-    assert_eq!(trashed_entry.name, "src");
-    assert_eq!(trashed_entry.original_parent, root_path);
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_b.txt"))]);
-
-    let trash_entries = fs.trash_entries();
-    assert_eq!(trash_entries.len(), 2);
-    assert_eq!(trash_entries[1].name, "src");
-    assert_eq!(trash_entries[1].original_parent, root_path);
 }
 
 #[gpui::test]
@@ -709,36 +957,20 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     )
     .await;
 
-    // Providing a non-existent `TrashedEntry` should result in an error.
-    let id = OsString::from("/trash/file_c.txt");
-    let name = OsString::from("file_c.txt");
-    let original_parent = PathBuf::from(path!("/root"));
-    let trashed_entry = TrashedEntry {
-        id,
-        name,
-        original_parent,
-    };
-    let result = fs.restore(trashed_entry).await;
-    assert!(matches!(result, Err(TrashRestoreError::NotFound { .. })));
-
     // Attempt deleting a file, asserting that the filesystem no longer reports
     // it as part of its list of files, restore it and verify that the list of
     // files and trash has been updated accordingly.
     let path = path!("/root/src/file_a.txt").as_ref();
     let trashed_entry = fs.trash(path, Default::default()).await.unwrap();
 
-    assert_eq!(fs.trash_entries().len(), 1);
     assert_eq!(
-        fs.files(),
-        vec![
-            PathBuf::from(path!("/root/file_c.txt")),
-            PathBuf::from(path!("/root/src/file_b.txt"))
-        ]
+        fs.original_path_for_trash_id(trashed_entry),
+        Some(path.to_path_buf())
     );
 
     fs.restore(trashed_entry).await.unwrap();
+    assert_eq!(fs.original_path_for_trash_id(trashed_entry), None);
 
-    assert_eq!(fs.trash_entries().len(), 0);
     assert_eq!(
         fs.files(),
         vec![
@@ -758,7 +990,6 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     let path = path!("/root/src/").as_ref();
     let trashed_entry = fs.trash(path, options).await.unwrap();
 
-    assert_eq!(fs.trash_entries().len(), 1);
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
 
     fs.restore(trashed_entry).await.unwrap();
@@ -771,14 +1002,12 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
             PathBuf::from(path!("/root/src/file_b.txt"))
         ]
     );
-    assert_eq!(fs.trash_entries().len(), 0);
 
     // A collision error should be returned in case a file is being restored to
     // a path where a file already exists.
     let path = path!("/root/src/file_a.txt").as_ref();
     let trashed_entry = fs.trash(path, Default::default()).await.unwrap();
 
-    assert_eq!(fs.trash_entries().len(), 1);
     assert_eq!(
         fs.files(),
         vec![
@@ -789,7 +1018,6 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
 
     fs.write(path, "New File A".as_bytes()).await.unwrap();
 
-    assert_eq!(fs.trash_entries().len(), 1);
     assert_eq!(
         fs.files(),
         vec![
@@ -815,19 +1043,16 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     let path = path!("/root/src/").as_ref();
     let trashed_entry = fs.trash(path, options).await.unwrap();
 
-    assert_eq!(fs.trash_entries().len(), 2);
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
 
     fs.create_dir(path).await.unwrap();
 
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
-    assert_eq!(fs.trash_entries().len(), 2);
 
     let result = fs.restore(trashed_entry).await;
     assert!(result.is_err());
 
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
-    assert_eq!(fs.trash_entries().len(), 2);
 }
 
 /// Create a directory symlink (`link` -> `target`) in a cross-platform way.
@@ -881,6 +1106,59 @@ async fn watcher_delivered_event(
             _ = timeout => return false,
         }
     }
+}
+
+#[gpui::test]
+async fn test_realfs_watcher_diagnostics(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let fs = RealFs::new(None, executor.clone());
+    let directory = TempDir::new().unwrap();
+    let root = std::fs::canonicalize(directory.path()).unwrap();
+    // Windows canonicalization adds a verbatim prefix that watcher paths omit.
+    let root = util::paths::SanitizedPath::new(&root)
+        .as_path()
+        .to_path_buf();
+    let recording = fs.record_watcher_diagnostics().unwrap();
+    let (mut events, watcher) = fs.watch(&root, Duration::from_millis(10)).await;
+    let file = root.join("watcher-diagnostics.txt");
+    fs.write(&file, b"first").await.unwrap();
+    assert!(
+        watcher_delivered_event(&mut events, &executor, Duration::from_secs(5), &|path| {
+            path == file
+        })
+        .await,
+        "no watcher event matched {file:?}: {:#?}",
+        recording.snapshot()
+    );
+    let snapshot = recording.snapshot();
+    assert!(
+        snapshot
+            .events
+            .iter()
+            .any(|event| event.operation == "watch")
+    );
+    assert!(snapshot.events.iter().any(|event| {
+        event.operation == "event"
+            && (event.rescan || event.paths.contains(&file.to_string_lossy().into_owned()))
+    }));
+    assert!(snapshot.watchers.iter().any(|watcher| {
+        watcher
+            .roots
+            .iter()
+            .any(|entry| entry.path == root.to_string_lossy())
+    }));
+    serde_json::to_string_pretty(&snapshot).unwrap();
+
+    drop(recording);
+    fs.write(&file, b"second").await.unwrap();
+    assert!(
+        watcher_delivered_event(&mut events, &executor, Duration::from_secs(5), &|path| {
+            path == file
+        })
+        .await
+    );
+    drop(events);
+    drop(watcher);
 }
 
 /// Exercises a spread of real watchers whose registered watch path is spelled
@@ -1166,4 +1444,31 @@ async fn test_realfs_watch_stress_reports_missed_paths(
         "missed {} paths without rescan being reported",
         missed_paths.len()
     );
+}
+
+#[gpui::test]
+async fn restore_can_be_retried_after_collision(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let path = path!("/root/a.txt");
+    let remove_options = RemoveOptions::default();
+    fs.insert_tree(path!("/root"), json!({ "a.txt": "original"}))
+        .await;
+
+    // We'll first trash the `a.txt` file so we can hold onto its `TrashId`,
+    // allowing us to later attempt restoring it again, ensuring that it didn't
+    // get removed from the trash state, even if restoring failed.
+    let trash_id = fs.trash(path.as_ref(), remove_options).await.unwrap();
+
+    fs.insert_file(path, "conflicting".into()).await;
+    let err = fs.restore(trash_id).await.unwrap_err();
+    assert!(matches!(err, TrashRestoreError::Collision { .. }));
+
+    fs.remove_file(path.as_ref(), remove_options).await.unwrap();
+    let restored_path = fs.restore(trash_id).await.unwrap();
+    assert_eq!(fs.load(restored_path.as_path()).await.unwrap(), "original");
+
+    assert!(matches!(
+        fs.restore(trash_id).await.unwrap_err(),
+        TrashRestoreError::AlreadyRestored
+    ));
 }

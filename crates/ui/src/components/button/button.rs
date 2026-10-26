@@ -87,6 +87,7 @@ pub struct Button {
     end_icon: Option<Icon>,
     key_binding: Option<KeyBinding>,
     key_binding_position: KeybindingPosition,
+    wrap_key_binding: bool,
     alpha: Option<f32>,
     truncate: bool,
     loading: bool,
@@ -111,6 +112,7 @@ impl Button {
             end_icon: None,
             key_binding: None,
             key_binding_position: KeybindingPosition::default(),
+            wrap_key_binding: false,
             alpha: None,
             truncate: false,
             loading: false,
@@ -127,6 +129,21 @@ impl Button {
     /// Defaults to the button's visible label.
     pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.base = self.base.aria_label(label);
+        self
+    }
+
+    /// Sets the supplementary description announced by assistive technology
+    /// after the button's name, role, and value.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.base = self.base.aria_description(description);
+        self
+    }
+
+    /// Sets the current value reported to assistive technology. Use this when
+    /// the button represents a control with a value, such as a combobox
+    /// trigger whose value is the current selection.
+    pub fn aria_value(mut self, value: impl Into<SharedString>) -> Self {
+        self.base = self.base.aria_value(value);
         self
     }
 
@@ -192,6 +209,13 @@ impl Button {
     /// Display the keybinding that triggers the button action.
     pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
         self.key_binding = key_binding.into();
+        self
+    }
+
+    /// Lets the keybinding wrap onto its own line when the button is too narrow
+    /// to fit it next to the label, growing the button to fit both lines.
+    pub fn wrap_key_binding(mut self, wrap: bool) -> Self {
+        self.wrap_key_binding = wrap;
         self
     }
 
@@ -299,6 +323,7 @@ impl Disableable for Button {
 }
 
 impl Clickable for Button {
+    #[inline(always)]
     fn on_click(
         mut self,
         handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
@@ -378,6 +403,7 @@ impl ButtonCommon for Button {
     /// Button::new("tooltip_button", "Hover Me")
     ///     .tooltip(Tooltip::text("This is a tooltip"));
     /// ```
+    #[inline(always)]
     fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
@@ -401,7 +427,7 @@ impl ButtonCommon for Button {
 
 impl RenderOnce for Button {
     #[allow(refining_impl_trait)]
-    fn render(mut self, _window: &mut Window, cx: &mut App) -> ButtonLike {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 
@@ -414,6 +440,31 @@ impl RenderOnce for Button {
             self.base.aria_label = Some(label.clone());
         }
 
+        let keyshortcuts = self
+            .key_binding
+            .as_ref()
+            .and_then(|key_binding| key_binding.keyboard_shortcut_text(window, cx));
+        let wrap_key_binding =
+            self.wrap_key_binding && keyshortcuts.is_some() && KeyBinding::default_visibility(cx);
+
+        // Announce the displayed keybinding to assistive technology via
+        // `aria-keyshortcuts` so screen-reader users hear the same shortcut
+        // sighted users see next to the button.
+        if self.base.aria_keyshortcuts.is_none()
+            && let Some(keyshortcuts) = keyshortcuts
+        {
+            self.base.aria_keyshortcuts = Some(keyshortcuts);
+        }
+
+        // A combobox's value is its visible text, so expose it as the
+        // accessible value by default. This lets combobox triggers announce
+        // their current selection without each caller wiring it up.
+        if matches!(self.base.aria_role, Some(gpui::Role::ComboBox))
+            && self.base.aria_value.is_none()
+        {
+            self.base.aria_value = Some(label.clone());
+        }
+
         let label_color = if is_disabled {
             Color::Disabled
         } else if is_selected {
@@ -422,57 +473,84 @@ impl RenderOnce for Button {
             self.label_color.unwrap_or_default()
         };
         let loading_icon_id = (self.base.id().clone(), "loading");
+        let wrapped_key_binding = if wrap_key_binding {
+            self.key_binding.take()
+        } else {
+            None
+        };
 
-        self.base.child(
-            h_flex()
-                .when(self.truncate, |this| this.min_w_0().overflow_hidden())
-                .gap(DynamicSpacing::Base04.rems(cx))
-                .when_else(
-                    self.loading,
-                    |this| {
-                        this.child(
-                            Icon::new(IconName::LoadCircle)
-                                .size(IconSize::Small)
-                                .color(Color::Muted)
-                                .with_keyed_rotate_animation(loading_icon_id, 2),
-                        )
-                    },
-                    |this| {
-                        this.when_some(self.start_icon, |this, icon| {
-                            this.child(if is_disabled {
-                                icon.color(Color::Disabled)
-                            } else {
-                                icon
-                            })
+        let content = h_flex()
+            .when(self.truncate, |this| this.min_w_0().overflow_hidden())
+            .gap(DynamicSpacing::Base04.rems(cx))
+            .when_else(
+                self.loading,
+                |this| {
+                    this.child(
+                        Icon::new(IconName::LoadCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Muted)
+                            .with_keyed_rotate_animation(loading_icon_id, 2),
+                    )
+                },
+                |this| {
+                    this.when_some(self.start_icon, |this, icon| {
+                        this.child(if is_disabled {
+                            icon.color(Color::Disabled)
+                        } else {
+                            icon
                         })
-                    },
-                )
-                .child(
-                    h_flex()
-                        .when(self.truncate, |this| this.min_w_0().overflow_hidden())
-                        .when(
-                            self.key_binding_position == KeybindingPosition::Start,
-                            |this| this.flex_row_reverse(),
-                        )
-                        .gap(DynamicSpacing::Base06.rems(cx))
-                        .justify_between()
-                        .child(
-                            Label::new(label)
-                                .color(label_color)
-                                .size(self.label_size.unwrap_or_default())
-                                .when_some(self.alpha, |this, alpha| this.alpha(alpha))
-                                .when(self.truncate, |this| this.truncate()),
-                        )
-                        .children(self.key_binding),
-                )
-                .when_some(self.end_icon, |this, icon| {
-                    this.child(if is_disabled {
-                        icon.color(Color::Disabled)
-                    } else {
-                        icon
                     })
-                }),
-        )
+                },
+            )
+            .child(
+                h_flex()
+                    .when(self.truncate, |this| this.min_w_0().overflow_hidden())
+                    .when(
+                        self.key_binding_position == KeybindingPosition::Start,
+                        |this| this.flex_row_reverse(),
+                    )
+                    .gap(DynamicSpacing::Base06.rems(cx))
+                    .justify_between()
+                    .child(
+                        Label::new(label)
+                            .color(label_color)
+                            .size(self.label_size.unwrap_or_default())
+                            .when_some(self.alpha, |this, alpha| this.alpha(alpha))
+                            .when(self.truncate, |this| this.truncate()),
+                    )
+                    .children(self.key_binding),
+            )
+            .when_some(self.end_icon, |this, icon| {
+                this.child(if is_disabled {
+                    icon.color(Color::Disabled)
+                } else {
+                    icon
+                })
+            });
+
+        if let Some(key_binding) = wrapped_key_binding {
+            let row_height = self.base.size.rems();
+            let content = content
+                .flex_none()
+                .min_h(row_height)
+                .when(self.truncate, |this| this.max_w_full());
+            let key_binding = h_flex().flex_none().min_h(row_height).child(key_binding);
+            // Wrapping follows child order even in a reversed row, so order the
+            // children instead to keep a `Start` keybinding on the first line.
+            self.base.auto_height().child(
+                h_flex()
+                    .w_full()
+                    .flex_wrap()
+                    .justify_center()
+                    .gap_x(DynamicSpacing::Base06.rems(cx))
+                    .map(|this| match self.key_binding_position {
+                        KeybindingPosition::Start => this.child(key_binding).child(content),
+                        KeybindingPosition::End => this.child(content).child(key_binding),
+                    }),
+            )
+        } else {
+            self.base.child(content)
+        }
     }
 }
 

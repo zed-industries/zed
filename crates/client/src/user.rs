@@ -56,7 +56,7 @@ pub struct ParticipantIndex(pub u32);
 #[derive(Default, Debug)]
 pub struct User {
     pub legacy_id: LegacyUserId,
-    pub github_login: SharedString,
+    pub username: SharedString,
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
 }
@@ -79,13 +79,13 @@ impl PartialOrd for User {
 
 impl Ord for User {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.github_login.cmp(&other.github_login)
+        self.username.cmp(&other.username)
     }
 }
 
 impl PartialEq for User {
     fn eq(&self, other: &Self) -> bool {
-        self.legacy_id == other.legacy_id && self.github_login == other.github_login
+        self.legacy_id == other.legacy_id && self.username == other.username
     }
 }
 
@@ -108,7 +108,6 @@ pub enum ContactRequestStatus {
 
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
-    by_github_login: HashMap<SharedString, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     edit_prediction_usage: Option<EditPredictionUsage>,
@@ -189,7 +188,6 @@ impl UserStore {
 
         Self {
             users: Default::default(),
-            by_github_login: Default::default(),
             current_user: current_user_rx,
             current_organization: None,
             organizations: Vec::new(),
@@ -239,7 +237,7 @@ impl UserStore {
                                 let current_user_and_response = if let Some(response) = response {
                                     let user = Arc::new(User {
                                         legacy_id: user_id,
-                                        github_login: response.user.github_login.clone().into(),
+                                        username: response.user.username.clone().into(),
                                         avatar_uri: response.user.avatar_url.clone().into(),
                                         name: response.user.name.clone(),
                                     });
@@ -260,8 +258,6 @@ impl UserStore {
                                 cx.update(|cx| {
                                     if let Some((user, response)) = current_user_and_response {
                                         this.update(cx, |this, cx| {
-                                            this.by_github_login
-                                                .insert(user.github_login.clone(), user_id);
                                             this.users.insert(user_id, user);
                                             this.update_authenticated_user(response, cx)
                                         })
@@ -317,7 +313,6 @@ impl UserStore {
     #[cfg(feature = "test-support")]
     pub fn clear_cache(&mut self) {
         self.users.clear();
-        self.by_github_login.clear();
     }
 
     async fn handle_show_contacts(
@@ -405,10 +400,11 @@ impl UserStore {
                             .retain(|contact| !removed_contacts.contains(&contact.user.legacy_id));
                         // Update existing contacts and insert new ones
                         for updated_contact in updated_contacts {
-                            match this.contacts.binary_search_by_key(
-                                &&updated_contact.user.github_login,
-                                |contact| &contact.user.github_login,
-                            ) {
+                            match this
+                                .contacts
+                                .binary_search_by_key(&&updated_contact.user.username, |contact| {
+                                    &contact.user.username
+                                }) {
                                 Ok(ix) => this.contacts[ix] = updated_contact,
                                 Err(ix) => this.contacts.insert(ix, updated_contact),
                             }
@@ -430,9 +426,8 @@ impl UserStore {
                         for user in incoming_requests {
                             match this
                                 .incoming_contact_requests
-                                .binary_search_by_key(&&user.github_login, |contact| {
-                                    &contact.github_login
-                                }) {
+                                .binary_search_by_key(&&user.username, |contact| &contact.username)
+                            {
                                 Ok(ix) => this.incoming_contact_requests[ix] = user,
                                 Err(ix) => this.incoming_contact_requests.insert(ix, user),
                             }
@@ -445,8 +440,8 @@ impl UserStore {
                         for request in outgoing_requests {
                             match this
                                 .outgoing_contact_requests
-                                .binary_search_by_key(&&request.github_login, |contact| {
-                                    &contact.github_login
+                                .binary_search_by_key(&&request.username, |contact| {
+                                    &contact.username
                                 }) {
                                 Ok(ix) => this.outgoing_contact_requests[ix] = request,
                                 Err(ix) => this.outgoing_contact_requests.insert(ix, request),
@@ -468,7 +463,7 @@ impl UserStore {
 
     pub fn has_contact(&self, user: &Arc<User>) -> bool {
         self.contacts
-            .binary_search_by_key(&&user.github_login, |contact| &contact.user.github_login)
+            .binary_search_by_key(&&user.username, |contact| &contact.user.username)
             .is_ok()
     }
 
@@ -487,19 +482,19 @@ impl UserStore {
     pub fn contact_request_status(&self, user: &User) -> ContactRequestStatus {
         if self
             .contacts
-            .binary_search_by_key(&&user.github_login, |contact| &contact.user.github_login)
+            .binary_search_by_key(&&user.username, |contact| &contact.user.username)
             .is_ok()
         {
             ContactRequestStatus::RequestAccepted
         } else if self
             .outgoing_contact_requests
-            .binary_search_by_key(&&user.github_login, |user| &user.github_login)
+            .binary_search_by_key(&&user.username, |user| &user.username)
             .is_ok()
         {
             ContactRequestStatus::RequestSent
         } else if self
             .incoming_contact_requests
-            .binary_search_by_key(&&user.github_login, |user| &user.github_login)
+            .binary_search_by_key(&&user.username, |user| &user.username)
             .is_ok()
         {
             ContactRequestStatus::RequestReceived
@@ -688,12 +683,6 @@ impl UserStore {
         })
     }
 
-    pub fn cached_user_by_github_login(&self, github_login: &str) -> Option<Arc<User>> {
-        self.by_github_login
-            .get(github_login)
-            .and_then(|id| self.users.get(id).cloned())
-    }
-
     pub fn current_user(&self) -> Option<Arc<User>> {
         self.current_user.borrow().clone()
     }
@@ -773,6 +762,15 @@ impl UserStore {
         cx.notify();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_current_organization_plan_for_test(&mut self, plan: Plan, cx: &mut Context<Self>) {
+        if let Some(organization) = &self.current_organization {
+            self.plans_by_organization
+                .insert(organization.id.clone(), plan);
+        }
+        cx.notify();
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
@@ -793,6 +791,17 @@ impl UserStore {
         }
 
         self.plan_info.as_ref().map(|info| info.plan())
+    }
+
+    pub fn current_organization_has_no_active_subscription(&self) -> bool {
+        self.plan_info.is_some()
+            && self
+                .current_organization
+                .as_ref()
+                .is_some_and(|organization| {
+                    !organization.is_personal
+                        && !self.plans_by_organization.contains_key(&organization.id)
+                })
     }
 
     pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
@@ -841,6 +850,13 @@ impl UserStore {
 
     pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
         self.edit_prediction_usage
+    }
+
+    /// Returns whether the current plan doesn't include Zed's hosted edit predictions. This is
+    /// decided by plan rather than by the usage limit Cloud reports, because Cloud may still
+    /// report a nonzero Free allowance while it denies requests.
+    pub fn edit_predictions_excluded_from_plan(&self) -> bool {
+        self.plan() == Some(Plan::ZedFree)
     }
 
     pub fn update_edit_prediction_usage(
@@ -913,29 +929,29 @@ impl UserStore {
     }
 
     fn handle_message_to_client(this: WeakEntity<Self>, message: &MessageToClient, cx: &App) {
-        cx.spawn(async move |cx| {
-            match message {
-                MessageToClient::UserUpdated => {
-                    let (cloud_client, system_id) = cx
-                        .update(|cx| {
-                            this.read_with(cx, |this, _cx| {
-                                this.client.upgrade().map(|client| {
-                                    let system_id =
-                                        client.telemetry().system_id().map(|id| id.to_string());
-                                    (client.cloud_client(), system_id)
-                                })
-                            })
-                        })?
-                        .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
+        match message {
+            MessageToClient::UserUpdated => {}
+            MessageToClient::NotificationsUpdated | MessageToClient::SettingsUpdated => return,
+        }
 
-                    let response = cloud_client.get_authenticated_user(system_id).await?;
-                    cx.update(|cx| {
-                        this.update(cx, |this, cx| {
-                            this.update_authenticated_user(response, cx);
+        cx.spawn(async move |cx| {
+            let (cloud_client, system_id) = cx
+                .update(|cx| {
+                    this.read_with(cx, |this, _cx| {
+                        this.client.upgrade().map(|client| {
+                            let system_id = client.telemetry().system_id().map(|id| id.to_string());
+                            (client.cloud_client(), system_id)
                         })
-                    })?;
-                }
-            }
+                    })
+                })?
+                .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
+
+            let response = cloud_client.get_authenticated_user(system_id).await?;
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.update_authenticated_user(response, cx);
+                })
+            })?;
 
             anyhow::Ok(())
         })
@@ -968,13 +984,7 @@ impl UserStore {
         let mut ret = Vec::with_capacity(users.len());
         for user in users {
             let user = User::new(user);
-            if let Some(old) = self.users.insert(user.legacy_id, user.clone())
-                && old.github_login != user.github_login
-            {
-                self.by_github_login.remove(&old.github_login);
-            }
-            self.by_github_login
-                .insert(user.github_login.clone(), user.legacy_id);
+            self.users.insert(user.legacy_id, user.clone());
             ret.push(user)
         }
         ret
@@ -1003,8 +1013,8 @@ impl UserStore {
         let mut ret = HashMap::default();
         let mut missing_user_ids = Vec::new();
         for id in user_ids {
-            if let Some(github_login) = self.get_cached_user(id).map(|u| u.github_login.clone()) {
-                ret.insert(id, github_login);
+            if let Some(username) = self.get_cached_user(id).map(|u| u.username.clone()) {
+                ret.insert(id, username);
             } else {
                 missing_user_ids.push(id)
             }
@@ -1025,7 +1035,7 @@ impl User {
     fn new(message: proto::User) -> Arc<Self> {
         Arc::new(User {
             legacy_id: message.id,
-            github_login: message.github_login.into(),
+            username: message.username.into(),
             avatar_uri: message.avatar_url.into(),
             name: message.name,
         })
@@ -1098,5 +1108,76 @@ impl EditPredictionUsage {
             EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME,
             headers,
         )?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::make_get_authenticated_user_response;
+    use clock::FakeSystemClock;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn test_current_organization_has_no_active_subscription(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        let client = cx.update(|cx| {
+            Client::new(
+                Arc::new(FakeSystemClock::new()),
+                FakeHttpClient::with_404_response(),
+                cx,
+            )
+        });
+        let user_store = cx.new(|cx| UserStore::new(client, cx));
+
+        let organization = |id: &str, is_personal| Organization {
+            id: OrganizationId(id.into()),
+            name: id.into(),
+            is_personal,
+            ui_permissions: Default::default(),
+        };
+
+        assert!(!user_store.read_with(cx, |store, _| {
+            store.current_organization_has_no_active_subscription()
+        }));
+
+        user_store.update(cx, |store, cx| {
+            let mut response = make_get_authenticated_user_response(1, "user".into());
+            response.organizations = vec![
+                organization("personal", true),
+                organization("unsubscribed", false),
+                organization("paid", false),
+            ];
+            response.default_organization_id = Some(OrganizationId("unsubscribed".into()));
+            response.plans_by_organization.insert(
+                OrganizationId("personal".into()),
+                KnownOrUnknown::Known(Plan::ZedPro),
+            );
+            response.plans_by_organization.insert(
+                OrganizationId("paid".into()),
+                KnownOrUnknown::Known(Plan::ZedBusiness),
+            );
+            store.update_authenticated_user(response, cx);
+        });
+        assert!(user_store.read_with(cx, |store, _| {
+            store.current_organization_has_no_active_subscription()
+        }));
+
+        for organization in [organization("personal", true), organization("paid", false)] {
+            user_store
+                .update(cx, |store, cx| {
+                    store.set_current_organization(Arc::new(organization), cx)
+                })
+                .await
+                .unwrap();
+            assert!(!user_store.read_with(cx, |store, _| {
+                store.current_organization_has_no_active_subscription()
+            }));
+        }
     }
 }

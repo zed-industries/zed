@@ -53,6 +53,7 @@ impl HighlightedMatch {
 impl RenderOnce for HighlightedMatch {
     fn render(self, _window: &mut Window, _: &mut App) -> impl IntoElement {
         HighlightedLabel::new(self.text, self.highlight_positions)
+            .single_line()
             .color(self.color)
             .truncate()
     }
@@ -62,6 +63,7 @@ impl HighlightedMatchWithPaths {
     pub fn render_paths_children(&mut self, element: Div) -> Div {
         element.children(self.paths.clone().into_iter().map(|path| {
             HighlightedLabel::new(path.text, path.highlight_positions)
+                .single_line()
                 .size(LabelSize::Small)
                 .color(Color::Muted)
         }))

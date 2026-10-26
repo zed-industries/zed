@@ -11,6 +11,26 @@ See the platform-specific instructions for building Zed from source:
 - [Linux](./development/linux.md)
 - [Windows](./development/windows.md)
 
+## Bird's-eye view of Zed {#birds-eye-view-of-zed}
+
+Keep the [Zed glossary](./development/glossary.md) handy when starting out. It explains structures and terms you'll see throughout the codebase.
+
+Zed is made up of several smaller crates. Here are the ones you're most likely to work with:
+
+- [`gpui`](https://github.com/zed-industries/zed/tree/main/crates/gpui) is a GPU-accelerated UI framework which provides all of the building blocks for Zed. **We recommend familiarizing yourself with the root level GPUI documentation.**
+- [`editor`](https://github.com/zed-industries/zed/tree/main/crates/editor) contains the core `Editor` type that drives both the code editor and all various input fields within Zed. It also handles a display layer for LSP features such as Inlay Hints or code completions.
+- [`project`](https://github.com/zed-industries/zed/tree/main/crates/project) manages files and navigation within the filetree. It is also Zed's side of communication with LSP.
+- [`workspace`](https://github.com/zed-industries/zed/tree/main/crates/workspace) handles local state serialization and groups projects together.
+- [`vim`](https://github.com/zed-industries/zed/tree/main/crates/vim) is a thin implementation of Vim workflow over `editor`.
+- [`lsp`](https://github.com/zed-industries/zed/tree/main/crates/lsp) handles communication with external LSP server.
+- [`language`](https://github.com/zed-industries/zed/tree/main/crates/language) drives `editor`'s understanding of language - from providing a list of symbols to the syntax map.
+- [`collab`](https://github.com/zed-industries/zed/tree/main/crates/collab) is the collaboration server itself, driving the collaboration features such as project sharing.
+- [`rpc`](https://github.com/zed-industries/zed/tree/main/crates/rpc) defines messages to be exchanged with collaboration server.
+- [`theme`](https://github.com/zed-industries/zed/tree/main/crates/theme) defines the theme system and provides a default theme.
+- [`ui`](https://github.com/zed-industries/zed/tree/main/crates/ui) is a collection of UI components and common patterns used throughout Zed.
+- [`cli`](https://github.com/zed-industries/zed/tree/main/crates/cli) is the CLI crate which invokes the Zed binary.
+- [`zed`](https://github.com/zed-industries/zed/tree/main/crates/zed) is where all things come together, and the `main` entry point for Zed.
+
 ## Keychain access
 
 Zed stores secrets in the system keychain.
@@ -99,7 +119,7 @@ Open the command palette and run one of the following:
 - `zed: record etw trace`: records CPU, GPU, memory, and I/O activity
 - `zed: record etw trace with heap tracing`: includes heap allocation data for the Zed process
 
-Zed will prompt you to choose a save location for the `.etl` file, then request administrator permission. Once granted, recording will begin.
+Zed will request administrator permission. Once granted, recording will begin.
 
 ### Saving or canceling
 
@@ -107,8 +127,6 @@ While a trace is recording, open the command palette and run one of the followin
 
 - `zed: save etw trace`: stops recording and saves the trace to disk
 - `zed: cancel etw trace`: stops recording without saving
-
-Recordings automatically save after 60 seconds if not stopped manually.
 
 ## Contributor links
 

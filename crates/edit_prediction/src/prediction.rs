@@ -49,27 +49,35 @@ impl EditPredictionResult {
         e2e_latency: std::time::Duration,
         cx: &mut AsyncApp,
     ) -> Self {
-        let (edits, new_snapshot) = (!edits.is_empty())
-            .then(|| {
-                edited_buffer.read_with(cx, |buffer, _cx| {
-                    let new_snapshot = buffer.snapshot();
-                    let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
-                        interpolate_edits(&edited_buffer_snapshot, &new_snapshot, &edits)
-                            .map(Arc::from)
-                            .unwrap_or_default();
-                    let snapshot = (!edits.is_empty()).then_some(new_snapshot);
-                    (Some(edits), snapshot)
-                })
+        let (edits, reject_reason, new_snapshot): (
+            Arc<[(Range<Anchor>, Arc<str>)]>,
+            Option<EditPredictionRejectReason>,
+            Option<BufferSnapshot>,
+        ) = if edits.is_empty() {
+            (
+                Arc::default(),
+                Some(EditPredictionRejectReason::Empty),
+                None,
+            )
+        } else {
+            edited_buffer.read_with(cx, |buffer, _cx| {
+                let new_snapshot = buffer.snapshot();
+                match interpolate_edits(&edited_buffer_snapshot, &new_snapshot, &edits) {
+                    Some(edits) if edits.is_empty() => (
+                        Arc::default(),
+                        Some(EditPredictionRejectReason::InterpolatedEmpty),
+                        None,
+                    ),
+                    Some(edits) => (Arc::from(edits), None, Some(new_snapshot)),
+                    None => (
+                        Arc::default(),
+                        Some(EditPredictionRejectReason::InterpolateFailed),
+                        None,
+                    ),
+                }
             })
-            .unwrap_or_default();
-        let snapshot = new_snapshot.unwrap_or_else(|| edited_buffer_snapshot.clone());
-
-        let reject_reason = match edits.as_ref() {
-            None => Some(EditPredictionRejectReason::Empty),
-            Some(edits) if edits.is_empty() => Some(EditPredictionRejectReason::InterpolatedEmpty),
-            Some(_) => None,
         };
-        let edits = edits.unwrap_or_default();
+        let snapshot = new_snapshot.unwrap_or_else(|| edited_buffer_snapshot.clone());
 
         let edit_preview = if !edits.is_empty() {
             edited_buffer
@@ -93,6 +101,34 @@ impl EditPredictionResult {
                 trigger,
             },
             reject_reason,
+            e2e_latency,
+        }
+    }
+
+    pub fn new_rejected(
+        id: EditPredictionId,
+        edited_buffer: &Entity<Buffer>,
+        edited_buffer_snapshot: &BufferSnapshot,
+        inputs: EditPredictionInputs,
+        model_version: Option<String>,
+        trigger: PredictEditsRequestTrigger,
+        e2e_latency: std::time::Duration,
+        reject_reason: EditPredictionRejectReason,
+    ) -> Self {
+        Self {
+            prediction: EditPrediction {
+                id,
+                edits: Arc::default(),
+                cursor_position: None,
+                editable_range: None,
+                snapshot: edited_buffer_snapshot.clone(),
+                edit_preview: EditPreview::unchanged(edited_buffer_snapshot),
+                inputs,
+                buffer: edited_buffer.clone(),
+                model_version,
+                trigger,
+            },
+            reject_reason: Some(reject_reason),
             e2e_latency,
         }
     }

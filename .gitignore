@@ -8,6 +8,7 @@
 *.wasm
 *.xcodeproj
 .DS_Store
+.agents
 .blob_store
 .build
 .claude/settings.local.json
@@ -58,3 +59,6 @@ crates/docs_preprocessor/actions.json
 
 # NixOS integration test state
 .nixos-test-history
+
+.local*
+.cache

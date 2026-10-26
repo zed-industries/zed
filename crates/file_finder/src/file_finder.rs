@@ -1,35 +1,34 @@
 #[cfg(test)]
 mod file_finder_tests;
+#[cfg(test)]
+mod multi_select_tests;
 
 use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use channel::ChannelStore;
 use client::ChannelId;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::Editor;
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
-    Action, AnyElement, App, Context, DismissEvent, Empty, Entity, EventEmitter, FocusHandle,
-    Focusable, KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task,
-    TaskExt, WeakEntity, Window, actions, rems,
+    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, TaskExt,
+    WeakEntity, Window, actions,
 };
 use language::{BufferSnapshot, Point};
-use open_path_prompt::{
-    OpenPathPrompt,
-    file_finder_settings::{FileFinderSettings, FileFinderWidth},
-};
+use open_path_prompt::{OpenPathPrompt, file_finder_settings::FileFinderSettings};
 use picker::{Picker, PickerDelegate};
 use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
 };
-use project_panel::project_panel_settings::ProjectPanelSettings;
-use settings::Settings;
+
+use settings::{ModalWidthContent, SeedQuerySetting, Settings, SettingsStore};
 use std::{
     borrow::Cow,
-    cmp,
+    cmp, mem,
     ops::{Range, RangeInclusive},
     path::{Component, Path, PathBuf},
     sync::{
@@ -38,7 +37,7 @@ use std::{
     },
     time::Duration,
 };
-use ui::{HighlightedLabel, Indicator, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{Checkbox, HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::{
     ResultExt, maybe,
     paths::{PathStyle, PathWithPosition},
@@ -46,8 +45,8 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    ModalView, OpenChannelNotesById, OpenOptions, OpenVisible, SplitDirection, Workspace,
-    item::PreviewTabsSettings, notifications::NotifyResultExt, pane,
+    MAX_RECENT_SELECTIONS, ModalView, OpenChannelNotesById, OpenOptions, OpenVisible,
+    SplitDirection, Workspace, item::PreviewTabsSettings, notifications::NotifyResultExt, pane,
 };
 use zed_actions::search::ToggleIncludeIgnored;
 
@@ -85,7 +84,16 @@ impl FileFinder {
         workspace.register_action(
             |workspace, action: &workspace::ToggleFileFinder, window, cx| {
                 let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
-                    Self::open(workspace, action.separate_history, window, cx).detach();
+                    let seed_query = Self::seed_query(workspace, window, cx);
+                    Self::open(
+                        workspace,
+                        action.separate_history,
+                        action.include_ignored,
+                        seed_query,
+                        window,
+                        cx,
+                    )
+                    .detach();
                     return;
                 };
 
@@ -102,11 +110,12 @@ impl FileFinder {
     fn open(
         workspace: &mut Workspace,
         separate_history: bool,
+        include_ignored: Option<bool>,
+        seed_query: Option<String>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
         let project = workspace.project().read(cx);
-        let fs = project.fs();
 
         let currently_opened_path = workspace.active_item(cx).and_then(|item| {
             let project_path = item.project_path(cx)?;
@@ -121,22 +130,9 @@ impl FileFinder {
             .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
             .into_iter()
             .filter_map(|(project_path, abs_path)| {
-                if project.entry_for_path(&project_path, cx).is_some() {
-                    return Some(Task::ready(Some(FoundPath::new(project_path, abs_path?))));
-                }
-                let abs_path = abs_path?;
-                if project.is_local() {
-                    let fs = fs.clone();
-                    Some(cx.background_spawn(async move {
-                        if fs.is_file(&abs_path).await {
-                            Some(FoundPath::new(project_path, abs_path))
-                        } else {
-                            None
-                        }
-                    }))
-                } else {
-                    Some(Task::ready(Some(FoundPath::new(project_path, abs_path))))
-                }
+                let path = FoundPath::new(project_path, abs_path?);
+                let is_file = path.is_file(project, cx);
+                Some(cx.background_spawn(async move { is_file.await.then_some(path) }))
             })
             .collect::<Vec<_>>();
         cx.spawn_in(window, async move |workspace, cx| {
@@ -154,29 +150,75 @@ impl FileFinder {
                             currently_opened_path,
                             history_items.collect(),
                             separate_history,
+                            include_ignored,
                             window,
                             cx,
                         );
 
-                        FileFinder::new(delegate, window, cx)
+                        FileFinder::new(delegate, seed_query, window, cx)
                     });
                 })
                 .ok();
         })
     }
 
-    fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// The query to pre-fill the finder with from the user's latest selection,
+    /// when `prefill_query_from_selection` is enabled. The focused pane's item
+    /// (e.g. a terminal in a dock) is consulted before the active center pane's
+    /// item, so the selection next to the focus wins.
+    fn seed_query(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<String> {
+        if !FileFinderSettings::get_global(cx).prefill_query_from_selection {
+            return None;
+        }
+
+        let focused_item = workspace.focused_pane(window, cx).read(cx).active_item();
+        let active_item = workspace
+            .active_item(cx)
+            .filter(|active| match &focused_item {
+                Some(focused) => focused.item_id() != active.item_id(),
+                None => true,
+            });
+
+        focused_item
+            .into_iter()
+            .chain(active_item)
+            .find_map(|item| {
+                let query = item.to_searchable_item_handle(cx)?.query_suggestion(
+                    Some(SeedQuerySetting::Selection),
+                    window,
+                    cx,
+                );
+                sanitize_file_query(&query)
+            })
+    }
+
+    fn new(
+        delegate: FileFinderDelegate,
+        seed_query: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let modal_max_width_setting = FileFinderSettings::get_global(cx).modal_max_width;
 
         let project = delegate.project.clone();
         let modal_max_width = Self::modal_max_width(modal_max_width_setting, window);
+        let preview = picker_preview::editor_preview(project, window, cx);
         let picker = cx.new(|cx| {
-            Picker::uniform_list_with_preview(delegate, project, window, cx)
+            Picker::uniform_list_with_preview(delegate, preview, window, cx)
                 .initial_width(Rems::from_pixels(modal_max_width, window))
         });
         let picker_focus_handle = picker.focus_handle(cx);
-        picker.update(cx, |picker, _| {
+        picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
+            if let Some(seed_query) = seed_query {
+                picker.set_query(&seed_query, window, cx);
+                picker.select_query(window, cx);
+            }
+            picker.delegate.refresh_history(window, cx);
         });
         Self {
             picker,
@@ -275,6 +317,10 @@ impl FileFinder {
     ) {
         self.picker.update(cx, |picker, cx| {
             let delegate = &mut picker.delegate;
+            if !delegate.selected_matches.is_empty() {
+                delegate.open_selected_in_one_split(split_direction, window, cx);
+                return;
+            }
             if let Some(workspace) = delegate.workspace.upgrade()
                 && let Some(m) = delegate.matches.get(delegate.selected_index())
             {
@@ -309,18 +355,19 @@ impl FileFinder {
         });
     }
 
-    pub fn modal_max_width(width_setting: FileFinderWidth, window: &mut Window) -> Pixels {
-        let window_width = window.viewport_size().width;
-        let small_width = rems(34.).to_pixels(window.rem_size());
-
-        match width_setting {
-            FileFinderWidth::Small => small_width,
-            FileFinderWidth::Full => window_width,
-            FileFinderWidth::XLarge => (window_width - px(512.)).max(small_width),
-            FileFinderWidth::Large => (window_width - px(768.)).max(small_width),
-            FileFinderWidth::Medium => (window_width - px(1024.)).max(small_width),
-        }
+    pub fn modal_max_width(width_setting: ModalWidthContent, window: &mut Window) -> Pixels {
+        let small_width = picker::DEFAULT_MODAL_WIDTH.to_pixels(window.rem_size());
+        width_setting.to_pixels(small_width, window.viewport_size().width)
     }
+}
+
+const MAX_SEED_QUERY_LENGTH: usize = 100;
+
+/// Flattens a selection into a single-line file query, capped to a sane length,
+/// since the selection seeds a file-name lookup.
+fn sanitize_file_query(selection: &str) -> Option<String> {
+    let query = selection.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!query.is_empty()).then(|| query.chars().take(MAX_SEED_QUERY_LENGTH).collect())
 }
 
 impl EventEmitter<DismissEvent> for FileFinder {}
@@ -360,16 +407,19 @@ pub struct FileFinderDelegate {
     latest_search_query: Option<FileSearchQuery>,
     currently_opened_path: Option<FoundPath>,
     matches: Matches,
+    selected_matches: Vec<SelectedMatch>,
     selected_index: usize,
     has_changed_selected_index: bool,
     cancel_flag: Arc<AtomicBool>,
     search_in_flight: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
+    history_refresh: Task<()>,
     separate_history: bool,
     first_update: bool,
     focus_handle: FocusHandle,
     include_ignored: Option<bool>,
     include_ignored_refresh: Task<()>,
+    debounce_next_refresh: bool,
 }
 
 /// Use a custom ordering for file finder: the regular one
@@ -454,6 +504,45 @@ impl Match {
             Match::History { panel_match, .. } => panel_match.as_ref(),
             Match::Search(panel_match) => Some(panel_match),
             Match::Channel { .. } | Match::CreateNew(_) => None,
+        }
+    }
+}
+
+/// Wrapper with Eq comparing the worktree-qualified path of file matches
+#[derive(Clone)]
+struct SelectedMatch(pub Match);
+
+impl SelectedMatch {
+    fn new(m: Match) -> Option<Self> {
+        match m {
+            Match::History { .. } | Match::Search(_) => Some(Self(m)),
+            Match::Channel { .. } | Match::CreateNew(_) => None,
+        }
+    }
+}
+
+impl PartialEq for SelectedMatch {
+    fn eq(&self, other: &Self) -> bool {
+        *self == other.0
+    }
+}
+
+impl Eq for SelectedMatch {}
+
+impl PartialEq<Match> for SelectedMatch {
+    fn eq(&self, other: &Match) -> bool {
+        match (&self.0, other) {
+            (Match::History { path: a, .. }, Match::History { path: b, .. }) => {
+                a.project == b.project
+            }
+            (Match::Search(a), Match::Search(b)) => {
+                a.0.worktree_id == b.0.worktree_id && a.0.path == b.0.path
+            }
+            (Match::History { path: h, .. }, Match::Search(s))
+            | (Match::Search(s), Match::History { path: h, .. }) => {
+                h.project.worktree_id.to_usize() == s.0.worktree_id && h.project.path == s.0.path
+            }
+            _ => false,
         }
     }
 }
@@ -732,7 +821,14 @@ fn should_hide_root_in_entry_path(worktree_store: &Entity<WorktreeStore>, cx: &A
         .filter(|worktree| !worktree.read(cx).is_single_file())
         .nth(1)
         .is_some();
-    ProjectPanelSettings::get_global(cx).hide_root && !multiple_worktrees
+    let hide_root = cx
+        .global::<SettingsStore>()
+        .merged_settings()
+        .project_panel
+        .as_ref()
+        .and_then(|project_panel| project_panel.hide_root)
+        .unwrap_or(false);
+    hide_root && !multiple_worktrees
 }
 
 fn worktree_names_for_history_matching(
@@ -785,10 +881,31 @@ impl FoundPath {
     fn new(project: ProjectPath, absolute: PathBuf) -> Self {
         Self { project, absolute }
     }
+
+    fn is_file(&self, project: &Project, cx: &App) -> Task<bool> {
+        if let Some(entry) = project.entry_for_path(&self.project, cx) {
+            return Task::ready(entry.is_file());
+        }
+        if project.is_local() {
+            let fs = project.fs().clone();
+            let path = self.absolute.clone();
+            cx.background_spawn(async move { fs.is_file(&path).await })
+        } else if project.is_via_remote_server() {
+            let Some(path) = self.absolute.to_str() else {
+                return Task::ready(false);
+            };
+            let resolve_path = project.resolve_abs_path(path, cx);
+            cx.background_spawn(
+                async move { resolve_path.await.is_some_and(|path| path.is_file()) },
+            )
+        } else {
+            Task::ready(true)
+        }
+    }
 }
 
-const MAX_RECENT_SELECTIONS: usize = 20;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
+const WORKTREE_UPDATE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
 pub enum Event {
     Selected(ProjectPath),
@@ -906,6 +1023,7 @@ impl FileFinderDelegate {
         currently_opened_path: Option<FoundPath>,
         history_items: Vec<FoundPath>,
         separate_history: bool,
+        include_ignored: Option<bool>,
         window: &mut Window,
         cx: &mut Context<FileFinder>,
     ) -> Self {
@@ -926,16 +1044,19 @@ impl FileFinderDelegate {
             latest_search_query: None,
             currently_opened_path,
             matches: Matches::default(),
+            selected_matches: Vec::new(),
             has_changed_selected_index: false,
             selected_index: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             search_in_flight: Arc::new(AtomicBool::new(false)),
             history_items,
+            history_refresh: Task::ready(()),
             separate_history,
             first_update: true,
             focus_handle: cx.focus_handle(),
-            include_ignored: FileFinderSettings::get_global(cx).include_ignored,
+            include_ignored: include_ignored.or(FileFinderSettings::get_global(cx).include_ignored),
             include_ignored_refresh: Task::ready(()),
+            debounce_next_refresh: false,
         }
     }
 
@@ -946,15 +1067,130 @@ impl FileFinderDelegate {
     ) {
         cx.subscribe_in(project, window, |file_finder, _, event, window, cx| {
             match event {
-                project::Event::WorktreeUpdatedEntries(_, _)
-                | project::Event::WorktreeAdded(_)
-                | project::Event::WorktreeRemoved(_) => file_finder
-                    .picker
-                    .update(cx, |picker, cx| picker.refresh(window, cx)),
+                project::Event::WorktreeUpdatedEntries(_, _) => {
+                    file_finder.picker.update(cx, |picker, cx| {
+                        picker.delegate.refresh_history(window, cx);
+                        picker.delegate.debounce_next_refresh = true;
+                        picker.refresh(window, cx);
+                    })
+                }
+                project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
+                    file_finder
+                        .picker
+                        .update(cx, |picker, cx| picker.refresh(window, cx))
+                }
                 _ => {}
             };
         })
         .detach();
+    }
+
+    fn refresh_history(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let project = self.project.read(cx);
+        let paths = self
+            .history_items
+            .iter()
+            .chain(self.currently_opened_path.iter())
+            .cloned()
+            .chain(
+                self.selected_matches
+                    .iter()
+                    .filter_map(|entry| match &entry.0 {
+                        Match::History { path, .. } => Some(path.clone()),
+                        Match::Search(path_match) => {
+                            let path =
+                                project_path_for_search_match(&self.project, &path_match.0, cx);
+                            let absolute = project.absolute_path(&path, cx)?;
+                            Some(FoundPath::new(path, absolute))
+                        }
+                        Match::Channel { .. } | Match::CreateNew(_) => None,
+                    }),
+            )
+            .filter(|path| {
+                project
+                    .entry_for_path(&path.project, cx)
+                    .is_none_or(|entry| !entry.is_file())
+            })
+            .map(|path| (path.project.clone(), path))
+            .collect::<HashMap<_, _>>();
+        if paths.is_empty() {
+            self.history_refresh = Task::ready(());
+            return;
+        }
+        let checks = paths
+            .into_values()
+            .map(|path| {
+                let is_file = path.is_file(project, cx);
+                async move { (!is_file.await).then_some(path.project) }
+            })
+            .collect::<Vec<_>>();
+        self.history_refresh = cx.spawn_in(window, async move |picker, cx| {
+            let removed_paths = join_all(checks)
+                .await
+                .into_iter()
+                .flatten()
+                .collect::<HashSet<_>>();
+            if removed_paths.is_empty() {
+                return;
+            }
+            picker
+                .update_in(cx, |picker, window, cx| {
+                    picker.delegate.remove_invalid_paths(&removed_paths, cx);
+                    picker.delegate.debounce_next_refresh = true;
+                    picker.refresh(window, cx);
+                })
+                .ok();
+        });
+    }
+
+    fn remove_invalid_paths(&mut self, removed_paths: &HashSet<ProjectPath>, cx: &App) {
+        let retain_path = |path: &ProjectPath| !removed_paths.contains(path);
+        self.history_items.retain(|path| retain_path(&path.project));
+        if self
+            .currently_opened_path
+            .as_ref()
+            .is_some_and(|path| !retain_path(&path.project))
+        {
+            self.currently_opened_path = None;
+        }
+
+        let project = &self.project;
+        let retain_match = |entry: &Match| match entry {
+            Match::History { path, .. } => retain_path(&path.project),
+            Match::Search(path_match) => {
+                retain_path(&project_path_for_search_match(project, &path_match.0, cx))
+            }
+            Match::Channel { .. } | Match::CreateNew(_) => true,
+        };
+        self.selected_matches.retain(|entry| retain_match(&entry.0));
+
+        let mut index = 0;
+        let mut selected_index = self.selected_index;
+        self.matches.matches.retain(|entry| {
+            let retain = retain_match(entry);
+            if !retain && index < self.selected_index {
+                selected_index -= 1;
+            }
+            index += 1;
+            retain
+        });
+        self.selected_index = selected_index.min(self.matches.len().saturating_sub(1));
+    }
+
+    fn prepend_selected_matches(&mut self) {
+        if self.selected_matches.is_empty() {
+            return;
+        }
+        self.matches
+            .matches
+            .retain(|m| !self.selected_matches.iter().any(|selected| selected == m));
+        let mut new: Vec<Match> = self
+            .selected_matches
+            .iter()
+            .map(|selected| selected.0.clone())
+            .collect();
+        new.append(&mut self.matches.matches);
+        self.matches.matches = new;
     }
 
     fn spawn_search(
@@ -1026,14 +1262,23 @@ impl FileFinderDelegate {
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
-            let query_changed = Some(query.path_query())
+            let path_query_changed = Some(query.path_query())
                 != self
                     .latest_search_query
                     .as_ref()
                     .map(|query| query.path_query());
-            let extend_old_matches = self.latest_search_did_cancel && !query_changed;
+            let extend_old_matches = self.latest_search_did_cancel && !path_query_changed;
 
-            let selected_match = if query_changed {
+            // The line/column suffix doesn't affect which files match, but it
+            // does change the user's intent ("go inside this file" vs. "pick a
+            // file"). Drop the preserved selection when it appears or changes
+            // so the new intent can be honored by `calculate_selected_index`.
+            let position_changed = self
+                .latest_search_query
+                .as_ref()
+                .and_then(|q| q.path_position.row)
+                != query.path_position.row;
+            let selected_match = if path_query_changed || position_changed {
                 None
             } else {
                 self.matches.get(self.selected_index).cloned()
@@ -1113,7 +1358,7 @@ impl FileFinderDelegate {
                 }
             }
 
-            let query_path = query.raw_query.as_str();
+            let query_path = query.path_query();
             if let Ok(mut query_path) = RelPath::new(Path::new(query_path), path_style) {
                 let available_worktree = self
                     .project
@@ -1148,8 +1393,8 @@ impl FileFinderDelegate {
                 if let Some(worktree) = expect_worktree {
                     let worktree = worktree.read(cx);
                     if worktree.entry_for_path(&query_path).is_none()
-                        && !query.raw_query.ends_with("/")
-                        && !(path_style.is_windows() && query.raw_query.ends_with("\\"))
+                        && !query.path_query().ends_with('/')
+                        && !(path_style.is_windows() && query.path_query().ends_with('\\'))
                     {
                         self.matches.matches.push(Match::CreateNew(ProjectPath {
                             worktree_id: worktree.id(),
@@ -1159,14 +1404,21 @@ impl FileFinderDelegate {
                 }
             }
 
-            self.selected_index = selected_match.map_or_else(
-                || self.calculate_selected_index(cx),
-                |m| {
-                    self.matches
-                        .position(&m, self.currently_opened_path.as_ref())
-                        .unwrap_or(0)
-                },
-            );
+            self.prepend_selected_matches();
+
+            self.selected_index = if !self.selected_matches.is_empty() {
+                0
+            } else {
+                let query_has_position = query.path_position.row.is_some();
+                selected_match.map_or_else(
+                    || self.calculate_selected_index(query_has_position, cx),
+                    |m| {
+                        self.matches
+                            .position(&m, self.currently_opened_path.as_ref())
+                            .unwrap_or(0)
+                    },
+                )
+            };
 
             self.latest_search_query = Some(query);
             self.latest_search_did_cancel = did_cancel;
@@ -1202,7 +1454,11 @@ impl FileFinderDelegate {
                         let full_path = if should_hide_root_in_entry_path(&worktree_store, cx) {
                             entry_path.project.path.clone()
                         } else {
-                            worktree.read(cx).root_name().join(&entry_path.project.path)
+                            worktree
+                                .read(cx)
+                                .root_name()
+                                .join(&entry_path.project.path)
+                                .into()
                         };
                         let mut components = full_path.components();
                         let filename = components.next_back().unwrap_or("");
@@ -1306,8 +1562,9 @@ impl FileFinderDelegate {
         }
 
         (
-            HighlightedLabel::new(file_name, file_name_positions),
+            HighlightedLabel::new(file_name, file_name_positions).single_line(),
             HighlightedLabel::new(full_path, full_path_positions)
+                .single_line()
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         )
@@ -1422,8 +1679,17 @@ impl FileFinderDelegate {
     }
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
-    fn calculate_selected_index(&self, cx: &mut Context<Picker<Self>>) -> usize {
-        if FileFinderSettings::get_global(cx).skip_focus_for_active_in_search
+    ///
+    /// When the query carries a row (e.g. `foo.rs:42`), the user is asking to
+    /// navigate inside a specific file, so we never skip past the active match
+    /// even if the setting is enabled.
+    fn calculate_selected_index(
+        &self,
+        query_has_position: bool,
+        cx: &mut Context<Picker<Self>>,
+    ) -> usize {
+        if !query_has_position
+            && FileFinderSettings::get_global(cx).skip_focus_for_active_in_search
             && let Some(Match::History { path, .. }) = self.matches.get(0)
             && Some(path) == self.currently_opened_path.as_ref()
         {
@@ -1436,8 +1702,8 @@ impl FileFinderDelegate {
         0
     }
 
-    fn key_context(&self, _window: &Window, _cx: &App) -> KeyContext {
-        let mut key_context = KeyContext::new_with_defaults();
+    fn key_context(&self, _window: &Window, cx: &App) -> KeyContext {
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("FileFinder");
         key_context
     }
@@ -1457,6 +1723,21 @@ impl FileFinderDelegate {
         let Some(m) = self.matches.get(self.selected_index()).cloned() else {
             return;
         };
+        let allow_preview = PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
+        self.open_match(m, secondary, dismiss_after_open, allow_preview, window, cx);
+    }
+
+    /// `allow_preview` is forced off for batch opens so every file gets its
+    /// own tab instead of consecutive opens reusing one preview tab.
+    fn open_match(
+        &mut self,
+        m: Match,
+        secondary: bool,
+        dismiss_after_open: bool,
+        allow_preview: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<FileFinderDelegate>>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -1479,8 +1760,6 @@ impl FileFinderDelegate {
                                  project_path,
                                  window: &mut Window,
                                  cx: &mut Context<Workspace>| {
-                let allow_preview =
-                    PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
                 if secondary {
                     workspace.split_path_preview(project_path, allow_preview, None, window, cx)
                 } else {
@@ -1595,6 +1874,59 @@ impl FileFinderDelegate {
     ) {
         self.open_selected_file(false, false, window, cx);
     }
+
+    /// Opens every multi-selected file as a tab in a single new split, then
+    /// dismisses the finder.
+    fn open_selected_in_one_split(
+        &mut self,
+        split_direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Picker<FileFinderDelegate>>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let selected = std::mem::take(&mut self.selected_matches);
+        let paths: Vec<ProjectPath> = selected
+            .iter()
+            .filter_map(|selected| match &selected.0 {
+                Match::History { path, .. } => Some(ProjectPath {
+                    worktree_id: path.project.worktree_id,
+                    path: Arc::clone(&path.project.path),
+                }),
+                Match::Search(m) => Some(project_path_for_search_match(&self.project, &m.0, cx)),
+                Match::Channel { .. } | Match::CreateNew(_) => None,
+            })
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        workspace.update(cx, |workspace, cx| {
+            let new_pane =
+                workspace.split_pane(workspace.active_pane().clone(), split_direction, window, cx);
+            let count = paths.len();
+            for (i, path) in paths.into_iter().enumerate() {
+                let focus_item = i + 1 == count;
+                workspace
+                    .open_path_preview(
+                        path,
+                        Some(new_pane.downgrade()),
+                        focus_item,
+                        false,
+                        true,
+                        window,
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
+            }
+        });
+        // Deferred because this runs from a `FileFinder` action handler, so
+        // the entity is already being updated.
+        let finder = self.file_finder.clone();
+        cx.defer(move |cx| {
+            finder.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+        });
+    }
 }
 
 fn full_path_budget(
@@ -1632,12 +1964,9 @@ impl PickerDelegate for FileFinderDelegate {
             "Include Ignored Files"
         };
 
-        let filter_button = IconButton::new("filter-ignored", IconName::Sliders)
+        let filter_button = IconButton::new("filter-ignored", IconName::FileIgnored)
             .icon_size(IconSize::Small)
             .toggle_state(including_ignored)
-            .when(self.include_ignored.is_some(), |this| {
-                this.indicator(Indicator::dot().color(Color::Info))
-            })
             .tooltip(move |_window, cx| {
                 Tooltip::for_action_in(tooltip_label, &ToggleIncludeIgnored, &focus_handle, cx)
             })
@@ -1663,6 +1992,11 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn selected_index(&self) -> usize {
         self.selected_index
+    }
+
+    fn set_hovered_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.selected_index = ix;
+        cx.notify();
     }
 
     fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -1695,6 +2029,7 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
+        let debounce_refresh = mem::take(&mut self.debounce_next_refresh);
         let raw_query = raw_query.trim();
 
         let raw_query = match &raw_query.get(0..2) {
@@ -1708,7 +2043,7 @@ impl PickerDelegate for FileFinderDelegate {
                     .all(|worktree| {
                         worktree
                             .read(cx)
-                            .entry_for_path(RelPath::unix(prefix.split_at(1).0).unwrap())
+                            .entry_for_path(RelPath::from_unix_str(prefix.split_at(1).0).unwrap())
                             .is_none_or(|entry| !entry.is_dir())
                     })
                 {
@@ -1755,6 +2090,7 @@ impl PickerDelegate for FileFinderDelegate {
                 self.first_update = false;
                 self.selected_index = 0;
             }
+            self.prepend_selected_matches();
             cx.notify();
             self.search_in_flight
                 .store(false, atomic::Ordering::Release);
@@ -1767,7 +2103,11 @@ impl PickerDelegate for FileFinderDelegate {
             let was_in_flight = search_in_flight.swap(true, atomic::Ordering::Relaxed);
 
             cx.spawn_in(window, async move |this, cx| {
-                if was_in_flight {
+                if debounce_refresh {
+                    cx.background_executor()
+                        .timer(WORKTREE_UPDATE_REFRESH_DEBOUNCE)
+                        .await;
+                } else if was_in_flight {
                     cx.background_executor().timer(SEARCH_DEBOUNCE).await;
                 }
                 let _ = maybe!(async move {
@@ -1805,10 +2145,68 @@ impl PickerDelegate for FileFinderDelegate {
         self.open_selected_file(secondary, true, window, cx);
     }
 
+    fn supports_multi_select(&self) -> bool {
+        true
+    }
+
+    fn is_item_selected(&self, ix: usize) -> bool {
+        let Some(m) = self.matches.get(ix) else {
+            return false;
+        };
+        self.selected_matches.iter().any(|selected| selected == m)
+    }
+
+    fn toggle_item_selected(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<Picker<FileFinderDelegate>>,
+    ) {
+        let Some(m) = self.matches.get(ix).cloned() else {
+            return;
+        };
+        // `new` rejects channels and the `create-new` placeholder.
+        let Some(selected) = SelectedMatch::new(m) else {
+            return;
+        };
+        if let Some(position) = self
+            .selected_matches
+            .iter()
+            .position(|existing| *existing == selected)
+        {
+            self.selected_matches.remove(position);
+        } else {
+            self.selected_matches.push(selected);
+        }
+        cx.notify();
+    }
+
+    fn selected_item_count(&self) -> usize {
+        self.selected_matches.len()
+    }
+
+    fn clear_selection(&mut self, _cx: &mut Context<Picker<FileFinderDelegate>>) {
+        self.selected_matches.clear();
+    }
+
+    fn confirm_multi(
+        &mut self,
+        secondary: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<FileFinderDelegate>>,
+    ) {
+        let selected = std::mem::take(&mut self.selected_matches);
+        let count = selected.len();
+        for (i, selected_match) in selected.into_iter().enumerate() {
+            let is_last = i + 1 == count;
+            self.open_match(selected_match.0, secondary, is_last, false, window, cx);
+        }
+    }
+
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<FileFinderDelegate>>) {
         self.file_finder
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn try_get_preview_data_for_match(&self, cx: &App) -> Option<picker::PreviewUpdate> {
@@ -1839,31 +2237,59 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        self.render_match_impl(ix, selected, None, window, cx)
+    }
+
+    fn render_match_with_checkbox(
+        &self,
+        ix: usize,
+        selected: bool,
+        checkbox: AnyElement,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        self.render_match_impl(ix, selected, Some(checkbox), window, cx)
+    }
+
+    fn actions_menu(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Vec<picker::PickerAction> {
+        let open_label: SharedString = if self.selected_matches.len() > 1 {
+            "Open multiple".into()
+        } else {
+            "Open File".into()
+        };
+        vec![
+            picker::PickerAction::header("Split…"),
+            picker::PickerAction::button("Left", pane::SplitLeft::default().boxed_clone()),
+            picker::PickerAction::button("Right", pane::SplitRight::default().boxed_clone()),
+            picker::PickerAction::button("Up", pane::SplitUp::default().boxed_clone()),
+            picker::PickerAction::button("Down", pane::SplitDown::default().boxed_clone()),
+            picker::PickerAction::separator(),
+            picker::PickerAction::button(open_label, menu::Confirm.boxed_clone()),
+        ]
+    }
+}
+
+impl FileFinderDelegate {
+    fn render_match_impl(
+        &self,
+        ix: usize,
+        selected: bool,
+        checkbox: Option<AnyElement>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<ListItem> {
         let settings = FileFinderSettings::get_global(cx);
 
         let path_match = self.matches.get(ix)?;
 
-        let end_icon = match path_match {
-            Match::History { .. } => Icon::new(IconName::HistoryRerun)
-                .color(Color::Muted)
-                .size(IconSize::Small)
-                .into_any_element(),
-            Match::Search(_) => v_flex()
-                .flex_none()
-                .size(IconSize::Small.rems())
-                .into_any_element(),
-            Match::Channel { .. } => v_flex()
-                .flex_none()
-                .size(IconSize::Small.rems())
-                .into_any_element(),
-            Match::CreateNew(_) => Empty.into_any_element(),
-        };
-
-        let is_create_new = matches!(path_match, Match::CreateNew(_));
-
         let (file_name_label, full_path_label) = self.labels_for_match(path_match, window, cx);
 
-        let file_icon = match path_match {
+        let start_icon = match path_match {
+            Match::CreateNew(_) => Some(Icon::new(IconName::Plus).size(IconSize::Small)),
             Match::Channel { .. } => Some(Icon::new(IconName::Hash).color(Color::Muted)),
             _ => maybe!({
                 if !settings.file_icons {
@@ -1876,44 +2302,60 @@ impl PickerDelegate for FileFinderDelegate {
             }),
         };
 
+        let checkbox = checkbox.map(|checkbox| {
+            if matches!(path_match, Match::CreateNew(_) | Match::Channel { .. }) {
+                div()
+                    .flex_none()
+                    .size(Checkbox::container_size())
+                    .into_any_element()
+            } else {
+                checkbox
+            }
+        });
+
+        let start_slot: Option<AnyElement> = match (checkbox, start_icon) {
+            (Some(checkbox), icon) => Some(
+                h_flex()
+                    .gap_1p5()
+                    .child(checkbox)
+                    .children(icon)
+                    .into_any_element(),
+            ),
+            (None, icon) => icon.map(IntoElement::into_any_element),
+        };
+
+        let end_slot: Option<AnyElement> = match path_match {
+            Match::History { .. } => Some(
+                Icon::new(IconName::HistoryRerun)
+                    .color(Color::Muted)
+                    .size(IconSize::Small)
+                    .into_any_element(),
+            ),
+            Match::Search(_) | Match::Channel { .. } => Some(
+                div()
+                    .flex_none()
+                    .size(IconSize::Small.rems())
+                    .into_any_element(),
+            ),
+            Match::CreateNew(_) => None,
+        };
+
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
                 .toggle_state(selected)
-                .map(|this| {
-                    if is_create_new {
-                        this.start_slot(Icon::new(IconName::Plus).size(IconSize::Small))
-                    } else {
-                        this.start_slot::<Icon>(file_icon)
-                    }
-                })
+                .start_slot::<AnyElement>(start_slot)
                 .child(
                     h_flex()
                         .w_full()
                         .min_w_0()
                         .gap_1p5()
-                        .child(file_name_label.truncate_middle())
-                        .child(full_path_label.truncate_start()),
+                        .child(file_name_label.flex_none().truncate_middle())
+                        .child(full_path_label.flex_1().truncate_start()),
                 )
-                .end_slot::<AnyElement>(end_icon),
+                .end_slot::<AnyElement>(end_slot),
         )
-    }
-
-    fn actions_menu(
-        &self,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> Vec<picker::PickerAction> {
-        vec![
-            picker::PickerAction::header("Split…"),
-            picker::PickerAction::button("Left", pane::SplitLeft::default().boxed_clone()),
-            picker::PickerAction::button("Right", pane::SplitRight::default().boxed_clone()),
-            picker::PickerAction::button("Up", pane::SplitUp::default().boxed_clone()),
-            picker::PickerAction::button("Down", pane::SplitDown::default().boxed_clone()),
-            picker::PickerAction::separator(),
-            picker::PickerAction::button("Open File", menu::Confirm.boxed_clone()),
-        ]
     }
 }
 
@@ -1951,7 +2393,7 @@ impl<'a> PathComponentSlice<'a> {
 
     fn elision_range(&self, budget: usize, matches: &[usize]) -> Option<Range<usize>> {
         let eligible_range = {
-            assert!(matches.windows(2).all(|w| w[0] <= w[1]));
+            assert!(matches.is_sorted());
             let mut matches = matches.iter().copied().peekable();
             let mut longest: Option<Range<usize>> = None;
             let mut cur = 0..0;

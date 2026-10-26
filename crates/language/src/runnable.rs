@@ -385,10 +385,11 @@ mod tests {
         let language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+                matcher: (LanguageMatcher {
+                    path_suffixes: vec!["rs".into()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             Some(tree_sitter_rust::LANGUAGE.into()),

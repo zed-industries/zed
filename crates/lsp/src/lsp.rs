@@ -6,10 +6,10 @@ pub use lsp_types::*;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use futures::{
-    AsyncRead, AsyncWrite, Future, FutureExt,
+    AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, Future, FutureExt, StreamExt,
     channel::oneshot::{self, Canceled},
     future::{self, Either},
-    io::BufWriter,
+    io::{BufReader, BufWriter},
     select,
 };
 use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
@@ -19,12 +19,9 @@ use postage::{barrier, prelude::Stream};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json, value::RawValue};
-use smol::{
-    channel,
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-};
 use util::command::{Child, Stdio};
 
+use gpui_util::{ResultExt, TryFutureExt};
 use std::path::Path;
 use std::{
     any::TypeId,
@@ -42,7 +39,7 @@ use std::{
     task::Poll,
     time::{Duration, Instant},
 };
-use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
+use util::{ConnectionResult, redact};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
@@ -60,9 +57,28 @@ pub const DEFAULT_LSP_REQUEST_TIMEOUT: Duration =
 /// The shutdown timeout for LSP servers (including Prettier/Copilot).
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+pub fn workspace_folder_for_uri(uri: Uri) -> WorkspaceFolder {
+    let name = uri
+        .to_file_path()
+        .ok()
+        .map(|path| {
+            let name = path.file_name().unwrap_or(path.as_os_str());
+            name.to_string_lossy().into_owned()
+        })
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            uri.path_segments()
+                .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| uri.as_str().to_owned());
+
+    WorkspaceFolder { uri, name }
+}
+
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
 type PendingRespondTasks = Arc<Mutex<HashMap<RequestId, Task<()>>>>;
-type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>) -> Task<()>>;
+type ResponseHandler = Box<dyn Send + FnOnce(Result<String, ResponseError>) -> Task<()>>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
 /// Kind of language server stdio given to an IO handler.
@@ -93,14 +109,16 @@ pub struct LanguageServerBinaryOptions {
     pub pre_release: bool,
 }
 
-struct NotificationSerializer(Box<dyn FnOnce() -> String + Send + Sync>);
+enum OutboundMessage {
+    Serialized(String),
+    PendingSerialization(Box<dyn FnOnce() -> String + Send + Sync>),
+}
 
 /// A running language server process.
 pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicI32,
-    outbound_tx: channel::Sender<String>,
-    notification_tx: channel::Sender<NotificationSerializer>,
+    outbound_tx: async_channel::Sender<OutboundMessage>,
     name: LanguageServerName,
     version: Option<SharedString>,
     process_name: Arc<str>,
@@ -220,6 +238,22 @@ fn is_unit<T: 'static>(_: &T) -> bool {
     TypeId::of::<T>() == TypeId::of::<()>()
 }
 
+fn deserialize_params<T: DeserializeOwned + 'static>(params: Value) -> serde_json::Result<T> {
+    if TypeId::of::<T>() == TypeId::of::<()>() {
+        serde_json::from_value(Value::Null)
+    } else {
+        serde_json::from_value(params)
+    }
+}
+
+fn deserialize_result<T: DeserializeOwned + 'static>(result: &str) -> serde_json::Result<T> {
+    if TypeId::of::<T>() == TypeId::of::<()>() {
+        serde_json::from_str("null")
+    } else {
+        serde_json::from_str(result)
+    }
+}
+
 /// Language server protocol RPC request message.
 ///
 /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
@@ -240,9 +274,9 @@ where
 struct AnyResponse<'a> {
     jsonrpc: &'a str,
     id: RequestId,
-    #[serde(default)]
-    error: Option<Error>,
-    #[serde(borrow)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<ResponseError>,
+    #[serde(borrow, skip_serializing_if = "Option::is_none")]
     result: Option<&'a RawValue>,
 }
 
@@ -262,7 +296,7 @@ struct Response<T> {
 enum LspResult<T> {
     #[serde(rename = "result")]
     Ok(Option<T>),
-    Error(Option<Error>),
+    Error(Option<ResponseError>),
 }
 
 /// Language server protocol RPC notification message.
@@ -290,13 +324,98 @@ struct NotificationOrRequest {
     params: Option<Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Error {
-    code: i64,
-    message: String,
-    #[serde(default)]
-    data: Option<serde_json::Value>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "i64", into = "i64")]
+pub enum ResponseErrorCode {
+    ParseError,
+    MethodNotFound,
+    RequestFailed,
+    ServerCancelled,
+    ContentModified,
+    Other(i64),
 }
+
+impl From<i64> for ResponseErrorCode {
+    fn from(code: i64) -> Self {
+        match code {
+            -32700 => Self::ParseError,
+            -32601 => Self::MethodNotFound,
+            lsp_types::error_codes::REQUEST_FAILED => Self::RequestFailed,
+            lsp_types::error_codes::SERVER_CANCELLED => Self::ServerCancelled,
+            lsp_types::error_codes::CONTENT_MODIFIED => Self::ContentModified,
+            code => Self::Other(code),
+        }
+    }
+}
+
+impl From<ResponseErrorCode> for i64 {
+    fn from(code: ResponseErrorCode) -> Self {
+        match code {
+            ResponseErrorCode::ParseError => -32700,
+            ResponseErrorCode::MethodNotFound => -32601,
+            ResponseErrorCode::RequestFailed => lsp_types::error_codes::REQUEST_FAILED,
+            ResponseErrorCode::ServerCancelled => lsp_types::error_codes::SERVER_CANCELLED,
+            ResponseErrorCode::ContentModified => lsp_types::error_codes::CONTENT_MODIFIED,
+            ResponseErrorCode::Other(code) => code,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseError {
+    pub code: ResponseErrorCode,
+    pub message: String,
+    #[serde(default)]
+    pub data: Option<serde_json::Value>,
+}
+
+impl ResponseError {
+    pub fn new(code: ResponseErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: None,
+        }
+    }
+
+    pub fn server_cancelled() -> Self {
+        Self::new(
+            ResponseErrorCode::ServerCancelled,
+            "server cancelled the request",
+        )
+    }
+
+    pub fn method_not_found(method: &str) -> Self {
+        Self::new(
+            ResponseErrorCode::MethodNotFound,
+            format!("Unrecognized method `{method}`"),
+        )
+    }
+
+    pub fn is_request_denied(&self) -> bool {
+        self.code == ResponseErrorCode::ServerCancelled
+            || self.code == ResponseErrorCode::ContentModified
+    }
+
+    pub fn should_retrigger(&self) -> bool {
+        self.code == ResponseErrorCode::ServerCancelled
+            && self
+                .data
+                .clone()
+                .and_then(|data| {
+                    serde_json::from_value::<DiagnosticServerCancellationData>(data).log_err()
+                })
+                .is_none_or(|data| data.retrigger_request)
+    }
+}
+
+impl std::fmt::Display for ResponseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for ResponseError {}
 
 pub trait LspRequestFuture<O>: Future<Output = ConnectionResult<O>> {
     fn id(&self) -> i32;
@@ -333,12 +452,12 @@ where
 }
 
 /// Combined capabilities of the server and the adapter.
-#[derive(Debug, Clone)]
-pub struct AdapterServerCapabilities {
+#[derive(Debug, Clone, Copy)]
+pub struct AdapterServerCapabilities<'a> {
     // Reported capabilities by the server
-    pub server_capabilities: ServerCapabilities,
+    pub server_capabilities: &'a ServerCapabilities,
     // List of code actions supported by the LspAdapter matching the server
-    pub code_action_kinds: Option<Vec<CodeActionKind>>,
+    pub code_action_kinds: Option<&'a [CodeActionKind]>,
 }
 
 // See the VSCode docs [1] and the LSP Spec [2]
@@ -416,7 +535,7 @@ impl LanguageServer {
             {:?}, working directory: {:?}, args: {:?}",
             binary.path,
             working_dir,
-            &binary.arguments
+            binary.arguments
         );
         let mut command = util::command::new_command(&binary.path);
         command
@@ -483,7 +602,8 @@ impl LanguageServer {
         Stderr: AsyncRead + Unpin + Send + 'static,
         F: Fn(&NotificationOrRequest) -> bool + 'static + Send + Sync + Clone,
     {
-        let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
+        let (outbound_tx, outbound_rx) = async_channel::unbounded::<OutboundMessage>();
+        let (serialized_tx, serialized_rx) = async_channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
         let notification_handlers =
             Arc::new(Mutex::new(HashMap::<_, NotificationHandler>::default()));
@@ -501,15 +621,14 @@ impl LanguageServer {
                         let response = AnyResponse {
                             jsonrpc: JSON_RPC_VERSION,
                             id: message_id,
-                            error: Some(Error {
-                                code: -32601,
-                                message: format!("Unrecognized method `{}`", msg.method),
-                                data: None,
-                            }),
+                            error: Some(ResponseError::method_not_found(&msg.method)),
                             result: None,
                         };
                         if let Ok(response) = serde_json::to_string(&response) {
-                            response_channel.send(response).await.ok();
+                            response_channel
+                                .send(OutboundMessage::Serialized(response))
+                                .await
+                                .ok();
                         }
                     }
                 }
@@ -550,7 +669,7 @@ impl LanguageServer {
         let output_task = cx.background_spawn({
             Self::handle_outgoing_messages(
                 stdin,
-                outbound_rx,
+                serialized_rx,
                 output_done_tx,
                 response_handlers.clone(),
                 io_handlers.clone(),
@@ -563,24 +682,22 @@ impl LanguageServer {
         }
         .into();
 
-        let (notification_tx, notification_rx) = channel::unbounded::<NotificationSerializer>();
-        cx.background_spawn({
-            let outbound_tx = outbound_tx.clone();
-            async move {
-                while let Ok(serializer) = notification_rx.recv().await {
-                    let serialized = (serializer.0)();
-                    let Ok(_) = outbound_tx.send(serialized).await else {
-                        return;
-                    };
-                }
-                outbound_tx.close();
+        cx.background_spawn(async move {
+            while let Ok(message) = outbound_rx.recv().await {
+                let serialized = match message {
+                    OutboundMessage::Serialized(message) => message,
+                    OutboundMessage::PendingSerialization(serialize) => serialize(),
+                };
+                let Ok(_) = serialized_tx.send(serialized).await else {
+                    return;
+                };
             }
+            serialized_tx.close();
         })
         .detach();
         Self {
             server_id,
             notification_handlers,
-            notification_tx,
             response_handlers,
             pending_respond_tasks,
             io_handlers,
@@ -607,8 +724,8 @@ impl LanguageServer {
     }
 
     /// List of code action kinds this language server reports being able to emit.
-    pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        self.code_action_kinds.clone()
+    pub fn code_action_kinds(&self) -> Option<&[CodeActionKind]> {
+        self.code_action_kinds.as_deref()
     }
 
     async fn handle_incoming_messages<Stdout>(
@@ -623,9 +740,8 @@ impl LanguageServer {
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
     {
-        use smol::stream::StreamExt;
         let stdout = BufReader::new(stdout);
-        let _clear_response_handlers = util::defer({
+        let _clear_response_handlers = gpui_util::defer({
             let response_handlers = response_handlers.clone();
             move || {
                 response_handlers.lock().take();
@@ -667,7 +783,7 @@ impl LanguageServer {
             }
 
             // Don't starve the main thread when receiving lots of notifications at once.
-            smol::future::yield_now().await;
+            futures_lite::future::yield_now().await;
         }
         input_handler.loop_handle.await
     }
@@ -703,13 +819,13 @@ impl LanguageServer {
             }
 
             // Don't starve the main thread when receiving lots of messages at once.
-            smol::future::yield_now().await;
+            futures_lite::future::yield_now().await;
         }
     }
 
     async fn handle_outgoing_messages<Stdin>(
         stdin: Stdin,
-        outbound_rx: channel::Receiver<String>,
+        outbound_rx: async_channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
@@ -750,21 +866,13 @@ impl LanguageServer {
         cx: &App,
     ) -> InitializeParams {
         let workspace_folders = self.workspace_folders.as_ref().map_or_else(
-            || {
-                vec![WorkspaceFolder {
-                    name: Default::default(),
-                    uri: self.root_uri.clone(),
-                }]
-            },
+            || vec![workspace_folder_for_uri(self.root_uri.clone())],
             |folders| {
                 folders
                     .lock()
                     .iter()
                     .cloned()
-                    .map(|uri| WorkspaceFolder {
-                        name: Default::default(),
-                        uri,
-                    })
+                    .map(workspace_folder_for_uri)
                     .collect()
             },
         );
@@ -803,10 +911,11 @@ impl LanguageServer {
                     inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
                         refresh_support: Some(true),
                     }),
-                    diagnostics: Some(DiagnosticWorkspaceClientCapabilities {
-                        refresh_support: Some(true),
-                    })
-                    .filter(|_| pull_diagnostics),
+                    diagnostics: pull_diagnostics.then_some(
+                        DiagnosticWorkspaceClientCapabilities {
+                            refresh_support: Some(true),
+                        },
+                    ),
                     code_lens: Some(CodeLensWorkspaceClientCapabilities {
                         refresh_support: Some(true),
                     }),
@@ -838,6 +947,9 @@ impl LanguageServer {
                 text_document: Some(TextDocumentClientCapabilities {
                     definition: Some(GotoCapability {
                         link_support: Some(true),
+                        dynamic_registration: Some(true),
+                    }),
+                    document_highlight: Some(DocumentHighlightClientCapabilities {
                         dynamic_registration: Some(true),
                     }),
                     code_action: Some(CodeActionClientCapabilities {
@@ -934,7 +1046,7 @@ impl LanguageServer {
                         dynamic_registration: Some(true),
                     }),
                     semantic_tokens: Some(SemanticTokensClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         requests: SemanticTokensClientCapabilitiesRequests {
                             range: None,
                             full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
@@ -987,16 +1099,19 @@ impl LanguageServer {
                     code_lens: Some(CodeLensClientCapabilities {
                         dynamic_registration: Some(true),
                     }),
+                    call_hierarchy: Some(CallHierarchyClientCapabilities {
+                        dynamic_registration: Some(true),
+                    }),
                     document_symbol: Some(DocumentSymbolClientCapabilities {
                         hierarchical_document_symbol_support: Some(true),
                         dynamic_registration: Some(true),
                         ..DocumentSymbolClientCapabilities::default()
                     }),
-                    diagnostic: Some(DiagnosticClientCapabilities {
+                    diagnostic: pull_diagnostics.then_some(DiagnosticClientCapabilities {
                         dynamic_registration: Some(true),
                         related_document_support: Some(true),
-                    })
-                    .filter(|_| pull_diagnostics),
+                        markup_message_support: Some(true),
+                    }),
                     color_provider: Some(DocumentColorClientCapabilities {
                         dynamic_registration: Some(true),
                     }),
@@ -1019,6 +1134,9 @@ impl LanguageServer {
                             ]),
                         }),
                     }),
+                    filters: Some(TextDocumentFilterClientCapabilities {
+                        relative_pattern_support: Some(true),
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
@@ -1032,7 +1150,7 @@ impl LanguageServer {
                             additional_properties_support: Some(true),
                         }),
                     }),
-                    ..WindowClientCapabilities::default()
+                    show_document: Some(ShowDocumentClientCapabilities { support: true }),
                 }),
             },
             trace: None,
@@ -1091,13 +1209,11 @@ impl LanguageServer {
         let next_id = AtomicI32::new(self.next_id.load(SeqCst));
         let outbound_tx = self.outbound_tx.clone();
         let executor = self.executor.clone();
-        let notification_serializers = self.notification_tx.clone();
         let mut output_done = self.output_done_rx.lock().take().unwrap();
         let shutdown_request = Self::request_internal::<request::Shutdown>(
             &next_id,
             &response_handlers,
             &outbound_tx,
-            &notification_serializers,
             &executor,
             SERVER_SHUTDOWN_TIMEOUT,
             (),
@@ -1110,7 +1226,7 @@ impl LanguageServer {
         Some(async move {
             log::debug!("language server shutdown started");
 
-            select! {
+            let shutdown_timed_out = select! {
                 request_result = shutdown_request.fuse() => {
                     match request_result {
                         ConnectionResult::Timeout => {
@@ -1124,19 +1240,32 @@ impl LanguageServer {
                         },
                         ConnectionResult::Result(Ok(())) => {}
                     }
+                    false
                 }
 
                 _ = timer => {
                     log::info!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                    true
                 },
-            }
+            };
 
             response_handlers.lock().take();
-            Self::notify_internal::<notification::Exit>(&notification_serializers, ()).ok();
-            notification_serializers.close();
-            output_done.recv().await;
-            server.lock().take().map(|mut child| child.kill());
+            Self::notify_internal::<notification::Exit>(&outbound_tx, ()).ok();
+            outbound_tx.close();
+            if !shutdown_timed_out {
+                select! {
+                    _ = output_done.recv().fuse() => {},
+                    _ = timer => {
+                        log::info!("timeout draining output for language server {name} (id {server_id}) during shutdown");
+                    },
+                }
+            }
             drop(tasks);
+            if let Some(mut child) = server.lock().take()
+                && let Err(error) = child.kill()
+            {
+                log::warn!("failed to kill language server {name} (id {server_id}): {error}");
+            }
             log::debug!("language server shutdown finished");
             Some(())
         })
@@ -1201,12 +1330,12 @@ impl LanguageServer {
     fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
         F: 'static + FnMut(Params, &mut AsyncApp) + Send,
-        Params: DeserializeOwned,
+        Params: DeserializeOwned + 'static,
     {
         let prev_handler = self.notification_handlers.lock().insert(
             method,
             Box::new(move |_, params, cx| {
-                if let Some(params) = serde_json::from_value(params).log_err() {
+                if let Some(params) = deserialize_params(params).log_err() {
                     f(params, cx);
                 }
             }),
@@ -1235,7 +1364,7 @@ impl LanguageServer {
             method,
             Box::new(move |id, params, cx| {
                 if let Some(id) = id {
-                    match serde_json::from_value(params) {
+                    match deserialize_params(params) {
                         Ok(params) => {
                             let response = f(params, cx);
                             let task = cx.foreground_executor().spawn({
@@ -1252,17 +1381,23 @@ impl LanguageServer {
                                         Err(error) => Response {
                                             jsonrpc: JSON_RPC_VERSION,
                                             id: id.clone(),
-                                            value: LspResult::Error(Some(Error {
-                                                code: lsp_types::error_codes::REQUEST_FAILED,
-                                                message: error.to_string(),
-                                                data: None,
-                                            })),
+                                            value: LspResult::Error(Some(
+                                                match error.downcast::<ResponseError>() {
+                                                    Ok(response_error) => response_error,
+                                                    Err(error) => ResponseError::new(
+                                                        ResponseErrorCode::RequestFailed,
+                                                        error.to_string(),
+                                                    ),
+                                                },
+                                            )),
                                         },
                                     };
                                     if let Some(response) =
                                         serde_json::to_string(&response).log_err()
                                     {
-                                        outbound_tx.try_send(response).ok();
+                                        outbound_tx
+                                            .try_send(OutboundMessage::Serialized(response))
+                                            .ok();
                                     }
                                     pending_respond_tasks.lock().remove(&id);
                                 }
@@ -1276,14 +1411,15 @@ impl LanguageServer {
                                 jsonrpc: JSON_RPC_VERSION,
                                 id,
                                 result: None,
-                                error: Some(Error {
-                                    code: -32700, // Parse error
-                                    message: error.to_string(),
-                                    data: None,
-                                }),
+                                error: Some(ResponseError::new(
+                                    ResponseErrorCode::ParseError,
+                                    error.to_string(),
+                                )),
                             };
                             if let Some(response) = serde_json::to_string(&response).log_err() {
-                                outbound_tx.try_send(response).ok();
+                                outbound_tx
+                                    .try_send(OutboundMessage::Serialized(response))
+                                    .ok();
                             }
                         }
                     }
@@ -1343,15 +1479,6 @@ impl LanguageServer {
         self.capabilities.read().clone()
     }
 
-    /// Get the reported capabilities of the running language server and
-    /// what we know on the client/adapter-side of its capabilities.
-    pub fn adapter_server_capabilities(&self) -> AdapterServerCapabilities {
-        AdapterServerCapabilities {
-            server_capabilities: self.capabilities(),
-            code_action_kinds: self.code_action_kinds(),
-        }
-    }
-
     /// Update the capabilities of the running language server.
     pub fn update_capabilities(&self, update: impl FnOnce(&mut ServerCapabilities)) {
         update(self.capabilities.write().deref_mut());
@@ -1393,32 +1520,8 @@ impl LanguageServer {
             &self.next_id,
             &self.response_handlers,
             &self.outbound_tx,
-            &self.notification_tx,
             &self.executor,
             request_timeout,
-            params,
-        )
-    }
-
-    /// Send a RPC request to the language server with a custom timer.
-    /// Once the attached future becomes ready, the request will time out with the provided output message.
-    ///
-    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
-    pub fn request_with_timer<T: request::Request, U: Future<Output = String>>(
-        &self,
-        params: T::Params,
-        timer: U,
-    ) -> impl LspRequestFuture<T::Result> + use<T, U>
-    where
-        T::Result: 'static + Send,
-    {
-        Self::request_internal_with_timer::<T, U>(
-            &self.next_id,
-            &self.response_handlers,
-            &self.outbound_tx,
-            &self.notification_tx,
-            &self.executor,
-            timer,
             params,
         )
     }
@@ -1426,8 +1529,7 @@ impl LanguageServer {
     fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
         response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-        outbound_tx: &channel::Sender<String>,
-        notification_serializers: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<OutboundMessage>,
         executor: &BackgroundExecutor,
         timer: U,
         params: T::Params,
@@ -1459,14 +1561,14 @@ impl LanguageServer {
                         executor
                             .spawn(async move {
                                 let response = match result {
-                                    Ok(response) => match serde_json::from_str(&response) {
+                                    Ok(response) => match deserialize_result(&response) {
                                         Ok(deserialized) => Ok(deserialized),
                                         Err(error) => {
                                             log::error!("failed to deserialize response from language server: {}. response from language server: {:?}", error, response);
                                             Err(error).context("failed to deserialize response")
                                         }
                                     }
-                                    Err(error) => Err(anyhow!("{}", error.message)),
+                                    Err(error) => Err(anyhow::Error::new(error)),
                                 };
                                 tx.send(response).ok();
                             })
@@ -1475,11 +1577,11 @@ impl LanguageServer {
             });
 
         let send = outbound_tx
-            .try_send(message)
+            .try_send(OutboundMessage::Serialized(message))
             .context("failed to write to language server's stdin");
 
         let response_handlers = Arc::clone(response_handlers);
-        let notification_serializers = notification_serializers.downgrade();
+        let outbound_tx = outbound_tx.downgrade();
         let started = Instant::now();
         LspRequest::new(id, async move {
             if let Err(e) = handle_response {
@@ -1489,10 +1591,10 @@ impl LanguageServer {
                 return ConnectionResult::Result(Err(e));
             }
 
-            let cancel_on_drop = util::defer(move || {
-                if let Some(notification_serializers) = notification_serializers.upgrade() {
+            let cancel_on_drop = gpui_util::defer(move || {
+                if let Some(outbound_tx) = outbound_tx.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
-                        &notification_serializers,
+                        &outbound_tx,
                         CancelParams {
                             id: NumberOrString::Number(id),
                         },
@@ -1536,8 +1638,7 @@ impl LanguageServer {
     fn request_internal<T>(
         next_id: &AtomicI32,
         response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-        outbound_tx: &channel::Sender<String>,
-        notification_serializers: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<OutboundMessage>,
         executor: &BackgroundExecutor,
         request_timeout: Duration,
         params: T::Params,
@@ -1550,7 +1651,6 @@ impl LanguageServer {
             next_id,
             response_handlers,
             outbound_tx,
-            notification_serializers,
             executor,
             Self::request_timeout_future(executor.clone(), request_timeout),
             params,
@@ -1583,15 +1683,14 @@ impl LanguageServer {
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
     pub fn notify<T: notification::Notification>(&self, params: T::Params) -> Result<()> {
-        let outbound = self.notification_tx.clone();
-        Self::notify_internal::<T>(&outbound, params)
+        Self::notify_internal::<T>(&self.outbound_tx, params)
     }
 
     fn notify_internal<T: notification::Notification>(
-        outbound_tx: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<OutboundMessage>,
         params: T::Params,
     ) -> Result<()> {
-        let serializer = NotificationSerializer(Box::new(move || {
+        let message = OutboundMessage::PendingSerialization(Box::new(move || {
             serde_json::to_string(&Notification {
                 jsonrpc: JSON_RPC_VERSION,
                 method: T::METHOD,
@@ -1600,7 +1699,7 @@ impl LanguageServer {
             .unwrap()
         }));
 
-        outbound_tx.send_blocking(serializer)?;
+        outbound_tx.send_blocking(message)?;
         Ok(())
     }
 
@@ -1628,10 +1727,7 @@ impl LanguageServer {
         if is_new_folder {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
-                    added: vec![WorkspaceFolder {
-                        uri,
-                        name: String::default(),
-                    }],
+                    added: vec![workspace_folder_for_uri(uri)],
                     removed: vec![],
                 },
             };
@@ -1663,10 +1759,7 @@ impl LanguageServer {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
                     added: vec![],
-                    removed: vec![WorkspaceFolder {
-                        uri,
-                        name: String::default(),
-                    }],
+                    removed: vec![workspace_folder_for_uri(uri)],
                 },
             };
             self.notify::<DidChangeWorkspaceFolders>(params).ok();
@@ -1681,18 +1774,14 @@ impl LanguageServer {
         let old_workspace_folders = std::mem::take(&mut *workspace_folders);
         let added: Vec<_> = folders
             .difference(&old_workspace_folders)
-            .map(|uri| WorkspaceFolder {
-                uri: uri.clone(),
-                name: String::default(),
-            })
+            .cloned()
+            .map(workspace_folder_for_uri)
             .collect();
 
         let removed: Vec<_> = old_workspace_folders
             .difference(&folders)
-            .map(|uri| WorkspaceFolder {
-                uri: uri.clone(),
-                name: String::default(),
-            })
+            .cloned()
+            .map(workspace_folder_for_uri)
             .collect();
         *workspace_folders = folders;
         let should_notify = !added.is_empty() || !removed.is_empty();
@@ -1822,7 +1911,7 @@ impl Drop for Subscription {
 pub struct FakeLanguageServer {
     pub binary: LanguageServerBinary,
     pub server: Arc<LanguageServer>,
-    notifications_rx: channel::Receiver<(String, String)>,
+    notifications_rx: async_channel::Receiver<(String, String)>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1837,7 +1926,7 @@ impl FakeLanguageServer {
     ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
-        let (notifications_tx, notifications_rx) = channel::unbounded();
+        let (notifications_tx, notifications_rx) = async_channel::unbounded();
 
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
@@ -2081,7 +2170,7 @@ impl FakeLanguageServer {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use std::str::FromStr;
+    use std::{io, str::FromStr, task::Context};
 
     #[ctor::ctor(unsafe)]
     fn init_logger() {
@@ -2105,8 +2194,8 @@ mod tests {
             &mut cx.to_async(),
         );
 
-        let (message_tx, message_rx) = channel::unbounded();
-        let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
+        let (message_tx, message_rx) = async_channel::unbounded();
+        let (diagnostics_tx, diagnostics_rx) = async_channel::unbounded();
         server
             .on_notification::<notification::ShowMessage, _>(move |params, _| {
                 message_tx.try_send(params).unwrap()
@@ -2172,6 +2261,113 @@ mod tests {
         drop(server);
         cx.run_until_parked();
         fake.receive_notification::<notification::Exit>().await;
+    }
+
+    #[gpui::test]
+    async fn test_notifications_and_requests_preserve_send_order(cx: &mut TestAppContext) {
+        let (server, mut stdout, output) = shutdown_test_server(None, cx);
+        let uri = Uri::from_str("file:///test.py").expect("valid document URI");
+        let notify_change = |version, text: &str| {
+            server
+                .notify::<notification::DidChangeTextDocument>(DidChangeTextDocumentParams {
+                    text_document: VersionedTextDocumentIdentifier::new(uri.clone(), version),
+                    content_changes: vec![TextDocumentContentChangeEvent {
+                        range: None,
+                        range_length: None,
+                        text: text.to_owned(),
+                    }],
+                })
+                .expect("document change must be queued");
+        };
+
+        notify_change(1, "α = 1\n");
+        let formatting = server.request::<request::Formatting>(
+            DocumentFormattingParams {
+                text_document: TextDocumentIdentifier::new(uri.clone()),
+                options: FormattingOptions {
+                    tab_size: 4,
+                    insert_spaces: true,
+                    ..FormattingOptions::default()
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        );
+        notify_change(2, "α = 2\n");
+        cx.run_until_parked();
+
+        let expected = [
+            r#"{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///test.py","version":1},"contentChanges":[{"text":"α = 1\n"}]}}"#,
+            r#"{"jsonrpc":"2.0","id":0,"method":"textDocument/formatting","params":{"textDocument":{"uri":"file:///test.py"},"options":{"tabSize":4,"insertSpaces":true}}}"#,
+            r#"{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///test.py","version":2},"contentChanges":[{"text":"α = 2\n"}]}}"#,
+        ]
+        .into_iter()
+        .flat_map(framed_test_message)
+        .collect::<Vec<_>>();
+        assert_eq!(
+            String::from_utf8(output.lock().bytes.clone()).expect("UTF-8 output"),
+            String::from_utf8(expected.clone()).expect("UTF-8 expected output"),
+        );
+
+        stdout
+            .write_all(&framed_test_message(
+                r#"{"jsonrpc":"2.0","id":0,"result":[]}"#,
+            ))
+            .await
+            .expect("formatting response must reach stdout");
+        assert_eq!(
+            formatting
+                .await
+                .into_response()
+                .expect("formatting response"),
+            Some(Vec::new()),
+        );
+        cx.run_until_parked();
+        assert_eq!(output.lock().bytes, expected);
+    }
+
+    #[gpui::test]
+    async fn test_shutdown_bounds_output_drain(cx: &mut TestAppContext) {
+        for remaining_flushes in [Some(0), Some(1), None] {
+            let (server, mut stdout, output) = shutdown_test_server(remaining_flushes, cx);
+            let io_handlers = Arc::downgrade(&server.io_handlers);
+            let mut shutdown = cx
+                .executor()
+                .spawn(server.shutdown().expect("shutdown must start"));
+            drop(server);
+            cx.run_until_parked();
+            let mut expected = if remaining_flushes == Some(0) {
+                Vec::new()
+            } else {
+                framed_test_message(r#"{"jsonrpc":"2.0","id":0,"method":"shutdown"}"#)
+            };
+            assert_eq!(output.lock().bytes, expected);
+            assert_eq!((&mut shutdown).now_or_never(), None);
+            cx.executor().advance_clock(Duration::from_secs(4));
+            if remaining_flushes != Some(0) {
+                stdout
+                    .write_all(&framed_test_message(
+                        r#"{"jsonrpc":"2.0","id":0,"result":null}"#,
+                    ))
+                    .await
+                    .expect("shutdown response must reach stdout");
+            }
+            cx.run_until_parked();
+            if remaining_flushes.is_none() {
+                expected.extend(framed_test_message(r#"{"jsonrpc":"2.0","method":"exit"}"#));
+            } else {
+                assert!(output.lock().blocked);
+                cx.executor().advance_clock(Duration::from_millis(999));
+                cx.run_until_parked();
+                assert_eq!((&mut shutdown).now_or_never(), None);
+                assert!(io_handlers.upgrade().is_some());
+                cx.executor().advance_clock(Duration::from_millis(1));
+                cx.run_until_parked();
+            }
+            assert_eq!(shutdown.now_or_never(), Some(Some(())));
+            assert_eq!(output.lock().bytes, expected);
+            assert!(io_handlers.upgrade().is_none());
+        }
     }
 
     #[gpui::test]
@@ -2244,6 +2440,86 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_unit_params_request_with_empty_object_params(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: Vec::new(),
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+
+        enum DiagnosticRefreshWithRawParams {}
+
+        impl request::Request for DiagnosticRefreshWithRawParams {
+            type Params = Value;
+            type Result = ();
+            const METHOD: &'static str = request::WorkspaceDiagnosticRefresh::METHOD;
+        }
+
+        let (refresh_tx, refresh_rx) = async_channel::unbounded();
+        server
+            .on_request::<request::WorkspaceDiagnosticRefresh, _, _>(move |(), _| {
+                let refresh_tx = refresh_tx.clone();
+                async move {
+                    refresh_tx.try_send(()).unwrap();
+                    Ok(())
+                }
+            })
+            .detach();
+
+        for params in [serde_json::json!({}), Value::Null] {
+            let response = fake
+                .request::<DiagnosticRefreshWithRawParams>(params, DEFAULT_LSP_REQUEST_TIMEOUT)
+                .await;
+            assert_eq!(response.into_response().unwrap(), ());
+            assert_eq!(refresh_rx.recv().await, Ok(()));
+        }
+    }
+
+    #[gpui::test]
+    async fn test_unit_result_response_with_empty_object(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: Vec::new(),
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+
+        enum ShutdownWithRawResult {}
+
+        impl request::Request for ShutdownWithRawResult {
+            type Params = Value;
+            type Result = Value;
+            const METHOD: &'static str = request::Shutdown::METHOD;
+        }
+
+        fake.set_request_handler::<ShutdownWithRawResult, _, _>(|_, _| async move {
+            Ok(serde_json::json!({}))
+        });
+
+        let response = server
+            .request::<request::Shutdown>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await;
+        assert_eq!(response.into_response().unwrap(), ());
+    }
+
+    #[gpui::test]
     fn test_deserialize_string_digit_id() {
         let json = r#"{"jsonrpc":"2.0","id":"2","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
         let notification = serde_json::from_str::<NotificationOrRequest>(json)
@@ -2271,6 +2547,35 @@ mod tests {
     }
 
     #[test]
+    fn test_response_error_code_roundtrip() {
+        for (code, number) in [
+            (ResponseErrorCode::ParseError, -32700),
+            (ResponseErrorCode::MethodNotFound, -32601),
+            (ResponseErrorCode::RequestFailed, -32803),
+            (ResponseErrorCode::ServerCancelled, -32802),
+            (ResponseErrorCode::ContentModified, -32801),
+            (ResponseErrorCode::Other(-32099), -32099),
+        ] {
+            assert_eq!(i64::from(code), number);
+            assert_eq!(ResponseErrorCode::from(number), code);
+        }
+    }
+
+    #[test]
+    fn test_serialize_error_response_has_no_result() {
+        let response = AnyResponse {
+            jsonrpc: JSON_RPC_VERSION,
+            id: RequestId::Int(0),
+            error: Some(ResponseError::method_not_found("foo")),
+            result: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&response).unwrap(),
+            "{\"jsonrpc\":\"2.0\",\"id\":0,\"error\":{\"code\":-32601,\"message\":\"Unrecognized method `foo`\",\"data\":null}}"
+        );
+    }
+
+    #[test]
     fn test_serialize_has_no_nulls() {
         // Ensure we're not setting both result and error variants. (ticket #10595)
         let no_tag = Response::<u32> {
@@ -2294,7 +2599,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_initialize_params_has_root_path_and_root_uri(cx: &mut TestAppContext) {
+    async fn test_default_initialize_params(cx: &mut TestAppContext) {
         cx.update(|cx| {
             release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
@@ -2309,8 +2614,21 @@ mod tests {
             Default::default(),
             &mut cx.to_async(),
         );
+        let project_uri = Uri::from_file_path(std::env::temp_dir().join("my project"))
+            .expect("workspace folder URI should be valid");
+        server.set_workspace_folders(BTreeSet::from_iter([project_uri.clone()]));
 
         let params = cx.update(|cx| server.default_initialize_params(false, false, cx));
+
+        assert_eq!(
+            params
+                .capabilities
+                .text_document
+                .as_ref()
+                .and_then(|capabilities| capabilities.document_highlight.as_ref())
+                .and_then(|capabilities| capabilities.dynamic_registration),
+            Some(true)
+        );
 
         #[allow(deprecated)]
         let root_uri = params.root_uri.expect("root_uri should be set");
@@ -2325,5 +2643,89 @@ mod tests {
             expected_path.to_string_lossy(),
             "root_path should be derived from root_uri"
         );
+        let workspace_folders = params
+            .workspace_folders
+            .expect("workspace folders should be set");
+
+        let expected_workspace_folders = vec![WorkspaceFolder {
+            uri: project_uri,
+            name: "my project".to_string(),
+        }];
+        assert_eq!(workspace_folders, expected_workspace_folders);
+    }
+
+    struct ShutdownTestOutput {
+        bytes: Vec<u8>,
+        remaining_flushes: Option<usize>,
+        blocked: bool,
+    }
+
+    struct ShutdownTestWriter(Arc<Mutex<ShutdownTestOutput>>);
+
+    impl AsyncWrite for ShutdownTestWriter {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            bytes: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            let mut output = self.0.lock();
+            if output.remaining_flushes == Some(0) {
+                output.blocked = true;
+                return Poll::Pending;
+            }
+            output.bytes.extend_from_slice(bytes);
+            Poll::Ready(Ok(bytes.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            if let Some(remaining_flushes) = &mut self.0.lock().remaining_flushes {
+                *remaining_flushes = remaining_flushes.saturating_sub(1);
+            }
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn shutdown_test_server(
+        remaining_flushes: Option<usize>,
+        cx: &mut TestAppContext,
+    ) -> (
+        LanguageServer,
+        async_pipe::PipeWriter,
+        Arc<Mutex<ShutdownTestOutput>>,
+    ) {
+        let (stdout_writer, stdout_reader) = async_pipe::pipe();
+        let output = Arc::new(Mutex::new(ShutdownTestOutput {
+            bytes: Vec::new(),
+            remaining_flushes,
+            blocked: false,
+        }));
+        let server = LanguageServer::new_internal(
+            LanguageServerId(0),
+            LanguageServerName::from("shutdown-test"),
+            ShutdownTestWriter(output.clone()),
+            stdout_reader,
+            None::<async_pipe::PipeReader>,
+            Arc::new(Mutex::new(None)),
+            None,
+            None,
+            LanguageServerBinary {
+                path: PathBuf::from("shutdown-test"),
+                arguments: Vec::new(),
+                env: None,
+            },
+            FakeLanguageServer::root_path(),
+            None,
+            &mut cx.to_async(),
+            |_| false,
+        );
+        (server, stdout_writer, output)
+    }
+
+    fn framed_test_message(payload: &str) -> Vec<u8> {
+        format!("Content-Length: {}\r\n\r\n{payload}", payload.len()).into_bytes()
     }
 }

@@ -599,6 +599,7 @@ impl Editor {
         self.scrollbar_marker_state.dirty = true;
         self.update_data_on_scroll(false, window, cx);
         self.folds_did_change(cx);
+        self.inlay_hint_visibility_changed(cx);
     }
 
     /// Removes any folds whose ranges intersect any of the given ranges.
@@ -613,6 +614,7 @@ impl Editor {
             map.unfold_intersecting(ranges.iter().cloned(), inclusive, cx);
         });
         self.folds_did_change(cx);
+        self.inlay_hint_visibility_changed(cx);
     }
 
     pub fn fold_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
@@ -642,16 +644,21 @@ impl Editor {
         });
 
         let snapshot = self.display_snapshot(cx);
-        self.selections.change_with(&snapshot, |selections| {
+        let previous = self.selections.disjoint_anchors_arc();
+        let (changed, ()) = self.selections.change_with(&snapshot, |selections| {
             for buffer_id in ids_to_fold.iter().copied() {
                 selections.remove_selections_from_buffer(buffer_id);
             }
         });
+        if changed {
+            self.invalidate_add_selection_goals_after_change(Some(&previous));
+        }
 
         cx.emit(EditorEvent::BufferFoldToggled {
             ids: ids_to_fold,
             folded: true,
         });
+        self.inlay_hint_visibility_changed(cx);
         cx.notify();
     }
 
@@ -666,6 +673,7 @@ impl Editor {
             ids: vec![buffer_id],
             folded: false,
         });
+        self.inlay_hint_visibility_changed(cx);
         cx.notify();
     }
 
@@ -703,6 +711,7 @@ impl Editor {
             map.remove_folds_with_type(ranges.iter().cloned(), type_id, cx)
         });
         self.folds_did_change(cx);
+        self.inlay_hint_visibility_changed(cx);
     }
 
     pub fn update_renderer_widths(
@@ -771,7 +780,7 @@ impl Editor {
                         if current_level < fold_at_level {
                             stack.push((nested_start_row, nested_end_row, current_level + 1));
                         } else if current_level == fold_at_level {
-                            // Fold iff there is no selection completely contained within the fold region
+                            // Fold if and only if there is no selection completely contained within the fold region
                             if !row_ranges_to_keep.iter().any(|selection| {
                                 selection.end >= nested_start_row
                                     && selection.start <= nested_end_row
@@ -780,7 +789,7 @@ impl Editor {
                             }
                         }
 
-                        start_row = nested_end_row + 1;
+                        start_row = (start_row + 1).max(nested_end_row);
                     }
                     None => start_row += 1,
                 }
@@ -798,6 +807,11 @@ impl Editor {
         let buffer_ids: HashSet<BufferId> = self
             .selections
             .disjoint_anchor_ranges()
+            .chain(
+                self.selections
+                    .pending_anchor()
+                    .map(|selection| selection.range()),
+            )
             .flat_map(|range| snapshot.buffer_ids_for_range(range))
             .collect();
         for buffer_id in buffer_ids {

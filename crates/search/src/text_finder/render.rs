@@ -5,7 +5,7 @@ use super::TextFinder;
 
 impl Render for TextFinder {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("TextFinder");
 
         v_flex()
@@ -15,6 +15,9 @@ impl Render for TextFinder {
             .on_action(cx.listener(Self::split_right))
             .on_action(cx.listener(Self::split_up))
             .on_action(cx.listener(Self::split_down))
+            .on_action(cx.listener(Self::fold))
+            .on_action(cx.listener(Self::unfold))
+            .on_action(cx.listener(Self::toggle_fold_all))
             .child(self.picker.clone())
     }
 }

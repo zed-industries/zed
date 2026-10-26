@@ -14,7 +14,9 @@ use gpui::{
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-    language_settings::{Formatter, FormatterList, LanguageSettings},
+    language_settings::{
+        ConfiguredLanguageServer, Formatter, FormatterList, LanguageSettings, all_language_settings,
+    },
     rust_lang, tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
@@ -33,7 +35,7 @@ use rpc::proto;
 use serde_json::json;
 use settings::{
     InlayHintSettingsContent, LanguageServerFormatterSpecifier, PrettierSettingsContent,
-    SettingsStore,
+    SemanticTokens, SettingsStore,
 };
 use std::{
     path::{Path, PathBuf},
@@ -180,7 +182,7 @@ async fn test_sharing_an_ssh_remote_project(
     cx_b.read(|cx| {
         assert_eq!(
             LanguageSettings::for_buffer(buffer_b.read(cx), cx).language_servers,
-            ["override-rust-analyzer".to_string()]
+            [ConfiguredLanguageServer::new("override-rust-analyzer")]
         )
     });
 
@@ -686,10 +688,11 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     let ts_lang = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+            matcher: (LanguageMatcher {
+                path_suffixes: vec!["ts".into()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             ..LanguageConfig::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -752,6 +755,8 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.format_on_save =
+                    Some(settings::FormatOnSave::On);
                 file.project.all_languages.defaults.formatter = Some(FormatterList::default());
                 file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
                     allowed: Some(true),
@@ -763,6 +768,8 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.format_on_save =
+                    Some(settings::FormatOnSave::On);
                 file.project.all_languages.defaults.formatter = Some(FormatterList::Single(
                     Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
                 ));
@@ -922,19 +929,19 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
         let matching_server_ids = log_store
             .language_servers
             .iter()
-            .filter_map(|(server_id, state)| {
+            .filter_map(|(key, state)| {
                 state
                     .name
                     .as_ref()
                     .is_some_and(|name| name.0 == "the-language-server")
-                    .then_some(*server_id)
+                    .then_some(key.server_id)
             })
             .collect::<Vec<_>>();
         assert_eq!(matching_server_ids, vec![first_server_id]);
     });
 
     project_a.update(cx_a, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), true, cx);
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
 
     let restarted_server = fake_language_servers.next().await.unwrap();
@@ -953,10 +960,6 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
             statuses[0].0, restarted_server_id,
             "restarting a remote language server should publish the replacement server id"
         );
-        assert_ne!(
-            statuses[0].0, first_server_id,
-            "restarting a remote language server should remove the previous server id"
-        );
         assert_eq!(statuses[0].1.name.0, "the-language-server");
     });
     cx_a.read_global::<GlobalLogStore, _>(|global, cx| {
@@ -964,12 +967,12 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
         let matching_server_ids = log_store
             .language_servers
             .iter()
-            .filter_map(|(server_id, state)| {
+            .filter_map(|(key, state)| {
                 state
                     .name
                     .as_ref()
                     .is_some_and(|name| name.0 == "the-language-server")
-                    .then_some(*server_id)
+                    .then_some(key.server_id)
             })
             .collect::<Vec<_>>();
         assert_eq!(
@@ -977,11 +980,54 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
             vec![restarted_server_id],
             "restarting a remote language server should replace the old log store entry"
         );
-        assert!(
-            !log_store.language_servers.contains_key(&first_server_id),
-            "restarting a remote language server should remove the previous log store entry"
+    });
+
+    let lsp_store = project_a.read_with(cx_a, |project, _| project.lsp_store());
+    lsp_store.update(cx_a, |lsp_store, cx| {
+        lsp_store.stop_all_language_servers(cx);
+    });
+    executor.run_until_parked();
+    lsp_store.read_with(cx_a, |lsp_store, _| {
+        assert_eq!(lsp_store.language_server_statuses().count(), 0);
+    });
+
+    cx_a.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.project.all_languages.defaults.semantic_tokens = Some(SemanticTokens::Full);
+        });
+    });
+    executor.run_until_parked();
+    server_cx.read(|cx| {
+        assert_eq!(
+            all_language_settings(None, cx).defaults.semantic_tokens,
+            SemanticTokens::Full
         );
     });
+    lsp_store.read_with(cx_a, |lsp_store, _| {
+        assert_eq!(lsp_store.language_server_statuses().count(), 0);
+    });
+
+    project_a.update(cx_a, |project, cx| {
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
+    });
+    executor.run_until_parked();
+    lsp_store.read_with(cx_a, |lsp_store, _| {
+        assert_eq!(lsp_store.language_server_statuses().count(), 1);
+    });
+    let mut resumed_server = fake_language_servers.next().await.unwrap();
+    assert_ne!(resumed_server.server.server_id(), restarted_server_id);
+    assert_eq!(
+        resumed_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Uri::from_file_path(path!("/project/a.rs")).unwrap(),
+            language_id: "rust".to_owned(),
+            version: 0,
+            text: "fn main() {}".to_owned(),
+        }
+    );
 }
 
 #[gpui::test]
@@ -1437,7 +1483,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     cx_a.read(|cx| {
         assert_eq!(
             LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
-            ["...".to_string()],
+            [ConfiguredLanguageServer::new("...")],
             "remote .zed/settings.json must not sync before trust approval"
         )
     });
@@ -1465,7 +1511,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     cx_a.read(|cx| {
         assert_eq!(
             LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
-            ["override-rust-analyzer".to_string()],
+            [ConfiguredLanguageServer::new("override-rust-analyzer")],
             "remote .zed/settings.json should sync after trust approval"
         )
     });

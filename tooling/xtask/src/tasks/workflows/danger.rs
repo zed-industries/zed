@@ -1,6 +1,6 @@
 use gh_workflow::*;
 
-use crate::tasks::workflows::steps::{CommonJobConditions, NamedJob, named};
+use crate::tasks::workflows::steps::{CommonJobConditions, CommonPermissionSets, NamedJob, named};
 
 use super::{runners, steps};
 
@@ -9,6 +9,7 @@ pub fn danger() -> Workflow {
     let danger = danger_job();
 
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default()
             .pull_request(PullRequest::default().add_branch("main").types([
                 PullRequestType::Opened,
@@ -42,7 +43,7 @@ fn danger_job() -> NamedJob {
         name: "danger".to_string(),
         job: Job::default()
             .with_repository_owner_guard()
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::DANGERBOT)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_pnpm())
             .add_step(

@@ -2,7 +2,7 @@ use crate::{
     Thread, ToolCallEventStream, ToolPermissionContext, ToolPermissionDecision,
     decide_permission_for_path,
 };
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use agent_skills::is_agents_skills_path;
 use anyhow::{Result, anyhow};
 use fs::Fs;
@@ -11,7 +11,7 @@ use project::{Project, ProjectPath};
 use settings::Settings;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use util::{normalize_path, paths::component_matches_ignore_ascii_case};
+use util::{paths::component_matches_ignore_ascii_case, paths::normalize_path};
 
 pub enum SensitiveSettingsKind {
     Local,

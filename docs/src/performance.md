@@ -22,7 +22,7 @@ The profile.json does not contain any symbols. Firefox profiler can add the loca
 See how long each annotated function call took and its arguments (if
 configured).
 
-Annotate any function you need appear in the profile with instrument. For more
+Annotate any function you need to appear in the profile with instrument. For more
 details see
 [tracing-instrument](https://docs.rs/tracing/latest/tracing/attr.instrument.html):
 
@@ -33,7 +33,7 @@ fn should_appear_in_profile(kitty: Cat) {
 }
 ```
 
-Then either compile Zed with `ZTRACING=1 cargo r --features tracy --release`. The release build is optional but highly recommended as like every program Zeds performance characteristics change dramatically with optimizations. You do not want to chase slowdowns that do not exist in release.
+Then either compile Zed with `ZTRACING=1 cargo r --features tracy --release`. The release build is optional but highly recommended as like every program Zed's performance characteristics change dramatically with optimizations. You do not want to chase slowdowns that do not exist in release.
 
 ## One time Setup/Building the profiler:
 
@@ -55,7 +55,7 @@ Open the profiler (tracy-profiler), you should see zed in the list of `Discovere
 
 <img width="392" height="auto" alt="image" src="https://github.com/user-attachments/assets/b6f06fc3-6b25-41c7-ade9-558cc93d6033" style="display: block; margin: 0 auto;"/>
 
-Tracy is an incredibly powerful profiler which can do a lot however it's UI is not that friendly. This is not the place for an in depth guide to Tracy, I do however want to highlight one particular workflow that is helpful when figuring out why a piece of code is _sometimes_ slow.
+Tracy is an incredibly powerful profiler which can do a lot; however, its UI is not that friendly. This is not the place for an in depth guide to Tracy, I do however want to highlight one particular workflow that is helpful when figuring out why a piece of code is _sometimes_ slow.
 
 Here are the steps:
 
@@ -83,7 +83,7 @@ Here are the steps:
 
 <img width="1964" height="auto" alt="Scroll to zoom in" src="https://github.com/user-attachments/assets/625c2bf4-a68d-40c4-becb-ade16bc9a8bc" />
 
-7. Click on a caller to to get statistics on _it_.
+7. Click on a caller to get statistics on _it_.
 
 <img width="1888" height="auto" alt="Click on any of the zones to get statistics" src="https://github.com/user-attachments/assets/7e578825-2b63-4b7f-88f7-0cb16b8a3387" />
 

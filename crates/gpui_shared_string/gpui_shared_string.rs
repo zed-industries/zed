@@ -1,5 +1,6 @@
 use std::{
     borrow::{Borrow, Cow},
+    iter,
     sync::Arc,
 };
 
@@ -120,6 +121,13 @@ impl From<&str> for SharedString {
     }
 }
 
+impl From<char> for SharedString {
+    #[inline]
+    fn from(c: char) -> SharedString {
+        SharedString(SmolStr::from_iter(iter::once(c)))
+    }
+}
+
 impl From<&mut str> for SharedString {
     #[inline]
     fn from(s: &mut str) -> SharedString {
@@ -197,7 +205,6 @@ impl<'de> Deserialize<'de> for SharedString {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        Ok(SharedString::new(&s))
+        SmolStr::deserialize(deserializer).map(SharedString)
     }
 }
