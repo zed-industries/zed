@@ -12532,7 +12532,12 @@ pub(crate) mod tests {
             let [acp_thread::ToolCallContent::DiffPatch { render, .. }] = call.content() else {
                 panic!("expected patch content");
             };
-            (entry_index, render.files[0].hunks[0].buffer.clone())
+            (
+                entry_index,
+                render.files[0].hunks[0]
+                    .resolved_buffer()
+                    .expect("hunk buffer"),
+            )
         });
         let original_editor = thread_view.read_with(cx, |view, cx| {
             let state = view.entry_view_state.read(cx);
@@ -12643,7 +12648,12 @@ pub(crate) mod tests {
             let [acp_thread::ToolCallContent::DiffPatch { render, .. }, ..] = call.content() else {
                 panic!("expected patch content");
             };
-            (entry_index, render.files[0].hunks[0].buffer.clone())
+            (
+                entry_index,
+                render.files[0].hunks[0]
+                    .resolved_buffer()
+                    .expect("hunk buffer"),
+            )
         });
         thread_view.read_with(cx, |view, cx| {
             let state = view.entry_view_state.read(cx);
@@ -12816,11 +12826,12 @@ pub(crate) mod tests {
             assert_eq!(render.files[0].hunks.len(), 1);
             let hunk = &render.files[0].hunks[0];
             assert_eq!(hunk.header.to_string(), "@@ -1 +1 @@");
+            let hunk_buffer = hunk.resolved_buffer().expect("hunk buffer");
             let editor = view
                 .entry_view_state
                 .read(cx)
                 .entry(original_index)
-                .and_then(|entry| entry.editor_for_patch_hunk(&hunk.buffer))
+                .and_then(|entry| entry.editor_for_patch_hunk(&hunk_buffer))
                 .expect("patch hunk editor");
             assert!(editor.read(cx).read_only(cx));
             assert!(
@@ -12853,7 +12864,7 @@ pub(crate) mod tests {
                     .is_some(),
                 "patch hunk should render as an inline diff",
             );
-            hunk.buffer.clone()
+            hunk_buffer
         });
         search_bar.update_in(cx, |bar, window, cx| {
             bar.query_editor.update(cx, |editor, cx| {

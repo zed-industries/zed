@@ -13,7 +13,7 @@ use language::{
 use markdown::Markdown;
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use std::{
-    cell::{Cell, OnceCell},
+    cell::{Cell, OnceCell, RefCell},
     cmp::Reverse,
     mem,
     ops::Range,
@@ -36,10 +36,36 @@ pub struct DiffPatchFile {
     pub hunks: Vec<DiffPatchHunk>,
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct DiffPatchHunk {
     pub header: SharedString,
-    pub buffer: Entity<MultiBuffer>,
+    state: Rc<RefCell<DiffPatchHunkState>>,
+}
+
+impl std::fmt::Debug for DiffPatchHunk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiffPatchHunk")
+            .field("header", &self.header)
+            .field("is_deferred", &self.is_deferred())
+            .finish()
+    }
+}
+
+enum DiffPatchHunkState {
+    Deferred(DeferredHunk),
+    Resolving,
+    Resolved(ResolvedHunk),
+}
+
+struct DeferredHunk {
+    old_text: String,
+    new_text: String,
+    path: String,
+    language_registry: Arc<LanguageRegistry>,
+}
+
+struct ResolvedHunk {
+    buffer: Entity<MultiBuffer>,
     _update_diff: Task<()>,
 }
 
@@ -73,9 +99,7 @@ impl DiffPatch {
                         render.hunks = file
                             .hunks
                             .into_iter()
-                            .map(|hunk| {
-                                DiffPatchHunk::new(hunk, &path, language_registry.clone(), cx)
-                            })
+                            .map(|hunk| DiffPatchHunk::new(hunk, &path, language_registry.clone()))
                             .collect();
                     }
                 }
@@ -201,12 +225,7 @@ fn patch_path_matches(patch: Option<&Path>, reported: Option<&Path>) -> bool {
 }
 
 impl DiffPatchHunk {
-    fn new(
-        hunk: patch::PatchHunk,
-        path: &str,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut App,
-    ) -> Self {
+    fn new(hunk: patch::PatchHunk, path: &str, language_registry: Arc<LanguageRegistry>) -> Self {
         let range_label = |start, count| {
             if count == 1 {
                 format!("{start}")
@@ -220,51 +239,109 @@ impl DiffPatchHunk {
             range_label(hunk.new_start, hunk.new_count),
         )
         .into();
-        let new_buffer = cx.new(|cx| {
-            let mut buffer = Buffer::local(hunk.new_text, cx);
-            buffer.set_capability(Capability::ReadOnly, cx);
-            buffer
-        });
-        let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::without_headers(Capability::ReadOnly);
-            multibuffer.set_excerpts_for_path(
-                PathKey::for_buffer(&new_buffer, cx),
-                new_buffer.clone(),
-                [Point::new(0, 0)..new_buffer.read(cx).max_point()],
-                0,
-                cx,
-            );
-            multibuffer
-        });
-        let task = cx.spawn({
-            let multibuffer = multibuffer.clone();
-            let path = path.to_owned();
-            async move |cx| {
-                let language = language_registry
-                    .load_language_for_file_path(Path::new(&path))
-                    .await
-                    .log_err();
-                new_buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx));
-                let snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-                let diff = cx.new(|cx| {
-                    // A hunk is only a snippet: it must never offer restore/apply operations.
-                    BufferDiff::new(&snapshot, language, Some(language_registry), cx)
-                });
-                diff.update(cx, |diff, cx| {
-                    diff.set_base_text(Some(hunk.old_text.into()), snapshot.text, cx)
-                })
-                .await;
-                multibuffer.update(cx, |buffer, cx| {
-                    buffer.add_diff(diff, cx);
-                    buffer.set_all_diff_hunks_expanded(cx);
-                });
-            }
-        });
         Self {
             header,
-            buffer: multibuffer,
-            _update_diff: task,
+            state: Rc::new(RefCell::new(DiffPatchHunkState::Deferred(DeferredHunk {
+                old_text: hunk.old_text,
+                new_text: hunk.new_text,
+                path: path.to_owned(),
+                language_registry,
+            }))),
         }
+    }
+
+    pub fn is_deferred(&self) -> bool {
+        matches!(&*self.state.borrow(), DiffPatchHunkState::Deferred(_))
+    }
+
+    pub fn resolved_buffer(&self) -> Option<Entity<MultiBuffer>> {
+        match &*self.state.borrow() {
+            DiffPatchHunkState::Resolved(resolved) => Some(resolved.buffer.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn buffer(&self, cx: &mut App) -> Entity<MultiBuffer> {
+        let deferred = {
+            let mut state = self.state.borrow_mut();
+            match &mut *state {
+                DiffPatchHunkState::Resolved(resolved) => return resolved.buffer.clone(),
+                DiffPatchHunkState::Resolving => {
+                    panic!("cyclical materialization of DiffPatchHunk");
+                }
+                DiffPatchHunkState::Deferred(_) => {
+                    let DiffPatchHunkState::Deferred(deferred) =
+                        std::mem::replace(&mut *state, DiffPatchHunkState::Resolving)
+                    else {
+                        unreachable!()
+                    };
+                    deferred
+                }
+            }
+        };
+
+        let resolved = build_patch_hunk_buffer(
+            deferred.old_text,
+            deferred.new_text,
+            deferred.path,
+            deferred.language_registry,
+            cx,
+        );
+        let buffer = resolved.buffer.clone();
+        *self.state.borrow_mut() = DiffPatchHunkState::Resolved(resolved);
+        buffer
+    }
+}
+
+fn build_patch_hunk_buffer(
+    old_text: String,
+    new_text: String,
+    path: String,
+    language_registry: Arc<LanguageRegistry>,
+    cx: &mut App,
+) -> ResolvedHunk {
+    let new_buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(new_text, cx);
+        buffer.set_capability(Capability::ReadOnly, cx);
+        buffer
+    });
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::without_headers(Capability::ReadOnly);
+        multibuffer.set_excerpts_for_path(
+            PathKey::for_buffer(&new_buffer, cx),
+            new_buffer.clone(),
+            [Point::new(0, 0)..new_buffer.read(cx).max_point()],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+    let task = cx.spawn({
+        let multibuffer = multibuffer.clone();
+        async move |cx| {
+            let language = language_registry
+                .load_language_for_file_path(Path::new(&path))
+                .await
+                .log_err();
+            new_buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx));
+            let snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            let diff = cx.new(|cx| {
+                // A hunk is only a snippet: it must never offer restore/apply operations.
+                BufferDiff::new(&snapshot, language, Some(language_registry), cx)
+            });
+            diff.update(cx, |diff, cx| {
+                diff.set_base_text(Some(old_text.into()), snapshot.text, cx)
+            })
+            .await;
+            multibuffer.update(cx, |buffer, cx| {
+                buffer.add_diff(diff, cx);
+                buffer.set_all_diff_hunks_expanded(cx);
+            });
+        }
+    });
+    ResolvedHunk {
+        buffer: multibuffer,
+        _update_diff: task,
     }
 }
 
@@ -1116,6 +1193,17 @@ mod tests {
         assert!(render.files[3].hunks.is_empty());
         assert!(render.files[4].hunks.is_empty());
         cx.update(|cx| {
+            for hunk in &render.files[0].hunks {
+                assert!(hunk.is_deferred());
+                assert!(hunk.resolved_buffer().is_none());
+            }
+            for file_index in [0, 1, 2, 5, 6] {
+                render.files[file_index].hunks[0].buffer(cx);
+            }
+            render.files[0].hunks[1].buffer(cx);
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
             for (file_index, expected) in [
                 (0, "context\nbefore\nafter\n"),
                 (1, "deleted\n"),
@@ -1123,7 +1211,7 @@ mod tests {
                 (5, "old\nnew\n"),
                 (6, "before\nafter\n"),
             ] {
-                let buffer = render.files[file_index].hunks[0].buffer.read(cx);
+                let buffer = render.files[file_index].hunks[0].buffer(cx).read(cx);
                 assert!(buffer.read_only());
                 let snapshot = buffer.snapshot(cx);
                 assert_eq!(snapshot.text(), expected);
@@ -1133,10 +1221,72 @@ mod tests {
                 }
             }
             assert_eq!(
-                render.files[0].hunks[1].buffer.read(cx).snapshot(cx).text(),
+                render.files[0].hunks[1]
+                    .buffer(cx)
+                    .read(cx)
+                    .snapshot(cx)
+                    .text(),
                 "old\nnew\n",
                 "sparse hunks must not synthesize the intervening 798 lines"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_diff_patch_lazy_hunk_materialization(cx: &mut TestAppContext) {
+        let patch = indoc! {r#"
+            diff --git /one /one
+            --- /one
+            +++ /one
+            @@ -100,2 +100,2 @@
+             context
+            -before
+            +after
+            @@ -900 +900 @@
+            -old
+            +new
+        "#};
+        let source = source(
+            patch,
+            json!([
+                {"operation": "modify", "path": "/one"},
+            ]),
+        );
+        let render = cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            DiffPatch::new(&source, &languages, cx)
+        });
+
+        assert_eq!(render.files.len(), 1);
+        assert_eq!(render.files[0].hunks.len(), 2);
+        assert!(render.files[0].hunks[0].is_deferred());
+        assert!(render.files[0].hunks[1].is_deferred());
+        assert!(render.files[0].hunks[0].resolved_buffer().is_none());
+        assert!(render.files[0].hunks[1].resolved_buffer().is_none());
+
+        let buffer_0 = cx.update(|cx| render.files[0].hunks[0].buffer(cx));
+        assert!(!render.files[0].hunks[0].is_deferred());
+        assert!(render.files[0].hunks[1].is_deferred());
+        assert_eq!(
+            render.files[0].hunks[0].resolved_buffer(),
+            Some(buffer_0.clone())
+        );
+        assert!(render.files[0].hunks[1].resolved_buffer().is_none());
+
+        let buffer_0_again = cx.update(|cx| render.files[0].hunks[0].buffer(cx));
+        assert_eq!(buffer_0, buffer_0_again);
+
+        let buffer_1 = cx.update(|cx| render.files[0].hunks[1].buffer(cx));
+        assert!(!render.files[0].hunks[1].is_deferred());
+        assert_ne!(buffer_0, buffer_1);
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let snapshot_0 = buffer_0.read(cx).snapshot(cx);
+            assert_eq!(snapshot_0.text(), "context\nbefore\nafter\n");
+            let snapshot_1 = buffer_1.read(cx).snapshot(cx);
+            assert_eq!(snapshot_1.text(), "old\nnew\n");
         });
     }
 
