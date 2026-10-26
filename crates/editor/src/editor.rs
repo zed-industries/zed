@@ -268,7 +268,7 @@ use ui::{
     prelude::*,
     scrollbars::ScrollbarAutoHide,
     tooltip_container,
-    utils::{WithRemSize, register_retained_focus},
+    utils::{RetainedFocusExt as _, WithRemSize},
 };
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
@@ -2330,10 +2330,11 @@ impl Editor {
 
         let inlay_hint_settings =
             inlay_hint_settings(selections.newest_anchor().head(), &buffer_snapshot, cx);
-        let focus_handle = cx.focus_handle();
-        if mode.is_single_line() {
-            register_retained_focus(&focus_handle, cx);
-        }
+        let focus_handle = if mode.is_single_line() {
+            cx.retained_focus_handle()
+        } else {
+            cx.focus_handle()
+        };
         if !is_minimap {
             cx.on_focus(&focus_handle, window, Self::handle_focus)
                 .detach();
