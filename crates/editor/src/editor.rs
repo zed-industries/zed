@@ -265,7 +265,10 @@ use theme::{
 use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
     Avatar, ContextMenu, Disclosure, IconButtonShape, Indicator, Key, KeyBinding, Tooltip,
-    prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
+    prelude::*,
+    scrollbars::ScrollbarAutoHide,
+    tooltip_container,
+    utils::{WithRemSize, register_retained_focus},
 };
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
@@ -2328,6 +2331,9 @@ impl Editor {
         let inlay_hint_settings =
             inlay_hint_settings(selections.newest_anchor().head(), &buffer_snapshot, cx);
         let focus_handle = cx.focus_handle();
+        if mode.is_single_line() {
+            register_retained_focus(&focus_handle, cx);
+        }
         if !is_minimap {
             cx.on_focus(&focus_handle, window, Self::handle_focus)
                 .detach();

@@ -12840,7 +12840,9 @@ async fn test_focus_follows_mouse_into_blank_area(cx: &mut gpui::TestAppContext)
 }
 
 #[gpui::test]
-async fn test_focus_follows_mouse_keeps_rename_editor_focused(cx: &mut gpui::TestAppContext) {
+async fn test_focus_follows_mouse_keeps_rename_and_context_menu_open(
+    cx: &mut gpui::TestAppContext,
+) {
     init_test_with_editor(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
@@ -12883,6 +12885,29 @@ async fn test_focus_follows_mouse_keeps_rename_editor_focused(cx: &mut gpui::Tes
         &["v root", "      [EDITOR: 'a.txt']  <== selected"],
         "Hovering the project panel should not cancel the rename"
     );
+
+    let entry_id = find_project_entry(&panel, "root/a.txt", cx).unwrap();
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cancel(&menu::Cancel, window, cx);
+        panel.deploy_context_menu(
+            ContextMenuPlacement::AtMouse(point(px(1700.), px(30.))),
+            entry_id,
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    cx.simulate_mouse_move(point(px(400.), px(400.)), None, Modifiers::none());
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _| {
+        assert!(
+            panel.context_menu.is_some(),
+            "Hovering a pane should not close the context menu"
+        );
+    });
 }
 
 pub(crate) fn init_test(cx: &mut TestAppContext) {

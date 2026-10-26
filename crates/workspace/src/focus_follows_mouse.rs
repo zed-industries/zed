@@ -1,7 +1,8 @@
 use gpui::{
     AnyWindowHandle, AppContext as _, Context, FocusHandle, Focusable, Global,
-    StatefulInteractiveElement, Task, Window,
+    StatefulInteractiveElement, Task,
 };
+use ui::utils::retains_focus;
 
 use crate::workspace_settings;
 
@@ -51,7 +52,10 @@ pub trait FocusFollowsMouse<E: Focusable>: StatefulInteractiveElement {
                             };
 
                             let _ = cx.update_window(window, move |_view, window, cx| {
-                                if is_single_line_editor_focused(window) {
+                                if window
+                                    .focused(cx)
+                                    .is_some_and(|focused| retains_focus(&focused, cx))
+                                {
                                     return;
                                 }
                                 window.focus(&focus, cx);
@@ -72,12 +76,3 @@ pub trait FocusFollowsMouse<E: Focusable>: StatefulInteractiveElement {
 }
 
 impl<E: Focusable, T: StatefulInteractiveElement> FocusFollowsMouse<E> for T {}
-
-fn is_single_line_editor_focused(window: &Window) -> bool {
-    window.context_stack().last().is_some_and(|context| {
-        context.contains("Editor")
-            && context
-                .get("mode")
-                .is_some_and(|mode| mode.as_ref() == "single_line")
-    })
-}

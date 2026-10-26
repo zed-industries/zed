@@ -1,6 +1,8 @@
 use crate::{
     ButtonCommon, ButtonStyle, IconButtonShape, KeyBinding, List, ListItem, ListItemSpacing,
-    ListSeparator, ListSubHeader, Tooltip, prelude::*, utils::WithRemSize,
+    ListSeparator, ListSubHeader, Tooltip,
+    prelude::*,
+    utils::{WithRemSize, register_retained_focus},
 };
 use gpui::{
     Action, Anchor, AnchoredPositionMode, AnyElement, App, Bounds, DismissEvent, Entity,
@@ -304,6 +306,7 @@ impl ContextMenu {
             let builder = Rc::new(builder);
 
             let focus_handle = cx.focus_handle();
+            register_retained_focus(&focus_handle, cx);
             let _on_blur_subscription = cx.on_blur(
                 &focus_handle,
                 window,
@@ -390,6 +393,7 @@ impl ContextMenu {
 
         // The way we rebuild the menu is a bit of a hack.
         let focus_handle = cx.focus_handle();
+        register_retained_focus(&focus_handle, cx);
         let new_menu = (builder.clone())(
             Self {
                 builder: Some(builder),
@@ -1256,6 +1260,7 @@ impl ContextMenu {
     ) -> Entity<ContextMenu> {
         cx.new(|cx| {
             let focus_handle = cx.focus_handle();
+            register_retained_focus(&focus_handle, cx);
 
             let _on_blur_subscription = cx.on_blur(
                 &focus_handle,
@@ -2126,6 +2131,7 @@ impl ContextMenu {
     #[inline(never)]
     fn new_inner(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
+        register_retained_focus(&focus_handle, cx);
         let _on_blur_subscription = cx.on_blur(
             &focus_handle,
             window,
