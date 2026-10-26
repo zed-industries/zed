@@ -1710,8 +1710,8 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                 scroll_handle.offset().apply_along(axis, |_| click_offset),
                                 cx,
                             );
-                            state.show_scrollbars(window, cx);
-                            state.set_dragging(axis, thumb_drag_offset, window, cx);
+                            state.show_scrollbars(cx);
+                            state.set_dragging(axis, thumb_drag_offset, cx);
                         };
 
                         cx.stop_propagation();
