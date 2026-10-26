@@ -1,25 +1,32 @@
-use std::{cmp::Reverse, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 
 use acp_thread::AgentSessionConfigOptions;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v2 as acp;
 use agent_servers::AgentServer;
 
 use collections::HashSet;
 use fs::Fs;
-use fuzzy::StringMatchCandidate;
+use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
     App, BackgroundExecutor, Context, DismissEvent, Entity, Subscription, Task, Window, prelude::*,
 };
-use ordered_float::OrderedFloat;
 use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
-use settings::SettingsStore;
+use settings::{AgentConfigOptionValue, SettingsStore};
 use ui::{
-    ElevationIndex, IconButton, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip, prelude::*,
+    ElevationIndex, IconButton, KeyBinding, ListItem, ListItemSpacing, PopoverMenuHandle, Switch,
+    SwitchLabelPosition, ToggleState, Tooltip, prelude::*,
 };
+use unicode_segmentation::UnicodeSegmentation;
 use util::ResultExt as _;
+use zed_actions::agent::ToggleModelSelector;
 
+use crate::model_search;
 use crate::ui::documentation_aside_side;
+use crate::{
+    CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, ToggleProfileSelector,
+    ToggleThinkingEffortMenu,
+};
 
 const PICKER_THRESHOLD: usize = 5;
 
@@ -66,13 +73,19 @@ impl ConfigOptionsView {
         }
     }
 
+    pub fn is_read_only(&self) -> bool {
+        self.config_options.is_read_only()
+    }
+
     pub fn toggle_category_picker(
         &mut self,
         category: acp::SessionConfigOptionCategory,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(config_id) = self.first_config_option_id(category) else {
+        let Some(config_id) = self.first_config_option_id_matching(category, |option| {
+            matches!(&option.kind, acp::SessionConfigKind::Select(_))
+        }) else {
             return false;
         };
 
@@ -80,11 +93,7 @@ impl ConfigOptionsView {
             return false;
         };
 
-        selector.update(cx, |selector, cx| {
-            selector.toggle_picker(window, cx);
-        });
-
-        true
+        selector.update(cx, |selector, cx| selector.toggle_picker(window, cx))
     }
 
     pub fn cycle_category_option(
@@ -93,44 +102,49 @@ impl ConfigOptionsView {
         favorites_only: bool,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(config_id) = self.first_config_option_id(category) else {
+        if self.config_options.is_read_only() {
+            return false;
+        }
+        let Some(config_id) = self.first_config_option_id_matching(category, |option| {
+            Self::can_cycle_config_option(option, favorites_only)
+        }) else {
             return false;
         };
 
         let Some(next_value) = self.next_value_for_config(&config_id, favorites_only, cx) else {
             return false;
         };
-
-        self.agent_server.set_default_config_option(
-            config_id.0.as_ref(),
-            Some(next_value.0.as_ref()),
+        set_config_option_and_default(
+            self.config_options.clone(),
+            self.agent_server.clone(),
+            config_id,
+            next_value,
             self.fs.clone(),
             cx,
-        );
-
-        let task = self
-            .config_options
-            .set_config_option(config_id, next_value, cx);
-
-        cx.spawn(async move |_, _| {
-            if let Err(err) = task.await {
-                log::error!("Failed to set config option: {:?}", err);
-            }
-        })
-        .detach();
+        )
+        .detach_and_log_err(cx);
 
         true
     }
 
-    fn first_config_option_id(
+    fn first_config_option_id_matching(
         &self,
         category: acp::SessionConfigOptionCategory,
+        predicate: impl Fn(&acp::SessionConfigOption) -> bool,
     ) -> Option<acp::SessionConfigId> {
         self.config_options
             .config_options()
             .into_iter()
-            .find(|option| option.category.as_ref() == Some(&category))
-            .map(|option| option.id)
+            .find(|option| option.category.as_ref() == Some(&category) && predicate(option))
+            .map(|option| option.config_id)
+    }
+
+    fn can_cycle_config_option(option: &acp::SessionConfigOption, favorites_only: bool) -> bool {
+        match &option.kind {
+            acp::SessionConfigKind::Select(_) => true,
+            acp::SessionConfigKind::Boolean(_) => !favorites_only,
+            _ => false,
+        }
     }
 
     fn selector_for_config_id(
@@ -149,35 +163,57 @@ impl ConfigOptionsView {
         config_id: &acp::SessionConfigId,
         favorites_only: bool,
         cx: &mut Context<Self>,
-    ) -> Option<acp::SessionConfigValueId> {
-        let mut options = extract_options(&self.config_options, config_id);
-        if options.is_empty() {
-            return None;
-        }
+    ) -> Option<acp::SessionConfigOptionValue> {
+        let option = self
+            .config_options
+            .config_options()
+            .into_iter()
+            .find(|option| &option.config_id == config_id)?;
 
-        if favorites_only {
-            let favorites = self
-                .agent_server
-                .favorite_config_option_value_ids(config_id, cx);
-            options.retain(|option| favorites.contains(&option.value));
-            if options.is_empty() {
-                return None;
+        match &option.kind {
+            acp::SessionConfigKind::Select(_) => {
+                let mut options = extract_options(&self.config_options, config_id);
+                if options.is_empty() {
+                    return None;
+                }
+
+                if favorites_only {
+                    let favorites = self
+                        .agent_server
+                        .favorite_config_option_value_ids(config_id, cx);
+                    options.retain(|option| favorites.contains(&option.value));
+                    if options.is_empty() {
+                        return None;
+                    }
+                }
+
+                let current_value = get_current_select_value(&self.config_options, config_id);
+                let current_index = current_value
+                    .as_ref()
+                    .and_then(|current| options.iter().position(|option| &option.value == current))
+                    .unwrap_or(usize::MAX);
+
+                let next_index = if current_index == usize::MAX {
+                    0
+                } else {
+                    (current_index + 1) % options.len()
+                };
+
+                Some(acp::SessionConfigOptionValue::id(
+                    options[next_index].value.clone(),
+                ))
             }
+            acp::SessionConfigKind::Boolean(boolean) => {
+                if favorites_only {
+                    None
+                } else {
+                    Some(acp::SessionConfigOptionValue::boolean(
+                        !boolean.current_value,
+                    ))
+                }
+            }
+            _ => None,
         }
-
-        let current_value = get_current_value(&self.config_options, config_id);
-        let current_index = current_value
-            .as_ref()
-            .and_then(|current| options.iter().position(|option| &option.value == current))
-            .unwrap_or(usize::MAX);
-
-        let next_index = if current_index == usize::MAX {
-            0
-        } else {
-            (current_index + 1) % options.len()
-        };
-
-        Some(options[next_index].value.clone())
     }
 
     fn config_option_ids(
@@ -186,7 +222,7 @@ impl ConfigOptionsView {
         config_options
             .config_options()
             .into_iter()
-            .map(|option| option.id)
+            .map(|option| option.config_id)
             .collect()
     }
 
@@ -214,6 +250,12 @@ impl ConfigOptionsView {
         config_options
             .config_options()
             .into_iter()
+            .filter(|option| {
+                matches!(
+                    &option.kind,
+                    acp::SessionConfigKind::Select(_) | acp::SessionConfigKind::Boolean(_)
+                )
+            })
             .map(|option| {
                 let config_options = config_options.clone();
                 let agent_server = agent_server.clone();
@@ -221,7 +263,7 @@ impl ConfigOptionsView {
                 cx.new(|cx| {
                     ConfigOptionSelector::new(
                         config_options,
-                        option.id.clone(),
+                        option.config_id,
                         agent_server,
                         fs,
                         window,
@@ -240,6 +282,8 @@ impl Render for ConfigOptionsView {
         }
 
         h_flex()
+            .min_w_0()
+            .flex_wrap()
             .gap_1()
             .children(self.selectors.iter().cloned())
             .into_any_element()
@@ -249,8 +293,10 @@ impl Render for ConfigOptionsView {
 struct ConfigOptionSelector {
     config_options: Rc<dyn AgentSessionConfigOptions>,
     config_id: acp::SessionConfigId,
-    picker_handle: PopoverMenuHandle<Picker<ConfigOptionPickerDelegate>>,
-    picker: Entity<Picker<ConfigOptionPickerDelegate>>,
+    agent_server: Rc<dyn AgentServer>,
+    fs: Arc<dyn Fs>,
+    picker_handle: Option<PopoverMenuHandle<Picker<ConfigOptionPickerDelegate>>>,
+    picker: Option<Entity<Picker<ConfigOptionPickerDelegate>>>,
     setting_value: bool,
 }
 
@@ -263,21 +309,26 @@ impl ConfigOptionSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let option_count = config_options
+        let current_option = config_options
             .config_options()
-            .iter()
-            .find(|opt| opt.id == config_id)
+            .into_iter()
+            .find(|opt| opt.config_id == config_id);
+        let option_count = current_option
+            .as_ref()
             .map(count_config_options)
             .unwrap_or(0);
+        let is_select = current_option
+            .as_ref()
+            .is_some_and(|option| matches!(&option.kind, acp::SessionConfigKind::Select(_)));
 
         let is_searchable = option_count >= PICKER_THRESHOLD;
 
-        let picker = {
+        let (picker_handle, picker) = if is_select {
             let config_options = config_options.clone();
             let config_id = config_id.clone();
             let agent_server = agent_server.clone();
             let fs = fs.clone();
-            cx.new(move |picker_cx| {
+            let picker = cx.new(move |picker_cx| {
                 let delegate = ConfigOptionPickerDelegate::new(
                     config_options,
                     config_id,
@@ -293,15 +344,19 @@ impl ConfigOptionSelector {
                     Picker::nonsearchable_list(delegate, window, picker_cx)
                 }
                 .show_scrollbar(true)
-                .width(rems(20.))
-                .max_height(Some(rems(20.).into()))
-            })
+                .initial_width(rems(20.))
+            });
+            (Some(PopoverMenuHandle::default()), Some(picker))
+        } else {
+            (None, None)
         };
 
         Self {
             config_options,
             config_id,
-            picker_handle: PopoverMenuHandle::default(),
+            agent_server,
+            fs,
+            picker_handle,
             picker,
             setting_value: false,
         }
@@ -311,15 +366,28 @@ impl ConfigOptionSelector {
         self.config_options
             .config_options()
             .into_iter()
-            .find(|opt| opt.id == self.config_id)
+            .find(|opt| opt.config_id == self.config_id)
     }
 
     fn config_id(&self) -> &acp::SessionConfigId {
         &self.config_id
     }
 
-    fn toggle_picker(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.picker_handle.toggle(window, cx);
+    fn toggle_picker(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.config_options.is_read_only()
+            || !self
+                .current_option()
+                .is_some_and(|option| matches!(option.kind, acp::SessionConfigKind::Select(_)))
+        {
+            return false;
+        }
+
+        if let Some(picker_handle) = &self.picker_handle {
+            picker_handle.toggle(window, cx);
+            true
+        } else {
+            false
+        }
     }
 
     fn current_value_name(&self) -> String {
@@ -336,6 +404,17 @@ impl ConfigOptionSelector {
         }
     }
 
+    fn handles_category_keybindings(&self, category: &acp::SessionConfigOptionCategory) -> bool {
+        self.config_options
+            .config_options()
+            .into_iter()
+            .find(|option| {
+                option.category.as_ref() == Some(category)
+                    && matches!(&option.kind, acp::SessionConfigKind::Select(_))
+            })
+            .is_some_and(|option| option.config_id == self.config_id)
+    }
+
     fn render_trigger_button(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Button {
         let Some(option) = self.current_option() else {
             return Button::new("config-option-trigger", "Unknown")
@@ -344,15 +423,28 @@ impl ConfigOptionSelector {
                 .disabled(true);
         };
 
-        let icon = if self.picker_handle.is_deployed() {
+        let picker_deployed = self
+            .picker_handle
+            .as_ref()
+            .is_some_and(|picker_handle| picker_handle.is_deployed());
+        let icon = if picker_deployed {
             IconName::ChevronUp
         } else {
             IconName::ChevronDown
         };
 
+        let value_name = self.current_value_name();
+        let mut graphemes = value_name.graphemes(true);
+        let truncated = graphemes.by_ref().take(32).collect::<String>();
+        let display_name = if graphemes.next().is_some() {
+            format!("{truncated}…")
+        } else {
+            truncated
+        };
+
         Button::new(
-            ElementId::Name(format!("config-option-{}", option.id.0).into()),
-            self.current_value_name(),
+            ElementId::Name(format!("config-option-{}", option.config_id.0).into()),
+            display_name,
         )
         .label_size(LabelSize::Small)
         .color(Color::Muted)
@@ -367,33 +459,189 @@ impl Render for ConfigOptionSelector {
             return div().into_any_element();
         };
 
-        let trigger_button = self.render_trigger_button(window, cx);
+        if self.config_options.is_read_only() {
+            let value = match &option.kind {
+                acp::SessionConfigKind::Select(_) => self.current_value_name(),
+                acp::SessionConfigKind::Boolean(boolean) => {
+                    format!(
+                        "{}: {}",
+                        option.name,
+                        if boolean.current_value { "On" } else { "Off" }
+                    )
+                }
+                _ => return div().into_any_element(),
+            };
+            return div()
+                .id(ElementId::Name(
+                    format!("config-option-{}", option.config_id.0).into(),
+                ))
+                .px_1()
+                .child(Label::new(value).size(LabelSize::Small).color(Color::Muted))
+                .tooltip(Tooltip::text(option.description.unwrap_or(option.name)))
+                .into_any_element();
+        }
 
-        let option_name = option.name.clone();
-        let option_description: Option<SharedString> = option.description.map(Into::into);
+        match &option.kind {
+            acp::SessionConfigKind::Select(_) => {
+                let (Some(picker), Some(picker_handle)) =
+                    (self.picker.clone(), self.picker_handle.clone())
+                else {
+                    return div().into_any_element();
+                };
 
-        let tooltip = Tooltip::element(move |_window, _cx| {
-            let mut content = v_flex().gap_1().child(Label::new(option_name.clone()));
-            if let Some(desc) = option_description.as_ref() {
-                content = content.child(
-                    Label::new(desc.clone())
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                );
+                let trigger_button = self.render_trigger_button(window, cx);
+
+                let show_category_keybindings = option
+                    .category
+                    .as_ref()
+                    .is_some_and(|category| self.handles_category_keybindings(category));
+                let option_category = option.category.clone();
+                let option_name = option.name.clone();
+                let option_description: Option<SharedString> =
+                    option.description.clone().map(Into::into);
+
+                let tooltip = Tooltip::element(move |_window, cx| {
+                    let mut content = v_flex().gap_1().child(Label::new(option_name.clone()));
+                    if let Some(desc) = option_description.as_ref() {
+                        content = content.child(
+                            Label::new(desc.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        );
+                    }
+
+                    let action_tooltip_container = |label: &str, keybinding: KeyBinding| {
+                        h_flex()
+                            .pt_1()
+                            .gap_2()
+                            .justify_between()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(Label::new(label))
+                            .child(keybinding)
+                    };
+
+                    if show_category_keybindings && let Some(category) = &option_category {
+                        match category {
+                            acp::SessionConfigOptionCategory::Mode => {
+                                content = content
+                                    .child(action_tooltip_container(
+                                        "Change Mode",
+                                        KeyBinding::for_action(&ToggleProfileSelector, cx),
+                                    ))
+                                    .child(action_tooltip_container(
+                                        "Cycle Through Modes",
+                                        KeyBinding::for_action(&CycleModeSelector, cx),
+                                    ));
+                            }
+                            acp::SessionConfigOptionCategory::Model => {
+                                content = content
+                                    .child(action_tooltip_container(
+                                        "Change Model",
+                                        KeyBinding::for_action(&ToggleModelSelector, cx),
+                                    ))
+                                    .child(action_tooltip_container(
+                                        "Cycle Favorite Models",
+                                        KeyBinding::for_action(&CycleFavoriteModels, cx),
+                                    ));
+                            }
+                            acp::SessionConfigOptionCategory::ThoughtLevel => {
+                                content = content
+                                    .child(action_tooltip_container(
+                                        "Change Thinking Effort",
+                                        KeyBinding::for_action(&ToggleThinkingEffortMenu, cx),
+                                    ))
+                                    .child(action_tooltip_container(
+                                        "Cycle Thinking Effort",
+                                        KeyBinding::for_action(&CycleThinkingEffort, cx),
+                                    ));
+                            }
+                            _ => {}
+                        }
+                    }
+                    content.into_any()
+                });
+
+                PickerPopoverMenu::new(
+                    picker,
+                    trigger_button,
+                    tooltip,
+                    gpui::Anchor::BottomRight,
+                    cx,
+                )
+                .with_handle(picker_handle)
+                .render(window, cx)
+                .into_any_element()
             }
-            content.into_any()
-        });
+            acp::SessionConfigKind::Boolean(boolean) => {
+                let option_id = option.config_id.clone();
+                let option_name: SharedString = option.name.clone().into();
+                let option_description: Option<SharedString> =
+                    option.description.clone().map(Into::into);
+                let tooltip_name = option_name.clone();
+                let tooltip = Tooltip::element(move |_window, _cx| {
+                    let mut content = v_flex().gap_1().child(Label::new(tooltip_name.clone()));
+                    if let Some(desc) = option_description.as_ref() {
+                        content = content.child(
+                            Label::new(desc.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        );
+                    }
+                    content.into_any()
+                });
 
-        PickerPopoverMenu::new(
-            self.picker.clone(),
-            trigger_button,
-            tooltip,
-            gpui::Anchor::BottomRight,
-            cx,
-        )
-        .with_handle(self.picker_handle.clone())
-        .render(window, cx)
-        .into_any_element()
+                let config_id = self.config_id.clone();
+                let config_options = self.config_options.clone();
+                let agent_server = self.agent_server.clone();
+                let fs = self.fs.clone();
+                let current_value = boolean.current_value;
+                let toggle_state = if current_value {
+                    ToggleState::Selected
+                } else {
+                    ToggleState::Unselected
+                };
+
+                h_flex()
+                    .id(ElementId::Name(
+                        format!("config-option-{}", option_id.0).into(),
+                    ))
+                    .pr_1()
+                    .tooltip(tooltip)
+                    .child(
+                        Switch::new(
+                            ElementId::Name(format!("config-option-{}-switch", option_id.0).into()),
+                            toggle_state,
+                        )
+                        .label(option_name)
+                        .label_position(SwitchLabelPosition::Start)
+                        .label_size(LabelSize::Small)
+                        .label_color(Color::Muted)
+                        .disabled(self.setting_value)
+                        .on_click(move |state, _window, cx| {
+                            if !config_options.config_options().iter().any(|option| {
+                                option.config_id == config_id
+                                    && matches!(&option.kind, acp::SessionConfigKind::Boolean(_))
+                            }) {
+                                return;
+                            }
+
+                            let next_value = matches!(state, ToggleState::Selected);
+                            set_config_option_and_default(
+                                config_options.clone(),
+                                agent_server.clone(),
+                                config_id.clone(),
+                                acp::SessionConfigOptionValue::boolean(next_value),
+                                fs.clone(),
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                        }),
+                    )
+                    .into_any_element()
+            }
+            _ => div().into_any_element(),
+        }
     }
 }
 
@@ -438,7 +686,7 @@ impl ConfigOptionPickerDelegate {
         let all_options = extract_options(&config_options, &config_id);
         let filtered_entries = options_to_picker_entries(&all_options, &favorites);
 
-        let current_value = get_current_value(&config_options, &config_id);
+        let current_value = get_current_select_value(&config_options, &config_id);
         let selected_index = current_value
             .and_then(|current| {
                 filtered_entries.iter().position(|entry| {
@@ -476,12 +724,16 @@ impl ConfigOptionPickerDelegate {
     }
 
     fn current_value(&self) -> Option<acp::SessionConfigValueId> {
-        get_current_value(&self.config_options, &self.config_id)
+        get_current_select_value(&self.config_options, &self.config_id)
     }
 }
 
 impl PickerDelegate for ConfigOptionPickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "config options"
+    }
 
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
@@ -498,7 +750,11 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
 
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
-            Some(ConfigOptionPickerEntry::Option(_)) => true,
+            Some(ConfigOptionPickerEntry::Option(option)) => {
+                extract_options(&self.config_options, &self.config_id)
+                    .iter()
+                    .any(|current| current.value == option.value)
+            }
             Some(ConfigOptionPickerEntry::Separator(_)) | None => false,
         }
     }
@@ -555,24 +811,23 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
         if let Some(ConfigOptionPickerEntry::Option(option)) =
             self.filtered_entries.get(self.selected_index)
         {
-            self.agent_server.set_default_config_option(
-                self.config_id.0.as_ref(),
-                Some(option.value.0.as_ref()),
+            // A deployed picker may outlive the option kind or choices that created it.
+            if !extract_options(&self.config_options, &self.config_id)
+                .iter()
+                .any(|current| current.value == option.value)
+            {
+                return;
+            }
+
+            set_config_option_and_default(
+                self.config_options.clone(),
+                self.agent_server.clone(),
+                self.config_id.clone(),
+                acp::SessionConfigOptionValue::id(option.value.clone()),
                 self.fs.clone(),
                 cx,
-            );
-            let task = self.config_options.set_config_option(
-                self.config_id.clone(),
-                option.value.clone(),
-                cx,
-            );
-
-            cx.spawn(async move |_, _| {
-                if let Err(err) = task.await {
-                    log::error!("Failed to set config option: {:?}", err);
-                }
-            })
-            .detach();
+            )
+            .detach_and_log_err(cx);
 
             cx.emit(DismissEvent);
         }
@@ -649,6 +904,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                                     let value_id = option.value.clone();
                                     let agent_server = self.agent_server.clone();
                                     let fs = self.fs.clone();
+                                    let config_options = self.config_options.clone();
 
                                     IconButton::new(("toggle-favorite-config-option", ix), icon)
                                         .layer(ElevationIndex::ElevatedSurface)
@@ -656,6 +912,13 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                                         .icon_size(IconSize::Small)
                                         .tooltip(Tooltip::text(tooltip))
                                         .on_click(move |_, _, cx| {
+                                            if !extract_options(&config_options, &config_id)
+                                                .iter()
+                                                .any(|current| current.value == value_id)
+                                            {
+                                                return;
+                                            }
+
                                             agent_server.toggle_favorite_config_option_value(
                                                 config_id.clone(),
                                                 value_id.clone(),
@@ -701,7 +964,7 @@ fn extract_options(
     let Some(option) = config_options
         .config_options()
         .into_iter()
-        .find(|opt| &opt.id == config_id)
+        .find(|opt| &opt.config_id == config_id)
     else {
         return Vec::new();
     };
@@ -734,18 +997,64 @@ fn extract_options(
     }
 }
 
-fn get_current_value(
+fn get_current_select_value(
     config_options: &Rc<dyn AgentSessionConfigOptions>,
     config_id: &acp::SessionConfigId,
 ) -> Option<acp::SessionConfigValueId> {
     config_options
         .config_options()
         .into_iter()
-        .find(|opt| &opt.id == config_id)
+        .find(|opt| &opt.config_id == config_id)
         .and_then(|opt| match &opt.kind {
             acp::SessionConfigKind::Select(select) => Some(select.current_value.clone()),
             _ => None,
         })
+}
+
+fn set_config_option_and_default(
+    config_options: Rc<dyn AgentSessionConfigOptions>,
+    agent_server: Rc<dyn AgentServer>,
+    config_id: acp::SessionConfigId,
+    value: acp::SessionConfigOptionValue,
+    fs: Arc<dyn Fs>,
+    cx: &mut App,
+) -> Task<anyhow::Result<()>> {
+    if config_options.is_read_only() {
+        return Task::ready(Err(anyhow::anyhow!("Session configuration is read-only")));
+    }
+    let response = config_options.set_config_option(config_id.clone(), value, cx);
+    cx.spawn(async move |cx| {
+        let options = response.await?;
+        // Saving the request would make rejected or normalized choices future defaults.
+        if let Some(value) = options
+            .iter()
+            .find(|option| option.config_id == config_id)
+            .and_then(setting_value_for_config_option)
+        {
+            cx.update(|cx| {
+                agent_server.set_default_config_option(config_id.0.as_ref(), Some(value), fs, cx);
+            });
+        }
+        Ok(())
+    })
+}
+
+fn setting_value_for_config_option(
+    option: &acp::SessionConfigOption,
+) -> Option<AgentConfigOptionValue> {
+    match &option.kind {
+        acp::SessionConfigKind::Select(select)
+            if find_option_name(&select.options, &select.current_value).is_some() =>
+        {
+            Some(AgentConfigOptionValue::ValueId(
+                select.current_value.0.to_string(),
+            ))
+        }
+        acp::SessionConfigKind::Boolean(boolean) => {
+            Some(AgentConfigOptionValue::Boolean(boolean.current_value))
+        }
+        _ => None,
+    }
 }
 
 fn options_to_picker_entries(
@@ -798,32 +1107,22 @@ async fn fuzzy_search_options(
     query: &str,
     executor: BackgroundExecutor,
 ) -> Vec<ConfigOptionValue> {
-    let candidates = options
-        .iter()
-        .enumerate()
-        .map(|(ix, opt)| StringMatchCandidate::new(ix, &opt.name))
-        .collect::<Vec<_>>();
-
-    let mut matches = fuzzy::match_strings(
-        &candidates,
-        query,
-        false,
-        true,
-        100,
-        &Default::default(),
-        executor,
-    )
-    .await;
-
-    matches.sort_unstable_by_key(|mat| {
-        let candidate = &candidates[mat.candidate_id];
-        (Reverse(OrderedFloat(mat.score)), candidate.id)
-    });
-
-    matches
-        .into_iter()
-        .map(|mat| options[mat.candidate_id].clone())
-        .collect()
+    model_search::search(options, query, executor, |index, option| {
+        (
+            StringMatchCandidate::new(index, option.name.clone()),
+            StringMatchCandidate::new(
+                index,
+                format!(
+                    "{} {} {} {}",
+                    option.name,
+                    option.group.as_deref().unwrap_or_default(),
+                    option.description.as_deref().unwrap_or_default(),
+                    option.value.0,
+                ),
+            ),
+        )
+    })
+    .await
 }
 
 fn find_option_name(
@@ -869,6 +1168,215 @@ mod tests {
     use project::{AgentId, Project};
     use std::{any::Any, cell::RefCell};
 
+    fn option_names(options: Vec<ConfigOptionValue>) -> Vec<String> {
+        options.into_iter().map(|option| option.name).collect()
+    }
+
+    #[gpui::test]
+    async fn config_option_search_matches_all_searchable_fields(executor: BackgroundExecutor) {
+        let options = vec![
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("openai/gpt-5.6-sol"),
+                name: "GPT-5.6 Sol".to_string(),
+                description: Some("Flagship reasoning model".to_string()),
+                group: Some("OpenAI".to_string()),
+            },
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("anthropic/claude-sonnet-4"),
+                name: "Claude Sonnet 4".to_string(),
+                description: None,
+                group: Some("Anthropic".to_string()),
+            },
+        ];
+
+        for query in [
+            "GPT 5.6",
+            "GPT-5.6",
+            "gpt5.6 sol",
+            "openai",
+            "openai/gpt-5.6-sol",
+            "flagship",
+            "openai reasoning",
+        ] {
+            assert_eq!(
+                option_names(fuzzy_search_options(options.clone(), query, executor.clone()).await),
+                ["GPT-5.6 Sol"],
+                "query {query:?} should match the GPT model",
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn config_option_search_ranks_names_before_metadata(executor: BackgroundExecutor) {
+        let options = vec![
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("reasoner"),
+                name: "Reasoner".to_string(),
+                description: Some("High reasoning effort".to_string()),
+                group: None,
+            },
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("xhigh"),
+                name: "Extra High".to_string(),
+                description: None,
+                group: None,
+            },
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("high"),
+                name: "High".to_string(),
+                description: Some(
+                    "High effort with advanced reasoning for complex tasks.".to_string(),
+                ),
+                group: None,
+            },
+        ];
+
+        assert_eq!(
+            option_names(fuzzy_search_options(options, "high", executor).await),
+            ["High", "Extra High", "Reasoner"],
+        );
+    }
+
+    #[gpui::test]
+    async fn config_option_search_preserves_name_order_with_different_metadata(
+        executor: BackgroundExecutor,
+    ) {
+        let options = vec![
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("model-a"),
+                name: "Model A".to_string(),
+                description: Some("Advanced reasoning for complex tasks".to_string()),
+                group: Some("Provider A".to_string()),
+            },
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("b"),
+                name: "Model B".to_string(),
+                description: None,
+                group: None,
+            },
+        ];
+
+        assert_eq!(
+            option_names(fuzzy_search_options(options, "model", executor).await),
+            ["Model A", "Model B"],
+        );
+    }
+
+    #[gpui::test]
+    async fn config_option_search_returns_more_than_one_hundred_matches(
+        executor: BackgroundExecutor,
+    ) {
+        let options = (0..101)
+            .map(|index| ConfigOptionValue {
+                value: acp::SessionConfigValueId::new(format!("model-{index}")),
+                name: format!("Model {index}"),
+                description: None,
+                group: None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            fuzzy_search_options(options, "model", executor).await.len(),
+            101
+        );
+    }
+
+    #[gpui::test]
+    fn config_defaults_wait_for_authoritative_response(cx: &mut TestAppContext) {
+        for boolean in [false, true] {
+            let agent_server = Rc::new(TestAgentServer::default());
+            let offered = if boolean {
+                acp::SessionConfigOption::boolean("config", "Config", false)
+            } else {
+                acp::SessionConfigOption::select(
+                    "config",
+                    "Config",
+                    "auto",
+                    vec![
+                        acp::SessionConfigSelectOption::new("auto", "Auto"),
+                        acp::SessionConfigSelectOption::new("manual", "Manual"),
+                    ],
+                )
+            }
+            .category(acp::SessionConfigOptionCategory::ModelConfig);
+            let config_options = Rc::new(TestSessionConfigOptions::new(vec![offered.clone()]));
+            let _updates = config_options.updates.borrow().receiver();
+            let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+            let view = cx.update(|cx| {
+                let config_options: Rc<dyn AgentSessionConfigOptions> = config_options.clone();
+                let agent_server: Rc<dyn AgentServer> = agent_server.clone();
+                cx.new(|_| ConfigOptionsView {
+                    config_option_ids: ConfigOptionsView::config_option_ids(&config_options),
+                    config_options,
+                    selectors: Vec::new(),
+                    agent_server,
+                    fs,
+                    _refresh_task: Task::ready(()),
+                })
+            });
+            let rejected = config_options.defer_next_response();
+            view.update(cx, |view, cx| {
+                assert!(view.cycle_category_option(
+                    acp::SessionConfigOptionCategory::ModelConfig,
+                    false,
+                    cx
+                ));
+            });
+            assert!(
+                agent_server.saved_defaults.lock().is_empty(),
+                "do not persist before acceptance"
+            );
+            rejected
+                .send(Err(anyhow::anyhow!("rejected")))
+                .expect("config response");
+            cx.run_until_parked();
+            assert!(
+                agent_server.saved_defaults.lock().is_empty(),
+                "rejection preserves preferences"
+            );
+
+            let accepted = config_options.defer_next_response();
+            view.update(cx, |view, cx| {
+                assert!(view.cycle_category_option(
+                    acp::SessionConfigOptionCategory::ModelConfig,
+                    false,
+                    cx
+                ));
+            });
+            config_options.replace_options(vec![offered.clone()]);
+            accepted
+                .send(Ok(vec![offered]))
+                .expect("authoritative response");
+            cx.run_until_parked();
+            let expected = if boolean {
+                AgentConfigOptionValue::Boolean(false)
+            } else {
+                AgentConfigOptionValue::ValueId("auto".into())
+            };
+            assert_eq!(
+                agent_server.saved_defaults.lock().as_slice(),
+                &[("config".into(), Some(expected))]
+            );
+
+            let removed = config_options.defer_next_response();
+            view.update(cx, |view, cx| {
+                assert!(view.cycle_category_option(
+                    acp::SessionConfigOptionCategory::ModelConfig,
+                    false,
+                    cx
+                ));
+            });
+            config_options.replace_options(Vec::new());
+            removed.send(Ok(Vec::new())).expect("option removed");
+            cx.run_until_parked();
+            assert_eq!(
+                agent_server.saved_defaults.lock().len(),
+                1,
+                "do not save an absent option"
+            );
+        }
+    }
+
     #[gpui::test]
     fn cycling_config_option_saves_selected_value_as_default(cx: &mut TestAppContext) {
         let agent_server = Rc::new(TestAgentServer::default());
@@ -903,20 +1411,325 @@ mod tests {
                 view.cycle_category_option(acp::SessionConfigOptionCategory::Mode, false, cx)
             }));
         });
+        cx.run_until_parked();
 
         assert_eq!(
             agent_server.saved_defaults.lock().as_slice(),
-            &[("mode".to_string(), Some("manual".to_string()))]
+            &[(
+                "mode".to_string(),
+                Some(AgentConfigOptionValue::ValueId("manual".to_string()))
+            )]
         );
         assert_eq!(
             config_options.set_values.borrow().as_slice(),
-            &[("mode".to_string(), "manual".to_string())]
+            &[(
+                "mode".to_string(),
+                acp::SessionConfigOptionValue::id("manual")
+            )]
         );
+    }
+
+    #[gpui::test]
+    fn cycling_boolean_config_option_saves_selected_value_as_default(cx: &mut TestAppContext) {
+        let agent_server = Rc::new(TestAgentServer::default());
+        let config_options = Rc::new(TestSessionConfigOptions::new(vec![
+            acp::SessionConfigOption::boolean("web_search", "Web Search", false)
+                .category(acp::SessionConfigOptionCategory::ModelConfig),
+        ]));
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            let config_options: Rc<dyn AgentSessionConfigOptions> = config_options.clone();
+            let agent_server: Rc<dyn AgentServer> = agent_server.clone();
+            let fs = fs.clone();
+            let view = cx.new(|_| ConfigOptionsView {
+                config_option_ids: ConfigOptionsView::config_option_ids(&config_options),
+                config_options,
+                selectors: Vec::new(),
+                agent_server,
+                fs,
+                _refresh_task: Task::ready(()),
+            });
+
+            assert!(view.update(cx, |view, cx| {
+                view.cycle_category_option(acp::SessionConfigOptionCategory::ModelConfig, false, cx)
+            }));
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            agent_server.saved_defaults.lock().as_slice(),
+            &[(
+                "web_search".to_string(),
+                Some(AgentConfigOptionValue::Boolean(true))
+            )]
+        );
+        assert_eq!(
+            config_options.set_values.borrow().as_slice(),
+            &[(
+                "web_search".to_string(),
+                acp::SessionConfigOptionValue::boolean(true)
+            )]
+        );
+    }
+
+    #[gpui::test]
+    fn cycling_category_cycles_boolean_config_option_first(cx: &mut TestAppContext) {
+        let agent_server = Rc::new(TestAgentServer::default());
+        let config_options = Rc::new(TestSessionConfigOptions::new(vec![
+            acp::SessionConfigOption::boolean("web_search", "Web Search", false)
+                .category(acp::SessionConfigOptionCategory::Model),
+            acp::SessionConfigOption::select(
+                "model",
+                "Model",
+                "small",
+                vec![
+                    acp::SessionConfigSelectOption::new("small", "Small"),
+                    acp::SessionConfigSelectOption::new("large", "Large"),
+                ],
+            )
+            .category(acp::SessionConfigOptionCategory::Model),
+        ]));
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            let config_options: Rc<dyn AgentSessionConfigOptions> = config_options.clone();
+            let agent_server: Rc<dyn AgentServer> = agent_server.clone();
+            let fs = fs.clone();
+            let view = cx.new(|_| ConfigOptionsView {
+                config_option_ids: ConfigOptionsView::config_option_ids(&config_options),
+                config_options,
+                selectors: Vec::new(),
+                agent_server,
+                fs,
+                _refresh_task: Task::ready(()),
+            });
+
+            assert!(view.update(cx, |view, cx| {
+                view.cycle_category_option(acp::SessionConfigOptionCategory::Model, false, cx)
+            }));
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            agent_server.saved_defaults.lock().as_slice(),
+            &[(
+                "web_search".to_string(),
+                Some(AgentConfigOptionValue::Boolean(true))
+            )]
+        );
+        assert_eq!(
+            config_options.set_values.borrow().as_slice(),
+            &[(
+                "web_search".to_string(),
+                acp::SessionConfigOptionValue::boolean(true)
+            )]
+        );
+    }
+
+    #[gpui::test]
+    fn toggling_category_picker_without_select_config_option_is_unhandled(cx: &mut TestAppContext) {
+        let agent_server = Rc::new(TestAgentServer::default());
+        let config_options = Rc::new(TestSessionConfigOptions::new(vec![
+            acp::SessionConfigOption::boolean("web_search", "Web Search", false)
+                .category(acp::SessionConfigOptionCategory::Model),
+        ]));
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+        let cx = cx.add_empty_window();
+        let view = cx.update({
+            move |window, cx| {
+                let config_options: Rc<dyn AgentSessionConfigOptions> = config_options;
+                let agent_server: Rc<dyn AgentServer> = agent_server;
+                cx.new(|cx| ConfigOptionsView::new(config_options, agent_server, fs, window, cx))
+            }
+        });
+
+        let handled = cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.toggle_category_picker(acp::SessionConfigOptionCategory::Model, window, cx)
+            })
+        });
+
+        assert!(!handled);
+    }
+
+    #[gpui::test]
+    fn unknown_config_options_survive_live_selector_updates(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+        let category = acp::SessionConfigOptionCategory::Mode;
+        let unknown = acp::SessionConfigOption::new(
+            "mode",
+            "Mode",
+            acp::SessionConfigKind::Other(acp::OtherSessionConfigKind::new(
+                "_future",
+                std::collections::BTreeMap::from([(
+                    "currentValue".to_string(),
+                    serde_json::json!({"opaque": [1, true]}),
+                )]),
+            )),
+        )
+        .category(category.clone());
+        let config_options = Rc::new(TestSessionConfigOptions::new(vec![unknown.clone()]));
+        let agent_server = Rc::new(TestAgentServer::default());
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            let config_options: Rc<dyn AgentSessionConfigOptions> = config_options.clone();
+            let agent_server: Rc<dyn AgentServer> = agent_server.clone();
+            cx.new(|cx| ConfigOptionsView::new(config_options, agent_server, fs, window, cx))
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert!(view.selectors.is_empty());
+                assert_eq!(
+                    view.config_option_ids,
+                    vec![acp::SessionConfigId::new("mode")]
+                );
+                assert!(!view.toggle_category_picker(category.clone(), window, cx));
+                assert!(!view.cycle_category_option(category.clone(), false, cx));
+            });
+        });
+        assert_eq!(config_options.config_options(), vec![unknown.clone()]);
+
+        config_options.replace_options(vec![
+            acp::SessionConfigOption::select(
+                "mode",
+                "Mode",
+                "auto",
+                vec![
+                    acp::SessionConfigSelectOption::new("auto", "Auto"),
+                    acp::SessionConfigSelectOption::new("manual", "Manual"),
+                ],
+            )
+            .category(category.clone()),
+        ]);
+        cx.run_until_parked();
+        let selector = cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert_eq!(view.selectors.len(), 1);
+                assert!(view.toggle_category_picker(category.clone(), window, cx));
+                assert!(view.cycle_category_option(category.clone(), false, cx));
+                view.selectors.first().expect("select control").clone()
+            })
+        });
+        let picker = cx.update(|_, cx| selector.read(cx).picker.clone().expect("select picker"));
+
+        config_options.replace_options(vec![unknown.clone()]);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert!(view.selectors.is_empty());
+                assert!(!view.toggle_category_picker(category.clone(), window, cx));
+                assert!(!view.cycle_category_option(category.clone(), false, cx));
+            });
+            assert!(!selector.update(cx, |selector, cx| selector.toggle_picker(window, cx)));
+            picker.update(cx, |picker, cx| {
+                assert!(!picker.delegate.can_select(0, window, cx));
+                picker.delegate.confirm(false, window, cx);
+            });
+        });
+        assert_eq!(config_options.config_options(), vec![unknown]);
+        assert_eq!(
+            config_options.set_values.borrow().as_slice(),
+            &[(
+                "mode".to_string(),
+                acp::SessionConfigOptionValue::id("manual")
+            )]
+        );
+        assert_eq!(
+            agent_server.saved_defaults.lock().as_slice(),
+            &[(
+                "mode".to_string(),
+                Some(AgentConfigOptionValue::ValueId("manual".to_string()))
+            )]
+        );
+    }
+
+    #[gpui::test]
+    async fn read_only_config_options_do_not_set_values_or_defaults(cx: &mut TestAppContext) {
+        let agent_server = Rc::new(TestAgentServer::default());
+        let config_options = Rc::new(TestSessionConfigOptions {
+            read_only: true,
+            ..TestSessionConfigOptions::new(vec![
+                acp::SessionConfigOption::select(
+                    "model",
+                    "Model",
+                    "child",
+                    vec![acp::SessionConfigSelectOption::new("child", "Child model")],
+                )
+                .category(acp::SessionConfigOptionCategory::Model),
+                acp::SessionConfigOption::boolean("fast", "Fast", true)
+                    .category(acp::SessionConfigOptionCategory::ModelConfig),
+            ])
+        });
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConfigOptionsView::new(
+                    config_options.clone(),
+                    agent_server.clone(),
+                    fs.clone(),
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert_eq!(view.selectors.len(), 2);
+                assert!(!view.toggle_category_picker(
+                    acp::SessionConfigOptionCategory::Model,
+                    window,
+                    cx,
+                ));
+                for category in [
+                    acp::SessionConfigOptionCategory::Model,
+                    acp::SessionConfigOptionCategory::ModelConfig,
+                ] {
+                    assert!(!view.cycle_category_option(category, false, cx));
+                }
+            });
+        });
+        let error = cx
+            .update(|_, cx| {
+                set_config_option_and_default(
+                    config_options.clone(),
+                    agent_server.clone(),
+                    "fast".into(),
+                    acp::SessionConfigOptionValue::boolean(false),
+                    fs,
+                    cx,
+                )
+            })
+            .await
+            .expect_err("even a stale picker cannot set a read-only value");
+        assert!(error.to_string().contains("read-only"));
+        assert!(config_options.set_values.borrow().is_empty());
+        assert!(agent_server.saved_defaults.lock().is_empty());
+
+        config_options.replace_options(vec![acp::SessionConfigOption::boolean(
+            "fast", "Fast", false,
+        )]);
+        cx.run_until_parked();
+        view.read_with(cx, |view, cx| {
+            assert_eq!(view.selectors.len(), 1);
+            assert!(matches!(
+                view.selectors.first().expect("updated selector").read(cx).current_option()
+                    .expect("updated option").kind,
+                acp::SessionConfigKind::Boolean(boolean) if !boolean.current_value
+            ));
+        });
     }
 
     #[derive(Default)]
     struct TestAgentServer {
-        saved_defaults: Arc<Mutex<Vec<(String, Option<String>)>>>,
+        saved_defaults: Arc<Mutex<Vec<(String, Option<AgentConfigOptionValue>)>>>,
     }
 
     impl AgentServer for TestAgentServer {
@@ -944,28 +1757,51 @@ mod tests {
         fn set_default_config_option(
             &self,
             config_id: &str,
-            value_id: Option<&str>,
+            value: Option<AgentConfigOptionValue>,
             _fs: Arc<dyn Fs>,
             _cx: &mut App,
         ) {
-            self.saved_defaults.lock().push((
-                config_id.to_string(),
-                value_id.map(|value| value.to_string()),
-            ));
+            self.saved_defaults
+                .lock()
+                .push((config_id.to_string(), value));
         }
     }
 
     struct TestSessionConfigOptions {
+        read_only: bool,
         options: RefCell<Vec<acp::SessionConfigOption>>,
-        set_values: RefCell<Vec<(String, String)>>,
+        set_values: RefCell<Vec<(String, acp::SessionConfigOptionValue)>>,
+        updates: RefCell<watch::Sender<()>>,
+        next_response: RefCell<
+            Option<
+                futures::channel::oneshot::Receiver<anyhow::Result<Vec<acp::SessionConfigOption>>>,
+            >,
+        >,
     }
 
     impl TestSessionConfigOptions {
         fn new(options: Vec<acp::SessionConfigOption>) -> Self {
             Self {
+                read_only: false,
                 options: RefCell::new(options),
                 set_values: RefCell::new(Vec::new()),
+                updates: RefCell::new(watch::channel(()).0),
+                next_response: RefCell::new(None),
             }
+        }
+
+        fn defer_next_response(
+            &self,
+        ) -> futures::channel::oneshot::Sender<anyhow::Result<Vec<acp::SessionConfigOption>>>
+        {
+            let (sender, receiver) = futures::channel::oneshot::channel();
+            assert!(self.next_response.borrow_mut().replace(receiver).is_none());
+            sender
+        }
+
+        fn replace_options(&self, options: Vec<acp::SessionConfigOption>) {
+            *self.options.borrow_mut() = options;
+            self.updates.borrow_mut().send(()).expect("config watcher");
         }
     }
 
@@ -974,27 +1810,53 @@ mod tests {
             self.options.borrow().clone()
         }
 
+        fn is_read_only(&self) -> bool {
+            self.read_only
+        }
+
         fn set_config_option(
             &self,
             config_id: acp::SessionConfigId,
-            value: acp::SessionConfigValueId,
-            _cx: &mut App,
+            value: acp::SessionConfigOptionValue,
+            cx: &mut App,
         ) -> Task<anyhow::Result<Vec<acp::SessionConfigOption>>> {
             self.set_values
                 .borrow_mut()
-                .push((config_id.0.to_string(), value.0.to_string()));
+                .push((config_id.0.to_string(), value.clone()));
 
+            if let Some(response) = self.next_response.borrow_mut().take() {
+                return cx.spawn(async move |_| response.await?);
+            }
             let options = {
                 let mut options = self.options.borrow_mut();
-                if let Some(option) = options.iter_mut().find(|option| option.id == config_id)
-                    && let acp::SessionConfigKind::Select(select) = &mut option.kind
+                if let Some(option) = options
+                    .iter_mut()
+                    .find(|option| option.config_id == config_id)
                 {
-                    select.current_value = value;
+                    match (&mut option.kind, value) {
+                        (
+                            acp::SessionConfigKind::Select(select),
+                            acp::SessionConfigOptionValue::Id { value },
+                        ) => {
+                            select.current_value = value;
+                        }
+                        (
+                            acp::SessionConfigKind::Boolean(boolean),
+                            acp::SessionConfigOptionValue::Boolean { value },
+                        ) => {
+                            boolean.current_value = value;
+                        }
+                        _ => {}
+                    }
                 }
                 options.clone()
             };
 
             Task::ready(Ok(options))
+        }
+
+        fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+            Some(self.updates.borrow().receiver())
         }
     }
 }

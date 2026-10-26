@@ -35,6 +35,15 @@ fn test_background_executor_spawn() {
 }
 
 #[test]
+fn test_dedicated_executor_spawn() {
+    TestScheduler::once(async |scheduler| {
+        let dedicated = DedicatedExecutor::new(&scheduler.background());
+        let task = dedicated.spawn(async move { 42 });
+        assert_eq!(task.await, 42);
+    });
+}
+
+#[test]
 fn test_scheduler_drops_with_stalled_detached_foreground_task() {
     let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
     let weak_scheduler = Arc::downgrade(&scheduler);
@@ -70,6 +79,23 @@ fn test_scheduler_drops_with_stalled_detached_background_task() {
     drop(scheduler);
     assert!(weak_scheduler.upgrade().is_none());
     drop(sender);
+}
+
+/// A dedicated task that is never polled must not keep the scheduler alive:
+/// its runnable sits in the scheduler's own queue, so any strong scheduler
+/// handle captured by the future would form a reference cycle and leak both.
+#[test]
+fn test_scheduler_drops_with_never_polled_dedicated_task() {
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
+    let weak_scheduler = Arc::downgrade(&scheduler);
+
+    scheduler
+        .background()
+        .spawn_dedicated(|_executor| async move {})
+        .detach();
+
+    drop(scheduler);
+    assert!(weak_scheduler.upgrade().is_none());
 }
 
 #[test]

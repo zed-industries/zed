@@ -460,7 +460,7 @@ impl PrettierStore {
     ) {
         let prettier_config_files = Prettier::CONFIG_FILE_NAMES
             .iter()
-            .map(|name| RelPath::unix(name).unwrap())
+            .map(|name| RelPath::from_unix_str(name).unwrap())
             .collect::<HashSet<_>>();
 
         let prettier_config_file_changed = changes
@@ -695,31 +695,6 @@ impl PrettierStore {
             installation_task: Some(new_installation_task),
             not_installed_plugins: plugins_to_install,
         };
-    }
-
-    pub fn on_settings_changed(
-        &mut self,
-        language_formatters_to_check: Vec<(Option<WorktreeId>, LanguageSettings)>,
-        cx: &mut Context<Self>,
-    ) {
-        let mut prettier_plugins_by_worktree = HashMap::default();
-        for (worktree, language_settings) in language_formatters_to_check {
-            if language_settings.prettier.allowed
-                && let Some(plugins) = prettier_plugins_for_language(&language_settings)
-            {
-                prettier_plugins_by_worktree
-                    .entry(worktree)
-                    .or_insert_with(HashSet::default)
-                    .extend(plugins.iter().cloned());
-            }
-        }
-        for (worktree, prettier_plugins) in prettier_plugins_by_worktree {
-            self.install_default_prettier(
-                worktree,
-                prettier_plugins.into_iter().map(Arc::from),
-                cx,
-            );
-        }
     }
 }
 

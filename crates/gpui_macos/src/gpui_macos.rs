@@ -4,61 +4,53 @@
 //! macOS screens have a y axis that goes up from the bottom of the screen and
 //! an origin at the bottom left of the main display.
 
-mod dispatcher;
 mod display;
 mod display_link;
 mod events;
 mod keyboard;
 mod pasteboard;
+mod system_notifications;
 
 #[cfg(feature = "screen-capture")]
 mod screen_capture;
 
-mod metal_atlas;
-pub mod metal_renderer;
+use gpui_apple::metal_renderer as renderer;
 
-use metal_renderer as renderer;
+pub mod metal_renderer {
+    pub use gpui_apple::metal_renderer::{PathRasterizationVertex, PathSprite, SurfaceBounds};
 
-#[cfg(feature = "font-kit")]
-mod open_type;
-
-#[cfg(feature = "font-kit")]
-mod text_system;
+    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    pub use gpui_apple::metal_renderer::MetalHeadlessRenderer;
+}
 
 mod platform;
 mod window;
 mod window_appearance;
 
-use cocoa::{
-    base::{id, nil},
-    foundation::{NSAutoreleasePool, NSNotFound, NSString, NSUInteger},
+use objc2::{
+    Encode, Encoding, RefEncode,
+    rc::Retained,
+    runtime::{AnyObject, Bool},
 };
+use objc2_foundation::{NSNotFound, NSString, NSUInteger};
+use std::{ffi::CStr, ops::Range};
 
-use objc::runtime::{BOOL, NO, YES};
-use std::{
-    ffi::{CStr, c_char},
-    ops::Range,
-};
-
-pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use display_link::*;
+pub(crate) use gpui_apple::{AppleActivity, AppleDispatcher, main_thread_marker};
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 pub(crate) use window::*;
 
-#[cfg(feature = "font-kit")]
-pub(crate) use text_system::*;
-
 pub use platform::MacPlatform;
 
 trait BoolExt {
-    fn to_objc(self) -> BOOL;
+    fn to_objc(self) -> Bool;
 }
 
 impl BoolExt for bool {
-    fn to_objc(self) -> BOOL {
-        if self { YES } else { NO }
+    fn to_objc(self) -> Bool {
+        Bool::new(self)
     }
 }
 
@@ -66,14 +58,17 @@ trait NSStringExt {
     unsafe fn to_str(&self) -> &str;
 }
 
-impl NSStringExt for id {
+impl NSStringExt for *mut AnyObject {
     unsafe fn to_str(&self) -> &str {
         unsafe {
-            let cstr = self.UTF8String();
+            let Some(string) = self.cast::<NSString>().as_ref() else {
+                return "";
+            };
+            let cstr = string.UTF8String();
             if cstr.is_null() {
                 ""
             } else {
-                CStr::from_ptr(cstr as *mut c_char).to_str().unwrap()
+                CStr::from_ptr(cstr).to_str().unwrap()
             }
         }
     }
@@ -100,8 +95,8 @@ impl NSRange {
 
     fn to_range(self) -> Option<Range<usize>> {
         if self.is_valid() {
-            let start = self.location as usize;
-            let end = start + self.length as usize;
+            let start = self.location;
+            let end = start + self.length;
             Some(start..end)
         } else {
             None
@@ -118,19 +113,14 @@ impl From<Range<usize>> for NSRange {
     }
 }
 
-unsafe impl objc::Encode for NSRange {
-    fn encode() -> objc::Encoding {
-        let encoding = format!(
-            "{{NSRange={}{}}}",
-            NSUInteger::encode().as_str(),
-            NSUInteger::encode().as_str()
-        );
-        unsafe { objc::Encoding::from_str(&encoding) }
-    }
+unsafe impl Encode for NSRange {
+    const ENCODING: Encoding = objc2_foundation::NSRange::ENCODING;
 }
 
-/// Allow NSString::alloc use here because it sets autorelease
-#[allow(clippy::disallowed_methods)]
-unsafe fn ns_string(string: &str) -> id {
-    unsafe { NSString::alloc(nil).init_str(string).autorelease() }
+unsafe impl RefEncode for NSRange {
+    const ENCODING_REF: Encoding = Encoding::Pointer(&Self::ENCODING);
+}
+
+fn ns_string(string: &str) -> *mut AnyObject {
+    Retained::autorelease_ptr(NSString::from_str(string)).cast()
 }

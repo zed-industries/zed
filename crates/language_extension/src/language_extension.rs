@@ -5,13 +5,15 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use extension::{ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy};
-use gpui::{App, Entity};
-use language::{LanguageMatcher, LanguageName, LanguageRegistry, LoadedLanguage};
+use gpui::{App, Entity, WeakEntity};
+use language::{
+    ExtensionLanguagesUpdateOutcome, LanguageName, LanguageRegistration, LanguageRegistry,
+};
 use project::LspStore;
 
 #[derive(Clone)]
 pub enum LspAccess {
-    ViaLspStore(Entity<LspStore>),
+    ViaLspStore(WeakEntity<LspStore>),
     ViaWorkspaces(Arc<dyn Fn(&mut App) -> Result<Vec<Entity<LspStore>>> + Send + Sync + 'static>),
     Noop,
 }
@@ -44,24 +46,17 @@ impl ExtensionGrammarProxy for LanguageServerRegistryProxy {
 }
 
 impl ExtensionLanguageProxy for LanguageServerRegistryProxy {
-    fn register_language(
-        &self,
-        language: LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: LanguageMatcher,
-        hidden: bool,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
-    ) {
-        self.language_registry
-            .register_language(language, grammar, matcher, hidden, None, load);
-    }
-
-    fn remove_languages(
+    #[ztracing::instrument(skip_all)]
+    fn update_languages(
         &self,
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
-    ) {
-        self.language_registry
-            .remove_languages(languages_to_remove, grammars_to_remove);
+        registrations: Vec<LanguageRegistration>,
+    ) -> ExtensionLanguagesUpdateOutcome {
+        self.language_registry.update_extension_languages(
+            languages_to_remove,
+            grammars_to_remove,
+            registrations,
+        )
     }
 }

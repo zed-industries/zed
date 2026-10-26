@@ -7,13 +7,13 @@ use std::{
 
 use editor::Editor;
 use gpui::{
-    ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers, TextAlign,
-    TextStyleRefinement, WeakEntity,
+    AccessibleAction, ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers, Role,
+    TextAlign, TextStyleRefinement, WeakEntity,
 };
 
 use settings::{
     CenteredPaddingSettings, CodeFade, DelayMs, FontSize, FontWeightContent, InactiveOpacity,
-    MinimumContrast,
+    MinimumContrast, PixelSetting,
 };
 use ui::prelude::*;
 use zed_actions::editor::{MoveDown, MoveUp};
@@ -120,6 +120,7 @@ impl_newtype_numeric_stepper_float!(CodeFade, 0.1, 0.2, 0.05, 0.0, 0.9);
 impl_newtype_numeric_stepper_float!(FontSize, 1.0, 4.0, 0.5, 6.0, 72.0);
 impl_newtype_numeric_stepper_float!(InactiveOpacity, 0.1, 0.2, 0.05, 0.0, 1.0);
 impl_newtype_numeric_stepper_float!(MinimumContrast, 1., 10., 0.5, 0.0, 106.0);
+impl_newtype_numeric_stepper_float!(PixelSetting, 1.0, 10.0, 0.5, 0.0, f32::MAX);
 impl_newtype_numeric_stepper_int!(DelayMs, 100, 500, 10, 0, 2000);
 impl_newtype_numeric_stepper_float!(
     CenteredPaddingSettings,
@@ -274,6 +275,8 @@ pub struct NumberField<T: NumberFieldType = usize> {
     on_reset: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_change: Rc<dyn Fn(&T, &mut Window, &mut App) + 'static>,
     tab_index: Option<isize>,
+    aria_label: Option<SharedString>,
+    aria_description: Option<SharedString>,
 }
 
 impl<T: NumberFieldType> NumberField<T> {
@@ -314,6 +317,8 @@ impl<T: NumberFieldType> NumberField<T> {
             on_reset: None,
             on_change: Rc::new(|_, _, _| {}),
             tab_index: None,
+            aria_label: None,
+            aria_description: None,
         }
     }
 
@@ -342,6 +347,19 @@ impl<T: NumberFieldType> NumberField<T> {
         self
     }
 
+    /// Sets the label announced by assistive technology.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Sets the supplementary description announced by assistive technology
+    /// after the field's name, role, and value.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.aria_description = Some(description.into());
+        self
+    }
+
     fn sync_on_change_state(&self, cx: &mut App) {
         self.on_change_state
             .update(cx, |state, _| *state = Some(self.on_change.clone()));
@@ -352,6 +370,22 @@ impl<T: NumberFieldType> NumberField<T> {
 enum ValueChangeDirection {
     Increment,
     Decrement,
+}
+
+/// Best-effort conversion of a numeric field value to `f64` for reporting to
+/// assistive technology. Goes through the `Display` representation because
+/// `NumberFieldType` has no general numeric conversion.
+fn a11y_numeric_value(value: &impl Display) -> Option<f64> {
+    format!("{}", value).parse::<f64>().ok()
+}
+
+/// Best-effort conversion of an assistive-technology-provided `f64` back into
+/// a field value. Falls back to the rounded value for integer field types.
+fn a11y_value_to_field_value<T: NumberFieldType>(value: f64) -> Option<T> {
+    format!("{}", value)
+        .parse::<T>()
+        .ok()
+        .or_else(|| format!("{}", value.round()).parse::<T>().ok())
 }
 
 impl<T: NumberFieldType> RenderOnce for NumberField<T> {
@@ -437,6 +471,40 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
             })
         };
 
+        let step_value = {
+            let on_change = self.on_change.clone();
+            let get_current_value = get_current_value.clone();
+            let update_editor_text = update_editor_text.clone();
+
+            Rc::new(
+                move |direction: ValueChangeDirection,
+                      modifiers: Modifiers,
+                      window: &mut Window,
+                      cx: &mut App| {
+                    let current_value = get_current_value(cx);
+                    let step = get_step(modifiers);
+                    let new_value = change_value(current_value, step, direction);
+
+                    update_editor_text(new_value, window, cx);
+                    on_change(&new_value, window, cx);
+                },
+            )
+        };
+
+        let set_value = {
+            let on_change = self.on_change.clone();
+            let update_editor_text = update_editor_text.clone();
+
+            move |raw_value: f64, window: &mut Window, cx: &mut App| {
+                let Some(parsed) = a11y_value_to_field_value::<T>(raw_value) else {
+                    return;
+                };
+                let new_value = clamp_value(parsed);
+                update_editor_text(new_value, window, cx);
+                on_change(&new_value, window, cx);
+            }
+        };
+
         let bg_color = cx.theme().colors().surface_background;
         let hover_bg_color = cx.theme().colors().element_hover;
 
@@ -460,43 +528,89 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
 
         h_flex()
             .id(self.id.clone())
+            .role(Role::SpinButton)
+            .when_some(self.aria_label.clone(), |this, label| {
+                this.aria_label(label)
+            })
+            .when_some(self.aria_description.clone(), |this, description| {
+                this.aria_description(description)
+            })
+            .when_some(a11y_numeric_value(&self.value), |this, value| {
+                this.aria_numeric_value(value)
+            })
+            .when_some(a11y_numeric_value(&self.min_value), |this, min| {
+                this.aria_min_numeric_value(min)
+            })
+            .when_some(a11y_numeric_value(&self.max_value), |this, max| {
+                this.aria_max_numeric_value(max)
+            })
+            .when_some(a11y_numeric_value(&self.step), |this, step| {
+                this.aria_numeric_value_step(step)
+            })
+            // Some assistive technology (e.g. Orca via AT-SPI's Value
+            // interface) can only set an absolute value, while other screen
+            // readers dispatch Increment/Decrement, so support all three.
+            .on_a11y_action(AccessibleAction::SetValue, {
+                move |data, window, cx| {
+                    if let Some(gpui::accesskit::ActionData::NumericValue(value)) = data {
+                        set_value(*value, window, cx);
+                    }
+                }
+            })
+            .on_a11y_action(AccessibleAction::Increment, {
+                let step_value = step_value.clone();
+                move |_, window, cx| {
+                    step_value(
+                        ValueChangeDirection::Increment,
+                        Modifiers::default(),
+                        window,
+                        cx,
+                    );
+                }
+            })
+            .on_a11y_action(AccessibleAction::Decrement, {
+                let step_value = step_value.clone();
+                move |_, window, cx| {
+                    step_value(
+                        ValueChangeDirection::Decrement,
+                        Modifiers::default(),
+                        window,
+                        cx,
+                    );
+                }
+            })
             .track_focus(&self.focus_handle)
             .gap_1()
             .when_some(self.on_reset, |this, on_reset| {
                 this.child(
                     IconButton::new("reset", IconName::RotateCcw)
                         .icon_size(IconSize::Small)
+                        .aria_label("Reset to Default")
                         .when_some(self.tab_index, |this, _| this.tab_index(0isize))
                         .on_click(on_reset),
                 )
             })
             .child({
-                let on_change_for_increment = self.on_change.clone();
-
                 h_flex()
                     .map(|decrement| {
                         let decrement_handler = {
-                            let on_change = self.on_change.clone();
-                            let get_current_value = get_current_value.clone();
-                            let update_editor_text = update_editor_text.clone();
+                            let step_value = step_value.clone();
 
                             move |click: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                let current_value = get_current_value(cx);
-                                let step = get_step(click.modifiers());
-                                let new_value = change_value(
-                                    current_value,
-                                    step,
+                                step_value(
                                     ValueChangeDirection::Decrement,
+                                    click.modifiers(),
+                                    window,
+                                    cx,
                                 );
-
-                                update_editor_text(new_value, window, cx);
-                                on_change(&new_value, window, cx);
                             }
                         };
 
                         decrement.child(
                             base_button(IconName::Dash)
                                 .id((self.id.clone(), "decrement_button"))
+                                .role(Role::Button)
+                                .aria_label("Decrement")
                                 .rounded_tl_sm()
                                 .rounded_bl_sm()
                                 .when_some(self.tab_index, |this, _| this.tab_index(0isize))
@@ -668,6 +782,15 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                     };
 
                                     h_flex()
+                                        .id((self.id.clone(), "editor"))
+                                        .role(Role::TextInput)
+                                        .when_some(self.aria_label.clone(), |this, label| {
+                                            this.aria_label(label)
+                                        })
+                                        .when_some(
+                                            self.aria_description.clone(),
+                                            |this, description| this.aria_description(description),
+                                        )
                                         .flex_1()
                                         .h_full()
                                         .track_focus(&focus_handle)
@@ -677,8 +800,8 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                         })
                                         .child(editor)
                                         .on_action::<menu::Confirm>({
-                                            move |_, window, _| {
-                                                window.blur();
+                                            move |_, window, cx| {
+                                                window.blur(cx);
                                             }
                                         })
                                         .into_any_element()
@@ -687,27 +810,23 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                     })
                     .map(|increment| {
                         let increment_handler = {
-                            let on_change = on_change_for_increment.clone();
-                            let get_current_value = get_current_value.clone();
-                            let update_editor_text = update_editor_text.clone();
+                            let step_value = step_value.clone();
 
                             move |click: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                let current_value = get_current_value(cx);
-                                let step = get_step(click.modifiers());
-                                let new_value = change_value(
-                                    current_value,
-                                    step,
+                                step_value(
                                     ValueChangeDirection::Increment,
+                                    click.modifiers(),
+                                    window,
+                                    cx,
                                 );
-
-                                update_editor_text(new_value, window, cx);
-                                on_change(&new_value, window, cx);
                             }
                         };
 
                         increment.child(
                             base_button(IconName::Plus)
                                 .id((self.id.clone(), "increment_button"))
+                                .role(Role::Button)
+                                .aria_label("Increment")
                                 .rounded_tr_sm()
                                 .rounded_br_sm()
                                 .when_some(self.tab_index, |this, _| this.tab_index(0isize))

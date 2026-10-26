@@ -15,6 +15,7 @@ struct Args {
     regex: bool,
     whole_word: bool,
     case_sensitive: bool,
+    single: bool,
 }
 
 fn parse_args() -> Args {
@@ -26,6 +27,7 @@ fn parse_args() -> Args {
         regex: false,
         whole_word: false,
         case_sensitive: false,
+        single: false,
     };
 
     let mut positional = Vec::new();
@@ -34,6 +36,7 @@ fn parse_args() -> Args {
             "--regex" => parsed.regex = true,
             "--whole-word" => parsed.whole_word = true,
             "--case-sensitive" => parsed.case_sensitive = true,
+            "--single" => parsed.single = true,
             "-r" | "--replace" => {
                 parsed.replace = args_iter.next();
             }
@@ -105,6 +108,7 @@ fn main() {
 
     let query = Arc::new(query);
     let has_replacement = args.replace.is_some();
+    let single = args.single;
 
     gpui_platform::headless().run(move |cx| {
         release_channel::init_test(
@@ -152,8 +156,9 @@ fn main() {
 
                         if has_replacement && !matches.is_empty() {
                             window_handle.update(cx, |editor: &mut Editor, window, cx| {
-                                let mut match_iter = matches.iter();
-                                println!("Replacing all matches...");
+                                let to_replace = if single { 1 } else { matches.len() };
+                                let mut match_iter = matches.iter().take(to_replace);
+                                println!("Replacing {to_replace} matches...");
                                 let timer = std::time::Instant::now();
                                 editor.replace_all(
                                     &mut match_iter,
@@ -163,10 +168,7 @@ fn main() {
                                     cx,
                                 );
                                 let replace_elapsed = timer.elapsed();
-                                println!(
-                                    "Replaced {} matches in {replace_elapsed:?}",
-                                    matches.len()
-                                );
+                                println!("Replaced {to_replace} matches in {replace_elapsed:?}");
                             })?;
                         }
 

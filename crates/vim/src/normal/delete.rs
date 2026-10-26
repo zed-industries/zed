@@ -6,7 +6,7 @@ use crate::{
 };
 use collections::{HashMap, HashSet};
 use editor::{
-    Bias, DisplayPoint,
+    Bias, DisplayPoint, EditPredictionRequestTrigger,
     display_map::{DisplaySnapshot, ToDisplayPoint},
 };
 use gpui::{Context, Window};
@@ -84,7 +84,13 @@ impl Vim {
                         selection.collapse_to(cursor, selection.goal)
                     });
                 });
-                editor.refresh_edit_prediction(true, false, window, cx);
+                editor.refresh_edit_prediction(
+                    true,
+                    false,
+                    EditPredictionRequestTrigger::BufferEdit,
+                    window,
+                    cx,
+                );
             });
         });
     }
@@ -192,7 +198,13 @@ impl Vim {
                         selection.collapse_to(cursor, selection.goal)
                     });
                 });
-                editor.refresh_edit_prediction(true, false, window, cx);
+                editor.refresh_edit_prediction(
+                    true,
+                    false,
+                    EditPredictionRequestTrigger::BufferEdit,
+                    window,
+                    cx,
+                );
             });
         });
     }

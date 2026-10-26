@@ -1,7 +1,9 @@
 use crate::{
     DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, EditPredictionStore, open_ai_response::text_from_response,
-    prediction::EditPredictionResult, zeta::compute_edits,
+    EditPredictionStartedDebugEvent, EditPredictionStore,
+    open_ai_response::text_from_response,
+    prediction::{EditPredictionInputs, EditPredictionResult},
+    zeta::compute_edits,
 };
 use anyhow::{Context as _, Result};
 use cloud_llm_client::EditPredictionRejectReason;
@@ -16,7 +18,7 @@ use language_model::{ApiKeyState, EnvVar, env_var};
 use release_channel::AppVersion;
 use serde::{Deserialize, Serialize};
 use std::{mem, ops::Range, path::Path, sync::Arc};
-use zeta_prompt::ZetaPromptInput;
+use zeta_prompt::Zeta2PromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
 
@@ -50,13 +52,19 @@ impl Mercury {
             events,
             related_files,
             debug_tx,
+            trigger,
             ..
         }: EditPredictionModelInput,
         credentials_provider: Arc<dyn CredentialsProvider>,
         cx: &mut Context<EditPredictionStore>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         self.api_token.update(cx, |key_state, cx| {
-            _ = key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, credentials_provider, cx);
+            _ = key_state.load_cached(
+                MERCURY_CREDENTIALS_URL,
+                |key_state| key_state,
+                credentials_provider,
+                cx,
+            );
         });
         let Some(api_token) = self.api_token.read(cx).key(&MERCURY_CREDENTIALS_URL) else {
             return Task::ready(Ok(None));
@@ -102,7 +110,7 @@ impl Mercury {
                 + excerpt_ranges.editable_350.start)
                 ..(excerpt_offset_range.start + excerpt_ranges.editable_350.end);
 
-            let inputs = zeta_prompt::ZetaPromptInput {
+            let inputs = zeta_prompt::Zeta2PromptInput {
                 events,
                 related_files: Some(related_files),
                 cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
@@ -140,6 +148,7 @@ impl Mercury {
                 stream: false,
                 stream_options: None,
                 max_completion_tokens: None,
+                max_tokens: None,
                 stop: vec![],
                 temperature: None,
                 tool_choice: None,
@@ -253,8 +262,9 @@ impl Mercury {
                     edits.into(),
                     None,
                     Some(editable_range),
-                    inputs,
+                    EditPredictionInputs::V2(inputs),
                     None,
+                    trigger,
                     cx.background_executor().now() - request_start,
                     cx,
                 )
@@ -264,7 +274,7 @@ impl Mercury {
     }
 }
 
-fn build_prompt(inputs: &ZetaPromptInput) -> String {
+fn build_prompt(inputs: &Zeta2PromptInput) -> String {
     const RECENTLY_VIEWED_SNIPPETS_START: &str = "<|recently_viewed_code_snippets|>\n";
     const RECENTLY_VIEWED_SNIPPETS_END: &str = "<|/recently_viewed_code_snippets|>\n";
     const RECENTLY_VIEWED_SNIPPET_START: &str = "<|recently_viewed_code_snippet|>\n";
@@ -394,7 +404,12 @@ pub fn mercury_api_token(cx: &mut App) -> Entity<ApiKeyState> {
 pub fn load_mercury_api_token(cx: &mut App) -> Task<Result<(), language_model::AuthenticateError>> {
     let credentials_provider = zed_credentials_provider::global(cx);
     mercury_api_token(cx).update(cx, |key_state, cx| {
-        key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, credentials_provider, cx)
+        key_state.load_cached(
+            MERCURY_CREDENTIALS_URL,
+            |key_state| key_state,
+            credentials_provider,
+            cx,
+        )
     })
 }
 

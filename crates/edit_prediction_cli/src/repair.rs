@@ -367,7 +367,7 @@ pub async fn run_repair(
                     _ => None,
                 })
                 .collect::<Vec<_>>()
-                .join("")
+                .concat()
         }
         BatchProvider::Openai => {
             let client = if args.no_batch {
@@ -389,6 +389,7 @@ pub async fn run_repair(
                     content: Some(open_ai::MessageContent::Plain(teacher_response.clone())),
                     tool_calls: vec![],
                     reasoning_content: None,
+                    reasoning_details: None,
                 },
                 // Turn 3: Repair critique and instructions
                 open_ai::RequestMessage::User {
@@ -414,13 +415,13 @@ pub async fn run_repair(
                                     _ => None,
                                 })
                                 .collect::<Vec<_>>()
-                                .join(""),
+                                .concat(),
                         })
                     }
                     _ => None,
                 })
                 .collect::<Vec<_>>()
-                .join("")
+                .concat()
         }
     };
 

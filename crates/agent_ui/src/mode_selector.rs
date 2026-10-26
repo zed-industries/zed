@@ -1,5 +1,5 @@
 use acp_thread::AgentSessionModes;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v2 as acp;
 use agent_servers::AgentServer;
 
 use fs::Fs;
@@ -50,19 +50,19 @@ impl ModeSelector {
 
         let current_index = all_modes
             .iter()
-            .position(|mode| mode.id.0 == current_mode.0)
+            .position(|mode| mode.value == current_mode)
             .unwrap_or(0);
 
         if let Some(next_mode) = all_modes.get((current_index + 1) % all_modes.len()) {
-            self.set_mode(next_mode.id.clone(), cx);
+            self.set_mode(next_mode.value.clone(), cx);
         }
     }
 
-    pub fn mode(&self) -> acp::SessionModeId {
+    pub fn mode(&self) -> acp::SessionConfigValueId {
         self.connection.current_mode()
     }
 
-    pub fn set_mode(&mut self, mode: acp::SessionModeId, cx: &mut Context<Self>) {
+    pub fn set_mode(&mut self, mode: acp::SessionConfigValueId, cx: &mut Context<Self>) {
         self.agent_server
             .set_default_mode(Some(mode.clone()), self.fs.clone(), cx);
 
@@ -97,7 +97,7 @@ impl ModeSelector {
             let side = documentation_aside_side(cx);
 
             for mode in all_modes {
-                let is_selected = &mode.id == &current_mode;
+                let is_selected = &mode.value == &current_mode;
                 let entry = ContextMenuEntry::new(mode.name.clone())
                     .toggleable(IconPosition::End, is_selected);
 
@@ -112,7 +112,7 @@ impl ModeSelector {
                 };
 
                 menu.push_item(entry.handler({
-                    let mode_id = mode.id.clone();
+                    let mode_id = mode.value.clone();
                     let weak_self = weak_self.clone();
                     move |_window, cx| {
                         weak_self
@@ -136,7 +136,7 @@ impl Render for ModeSelector {
             .connection
             .all_modes()
             .iter()
-            .find(|mode| mode.id == current_mode_id)
+            .find(|mode| mode.value == current_mode_id)
             .map(|mode| mode.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
@@ -217,23 +217,51 @@ mod tests {
             let selector = cx.new(|_| ModeSelector::new(session_modes, agent_server, fs));
 
             selector.update(cx, |selector, cx| {
-                selector.set_mode(acp::SessionModeId::new("manual"), cx);
+                selector.set_mode(acp::SessionConfigValueId::new("manual"), cx);
             });
         });
 
         assert_eq!(
             agent_server.saved_defaults.lock().as_slice(),
-            &[Some(acp::SessionModeId::new("manual"))]
+            &[Some(acp::SessionConfigValueId::new("manual"))]
         );
         assert_eq!(
             session_modes.set_modes.borrow().as_slice(),
-            &[acp::SessionModeId::new("manual")]
+            &[acp::SessionConfigValueId::new("manual")]
+        );
+    }
+
+    #[gpui::test]
+    fn cycling_modes_preserves_choice_order_and_wraps(cx: &mut TestAppContext) {
+        let agent_server = Rc::new(TestAgentServer::default());
+        let session_modes = Rc::new(TestSessionModes::new());
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+        let cx = cx.add_empty_window();
+        let selector = cx.new_window_entity(|_window, _cx| {
+            ModeSelector::new(session_modes.clone(), agent_server.clone(), fs)
+        });
+
+        for _ in 0..3 {
+            selector.update_in(cx, |selector, window, cx| {
+                selector.cycle_mode(window, cx);
+            });
+        }
+
+        let expected = [
+            acp::SessionConfigValueId::new("manual"),
+            acp::SessionConfigValueId::new("ask"),
+            acp::SessionConfigValueId::new("auto"),
+        ];
+        assert_eq!(session_modes.set_modes.borrow().as_slice(), &expected);
+        assert_eq!(
+            agent_server.saved_defaults.lock().as_slice(),
+            expected.map(Some).as_slice()
         );
     }
 
     #[derive(Default)]
     struct TestAgentServer {
-        saved_defaults: Arc<Mutex<Vec<Option<acp::SessionModeId>>>>,
+        saved_defaults: Arc<Mutex<Vec<Option<acp::SessionConfigValueId>>>>,
     }
 
     impl AgentServer for TestAgentServer {
@@ -260,7 +288,7 @@ mod tests {
 
         fn set_default_mode(
             &self,
-            mode_id: Option<acp::SessionModeId>,
+            mode_id: Option<acp::SessionConfigValueId>,
             _fs: Arc<dyn Fs>,
             _cx: &mut App,
         ) {
@@ -269,32 +297,37 @@ mod tests {
     }
 
     struct TestSessionModes {
-        current_mode: RefCell<acp::SessionModeId>,
-        set_modes: RefCell<Vec<acp::SessionModeId>>,
+        current_mode: RefCell<acp::SessionConfigValueId>,
+        set_modes: RefCell<Vec<acp::SessionConfigValueId>>,
     }
 
     impl TestSessionModes {
         fn new() -> Self {
             Self {
-                current_mode: RefCell::new(acp::SessionModeId::new("auto")),
+                current_mode: RefCell::new(acp::SessionConfigValueId::new("auto")),
                 set_modes: RefCell::new(Vec::new()),
             }
         }
     }
 
     impl AgentSessionModes for TestSessionModes {
-        fn current_mode(&self) -> acp::SessionModeId {
+        fn current_mode(&self) -> acp::SessionConfigValueId {
             self.current_mode.borrow().clone()
         }
 
-        fn all_modes(&self) -> Vec<acp::SessionMode> {
+        fn all_modes(&self) -> Vec<acp::SessionConfigSelectOption> {
             vec![
-                acp::SessionMode::new("auto", "Auto"),
-                acp::SessionMode::new("manual", "Manual"),
+                acp::SessionConfigSelectOption::new("auto", "Auto"),
+                acp::SessionConfigSelectOption::new("manual", "Manual"),
+                acp::SessionConfigSelectOption::new("ask", "Ask"),
             ]
         }
 
-        fn set_mode(&self, mode: acp::SessionModeId, _cx: &mut App) -> Task<anyhow::Result<()>> {
+        fn set_mode(
+            &self,
+            mode: acp::SessionConfigValueId,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<()>> {
             *self.current_mode.borrow_mut() = mode.clone();
             self.set_modes.borrow_mut().push(mode);
             Task::ready(Ok(()))

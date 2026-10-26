@@ -108,22 +108,14 @@ pub(super) fn process<'a>(
 }
 
 fn mindmap_section_css(theme: &MermaidTheme) -> String {
-    let colors: Vec<String> = theme
-        .git_branch_colors
-        .iter()
-        .map(|c| crate::css_color(*c))
-        .collect();
-    let fills: Vec<String> = theme
-        .git_branch_colors
-        .iter()
-        .map(|c| {
-            crate::css_color(blend_over_background(
-                *c,
-                theme.background,
-                ACCENT_FILL_OPACITY,
-            ))
-        })
-        .collect();
+    let colors: [String; 8] = theme.git_branch_colors.map(crate::css_color);
+    let fills: [String; 8] = theme.git_branch_colors.map(|c| {
+        crate::css_color(blend_over_background(
+            c,
+            theme.background,
+            ACCENT_FILL_OPACITY,
+        ))
+    });
     let text = crate::css_color(theme.text_color);
     let mut css = String::with_capacity(5_400);
 
@@ -382,6 +374,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         r#"
         text, tspan, foreignObject div, foreignObject span, foreignObject p {{ font-family: {font} !important; }}
         foreignObject div, foreignObject span, foreignObject p {{ font-size: 16px; color: {text}; }}
+        .merman-foreignobject-fallback-text {{ font-size: 16px !important; }}
         foreignObject p {{ margin: 0; }}
         foreignObject {{ overflow: visible; }}
         foreignObject div {{ max-width: none !important; }}
@@ -415,8 +408,8 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .cluster-label, .nodeLabel {{ color: {text} !important; }}
         defs #statediagram-barbEnd {{ fill: {line} !important; stroke: {line} !important; }}
         #statediagram-barbEnd {{ fill: {line} !important; }}
-        .edgeLabel .label rect {{ fill: {primary} !important; }}
-        .edgeLabel rect {{ fill: {primary} !important; background-color: {primary} !important; }}
+        .edgeLabel .label rect {{ fill: {edge_label_bg} !important; opacity: 1 !important; }}
+        .edgeLabel rect {{ fill: {edge_label_bg} !important; opacity: 1 !important; background-color: {edge_label_bg} !important; }}
         .edgeLabel .label text {{ fill: {text} !important; }}
         .edgeLabel p {{ background-color: {primary} !important; }}
         .edgeLabel {{ background-color: {primary} !important; }}
@@ -424,7 +417,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         text.actor {{ text-anchor: middle; }}
         text.actor>tspan {{ fill: {actor_text} !important; stroke: none; }}
         .labelText, .labelText>tspan {{ fill: {actor_text} !important; }}
-        .actor-line {{ stroke: {actor_border} !important; }}
+        .actor-line {{ stroke: {actor_border} !important; fill: none !important; }}
         .messageLine0 {{ stroke: {text} !important; }}
         .messageLine1 {{ stroke: {text} !important; }}
         #arrowhead path {{ fill: {text} !important; stroke: {text} !important; }}
@@ -436,7 +429,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .noteText, .noteText>tspan {{ fill: {note_text} !important; }}
         .activation0, .activation1, .activation2 {{ fill: {secondary} !important; stroke: {border} !important; }}
         .labelBox {{ stroke: {actor_border} !important; fill: {actor_bg} !important; }}
-        .actor-man line {{ stroke: {actor_border} !important; fill: {actor_bg} !important; }}
+        .actor-man line {{ stroke: {actor_border} !important; fill: none !important; }}
         .actor-man circle {{ stroke: {actor_border} !important; fill: {actor_bg} !important; }}
         .pieTitleText {{ fill: {text} !important; }}
         .slice {{ fill: {text} !important; }}
@@ -447,7 +440,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         text.journey-section, text.task {{ fill: {text} !important; }}
         .relationshipLabelBox {{ fill: {tertiary} !important; opacity: 0.7; background-color: {tertiary} !important; }}
         .labelBkg {{ background-color: {tertiary} !important; }}
-        .edgeLabel .label {{ fill: {border} !important; }}
+        .edgeLabel .label {{ fill: {text} !important; }}
         .label {{ color: {text} !important; }}
         .relationshipLine {{ stroke: {line} !important; fill: none !important; }}
         .entityBox {{ fill: {primary}; stroke: {border}; }}
@@ -484,7 +477,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .commit-merge {{ stroke: {primary}; fill: {primary}; }}
         .commit-reverse {{ stroke: {primary}; fill: {primary}; stroke-width: 3; }}
         .commit-highlight-inner {{ stroke: {primary}; fill: {primary}; }}
-        .tag-label {{ font-size: 10px; }}
+        .tag-label {{ font-size: 10px; fill: {text}; }}
         .tag-label-bkg {{ fill: {primary}; stroke: {border}; }}
         .tag-hole {{ fill: {line}; }}
         .commit-label {{ fill: {text}; }}

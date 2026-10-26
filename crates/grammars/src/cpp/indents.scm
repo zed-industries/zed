@@ -9,6 +9,10 @@
   (else_clause)
 ] @indent
 
+(expression_statement
+  (_) @indent
+  ";" @end)
+
 (_
   "{"
   "}" @end) @indent
@@ -20,6 +24,15 @@
 (field_declaration_list
   (access_specifier)
   (access_specifier) @outdent)
+
+(compound_statement
+  (case_statement
+    ":" @start)
+  "}" @end) @indent
+
+(compound_statement
+  (case_statement)
+  (case_statement) @outdent)
 
 (_
   "("
