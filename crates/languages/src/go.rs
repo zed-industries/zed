@@ -2120,9 +2120,9 @@ mod tests {
 
         let runs = language.highlight_text(&Rope::from(source), 0..source.len());
         let type_parameter_highlight = runs
-            .iter()
+            .into_iter()
             .find(|(range, _)| range.contains(&type_parameter_offset))
-            .map(|(_, highlight_id)| *highlight_id);
+            .map(|(_, highlight_id)| highlight_id);
 
         assert_eq!(
             type_parameter_highlight,
