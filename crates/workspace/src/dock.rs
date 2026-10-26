@@ -1,7 +1,7 @@
 use crate::focus_follows_mouse::FocusFollowsMouse as _;
 use crate::persistence::model::DockData;
 use crate::status_bar::HideStatusItem;
-use crate::{DraggedDock, Event, FocusFollowsMouse, ModalLayer, Pane, WorkspaceSettings};
+use crate::{DraggedDock, Event, ModalLayer, Pane, WorkspaceSettings};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
 use client::proto;
@@ -287,7 +287,6 @@ pub struct Dock {
     is_open: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
-    focus_follows_mouse: FocusFollowsMouse,
     restoration: DockRestoreState,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
@@ -454,7 +453,6 @@ impl Dock {
                 active_panel_index: None,
                 is_open: false,
                 focus_handle: focus_handle.clone(),
-                focus_follows_mouse: WorkspaceSettings::get_global(cx).focus_follows_mouse,
                 _subscriptions: [focus_subscription, zoom_subscription],
                 restoration: DockRestoreState::Restoring { pending: None },
                 zoom_layer_open: false,
@@ -1343,7 +1341,7 @@ impl Render for Dock {
                 .id("dock-panel")
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
-                .focus_follows_mouse(self.focus_follows_mouse, cx)
+                .focus_follows_mouse(WorkspaceSettings::get_global(cx).focus_follows_mouse, cx)
                 .flex()
                 .bg(cx.theme().colors().panel_background)
                 .border_color(cx.theme().colors().border)
