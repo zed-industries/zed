@@ -143,26 +143,45 @@ pub fn display_list_to_svg(display_list: &DisplayList, font_size: f32) -> MathSv
             } => {
                 let px = *x as f32 * em + PAD;
                 let py = *y as f32 * em + PAD;
-                let d = path_commands_to_svg_d(commands, em, px, py);
-                let fill_attr = color_to_svg(color);
-                let fill_rule = if *is_fill { "evenodd" } else { "nonzero" };
-                let stroke_attr = if *is_fill {
-                    String::new()
+                let color_str = color_to_svg(color);
+
+                if *is_fill {
+                    // KaTeX delimiters (e.g. matrix brackets, braces, parentheses) and stretchy
+                    // symbols are assembled from multiple overlapping or adjacent path components.
+                    // If combined into a single <path> with evenodd fill rule, overlapping segments
+                    // (such as the vertical extension bar overlapping bracket caps) cancel out to
+                    // an even winding count (hole), making delimiter stems disappear.
+                    // If combined with nonzero winding, opposite-direction segments can also cancel out.
+                    // Emitting each subpath (delimited by MoveTo) as a separate <path> ensures every
+                    // component is filled solidly without mutual cancellation.
+                    let mut start = 0;
+                    for i in 1..commands.len() {
+                        if matches!(commands[i], PathCommand::MoveTo { .. }) {
+                            let d = path_commands_to_svg_d(&commands[start..i], em, px, py);
+                            if !d.is_empty() {
+                                svg.push_str(&format!(
+                                    "<path d=\"{}\" fill=\"{}\" />",
+                                    d, color_str
+                                ));
+                            }
+                            start = i;
+                        }
+                    }
+                    if start < commands.len() {
+                        let d = path_commands_to_svg_d(&commands[start..], em, px, py);
+                        if !d.is_empty() {
+                            svg.push_str(&format!("<path d=\"{}\" fill=\"{}\" />", d, color_str));
+                        }
+                    }
                 } else {
-                    format!(
-                        " stroke=\"{}\" stroke-width=\"{:.2}\" fill=\"none\"",
-                        fill_attr, 1.5
-                    )
-                };
-                let fill_attr_final = if *is_fill {
-                    format!(" fill=\"{}\"", fill_attr)
-                } else {
-                    String::new()
-                };
-                svg.push_str(&format!(
-                    "<path d=\"{}\"{} fill-rule=\"{}\"{} />",
-                    d, fill_attr_final, fill_rule, stroke_attr
-                ));
+                    let d = path_commands_to_svg_d(commands, em, px, py);
+                    if !d.is_empty() {
+                        svg.push_str(&format!(
+                            "<path d=\"{}\" stroke=\"{}\" stroke-width=\"{:.2}\" fill=\"none\" />",
+                            d, color_str, 1.5
+                        ));
+                    }
+                }
             }
         }
     }
@@ -372,6 +391,40 @@ mod tests {
         assert!(svg_str.starts_with("<svg"), "must start with svg tag");
         assert!(svg_str.ends_with("</svg>"), "must end with svg closing tag");
         assert!(svg_str.contains("<path"), "must contain glyph paths");
+    }
+
+    #[test]
+    fn test_matrix_delimiters_render_without_fill_rule_cancellation() {
+        // bmatrix uses tall bracket delimiters constructed with multiple subpath segments
+        let latex = r"\begin{bmatrix} f_x & s & c_x \\ 0 & f_y & c_y \\ 0 & 0 & 1 \end{bmatrix}";
+        let nodes = ratex_parser::parse(latex).unwrap();
+        let layout = ratex_layout::layout(&nodes, &Default::default());
+        let list = ratex_layout::to_display_list(&layout);
+        let output = display_list_to_svg(&list, 16.0);
+        let svg_str = String::from_utf8_lossy(&output.svg_bytes);
+        assert!(svg_str.starts_with("<svg"));
+        assert!(svg_str.ends_with("</svg>"));
+        // Must NOT use evenodd which causes overlapping bracket stem segments to cancel out and disappear
+        assert!(
+            !svg_str.contains("evenodd"),
+            "delimiters must not use evenodd fill-rule"
+        );
+        // Each delimiter segment must be emitted as a distinct filled path
+        assert!(svg_str.matches("<path d=").count() >= 4);
+
+        // Also test pmatrix and Bmatrix
+        for matrix_latex in [
+            r"\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}",
+            r"\begin{Bmatrix} a & b \\ c & d \end{Bmatrix}",
+        ] {
+            let nodes = ratex_parser::parse(matrix_latex).unwrap();
+            let layout = ratex_layout::layout(&nodes, &Default::default());
+            let list = ratex_layout::to_display_list(&layout);
+            let output = display_list_to_svg(&list, 16.0);
+            let svg_str = String::from_utf8_lossy(&output.svg_bytes);
+            assert!(svg_str.starts_with("<svg"));
+            assert!(!svg_str.contains("evenodd"));
+        }
     }
 }
 
