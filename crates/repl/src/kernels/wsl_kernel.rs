@@ -13,8 +13,8 @@ use jupyter_protocol::{
     ExecutionState, JupyterMessage, KernelInfoReply,
     connection_info::{ConnectionInfo, Transport},
 };
+use jupyter_zmq_client::dirs;
 use project::Fs;
-use runtimelib::dirs;
 use smol::net::TcpListener;
 use std::{
     fmt::Debug,
@@ -322,7 +322,7 @@ impl WslRunningKernel {
                 Err(_) => {}
             }
 
-            let output_socket = runtimelib::create_client_iopub_connection(
+            let output_socket = jupyter_zmq_client::create_client_iopub_connection(
                 &client_connection_info,
                 "",
                 &session_id,
@@ -330,8 +330,8 @@ impl WslRunningKernel {
             .await
             .context("Failed to create iopub connection. Is `ipykernel` installed in the WSL environment? Try running `pip install ipykernel` inside your WSL distribution.")?;
 
-            let peer_identity = runtimelib::peer_identity_for_session(&session_id)?;
-            let shell_socket = runtimelib::create_client_shell_connection_with_identity(
+            let peer_identity = jupyter_zmq_client::peer_identity_for_session(&session_id)?;
+            let shell_socket = jupyter_zmq_client::create_client_shell_connection_with_identity(
                 &client_connection_info,
                 &session_id,
                 peer_identity.clone(),
@@ -339,10 +339,10 @@ impl WslRunningKernel {
             .await?;
 
             let control_socket =
-                runtimelib::create_client_control_connection(&client_connection_info, &session_id)
+                jupyter_zmq_client::create_client_control_connection(&client_connection_info, &session_id)
                     .await?;
 
-            let stdin_socket = runtimelib::create_client_stdin_connection_with_identity(
+            let stdin_socket = jupyter_zmq_client::create_client_stdin_connection_with_identity(
                 &client_connection_info,
                 &session_id,
                 peer_identity,
