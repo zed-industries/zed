@@ -757,7 +757,7 @@ impl<T: 'static> Entity<T> {
         Event: Send + Clone + 'static,
         T: EventEmitter<Event>,
     {
-        let (tx, mut rx) = oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         let mut tx = Some(tx);
         let subscription = self.update(cx, |_, cx| {
             cx.subscribe(self, move |_, _, event, _| {

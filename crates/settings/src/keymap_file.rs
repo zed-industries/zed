@@ -1493,7 +1493,7 @@ impl ActionSequence {
                             Ok((action, _)) => Ok(action),
                             Err(err) => {
                                 return Err(ActionBuildError::BuildError {
-                                    name: Self::name_for_type().to_string(),
+                                    name: Self::name_for_type().into(),
                                     error: anyhow::anyhow!(
                                         "error at sequence index {index}: {err}"
                                     ),
@@ -1510,7 +1510,7 @@ impl ActionSequence {
 
     fn expected_array_error() -> ActionBuildError {
         ActionBuildError::BuildError {
-            name: Self::name_for_type().to_string(),
+            name: Self::name_for_type().into(),
             error: anyhow::anyhow!("expected array of actions"),
         }
     }

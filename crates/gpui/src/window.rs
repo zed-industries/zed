@@ -4,6 +4,8 @@ use crate::DebugFrameOverlayMode;
 use crate::Inspector;
 #[cfg(feature = "profiler")]
 use crate::profiler;
+use crate::subscription::SingleSubscriberSet;
+use crate::taffy::TaffyLayoutEngine;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
@@ -17,12 +19,12 @@ use crate::{
     PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
-    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    StrikethroughStyle, Style, SubpixelSprite, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, Task, TextInputConfiguration, TextInputStateChange,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTextSystem,
+    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -830,7 +832,7 @@ impl HitboxId {
         window.mouse_hit_test.ids.contains(&self)
     }
 
-    fn next(mut self) -> HitboxId {
+    fn next(self) -> HitboxId {
         HitboxId(self.0.wrapping_add(1))
     }
 }
@@ -1227,7 +1229,7 @@ pub struct Window {
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     pub(crate) display_id: Option<DisplayId>,
-    pub(crate) display_observers: SubscriberSet<(), AnyObserver>,
+    pub(crate) display_observers: SingleSubscriberSet<AnyObserver>,
     is_resizable: bool,
     is_minimizable: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -1262,8 +1264,8 @@ pub struct Window {
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
-    focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
-    pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
+    focus_listeners: SingleSubscriberSet<AnyWindowFocusListener>,
+    pub(crate) focus_lost_listeners: SingleSubscriberSet<AnyObserver>,
     focus_lost_path: SmallVec<[FocusId; 8]>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
@@ -1271,14 +1273,14 @@ pub struct Window {
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
-    pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
+    pub(crate) bounds_observers: SingleSubscriberSet<AnyObserver>,
     appearance: WindowAppearance,
-    pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
-    pub(crate) button_layout_observers: SubscriberSet<(), AnyObserver>,
+    pub(crate) appearance_observers: SingleSubscriberSet<AnyObserver>,
+    pub(crate) button_layout_observers: SingleSubscriberSet<AnyObserver>,
     active: Rc<Cell<bool>>,
     visibility: WindowVisibility,
     pub(crate) visibility_observers:
-        SubscriberSet<(), Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
+        SingleSubscriberSet<Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
@@ -1292,7 +1294,7 @@ pub struct Window {
     long_press_timer: Option<Task<()>>,
     long_press_capture: Option<EntityId>,
     pub(crate) refreshing: bool,
-    pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
+    pub(crate) activation_observers: SingleSubscriberSet<AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     /// Incremented every time focus moves. Used to invalidate a
@@ -1300,7 +1302,7 @@ pub struct Window {
     pub(crate) focus_generation: u64,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
-    pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
+    pub(crate) pending_input_observers: SingleSubscriberSet<AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
     pub(crate) client_inset: Option<Pixels>,
     /// The hitbox that has captured the pointer, if any.
@@ -2029,7 +2031,7 @@ impl Window {
                         window
                             .activation_observers
                             .clone()
-                            .retain(&(), |callback| callback(window, cx));
+                            .retain(|callback| callback(window, cx));
 
                         window.bounds_changed(cx);
                         window.refresh();
@@ -2149,7 +2151,7 @@ impl Window {
             removed: false,
             platform_window,
             display_id,
-            display_observers: SubscriberSet::new(),
+            display_observers: SingleSubscriberSet::new(),
             is_resizable,
             is_minimizable,
             sprite_atlas,
@@ -2176,8 +2178,8 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
-            focus_listeners: SubscriberSet::new(),
-            focus_lost_listeners: SubscriberSet::new(),
+            focus_listeners: SingleSubscriberSet::new(),
+            focus_lost_listeners: SingleSubscriberSet::new(),
             focus_lost_path: SmallVec::new(),
             default_prevented: true,
             mouse_position,
@@ -2185,13 +2187,13 @@ impl Window {
             modifiers,
             capslock,
             scale_factor,
-            bounds_observers: SubscriberSet::new(),
+            bounds_observers: SingleSubscriberSet::new(),
             appearance,
-            appearance_observers: SubscriberSet::new(),
-            button_layout_observers: SubscriberSet::new(),
+            appearance_observers: SingleSubscriberSet::new(),
+            button_layout_observers: SingleSubscriberSet::new(),
             active,
             visibility,
-            visibility_observers: SubscriberSet::new(),
+            visibility_observers: SingleSubscriberSet::new(),
             hovered,
             needs_present,
             input_rate_tracker,
@@ -2207,13 +2209,13 @@ impl Window {
             long_press_timer: None,
             long_press_capture: None,
             refreshing: false,
-            activation_observers: SubscriberSet::new(),
+            activation_observers: SingleSubscriberSet::new(),
             focus: None,
             focus_enabled: true,
             focus_generation: 0,
             pending_input: None,
             pending_modifier: ModifierState::default(),
-            pending_input_observers: SubscriberSet::new(),
+            pending_input_observers: SingleSubscriberSet::new(),
             prompt: None,
             client_inset: None,
             image_cache_stack: Vec::new(),
@@ -2234,7 +2236,7 @@ impl Window {
         &self,
         value: AnyWindowFocusListener,
     ) -> (Subscription, impl FnOnce() + use<>) {
-        self.focus_listeners.insert((), value)
+        self.focus_listeners.insert_pending(value)
     }
 }
 
@@ -2293,7 +2295,7 @@ impl Window {
             profiler::journal::record_window_visibility(self.handle.window_id(), visibility);
             self.visibility_observers
                 .clone()
-                .retain(&(), |callback| callback(visibility, self, cx));
+                .retain(|callback| callback(visibility, self, cx));
         }
         #[cfg(feature = "profiler")]
         if self.invalidator.is_dirty() || self.needs_present.get() {
@@ -2321,15 +2323,11 @@ impl Window {
         &self,
         mut callback: impl FnMut(WindowVisibility, &mut Window, &mut App) + 'static,
     ) -> Subscription {
-        let (subscription, activate) = self.visibility_observers.insert(
-            (),
-            Box::new(move |visibility, window, cx| {
+        self.visibility_observers
+            .insert(Box::new(move |visibility, window, cx| {
                 callback(visibility, window, cx);
                 true
-            }),
-        );
-        activate();
-        subscription
+            }))
     }
 
     /// Registers a callback to be invoked when the window appearance changes.
@@ -2337,15 +2335,11 @@ impl Window {
         &self,
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
-        let (subscription, activate) = self.appearance_observers.insert(
-            (),
-            Box::new(move |window, cx| {
+        self.appearance_observers
+            .insert(Box::new(move |window, cx| {
                 callback(window, cx);
                 true
-            }),
-        );
-        activate();
-        subscription
+            }))
     }
 
     /// Registers a callback to be invoked when the window button layout changes.
@@ -2353,15 +2347,11 @@ impl Window {
         &self,
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
-        let (subscription, activate) = self.button_layout_observers.insert(
-            (),
-            Box::new(move |window, cx| {
+        self.button_layout_observers
+            .insert(Box::new(move |window, cx| {
                 callback(window, cx);
                 true
-            }),
-        );
-        activate();
-        subscription
+            }))
     }
 
     /// Replaces the root entity of the window with a new one.
@@ -2587,7 +2577,7 @@ impl Window {
         context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
-        cx.keystroke_observers.clone().retain(&(), move |callback| {
+        cx.keystroke_observers.clone().retain(move |callback| {
             (callback)(
                 &KeystrokeEvent {
                     keystroke: keystroke.clone(),
@@ -2608,20 +2598,18 @@ impl Window {
         context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
-        cx.keystroke_interceptors
-            .clone()
-            .retain(&(), move |callback| {
-                (callback)(
-                    &KeystrokeEvent {
-                        keystroke: keystroke.clone(),
-                        input_preference,
-                        action: None,
-                        context_stack: context_stack.clone(),
-                    },
-                    self,
-                    cx,
-                )
-            });
+        cx.keystroke_interceptors.clone().retain(move |callback| {
+            (callback)(
+                &KeystrokeEvent {
+                    keystroke: keystroke.clone(),
+                    input_preference,
+                    action: None,
+                    context_stack: context_stack.clone(),
+                },
+                self,
+                cx,
+            )
+        });
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -2704,22 +2692,20 @@ impl Window {
         &self,
         entity: &Entity<T>,
         cx: &mut App,
-        mut on_release: impl FnOnce(&mut T, &mut Window, &mut App) + 'static,
+        on_release: impl FnOnce(&mut T, &mut Window, &mut App) + 'static,
     ) -> Subscription
     where
         T: 'static,
     {
         let entity_id = entity.entity_id();
         let window_handle = self.handle;
-        let (subscription, activate) = cx.release_listeners.insert(
+        cx.release_listeners.insert(
             entity_id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
                 let _ = window_handle.update(cx, |_, window, cx| on_release(entity, window, cx));
             }),
-        );
-        activate();
-        subscription
+        )
     }
 
     /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
@@ -2819,7 +2805,7 @@ impl Window {
 
         self.bounds_observers
             .clone()
-            .retain(&(), |callback| callback(self, cx));
+            .retain(|callback| callback(self, cx));
     }
 
     fn display_changed(handle: AnyWindowHandle, cx: &mut App) {
@@ -2851,7 +2837,7 @@ impl Window {
     pub(crate) fn notify_display_observers(&mut self, cx: &mut App) {
         self.display_observers
             .clone()
-            .retain(&(), |callback| callback(self, cx));
+            .retain(|callback| callback(self, cx));
     }
 
     /// The time between refreshes of the display the window is on, as of the
@@ -2870,15 +2856,10 @@ impl Window {
         &self,
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
-        let (subscription, activate) = self.display_observers.insert(
-            (),
-            Box::new(move |window, cx| {
-                callback(window, cx);
-                true
-            }),
-        );
-        activate();
-        subscription
+        self.display_observers.insert(Box::new(move |window, cx| {
+            callback(window, cx);
+            true
+        }))
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
@@ -2937,13 +2918,13 @@ impl Window {
 
         self.appearance_observers
             .clone()
-            .retain(&(), |callback| callback(self, cx));
+            .retain(|callback| callback(self, cx));
     }
 
     pub(crate) fn button_layout_changed(&mut self, cx: &mut App) {
         self.button_layout_observers
             .clone()
-            .retain(&(), |callback| callback(self, cx));
+            .retain(|callback| callback(self, cx));
     }
 
     /// Returns the appearance of the current window.
@@ -3551,7 +3532,7 @@ impl Window {
                 self.focus_lost_path = previous_focus_path.clone();
                 self.focus_lost_listeners
                     .clone()
-                    .retain(&(), |listener| listener(self, cx));
+                    .retain(|listener| listener(self, cx));
                 self.focus_lost_path = SmallVec::new();
                 // The focus-lost fallback (e.g. a workspace refocusing itself) may target
                 // an element that isn't part of the element tree, in which case scheduling
@@ -3574,7 +3555,7 @@ impl Window {
             };
             self.focus_listeners
                 .clone()
-                .retain(&(), |listener| listener(&event, self, cx));
+                .retain(|listener| listener(&event, self, cx));
         }
 
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -3976,7 +3957,7 @@ impl Window {
         let traversal_order = self.deferred_draw_traversal_order();
         let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
         for deferred_draw_ix in traversal_order {
-            let mut deferred_draw = &mut deferred_draws[deferred_draw_ix];
+            let deferred_draw = &mut deferred_draws[deferred_draw_ix];
             self.element_id_stack
                 .clone_from(&deferred_draw.element_id_stack);
             self.next_frame
@@ -5012,7 +4993,7 @@ impl Window {
         &mut self,
         bounds: Bounds<Pixels>,
         path: SharedString,
-        mut data: Option<&[u8]>,
+        data: Option<&[u8]>,
         transformation: TransformationMatrix,
         color: Hsla,
         cx: &App,
@@ -5324,7 +5305,7 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
 
         let content_mask = self.content_mask();
-        let mut id = self.next_hitbox_id;
+        let id = self.next_hitbox_id;
         self.next_hitbox_id = self.next_hitbox_id.next();
         let hitbox = Hitbox {
             id,
@@ -6295,7 +6276,7 @@ impl Window {
     pub(crate) fn pending_input_changed(&mut self, cx: &mut App) {
         self.pending_input_observers
             .clone()
-            .retain(&(), |callback| callback(self, cx));
+            .retain(|callback| callback(self, cx));
     }
 
     fn defer_pending_input_changed(&self, cx: &mut App) {
@@ -6663,7 +6644,7 @@ impl Window {
         f: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Subscription {
         let window_handle = self.handle;
-        let (subscription, activate) = cx.global_observers.insert(
+        let (subscription, activate) = cx.global_observers.insert_pending(
             TypeId::of::<G>(),
             Box::new(move |cx| {
                 window_handle
@@ -7233,7 +7214,7 @@ impl Window {
     }
 
     #[cfg(any(feature = "inspector", debug_assertions))]
-    fn paint_inspector(&mut self, mut inspector_element: Option<AnyElement>, cx: &mut App) {
+    fn paint_inspector(&mut self, inspector_element: Option<AnyElement>, cx: &mut App) {
         if let Some(mut inspector_element) = inspector_element {
             inspector_element.paint(self, cx);
         };

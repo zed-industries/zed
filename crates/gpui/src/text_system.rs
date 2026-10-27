@@ -25,12 +25,11 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{SmallVec, smallvec};
 use std::{
     borrow::Cow,
-    cell::RefCell,
+    cell::Cell,
     cmp,
     collections::VecDeque,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
-    mem,
     ops::{Deref, DerefMut, Range},
     sync::{
         Arc,
@@ -634,7 +633,7 @@ impl TextSystem {
 #[derive(Deref)]
 pub struct WindowTextSystem {
     line_layout_cache: LineLayoutCache,
-    font_runs_buffer: RefCell<Vec<FontRun>>,
+    font_runs_buffer: Cell<Vec<FontRun>>,
     #[deref]
     text_system: Arc<TextSystem>,
 }
@@ -647,7 +646,7 @@ impl WindowTextSystem {
                 text_system.platform_text_system.clone(),
                 text_system.font_generation.clone(),
             ),
-            font_runs_buffer: RefCell::default(),
+            font_runs_buffer: Cell::default(),
             text_system,
         }
     }
@@ -723,10 +722,10 @@ impl WindowTextSystem {
         line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
-        let mut font_runs = mem::take(&mut *self.font_runs_buffer.borrow_mut());
+        let mut font_runs = self.font_runs_buffer.take();
 
         let mut lines = SmallVec::new();
-        let mut max_wrap_lines = line_clamp;
+        let max_wrap_lines = line_clamp;
         let mut wrapped_lines = 0;
 
         let mut process_line = |line_text: SharedString, line_start, line_end| {
@@ -837,7 +836,7 @@ impl WindowTextSystem {
             process_line(text, 0, end);
         }
 
-        *self.font_runs_buffer.borrow_mut() = font_runs;
+        self.font_runs_buffer.set(font_runs);
 
         Ok(lines)
     }
@@ -858,7 +857,7 @@ impl WindowTextSystem {
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
         let mut last_run = None::<&TextRun>;
-        let mut font_runs = mem::take(&mut *self.font_runs_buffer.borrow_mut());
+        let mut font_runs = self.font_runs_buffer.take();
         font_runs.clear();
 
         for run in runs.iter() {
@@ -896,7 +895,7 @@ impl WindowTextSystem {
             force_width,
         );
 
-        *self.font_runs_buffer.borrow_mut() = font_runs;
+        self.font_runs_buffer.set(font_runs);
 
         layout
     }
