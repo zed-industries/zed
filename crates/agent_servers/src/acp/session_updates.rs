@@ -93,10 +93,18 @@ impl PendingSessionUpdates {
         let mut notifications = Vec::new();
         // Session IDs correlate concurrent creations. The wire carries no request ID
         // on these notifications, so provisional ID reuse by the agent remains ambiguous.
+        // The new session's subagents, and theirs, are announced before their own traffic,
+        // so walking in order also collects that traffic, in the order it arrived.
+        let mut sessions = vec![session_id.clone()];
         for update in std::mem::take(&mut self.updates) {
-            if &update.notification.session_id == session_id
-                && update.generation >= creation.generation
+            if update.generation >= creation.generation
+                && sessions.contains(&update.notification.session_id)
             {
+                if let InboundSessionUpdate::Subagent(subagent) = &update.notification.update
+                    && !sessions.contains(&subagent.session_id)
+                {
+                    sessions.push(subagent.session_id.clone());
+                }
                 notifications.push(update.notification);
             } else {
                 self.updates.push_back(update);
