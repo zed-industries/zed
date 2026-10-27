@@ -17,7 +17,9 @@ use std::{
 #[cfg(windows)]
 use tendril::fmt::{Format, WTF8};
 
-use crate::path_component::{Component, Components, Prefix, PrefixExt, iter_after};
+use crate::path_component::{
+    Component, Components, Prefix, PrefixExt, iter_after, rsplit_file_at_dot,
+};
 use crate::rel_path::{RelPath, StripPrefixError};
 
 pub mod abs_path;
@@ -249,6 +251,18 @@ impl PathStyle {
         )
         .map(|c| c.as_path())
         .ok_or(StripPrefixError)
+    }
+
+    pub fn file_stem<'a>(&self, path: &'a Path) -> Option<&'a OsStr> {
+        self.file_name(path)
+            .map(rsplit_file_at_dot)
+            .and_then(|(before, after)| before.or(after))
+    }
+
+    pub fn extension<'a>(&self, path: &'a Path) -> Option<&'a OsStr> {
+        self.file_name(path)
+            .map(rsplit_file_at_dot)
+            .and_then(|(before, after)| before.and(after))
     }
 }
 
