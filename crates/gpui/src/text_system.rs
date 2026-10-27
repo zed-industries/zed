@@ -520,7 +520,7 @@ impl TextSystem {
             .or_default()
             .pop()
             .unwrap_or_default();
-        let wrapper = LineWrapper::with_char_widths(font_id, font_size, self.clone(), char_widths);
+        let wrapper = LineWrapper::new(font_id, font_size, self.clone(), char_widths);
 
         LineWrapperHandle {
             wrapper: Some(wrapper),

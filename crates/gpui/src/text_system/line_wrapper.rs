@@ -52,7 +52,7 @@ impl LineWrapper {
     /// The maximum indent that can be applied to a line.
     pub const MAX_INDENT: u32 = 256;
 
-    pub(crate) fn with_char_widths(
+    pub(crate) fn new(
         font_id: FontId,
         font_size: Pixels,
         text_system: Arc<TextSystem>,
@@ -768,7 +768,7 @@ mod tests {
         let dispatcher = TestDispatcher::new(0);
         let cx = TestAppContext::build(dispatcher, None);
         let id = cx.text_system().resolve_font(&font(".ZedMono"));
-        LineWrapper::with_char_widths(
+        LineWrapper::new(
             id,
             px(16.),
             cx.text_system().clone(),
