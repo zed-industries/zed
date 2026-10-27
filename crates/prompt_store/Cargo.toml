@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/prompt_store.rs"
+doctest = false
 
 [dependencies]
 agent_skills.workspace = true

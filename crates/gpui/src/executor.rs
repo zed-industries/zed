@@ -281,6 +281,15 @@ impl BackgroundExecutor {
         self.dispatcher.is_main_thread()
     }
 
+    /// Whether this executor runs on the deterministic test scheduler.
+    ///
+    /// Available in every build. Use it, rather than `cfg(feature =
+    /// "test-support")`, for behavior that must differ under tests, so that
+    /// compiling `test-support` into an application doesn't change it.
+    pub fn is_test(&self) -> bool {
+        self.inner.is_test()
+    }
+
     #[doc(hidden)]
     pub fn dispatcher(&self) -> &Arc<dyn PlatformDispatcher> {
         &self.dispatcher

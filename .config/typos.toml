@@ -11,8 +11,8 @@ extend-exclude = [
     ".mailmap",
 
     # File suffixes aren't typos.
+    "crates/extension_suggest/src/extension_suggest.rs",
     "crates/theme/src/icon_theme.rs",
-    "crates/extensions_ui/src/extension_suggest.rs",
 
     # Some mock data is flagged as typos.
     "crates/assistant_tools/src/web_search_tool.rs",
@@ -112,9 +112,12 @@ extend-ignore-re = [
     "GHIzJ",
     # Intentionally non-matching query in project search tests
     "NOTHINGmATCHEStHIS",
+    # Ordinal suffix for spelled-out dates in script/github-pr-cleanup.py
+    '2: "nd"',
 ]
 check-filename = true
 
 [default.extend-words]
+flate = "flate"
 scap = "scap"
 writeable = "writeable"

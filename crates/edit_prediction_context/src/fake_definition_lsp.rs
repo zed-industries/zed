@@ -34,6 +34,7 @@ pub fn register_fake_definition_server(
                 arguments: Vec::new(),
                 env: None,
             },
+            opt_in_languages: Default::default(),
             capabilities: lsp::ServerCapabilities {
                 definition_provider: Some(lsp::OneOf::Left(true)),
                 type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
@@ -441,7 +442,7 @@ fn extract_declarations_from_tree(
         let mut name_range: Option<Range<usize>> = None;
         let mut has_item_range = false;
 
-        for capture in query_match.captures {
+        for capture in query_match.captures() {
             let range = capture.node.byte_range();
             if capture.index == outline_config.name_capture_ix {
                 name_range = Some(range);

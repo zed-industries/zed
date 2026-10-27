@@ -143,6 +143,13 @@ These examples are useful when working on GPUI itself, but they may not be the
 best starting point for new applications:
 
 - `active_state_bug` is a focused active-state reproduction.
+- `toggle_headless` starts without a display and preserves its app and todo
+  entities while attaching to or detaching from Wayland or X11. Run it on Linux
+  with `cargo run -p gpui --example toggle_headless`; its stdin commands are
+  `ls`, `create [message]`, `open`, `close`, and `quit`. `open` attaches to the
+  display server in the process environment and opens the window; while headless,
+  `open DISPLAY=:1` (or `WAYLAND_DISPLAY=… XDG_RUNTIME_DIR=…`) targets another one.
+  `close` closes the window and returns to headless mode.
 - `layer_shell` demonstrates Linux layer-shell windows.
 - `list_example` demonstrates bottom-aligned list state and scrollbar behavior.
 - `ownership_post` supports the ownership and data-flow documentation.

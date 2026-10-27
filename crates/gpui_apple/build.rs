@@ -1,12 +1,14 @@
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 
 fn main() {
-    #[cfg(target_os = "macos")]
-    macos_build::run();
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    apple_build::run();
 }
 
-#[cfg(target_os = "macos")]
-mod macos_build {
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod apple_build {
+    #[cfg(not(feature = "runtime_shaders"))]
+    use std::ffi::OsString;
     use std::{
         env,
         path::{Path, PathBuf},
@@ -125,26 +127,59 @@ mod macos_build {
     #[cfg(not(feature = "runtime_shaders"))]
     fn compile_metal_shaders(header_path: &Path) {
         use std::process::{self, Command};
+
+        println!("cargo:rerun-if-env-changed=SDKROOT");
+        println!("cargo:rerun-if-env-changed=DEVELOPER_DIR");
+
+        // Build scripts run on the host, so the target platform must come from
+        // Cargo's environment rather than `cfg!`. The target environment, not the
+        // target name, identifies simulators: `x86_64-apple-ios` has no `-sim` suffix.
+        let target_os = env::var("CARGO_CFG_TARGET_OS")
+            .expect("Cargo sets CARGO_CFG_TARGET_OS for build scripts");
+        let target_env = env::var("CARGO_CFG_TARGET_ENV")
+            .expect("Cargo sets CARGO_CFG_TARGET_ENV for build scripts");
+        let (sdk, minimum_version_argument) = match (target_os.as_str(), target_env.as_str()) {
+            ("macos", _) => ("macosx", "-mmacosx-version-min=12.0"),
+            ("ios", "sim") => ("iphonesimulator", "-mios-simulator-version-min=15.0"),
+            ("ios", "") => ("iphoneos", "-mios-version-min=15.0"),
+            _ => {
+                println!(
+                    "cargo::error=unsupported Metal shader target: target_os={target_os}, target_env={target_env}"
+                );
+                process::exit(1);
+            }
+        };
+
+        let sdk = if target_os == "macos" {
+            env::var_os("SDKROOT").unwrap_or_else(|| OsString::from(sdk))
+        } else {
+            OsString::from(sdk)
+        };
+
         let shader_path = "./src/shaders.metal";
-        let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");
-        let metallib_output_path =
-            PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metallib");
+        let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+        let air_output_path = out_dir.join("shaders.air");
+        let metallib_output_path = out_dir.join("shaders.metallib");
         println!("cargo:rerun-if-changed={}", shader_path);
 
         // The metal compiler records the resolved absolute path of its input
         // unconditionally. Compile a copy staged in OUT_DIR so the recorded
         // location is the build's canonical output directory, never the
         // checkout (corgi rejects artifacts that embed the build path).
-        let staged_shader_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metal");
+        let staged_shader_path = out_dir.join("shaders.metal");
         std::fs::copy(shader_path, &staged_shader_path).unwrap();
 
+        // When targeting macOS 12+, both `metal` and `metallib` also record
+        // their working directory in the metallib. Run them from OUT_DIR so
+        // that path isn't the checkout either.
         let output = Command::new("xcrun")
+            .current_dir(&out_dir)
+            .arg("-sdk")
+            .arg(&sdk)
             .args([
-                "-sdk",
-                "macosx",
                 "metal",
                 "-gline-tables-only",
-                "-mmacosx-version-min=10.15.7",
+                minimum_version_argument,
                 "-MO",
                 "-c",
             ])
@@ -163,7 +198,10 @@ mod macos_build {
         }
 
         let output = Command::new("xcrun")
-            .args(["-sdk", "macosx", "metallib"])
+            .current_dir(&out_dir)
+            .arg("-sdk")
+            .arg(&sdk)
+            .arg("metallib")
             .arg(&air_output_path)
             .arg("-o")
             .arg(metallib_output_path)
@@ -178,10 +216,7 @@ mod macos_build {
             process::exit(1);
         }
 
-        // The .air intermediate records the compiler's working directory in
-        // its debug info; the metallib built from it does not. Nothing reads
-        // the .air after this point, so drop it rather than leave a
-        // checkout-path-bearing file in OUT_DIR.
+        // Nothing reads the .air intermediate after this point.
         std::fs::remove_file(&air_output_path).unwrap();
     }
 }
