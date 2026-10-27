@@ -27,6 +27,11 @@ wayland = ["gpui_linux/wayland"]
 x11 = ["gpui_linux/x11"]
 
 [[bench]]
+name = "atlas_upload"
+harness = false
+required-features = ["bench-support"]
+
+[[bench]]
 name = "focus_cleanup"
 path = "../gpui/benches/focus_cleanup.rs"
 harness = false
@@ -60,7 +65,7 @@ gpui_ios.workspace = true
 gpui_windows.workspace = true
 gpui = { workspace = true, features = ["windows-manifest"] }
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+[target.'cfg(all(any(target_os = "linux", target_os = "freebsd"), not(target_env = "ohos")))'.dependencies]
 gpui_linux.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]

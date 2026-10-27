@@ -5,7 +5,8 @@
 
 use anyhow::Result;
 use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, px, size};
-use objc2::{MainThreadMarker, rc::Retained};
+use gpui_apple::main_thread_marker;
+use objc2::rc::Retained;
 use objc2_core_foundation::CGRect;
 use objc2_ui_kit::UIScreen;
 use std::time::Duration;
@@ -30,7 +31,7 @@ impl IosDisplay {
     #[allow(deprecated)] // Platform display queries can precede scene creation.
     pub fn main() -> Self {
         let screen =
-            UIScreen::mainScreen(MainThreadMarker::new().expect("UIKit requires the main thread"));
+            UIScreen::mainScreen(main_thread_marker().expect("UIKit requires the main thread"));
         Self { screen }
     }
 
@@ -38,7 +39,7 @@ impl IosDisplay {
     #[allow(deprecated)] // Preserve external screens even before they have a GPUI scene.
     pub fn all() -> impl Iterator<Item = Self> {
         let screens =
-            UIScreen::screens(MainThreadMarker::new().expect("UIKit requires the main thread"));
+            UIScreen::screens(main_thread_marker().expect("UIKit requires the main thread"));
         screens.to_vec().into_iter().map(|screen| Self { screen })
     }
 
