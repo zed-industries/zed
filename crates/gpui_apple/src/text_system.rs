@@ -545,12 +545,12 @@ impl AppleTextSystemState {
 
         {
             let mut text = text;
-            // CoreText merges adjacent runs whose fonts are equal, so a run whose font equals the
-            // previous visible run's is set a hair larger to keep ligatures from forming across
-            // them. Only those runs: SF tracks by its exact point size, and a nudged size draws
-            // wider or narrower than AppKit sets the same text. Distinct font ids can resolve to
-            // equal fonts, so compare the fonts themselves.
-            let mut previous_font: Option<CTFont> = None;
+            // CoreText merges adjacent runs that end up in equal fonts, including runs of
+            // different fonts that fall back to the same one, so every other run that inserts
+            // text is set a hair larger to keep ligatures from forming across them. The first
+            // run keeps its exact size: SF tracks by its exact point size, and a nudged size
+            // draws wider or narrower than AppKit sets the same text.
+            let mut break_ligature = false;
             for run in font_runs {
                 let text_run;
                 (text_run, text) = text.split_at(run.len);
@@ -569,17 +569,20 @@ impl AppleTextSystemState {
                 max_ascent = max_ascent.max(font_metrics.ascent * font_scale);
                 max_descent = max_descent.max(-font_metrics.descent * font_scale);
 
-                let mut native_font = font.native_font().clone_with_font_size(font_size.into());
-                if previous_font.as_ref() == Some(&native_font) {
-                    native_font = font
-                        .native_font()
-                        .clone_with_font_size(f32::from(font_size).next_up().into());
-                }
+                let font_size = if break_ligature {
+                    px(f32::from(font_size).next_up())
+                } else {
+                    font_size
+                };
                 unsafe {
-                    string.set_attribute(cf_range, kCTFontAttributeName, &native_font);
+                    string.set_attribute(
+                        cf_range,
+                        kCTFontAttributeName,
+                        &font.native_font().clone_with_font_size(font_size.into()),
+                    );
                 }
                 if length > 0 {
-                    previous_font = Some(native_font);
+                    break_ligature = !break_ligature;
                 }
             }
         }
@@ -861,7 +864,7 @@ mod tests {
     }
 
     #[test]
-    fn test_layout_line_breaks_ligatures_between_runs_of_one_font() {
+    fn test_layout_line_breaks_ligatures_between_runs() {
         let fonts = AppleTextSystem::new();
         fonts
             .add_fonts(vec![
@@ -921,6 +924,10 @@ mod tests {
             glyphs("fi", &[(times, 1), (helvetica, 0), (system, 0), (times, 1)]),
             split
         );
+
+        // Runs of different fonts that both fall back to Geeza Pro for Arabic.
+        assert_eq!(glyphs("لا", &[(helvetica, 4)]).len(), 1, "لا as one run");
+        assert_eq!(glyphs("لا", &[(helvetica, 2), (times, 2)]).len(), 2);
     }
 
     #[test]
