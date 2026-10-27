@@ -999,8 +999,8 @@ web-sys = "0.3"
 web-time = "1.1.0"
 webpki-roots = "1.0.10"
 webrtc-sys = "0.3.23"
-# 30.0.1 lacks the Vulkan surface-drop panic fix: https://github.com/gfx-rs/wgpu/pull/10230.
-wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "3b3506ea31154edc04de64debda0e780cba2639c", default-features = false }
+# 30.0.1 lacks the Vulkan surface-drop fix (wgpu#10230) and WebGL resize fix (wgpu#10348).
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", default-features = false }
 which = "8"
 windows-core = "0.62"
 windows-registry = "0.6.0"
