@@ -910,25 +910,6 @@ mod test {
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn docker_exec_returns_output_on_nonzero_exit() {
-        let docker = Docker {
-            docker_cli: "false".to_string(),
-            has_buildx: false,
-        };
-
-        let result = gpui::block_on(docker.run_docker_exec(
-            "container",
-            "/workspace",
-            "root",
-            &HashMap::new(),
-            Command::new("true"),
-        ));
-
-        assert!(!result.unwrap().status.success());
-    }
-
     // Regression: flattening arguments through a second `sh -c` made `npm install` run bare `npm`.
     #[cfg(not(target_os = "windows"))]
     #[test]

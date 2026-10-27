@@ -3488,10 +3488,7 @@ mod test {
     };
 
     #[cfg(not(target_os = "windows"))]
-    use std::{
-        fs as std_fs,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::fs as std_fs;
 
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
@@ -4049,87 +4046,60 @@ mod test {
     }
 
     #[gpui::test]
-    async fn should_skip_post_start_command_when_marker_check_reports_already_run(
-        cx: &mut TestAppContext,
-    ) {
-        let (test_dependencies, mut devcontainer_manifest) = init_default_devcontainer_manifest(
-            cx,
-            r#"{
-                "image": "test_image:latest",
-                "postStartCommand": "echo post-start"
-            }"#,
-        )
-        .await
-        .unwrap();
-        devcontainer_manifest.parse_nonremote_vars().unwrap();
-        test_dependencies.docker.set_exec_result(Ok(Output {
-            status: ExitStatus::from_raw(1),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        }));
-
-        let devcontainer_up = DevContainerUp {
-            started_at: Some("2026-06-23T10:00:00Z".to_string()),
-            container_id: "container".to_string(),
-            remote_user: "root".to_string(),
-            remote_workspace_folder: "/workspaces/project".to_string(),
-            extension_ids: Vec::new(),
-            remote_env: HashMap::new(),
-        };
-
-        devcontainer_manifest
-            .run_remote_scripts(&devcontainer_up, false, false)
+    async fn should_handle_post_start_marker_results(cx: &mut TestAppContext) {
+        let execution_error = DevContainerError::ContainerNotValid("container".to_string());
+        for (case, exec_result, expected_result) in [
+            (
+                "already marked",
+                Ok(Output {
+                    status: ExitStatus::from_raw(1),
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                }),
+                Ok(()),
+            ),
+            (
+                "execution failed",
+                Err(execution_error.clone()),
+                Err(execution_error),
+            ),
+        ] {
+            let (dependencies, mut manifest) = init_default_devcontainer_manifest(
+                cx,
+                r#"{"image": "test_image:latest", "postStartCommand": "echo post-start"}"#,
+            )
             .await
             .unwrap();
+            manifest.parse_nonremote_vars().unwrap();
+            dependencies.docker.set_exec_result(exec_result);
+            let devcontainer_up = DevContainerUp {
+                started_at: Some("2026-06-23T10:00:00Z".to_string()),
+                container_id: "container".to_string(),
+                remote_user: "root".to_string(),
+                remote_workspace_folder: "/workspaces/project".to_string(),
+                extension_ids: Vec::new(),
+                remote_env: HashMap::new(),
+            };
 
-        let docker_exec_commands = test_dependencies
-            .docker
-            .exec_commands_recorded
-            .lock()
-            .unwrap();
-        // Only the marker check runs; postStartCommand itself is skipped.
-        assert_eq!(docker_exec_commands.len(), 1);
-    }
-
-    #[gpui::test]
-    async fn should_propagate_post_start_marker_execution_error(cx: &mut TestAppContext) {
-        let (test_dependencies, mut devcontainer_manifest) = init_default_devcontainer_manifest(
-            cx,
-            r#"{
-                "image": "test_image:latest",
-                "postStartCommand": "echo post-start"
-            }"#,
-        )
-        .await
-        .unwrap();
-        devcontainer_manifest.parse_nonremote_vars().unwrap();
-        let error = DevContainerError::ContainerNotValid("container".to_string());
-        test_dependencies.docker.set_exec_result(Err(error.clone()));
-
-        let devcontainer_up = DevContainerUp {
-            started_at: Some("2026-06-23T10:00:00Z".to_string()),
-            container_id: "container".to_string(),
-            remote_user: "root".to_string(),
-            remote_workspace_folder: "/workspaces/project".to_string(),
-            extension_ids: Vec::new(),
-            remote_env: HashMap::new(),
-        };
-
-        assert_eq!(
-            devcontainer_manifest
-                .run_remote_scripts(&devcontainer_up, false, false)
-                .await,
-            Err(error)
-        );
-        assert_eq!(
-            test_dependencies
-                .docker
-                .exec_commands_recorded
-                .lock()
-                .unwrap()
-                .len(),
-            1
-        );
+            assert_eq!(
+                manifest
+                    .run_remote_scripts(&devcontainer_up, false, false)
+                    .await,
+                expected_result,
+                "{case}"
+            );
+            // Neither case should run the lifecycle command after the marker check.
+            assert_eq!(
+                dependencies
+                    .docker
+                    .exec_commands_recorded
+                    .lock()
+                    .unwrap()
+                    .len(),
+                1,
+                "{case}"
+            );
+        }
     }
 
     #[gpui::test]
@@ -4285,95 +4255,43 @@ mod test {
 
     #[cfg(not(target_os = "windows"))]
     #[test]
-    fn post_start_marker_command_writes_marker_and_reports_should_run_when_unmarked() {
-        let home_directory = temporary_home_directory("post-start-marker-unmarked");
-        let started_at = "2026-06-23T10:00:00Z";
+    fn post_start_marker_command_tracks_container_starts() {
+        let home_directory = tempfile::tempdir().unwrap();
         let marker = home_directory
-            .join(".devcontainer")
-            .join(".postStartCommandMarker");
+            .path()
+            .join(".devcontainer/.postStartCommandMarker");
 
-        let output = run_shell_command(
-            super::post_start_marker_command(started_at, "container-user"),
-            &home_directory,
-        );
-
-        assert!(output.status.success(), "should report doRun = true");
-        assert_eq!(
-            std_fs::read_to_string(&marker).expect("marker should be written"),
-            started_at
-        );
-
-        std_fs::remove_dir_all(home_directory).expect("temporary home should be removed");
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn post_start_marker_command_reports_should_not_run_when_already_marked() {
-        let home_directory = temporary_home_directory("post-start-marker-already-marked");
-        let started_at = "2026-06-23T10:00:00Z";
-
-        let first = run_shell_command(
-            super::post_start_marker_command(started_at, "container-user"),
-            &home_directory,
-        );
-        assert!(first.status.success());
-
-        let second = run_shell_command(
-            super::post_start_marker_command(started_at, "container-user"),
-            &home_directory,
-        );
-        assert!(
-            !second.status.success(),
-            "should report doRun = false once already marked for this start"
-        );
-
-        std_fs::remove_dir_all(home_directory).expect("temporary home should be removed");
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn post_start_marker_command_reports_should_run_when_started_at_changes() {
-        let home_directory = temporary_home_directory("post-start-marker-new-start");
-        let marker = home_directory
-            .join(".devcontainer")
-            .join(".postStartCommandMarker");
-
-        let first = run_shell_command(
-            super::post_start_marker_command("2026-06-23T10:00:00Z", "container-user"),
-            &home_directory,
-        );
-        assert!(first.status.success());
-
-        let second = run_shell_command(
-            super::post_start_marker_command("2026-06-23T11:00:00Z", "container-user"),
-            &home_directory,
-        );
-        assert!(
-            second.status.success(),
-            "a new start should report doRun = true even if a previous start was marked"
-        );
-        assert_eq!(
-            std_fs::read_to_string(&marker).expect("marker should be written"),
-            "2026-06-23T11:00:00Z"
-        );
-
-        std_fs::remove_dir_all(home_directory).expect("temporary home should be removed");
+        for (case, started_at, should_run) in [
+            ("first start", "2026-06-23T10:00:00Z", true),
+            ("same start", "2026-06-23T10:00:00Z", false),
+            ("new start", "2026-06-23T11:00:00Z", true),
+        ] {
+            let output = run_shell_command(
+                super::post_start_marker_command(started_at, "container-user"),
+                home_directory.path(),
+            );
+            assert_eq!(output.status.success(), should_run, "{case}");
+            assert_eq!(
+                std_fs::read_to_string(&marker).unwrap(),
+                started_at,
+                "{case}"
+            );
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn post_start_marker_command_quotes_special_characters_in_started_at() {
-        let home_directory = temporary_home_directory("post-start-marker-quoting");
+        let home_directory = tempfile::tempdir().unwrap();
         let started_at = "2026-06-23T10:00:00Z' ; touch pwned; echo '";
         let marker = home_directory
-            .join(".devcontainer")
-            .join(".postStartCommandMarker");
-        let canary = home_directory.join("pwned");
+            .path()
+            .join(".devcontainer/.postStartCommandMarker");
+        let canary = home_directory.path().join("pwned");
+        let mut command = super::post_start_marker_command(started_at, "container-user");
+        command.current_dir(home_directory.path());
 
-        let output = run_shell_command(
-            super::post_start_marker_command(started_at, "container-user"),
-            &home_directory,
-        );
+        let output = run_shell_command(command, home_directory.path());
 
         assert!(output.status.success());
         assert!(
@@ -4384,8 +4302,6 @@ mod test {
             std_fs::read_to_string(&marker).expect("marker should be written"),
             started_at
         );
-
-        std_fs::remove_dir_all(home_directory).expect("temporary home should be removed");
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -4406,20 +4322,6 @@ mod test {
     fn run_shell_command(mut command: Command, home_directory: &Path) -> Output {
         command.env("HOME", home_directory);
         gpui::block_on(command.output()).expect("shell should run the marker command")
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn temporary_home_directory(prefix: &str) -> PathBuf {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time should be after unix epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "zed-devcontainer-{prefix}-{}-{now}",
-            std::process::id()
-        ));
-        std_fs::create_dir_all(&path).expect("temporary home should be created");
-        path
     }
 
     #[gpui::test]
