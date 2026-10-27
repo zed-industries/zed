@@ -22,7 +22,7 @@ collections.workspace = true
 credentials_provider.workspace = true
 env_var.workspace = true
 futures.workspace = true
-gpui.workspace = true
+gpui = { workspace = true, default-features = true }
 gpui_util.workspace = true
 http_client.workspace = true
 icons.workspace = true

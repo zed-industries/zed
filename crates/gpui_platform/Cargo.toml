@@ -13,7 +13,24 @@ path = "src/gpui_platform.rs"
 doctest = false
 
 [features]
-default = ["multithreaded"]
+default = ["multithreaded", "gpui/default"]
+svg = ["gpui/svg"]
+svg-raster-images = ["svg", "gpui/svg-raster-images"]
+image-bmp = ["gpui/image-bmp"]
+image-dds = ["gpui/image-dds"]
+image-exr = ["gpui/image-exr"]
+image-ff = ["gpui/image-ff"]
+image-gif = ["gpui/image-gif"]
+image-hdr = ["gpui/image-hdr"]
+image-ico = ["gpui/image-ico"]
+image-jpeg = ["gpui/image-jpeg"]
+image-png = ["gpui/image-png"]
+image-pnm = ["gpui/image-pnm"]
+image-qoi = ["gpui/image-qoi"]
+image-tga = ["gpui/image-tga"]
+image-tiff = ["gpui/image-tiff"]
+image-webp = ["gpui/image-webp"]
+image-rayon = ["gpui/image-rayon"]
 # Threads in the browser: needs a nightly toolchain and a cross-origin-isolated
 # page. Off, gpui_web builds on stable.
 multithreaded = ["gpui_web/multithreaded"]

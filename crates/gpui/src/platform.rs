@@ -41,10 +41,11 @@ use crate::{
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
-    hash, point, px, size,
+    RenderGlyphParams, RenderImage, RenderImageParams, Scene, ShapedGlyph, ShapedRun, SharedString,
+    Size, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
 };
+#[cfg(feature = "svg")]
+use crate::{RenderSvgParams, SvgRenderer};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
 use anyhow::{Context as _, Result};
@@ -53,8 +54,9 @@ use collections::FxHashMap;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use image::RgbaImage;
-use image::codecs::gif::GifDecoder;
-use image::{AnimationDecoder as _, DynamicImage, Frame};
+#[cfg(feature = "image-gif")]
+use image::{AnimationDecoder as _, codecs::gif::GifDecoder};
+use image::{DynamicImage, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use scheduler::Instant;
 pub use scheduler::RunnableMeta;
@@ -1751,6 +1753,7 @@ pub fn get_gamma_correction_ratios(gamma: f32) -> [f32; 4] {
 #[expect(missing_docs)]
 pub enum AtlasKey {
     Glyph(RenderGlyphParams),
+    #[cfg(feature = "svg")]
     Svg(RenderSvgParams),
     Image(RenderImageParams),
 }
@@ -1768,6 +1771,7 @@ impl AtlasKey {
                     AtlasTextureKind::Monochrome
                 }
             }
+            #[cfg(feature = "svg")]
             AtlasKey::Svg(_) => AtlasTextureKind::Monochrome,
             AtlasKey::Image(_) => AtlasTextureKind::Polychrome,
         }
@@ -1780,6 +1784,7 @@ impl From<RenderGlyphParams> for AtlasKey {
     }
 }
 
+#[cfg(feature = "svg")]
 impl From<RenderSvgParams> for AtlasKey {
     fn from(params: RenderSvgParams) -> Self {
         Self::Svg(params)
@@ -3432,8 +3437,20 @@ impl Image {
     }
 
     /// Convert the clipboard image to an `ImageData` object.
+    #[cfg(feature = "svg")]
     pub fn to_image_data(&self, svg_renderer: SvgRenderer) -> Result<Arc<RenderImage>> {
+        if self.format == ImageFormat::Svg {
+            return svg_renderer
+                .render_single_frame(&self.bytes, 1.0)
+                .map_err(Into::into);
+        }
+        self.to_bitmap_data()
+    }
+
+    /// Decode a bitmap image without an SVG renderer.
+    pub fn to_bitmap_data(&self) -> Result<Arc<RenderImage>> {
         let frames = match self.format {
+            #[cfg(feature = "image-gif")]
             ImageFormat::Gif => {
                 let decoder = GifDecoder::new(Cursor::new(&self.bytes))?;
                 let mut frames = SmallVec::new();
@@ -3459,6 +3476,8 @@ impl Image {
 
                 frames
             }
+            #[cfg(not(feature = "image-gif"))]
+            ImageFormat::Gif => decode_static_image(&self.bytes, image::ImageFormat::Gif)?,
             ImageFormat::Png => decode_static_image(&self.bytes, image::ImageFormat::Png)?,
             ImageFormat::Jpeg => decode_static_image(&self.bytes, image::ImageFormat::Jpeg)?,
             ImageFormat::Webp => decode_static_image(&self.bytes, image::ImageFormat::WebP)?,
@@ -3466,9 +3485,7 @@ impl Image {
             ImageFormat::Tiff => decode_static_image(&self.bytes, image::ImageFormat::Tiff)?,
             ImageFormat::Ico => decode_static_image(&self.bytes, image::ImageFormat::Ico)?,
             ImageFormat::Svg => {
-                return svg_renderer
-                    .render_single_frame(&self.bytes, 1.0)
-                    .map_err(Into::into);
+                anyhow::bail!("SVG images require the svg feature and an SVG renderer")
             }
             ImageFormat::Pnm => decode_static_image(&self.bytes, image::ImageFormat::Pnm)?,
         };
@@ -3550,19 +3567,21 @@ impl From<String> for ClipboardString {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "image-jpeg", feature = "svg")))]
 mod image_tests {
     use super::*;
+    #[cfg(feature = "svg")]
     use std::sync::Arc;
 
     #[test]
+    #[cfg(feature = "image-jpeg")]
     fn test_image_to_image_data_applies_exif_orientation() {
         let image = Image::from_bytes(
             ImageFormat::Jpeg,
             include_bytes!("../examples/image/exif-orientation-rotate-180.jpg").to_vec(),
         );
 
-        let render_image = image.to_image_data(SvgRenderer::new(Arc::new(()))).unwrap();
+        let render_image = image.to_bitmap_data().unwrap();
 
         assert_eq!(render_image.size(0), size(16.into(), 32.into()));
 
@@ -3572,6 +3591,7 @@ mod image_tests {
     }
 
     #[test]
+    #[cfg(feature = "svg")]
     fn test_svg_image_to_image_data_converts_to_bgra() {
         let image = Image::from_bytes(
             ImageFormat::Svg,

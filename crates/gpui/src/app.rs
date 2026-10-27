@@ -42,6 +42,8 @@ pub use visual_test_context::*;
 
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
+#[cfg(feature = "svg")]
+use crate::SvgRenderer;
 use crate::asset_cache::CachedLoad;
 use crate::subscription::SingleSubscriberSet;
 use crate::{
@@ -53,7 +55,7 @@ use crate::{
     Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PowerMode, Priority, PromptBuilder,
     PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription,
     SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
     ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
     WindowInvalidator, WindowingRequest,
@@ -233,8 +235,11 @@ impl Application {
     pub fn with_assets(self, asset_source: impl AssetSource) -> Self {
         let mut context_lock = self.0.borrow_mut();
         let asset_source = Arc::new(asset_source);
-        context_lock.asset_source = asset_source.clone();
-        context_lock.svg_renderer = SvgRenderer::new(asset_source);
+        #[cfg(feature = "svg")]
+        {
+            context_lock.svg_renderer = SvgRenderer::new(asset_source.clone());
+        }
+        context_lock.asset_source = asset_source;
         drop(context_lock);
         self
     }
@@ -910,6 +915,7 @@ pub struct App {
     // assets
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
     asset_source: Arc<dyn AssetSource>,
+    #[cfg(feature = "svg")]
     pub(crate) svg_renderer: SvgRenderer,
     http_client: Arc<dyn HttpClient>,
 
@@ -997,6 +1003,7 @@ impl App {
                 foreground_journal,
                 #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
                 hang_monitor: None,
+                #[cfg(feature = "svg")]
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
                 asset_source,
@@ -2079,6 +2086,7 @@ impl App {
     }
 
     /// Returns the SVG renderer used by the application.
+    #[cfg(feature = "svg")]
     pub fn svg_renderer(&self) -> SvgRenderer {
         self.svg_renderer.clone()
     }

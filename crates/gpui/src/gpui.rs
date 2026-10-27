@@ -52,6 +52,7 @@ mod spring;
 mod style;
 mod styled;
 mod subscription;
+#[cfg(feature = "svg")]
 mod svg_renderer;
 mod tab_stop;
 mod taffy;
@@ -143,6 +144,7 @@ pub use spring::*;
 pub use style::*;
 pub use styled::*;
 pub use subscription::*;
+#[cfg(feature = "svg")]
 pub use svg_renderer::*;
 pub use taffy::{AvailableSpace, LayoutId};
 pub use text_system::*;

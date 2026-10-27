@@ -13,7 +13,7 @@ path = "src/gpui_wgpu.rs"
 doctest = false
 
 [features]
-default = []
+default = ["gpui/default"]
 bench-support = ["gpui/bench-support", "dep:image"]
 font-kit = ["dep:font-kit"]
 test-support = ["gpui/test-support", "dep:image"]

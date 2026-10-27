@@ -367,7 +367,7 @@ git_ui_core = { path = "crates/git_ui_core" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui", default-features = false }
-gpui_apple = { path = "crates/gpui_apple" }
+gpui_apple = { path = "crates/gpui_apple", default-features = false }
 gpui_ios = { path = "crates/gpui_ios" }
 gpui_linux = { path = "crates/gpui_linux", default-features = false }
 gpui_macos = { path = "crates/gpui_macos", default-features = false }
@@ -377,7 +377,7 @@ gpui_shared_string = { path = "crates/gpui_shared_string" }
 gpui_tokio = { path = "crates/gpui_tokio" }
 gpui_util = { path = "crates/gpui_util" }
 gpui_web = { path = "crates/gpui_web", default-features = false }
-gpui_wgpu = { path = "crates/gpui_wgpu" }
+gpui_wgpu = { path = "crates/gpui_wgpu", default-features = false }
 gpui_windows = { path = "crates/gpui_windows", default-features = false }
 grammars = { path = "crates/grammars" }
 hang_telemetry = { path = "crates/hang_telemetry" }
@@ -650,25 +650,7 @@ httparse = "1.10"
 human_bytes = "0.4.1"
 idna = "1.0"
 ignore = "0.4.22"
-# image's default features minus "avif", which only adds an encoder (rav1e);
-# decoding AVIF would additionally need the non-default "avif-native" feature.
-image = { version = "0.25.1", default-features = false, features = [
-    "bmp",
-    "dds",
-    "exr",
-    "ff",
-    "gif",
-    "hdr",
-    "ico",
-    "jpeg",
-    "png",
-    "pnm",
-    "qoi",
-    "rayon",
-    "tga",
-    "tiff",
-    "webp",
-] }
+image = { version = "0.25.1", default-features = false }
 imara-diff = { version = "0.2", default-features = false }
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
@@ -873,7 +855,6 @@ resvg = { version = "0.46.0", default-features = false, features = [
     "text",
     "system-fonts",
     "memmap-fonts",
-    "raster-images",
 ] }
 rsa = { version = "0.9", default-features = false, features = ["std", "u64_digit"] }
 runtimelib = { version = "1.4.0", default-features = false, features = [

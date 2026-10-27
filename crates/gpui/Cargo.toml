@@ -18,7 +18,47 @@ autobenches = false
 workspace = true
 
 [features]
-default = ["font-kit", "wayland", "x11", "windows-manifest"]
+# image's default features minus "avif", which only adds an encoder (rav1e);
+# decoding AVIF would additionally need the non-default "avif-native" feature.
+default = [
+    "font-kit",
+    "wayland",
+    "x11",
+    "windows-manifest",
+    "svg-raster-images",
+    "image-bmp",
+    "image-dds",
+    "image-exr",
+    "image-ff",
+    "image-gif",
+    "image-hdr",
+    "image-ico",
+    "image-jpeg",
+    "image-png",
+    "image-pnm",
+    "image-qoi",
+    "image-tga",
+    "image-tiff",
+    "image-webp",
+    "image-rayon",
+]
+svg = ["dep:resvg", "dep:usvg"]
+svg-raster-images = ["svg", "resvg/raster-images"]
+image-bmp = ["image/bmp"]
+image-dds = ["image/dds"]
+image-exr = ["image/exr"]
+image-ff = ["image/ff"]
+image-gif = ["image/gif"]
+image-hdr = ["image/hdr"]
+image-ico = ["image/ico"]
+image-jpeg = ["image/jpeg"]
+image-png = ["image/png"]
+image-pnm = ["image/pnm"]
+image-qoi = ["image/qoi"]
+image-tga = ["image/tga"]
+image-tiff = ["image/tiff"]
+image-webp = ["image/webp"]
+image-rayon = ["image/rayon"]
 test-support = [
     "collections/test-support",
     "http_client/test-support",
@@ -91,8 +131,8 @@ raw-window-handle.workspace = true
 regex = { workspace = true, default-features = true }
 refineable.workspace = true
 scheduler.workspace = true
-resvg.workspace = true
-usvg.workspace = true
+resvg = { workspace = true, optional = true }
+usvg = { workspace = true, optional = true }
 ttf-parser = "0.25"
 schemars = { workspace = true, features = ["derive"] }
 seahash = "4.1"

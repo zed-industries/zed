@@ -42,6 +42,37 @@ The features on `gpui_platform` are platform-specific, so the list above is a sa
 
 - **Windows** — no features are required. Windowing uses Win32 and text uses DirectWrite. `font-kit` has no effect here.
 
+### Image formats and SVG
+
+GPUI and `gpui_platform` preserve the existing image formats and SVG support in
+their default features. To select only PNG, disable defaults on both crates and
+enable `image-png` on either one:
+
+```toml
+gpui = { version = "*", default-features = false }
+gpui_platform = { version = "*", default-features = false, features = ["font-kit", "wayland", "x11", "image-png"] }
+```
+
+The individual format features are `image-bmp`, `image-dds`, `image-exr`,
+`image-ff`, `image-gif`, `image-hdr`, `image-ico`, `image-jpeg`, `image-png`,
+`image-pnm`, `image-qoi`, `image-tga`, `image-tiff`, and `image-webp`.
+`image-rayon` enables parallel image processing. All of these features are
+enabled by default. `gpui_platform` forwards each feature to GPUI.
+
+Raw `RenderImage` frames do not need any image-format feature. File assets and
+clipboard images need the corresponding codec; unsupported formats return an
+error. `image-gif` and `image-webp` also enable animated decoding.
+
+`svg` enables SVG parsing and rendering, including SVG text. `svg-raster-images`
+also enables embedded raster images and their decoder dependencies. The defaults
+include `svg-raster-images`. Without `svg`, the SVG renderer, element, and drawing
+APIs are not compiled. Ordinary GPUI text remains available. Use
+`Image::to_bitmap_data()` to decode bitmap images independently of SVG support;
+`Image::to_image_data()` is available with `svg` enabled and also accepts SVGs.
+
+Cargo combines features requested by all dependencies. These switches control
+GPUI's requests; another dependency can still enable additional image codecs.
+
 ### Additional Topics
 
 - [Ownership and data flow](_ownership_and_data_flow)

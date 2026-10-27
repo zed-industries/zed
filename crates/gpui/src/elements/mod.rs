@@ -8,6 +8,7 @@ mod image_cache;
 mod img;
 mod list;
 mod surface;
+#[cfg(feature = "svg")]
 mod svg;
 mod text;
 mod uniform_list;
@@ -22,6 +23,7 @@ pub use image_cache::*;
 pub use img::*;
 pub use list::*;
 pub use surface::*;
+#[cfg(feature = "svg")]
 pub use svg::*;
 pub use text::*;
 pub use uniform_list::*;

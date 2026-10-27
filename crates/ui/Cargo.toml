@@ -16,7 +16,7 @@ path = "src/ui.rs"
 chrono.workspace = true
 component.workspace = true
 documented.workspace = true
-gpui.workspace = true
+gpui = { workspace = true, features = ["svg"] }
 gpui_macros.workspace = true
 icons.workspace = true
 itertools.workspace = true
@@ -40,4 +40,4 @@ theme_settings.workspace = true
 ignored = ["log"]
 
 [features]
-default = []
+default = ["gpui/default"]

@@ -1,23 +1,29 @@
+#[cfg(feature = "image-webp")]
+use crate::decode_static_image_from_decoder;
 use crate::{
     AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
     Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SharedString, SharedUri, StyleRefinement, Styled, Task, Window, decode_static_image,
-    decode_static_image_from_decoder, px,
+    SharedString, SharedUri, StyleRefinement, Styled, Task, Window, decode_static_image, px,
 };
 use anyhow::Result;
 
 use futures::Future;
 use gpui_util::ResultExt;
-use image::{
-    AnimationDecoder, ImageError, ImageFormat, Rgba,
-    codecs::{gif::GifDecoder, webp::WebPDecoder},
-};
+use image::ImageError;
+#[cfg(feature = "image-gif")]
+use image::codecs::gif::GifDecoder;
+#[cfg(any(feature = "image-gif", feature = "image-webp"))]
+use image::{AnimationDecoder, ImageFormat};
+#[cfg(feature = "image-webp")]
+use image::{Rgba, codecs::webp::WebPDecoder};
 use scheduler::Instant;
+#[cfg(any(test, feature = "image-gif", feature = "image-webp"))]
 use smallvec::SmallVec;
+#[cfg(any(feature = "image-gif", feature = "image-webp"))]
+use std::io::Cursor;
 use std::{
-    fs,
-    io::{self, Cursor},
+    fs, io,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     str::FromStr,
@@ -605,10 +611,17 @@ impl Asset for ImageDecoder {
 
     fn load(
         source: Self::Source,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let renderer = cx.svg_renderer();
-        async move { source.to_image_data(renderer).map_err(Into::into) }
+        #[cfg(feature = "svg")]
+        let renderer = _cx.svg_renderer();
+        async move {
+            #[cfg(feature = "svg")]
+            let result = source.to_image_data(renderer);
+            #[cfg(not(feature = "svg"))]
+            let result = source.to_bitmap_data();
+            result.map_err(Into::into)
+        }
     }
 }
 
@@ -627,6 +640,7 @@ impl Asset for ImageAssetLoader {
         let client = cx.http_client();
         // TODO: Can we make SVGs always rescale?
         // let scale_factor = cx.scale_factor();
+        #[cfg(feature = "svg")]
         let svg_renderer = cx.svg_renderer();
         let asset_source = cx.asset_source().clone();
         async move {
@@ -668,6 +682,7 @@ impl Asset for ImageAssetLoader {
 
             if let Ok(format) = image::guess_format(&bytes) {
                 let data = match format {
+                    #[cfg(feature = "image-gif")]
                     ImageFormat::Gif => {
                         let decoder = GifDecoder::new(Cursor::new(&bytes))?;
                         let mut frames = SmallVec::new();
@@ -697,6 +712,7 @@ impl Asset for ImageAssetLoader {
 
                         frames
                     }
+                    #[cfg(feature = "image-webp")]
                     ImageFormat::WebP => {
                         let mut decoder = WebPDecoder::new(Cursor::new(&bytes))?;
 
@@ -737,9 +753,18 @@ impl Asset for ImageAssetLoader {
 
                 Ok(Arc::new(RenderImage::new(data)))
             } else {
-                svg_renderer
-                    .render_single_frame(&bytes, 1.0)
-                    .map_err(Into::into)
+                #[cfg(feature = "svg")]
+                {
+                    svg_renderer
+                        .render_single_frame(&bytes, 1.0)
+                        .map_err(Into::into)
+                }
+                #[cfg(not(feature = "svg"))]
+                {
+                    Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                        "Unsupported image format"
+                    ))))
+                }
             }
         }
     }
@@ -771,6 +796,7 @@ pub enum ImageCacheError {
     #[error("image error: {0}")]
     Image(Arc<ImageError>),
     /// An error that occurred while processing an SVG.
+    #[cfg(feature = "svg")]
     #[error("svg error: {0}")]
     Usvg(Arc<usvg::Error>),
 }
@@ -787,6 +813,7 @@ impl From<io::Error> for ImageCacheError {
     }
 }
 
+#[cfg(feature = "svg")]
 impl From<usvg::Error> for ImageCacheError {
     fn from(value: usvg::Error) -> Self {
         Self::Usvg(Arc::new(value))
