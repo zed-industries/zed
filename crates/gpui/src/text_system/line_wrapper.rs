@@ -34,9 +34,6 @@ pub struct LineWrapper {
 }
 
 /// Cached character widths for one font and size.
-///
-/// The text system pools these rather than whole wrappers, because a pooled
-/// wrapper's `Arc<TextSystem>` would form a reference cycle with its owner.
 pub(crate) struct CharWidthCache {
     ascii: [Option<Pixels>; 128],
     other: HashMap<char, Pixels>,
