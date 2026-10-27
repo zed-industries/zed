@@ -233,7 +233,7 @@ pub struct TextSystem {
     font_ids_by_font: RwLock<FxHashMap<Font, CachedFont>>,
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
     raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
-    wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
+    wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<CharWidthCache>>>,
     fallback_font_stack: SmallVec<[Font; 2]>,
     font_generation: Arc<AtomicUsize>,
     missing_glyph_reporter: Arc<MissingGlyphReporter>,
@@ -515,12 +515,12 @@ impl TextSystem {
     pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
         let lock = &mut self.wrapper_pool.lock();
         let font_id = self.resolve_font(&font);
-        let wrappers = lock
+        let char_widths = lock
             .entry(FontIdWithSize { font_id, font_size })
-            .or_default();
-        let wrapper = wrappers
+            .or_default()
             .pop()
-            .unwrap_or_else(|| LineWrapper::new(font_id, font_size, self.clone()));
+            .unwrap_or_default();
+        let wrapper = LineWrapper::new(font_id, font_size, self.clone(), char_widths);
 
         LineWrapperHandle {
             wrapper: Some(wrapper),
@@ -945,7 +945,7 @@ impl Drop for LineWrapperHandle {
                 font_size: wrapper.font_size,
             })
             .unwrap()
-            .push(wrapper);
+            .push(wrapper.into_char_widths());
     }
 }
 
@@ -1312,6 +1312,28 @@ mod font_resolution_tests {
 
         text_system.fallback_font_stack.clear();
         assert_eq!(text_system.resolve_font(&requested), FontId(42));
+    }
+}
+
+#[cfg(test)]
+mod line_wrapper_pool_tests {
+    use super::*;
+    use crate::NoopTextSystem;
+
+    #[test]
+    fn pooled_line_wrappers_do_not_retain_text_system() {
+        let text_system = Arc::new(TextSystem::new(Arc::new(NoopTextSystem::new())));
+        let weak_text_system = Arc::downgrade(&text_system);
+
+        let mut wrapper = text_system.line_wrapper(font(".ZedMono"), px(16.));
+        let fragments = [LineFragment::text("hello world")];
+        wrapper
+            .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+            .for_each(drop);
+        drop(wrapper);
+        drop(text_system);
+
+        assert!(weak_text_system.upgrade().is_none());
     }
 }
 
