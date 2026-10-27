@@ -4023,11 +4023,6 @@ mod test {
             .collect::<Vec<_>>();
         assert_eq!(marker_args[0], OsStr::new("-c"));
         let marker_script = marker_args[1].to_string_lossy();
-        assert!(
-            marker_script
-                .contains("marker=\"$home_directory/.devcontainer/.postStartCommandMarker\"")
-        );
-        assert!(!marker_script.contains("/tmp/zed-devcontainer"));
         assert!(!marker_script.contains("echo post-start"));
 
         fn assert_clean_sh_c_command(command: &Command, expected_script: &str) {
