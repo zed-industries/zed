@@ -1067,7 +1067,7 @@ impl PlatformWindow for WindowsWindow {
             .set_composition_order(surfaces)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<image::RgbaImage> {
         self.state
             .renderer
