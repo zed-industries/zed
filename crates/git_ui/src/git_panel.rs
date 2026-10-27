@@ -7523,10 +7523,11 @@ impl GitPanel {
         }
     }
 
-    fn history_entry_index(&self, sha: Oid) -> Option<usize> {
+    fn active_history_entry_index(&self) -> Option<usize> {
+        let active_history_sha = self.active_history_sha?;
         self.commit_history_entries()
             .iter()
-            .position(|entry| entry.sha == sha)
+            .position(|entry| entry.sha == active_history_sha)
     }
 
     fn update_active_history_sha(&mut self, cx: &mut Context<Self>) {
@@ -7547,7 +7548,7 @@ impl GitPanel {
             return;
         }
         self.active_history_sha = active_history_sha;
-        if let Some(index) = active_history_sha.and_then(|sha| self.history_entry_index(sha)) {
+        if let Some(index) = self.active_history_entry_index() {
             self.focused_history_entry = Some(index);
         }
         cx.notify();
@@ -7749,10 +7750,9 @@ impl GitPanel {
         // Keep the focused entry within range as the history grows or clears,
         // starting from the active commit when nothing is focused yet.
         let count = self.commit_history_entries().len();
-        let focused = self.focused_history_entry.or_else(|| {
-            self.active_history_sha
-                .and_then(|sha| self.history_entry_index(sha))
-        });
+        let focused = self
+            .focused_history_entry
+            .or_else(|| self.active_history_entry_index());
         self.focused_history_entry =
             focused.and_then(|focused| (count > 0).then(|| focused.min(count - 1)));
         if changed {
