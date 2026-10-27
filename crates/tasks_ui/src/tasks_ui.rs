@@ -310,7 +310,6 @@ where
         let did_spawn = workspace
             .update_in(cx, |workspace, window, cx| {
                 let default_context = TaskContext::default();
-                let active_context = task_contexts.active_context().unwrap_or(&default_context);
 
                 tasks.retain_mut(|(task_source_kind, target_task)| {
                     if predicate((task_source_kind, target_task)) {
@@ -319,10 +318,14 @@ where
                         {
                             target_task.reveal_target = target_override;
                         }
+                        let task_context = task_contexts
+                            .context_for_task(task_source_kind, target_task)
+                            .unwrap_or(&default_context);
+
                         workspace.schedule_task(
                             task_source_kind.clone(),
                             target_task,
-                            active_context,
+                            task_context,
                             false,
                             window,
                             cx,
@@ -484,19 +487,23 @@ fn worktree_context(worktree_abs_path: &Path) -> TaskContext {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc};
+    use std::{
+        collections::HashMap,
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
 
     use editor::{Editor, MultiBufferOffset, SelectionEffects};
-    use gpui::TestAppContext;
+    use gpui::{Entity, TestAppContext, VisualTestContext};
     use language::{Language, LanguageConfig};
     use project::{BasicContextProvider, FakeFs, Project, task_store::TaskStore};
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
     use util::{path, rel_path::rel_path};
-    use workspace::{AppState, MultiWorkspace};
+    use workspace::{AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace};
 
-    use crate::task_contexts;
+    use crate::{Spawn, task_contexts};
 
     #[gpui::test]
     async fn test_non_project_active_editor_uses_visible_worktree_context(cx: &mut TestAppContext) {
@@ -589,6 +596,129 @@ mod tests {
         assert_eq!(
             item_context.task_variables.get(&VariableName::WorktreeRoot),
             None
+        );
+    }
+
+    #[gpui::test]
+    async fn test_spawn_by_name_resolves_worktree_task_with_single_file_editor_active(
+        cx: &mut TestAppContext,
+    ) {
+        let (_, workspace, cx) = init_project_with_worktree_task(cx).await;
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/external/notes.txt")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::None),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert_task_spawned_by_name_in_project_root(&workspace, cx);
+    }
+
+    #[gpui::test]
+    async fn test_spawn_by_name_resolves_worktree_task_with_invisible_worktree_editor_active(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace, cx) = init_project_with_worktree_task(cx).await;
+
+        let (external_worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/external"), false, cx)
+            })
+            .await
+            .unwrap();
+        let external_worktree_id = external_worktree.read_with(cx, |worktree, _| worktree.id());
+        cx.run_until_parked();
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(
+                    (external_worktree_id, rel_path("notes.txt")),
+                    None,
+                    true,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert_task_spawned_by_name_in_project_root(&workspace, cx);
+    }
+
+    async fn init_project_with_worktree_task(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Project>, Entity<Workspace>, &mut VisualTestContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".zed": {
+                    "tasks.json": r#"[
+                        {
+                            "label": "print worktree root",
+                            "command": "echo",
+                            "args": ["$ZED_WORKTREE_ROOT"]
+                        }
+                    ]"#,
+                },
+                "main.rs": "",
+            }),
+        )
+        .await;
+        fs.insert_tree(path!("/external"), json!({"notes.txt": ""}))
+            .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        (project, workspace, cx)
+    }
+
+    fn assert_task_spawned_by_name_in_project_root(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.dispatch_action(Spawn::ByName {
+            task_name: "print worktree root".to_string(),
+            reveal_target: None,
+        });
+        cx.run_until_parked();
+
+        let task_inventory = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .project()
+                    .read(cx)
+                    .task_store()
+                    .read(cx)
+                    .task_inventory()
+                    .cloned()
+            })
+            .expect("project should have a task inventory");
+        let (_, scheduled_task) = task_inventory
+            .read_with(cx, |inventory, _| inventory.last_scheduled_task(None))
+            .expect("worktree task should be spawned by name");
+
+        assert_eq!(
+            scheduled_task.resolved.args,
+            vec![path!("/project").to_string()]
+        );
+        assert_eq!(
+            scheduled_task.resolved.cwd.as_deref(),
+            Some(Path::new(path!("/project")))
         );
     }
 
