@@ -20,7 +20,10 @@ use gpui::{
     TouchEvent, TouchId, TouchPhase, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowInsets, WindowParams, WindowVisibility, px, size,
 };
-use gpui_apple::metal_renderer::{Context as MetalContext, MetalRenderer};
+use gpui_apple::{
+    main_thread_marker,
+    metal_renderer::{Context as MetalContext, MetalRenderer},
+};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, ProtocolObject};
 use objc2::{
@@ -301,7 +304,7 @@ impl IosWindow {
         let screen_bounds = screen.bounds();
         let scale_factor = screen.scale();
 
-        let main_thread = MainThreadMarker::new().expect("UIKit requires the main thread");
+        let main_thread = main_thread_marker().expect("UIKit requires the main thread");
         // Create UIWindow
         let window_scene = platform.application.window_scene();
         let window_scene = window_scene.as_deref();
@@ -323,6 +326,16 @@ impl IosWindow {
 
         let layer = view.layer();
         layer.setContentsScale(scale);
+        let mut renderer = MetalRenderer::from_layer(
+            MetalContext::default(),
+            layer
+                .downcast_ref::<CAMetalLayer>()
+                .ok_or_else(|| anyhow::anyhow!("UIKit view must have a CAMetalLayer"))?,
+            false,
+        )?;
+        let pixel_w = (screen_bounds_cg.size.width * scale) as i32;
+        let pixel_h = (screen_bounds_cg.size.height * scale) as i32;
+        renderer.update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
 
         // Auto-resize the Metal view when the parent view changes size
         // (e.g. rotation). UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight
@@ -402,17 +415,6 @@ impl IosWindow {
         text_input_view.setAlpha(0.01);
         text_input_view.setUserInteractionEnabled(true);
         view.addSubview(&text_input_view);
-
-        let pixel_w = (screen_bounds_cg.size.width * scale) as i32;
-        let pixel_h = (screen_bounds_cg.size.height * scale) as i32;
-        let mut renderer = MetalRenderer::from_layer(
-            MetalContext::default(),
-            layer
-                .downcast_ref::<CAMetalLayer>()
-                .ok_or_else(|| anyhow::anyhow!("UIKit view must have a CAMetalLayer"))?,
-            false,
-        );
-        renderer.update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
 
         let state = IosWindowState {
             platform: Rc::downgrade(platform),

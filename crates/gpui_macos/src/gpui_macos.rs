@@ -27,22 +27,17 @@ mod platform;
 mod window;
 mod window_appearance;
 
-use cocoa::{
-    base::{id, nil},
-    foundation::{NSAutoreleasePool, NSNotFound, NSString, NSUInteger},
+use objc2::{
+    Encode, Encoding, RefEncode,
+    rc::Retained,
+    runtime::{AnyObject, Bool},
 };
-
-use objc::runtime::{BOOL, NO, YES};
-use objc2::runtime::AnyObject;
-use objc2_foundation::NSString as Objc2NSString;
-use std::{
-    ffi::{CStr, c_char},
-    ops::Range,
-};
+use objc2_foundation::{NSNotFound, NSString, NSUInteger};
+use std::{ffi::CStr, ops::Range};
 
 pub(crate) use display::*;
 pub(crate) use display_link::*;
-pub(crate) use gpui_apple::{AppleActivity, AppleDispatcher};
+pub(crate) use gpui_apple::{AppleActivity, AppleDispatcher, main_thread_marker};
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 pub(crate) use window::*;
@@ -50,12 +45,12 @@ pub(crate) use window::*;
 pub use platform::MacPlatform;
 
 trait BoolExt {
-    fn to_objc(self) -> BOOL;
+    fn to_objc(self) -> Bool;
 }
 
 impl BoolExt for bool {
-    fn to_objc(self) -> BOOL {
-        if self { YES } else { NO }
+    fn to_objc(self) -> Bool {
+        Bool::new(self)
     }
 }
 
@@ -63,23 +58,10 @@ trait NSStringExt {
     unsafe fn to_str(&self) -> &str;
 }
 
-impl NSStringExt for id {
-    unsafe fn to_str(&self) -> &str {
-        unsafe {
-            let cstr = self.UTF8String();
-            if cstr.is_null() {
-                ""
-            } else {
-                CStr::from_ptr(cstr as *mut c_char).to_str().unwrap()
-            }
-        }
-    }
-}
-
 impl NSStringExt for *mut AnyObject {
     unsafe fn to_str(&self) -> &str {
         unsafe {
-            let Some(string) = self.cast::<Objc2NSString>().as_ref() else {
+            let Some(string) = self.cast::<NSString>().as_ref() else {
                 return "";
             };
             let cstr = string.UTF8String();
@@ -113,8 +95,8 @@ impl NSRange {
 
     fn to_range(self) -> Option<Range<usize>> {
         if self.is_valid() {
-            let start = self.location as usize;
-            let end = start + self.length as usize;
+            let start = self.location;
+            let end = start + self.length;
             Some(start..end)
         } else {
             None
@@ -131,19 +113,14 @@ impl From<Range<usize>> for NSRange {
     }
 }
 
-unsafe impl objc::Encode for NSRange {
-    fn encode() -> objc::Encoding {
-        let encoding = format!(
-            "{{NSRange={}{}}}",
-            NSUInteger::encode().as_str(),
-            NSUInteger::encode().as_str()
-        );
-        unsafe { objc::Encoding::from_str(&encoding) }
-    }
+unsafe impl Encode for NSRange {
+    const ENCODING: Encoding = objc2_foundation::NSRange::ENCODING;
 }
 
-/// Allow NSString::alloc use here because it sets autorelease
-#[allow(clippy::disallowed_methods)]
-unsafe fn ns_string(string: &str) -> id {
-    unsafe { NSString::alloc(nil).init_str(string).autorelease() }
+unsafe impl RefEncode for NSRange {
+    const ENCODING_REF: Encoding = Encoding::Pointer(&Self::ENCODING);
+}
+
+fn ns_string(string: &str) -> *mut AnyObject {
+    Retained::autorelease_ptr(NSString::from_str(string)).cast()
 }

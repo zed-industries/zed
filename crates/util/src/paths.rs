@@ -647,6 +647,14 @@ impl PathWithPosition {
         // in the future seems unlikely.
         static SUFFIX_RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(ROW_COL_CAPTURE_REGEX).unwrap());
+        // `Path::with_file_name` inserts the host's separator, which can
+        // corrupt Unix paths when the editor runs on Windows.
+        let replace_file_name = |input: &str, file_name: &str, replacement: &str| {
+            input.rsplit_once(file_name).map_or_else(
+                || PathBuf::from(input),
+                |(prefix, _)| PathBuf::from(format!("{prefix}{replacement}")),
+            )
+        };
         match SUFFIX_RE
             .captures(maybe_file_name_with_row_col)
             .and_then(|captures| {
@@ -659,7 +667,11 @@ impl PathWithPosition {
                 let column = maybe_column.parse::<u32>().ok();
 
                 Self {
-                    path: path.with_file_name(&maybe_file_name_with_row_col[..file_name_end]),
+                    path: replace_file_name(
+                        trimmed,
+                        maybe_file_name_with_row_col,
+                        &maybe_file_name_with_row_col[..file_name_end],
+                    ),
                     row,
                     column,
                 }
@@ -703,7 +715,7 @@ impl PathWithPosition {
 
                 Self {
                     path: if row.is_some() {
-                        path.with_file_name(path_string)
+                        replace_file_name(s, file_name, &path_string)
                     } else {
                         path.to_path_buf()
                     },
@@ -2479,6 +2491,54 @@ mod tests {
             assert_eq!(parsed.path.as_os_str(), Path::new(input).as_os_str());
             assert_eq!(parsed.row, None, "{input}");
             assert_eq!(parsed.column, None, "{input}");
+        }
+    }
+
+    #[test]
+    fn path_with_position_preserves_path_separators() {
+        for (input, expected_path, expected_column) in [
+            (
+                "/home/user/project/src/main.rs:49",
+                "/home/user/project/src/main.rs",
+                None,
+            ),
+            (
+                "/home/user/project/src/main.rs:49:7",
+                "/home/user/project/src/main.rs",
+                Some(7),
+            ),
+            (
+                "/home/user/project/src/main.rs:49:in",
+                "/home/user/project/src/main.rs",
+                None,
+            ),
+            ("src/main.rs(49,7)", "src/main.rs", Some(7)),
+            ("src/main.rs:49/", "src/main.rs", None),
+            ("src/main.rs:49/.", "src/main.rs", None),
+            ("parent//file.rs:49", "parent//file.rs", None),
+            ("parent/./file.rs:49", "parent/./file.rs", None),
+            ("parent/😀.rs:49", "parent/😀.rs", None),
+            ("C:/project/src/main.rs:49", "C:/project/src/main.rs", None),
+            (
+                r"C:\project\src\main.rs:49",
+                r"C:\project\src\main.rs",
+                None,
+            ),
+            (r"src\mixed/main.rs:49", r"src\mixed/main.rs", None),
+            (
+                r"\\server\share/main.rs:49",
+                r"\\server\share/main.rs",
+                None,
+            ),
+        ] {
+            let parsed = PathWithPosition::parse_str(input);
+            assert_eq!(
+                parsed.path.as_os_str(),
+                OsStr::new(expected_path),
+                "{input}"
+            );
+            assert_eq!(parsed.row, Some(49), "{input}");
+            assert_eq!(parsed.column, expected_column, "{input}");
         }
     }
 

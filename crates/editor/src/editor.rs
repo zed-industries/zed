@@ -265,7 +265,10 @@ use theme::{
 use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
     Avatar, ContextMenu, Disclosure, IconButtonShape, Indicator, Key, KeyBinding, Tooltip,
-    prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
+    prelude::*,
+    scrollbars::ScrollbarAutoHide,
+    tooltip_container,
+    utils::{RetainedFocusExt as _, WithRemSize},
 };
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
@@ -1834,37 +1837,40 @@ struct GutterButtonTooltip {
 }
 
 impl GutterButtonTooltip {
-    fn active_intent(&self, modifiers: Modifiers) -> GutterButtonIntent {
-        if modifiers.secondary() {
+    fn active_intent(&self, modifiers: Modifiers, cx: &App) -> GutterButtonIntent {
+        if modifiers.secondary(cx) {
             self.secondary
         } else {
             self.primary
         }
     }
 
-    fn meta_text(&self) -> String {
+    fn meta_text(&self, cx: &App) -> String {
         const RIGHT_CLICK_HINT: &str = "right-click for more options";
 
         if self.primary == self.secondary {
             return RIGHT_CLICK_HINT.to_string();
         }
         let modifier_as_text = gpui::Keystroke {
-            modifiers: Modifiers::secondary_key(),
+            modifiers: Modifiers::secondary_key(cx),
             ..Default::default()
         };
         let secondary = match self.secondary {
             GutterButtonIntent::SetBookmark => "bookmark",
             GutterButtonIntent::SetBreakpoint => "breakpoint",
         };
-        format!("{modifier_as_text}-click to add a {secondary}\n{RIGHT_CLICK_HINT}")
+        format!(
+            "{}-click to add a {secondary}\n{RIGHT_CLICK_HINT}",
+            modifier_as_text.display(cx.platform_info().os)
+        )
     }
 }
 
 impl Render for GutterButtonTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let intent = self.active_intent(window.modifiers());
+        let intent = self.active_intent(window.modifiers(), cx);
         let key_binding = KeyBinding::for_action_in(intent.action(), &self.focus_handle, cx);
-        let meta_text = self.meta_text();
+        let meta_text = self.meta_text(cx);
 
         #[cfg(test)]
         if let Some(on_render) = &self.on_render {
@@ -2405,7 +2411,11 @@ impl Editor {
 
         let inlay_hint_settings =
             inlay_hint_settings(selections.newest_anchor().head(), &buffer_snapshot, cx);
-        let focus_handle = cx.focus_handle();
+        let focus_handle = if mode.is_single_line() {
+            cx.retained_focus_handle()
+        } else {
+            cx.focus_handle()
+        };
         if !is_minimap {
             cx.on_focus(&focus_handle, window, Self::handle_focus)
                 .detach();
@@ -2868,7 +2878,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> KeyContext {
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("Editor");
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
@@ -4306,7 +4316,7 @@ impl Editor {
 
     fn is_cmd_or_ctrl_pressed(modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
         match EditorSettings::get_global(cx).multi_cursor_modifier {
-            MultiCursorModifier::Alt => modifiers.secondary(),
+            MultiCursorModifier::Alt => modifiers.secondary(cx),
             MultiCursorModifier::CmdOrCtrl => modifiers.alt,
         }
     }
@@ -4314,7 +4324,7 @@ impl Editor {
     fn is_alt_pressed(modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
         match EditorSettings::get_global(cx).multi_cursor_modifier {
             MultiCursorModifier::Alt => modifiers.alt,
-            MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
+            MultiCursorModifier::CmdOrCtrl => modifiers.secondary(cx),
         }
     }
 
@@ -4852,7 +4862,7 @@ impl Editor {
         let breakpoint = Arc::from(breakpoint.clone());
 
         let alt_as_text = gpui::Keystroke {
-            modifiers: Modifiers::secondary_key(),
+            modifiers: Modifiers::secondary_key(cx),
             ..Default::default()
         };
         let primary_action_text = "Unset breakpoint";
@@ -4863,7 +4873,8 @@ impl Editor {
             SharedString::from("No executable code is associated with this line.")
         } else if !breakpoint.is_disabled() {
             SharedString::from(format!(
-                "{alt_as_text}-click to disable\nright-click for more options"
+                "{}-click to disable\nright-click for more options",
+                alt_as_text.display(cx.platform_info().os)
             ))
         } else {
             SharedString::from("Right-click for more options")
@@ -4933,7 +4944,7 @@ impl Editor {
             }
         };
 
-        let intent = if window.modifiers().secondary() {
+        let intent = if window.modifiers().secondary(cx) {
             secondary
         } else {
             primary
@@ -4949,7 +4960,7 @@ impl Editor {
             .on_click(cx.listener({
                 move |editor, _: &ClickEvent, window, cx| {
                     window.focus(&editor.focus_handle(cx), cx);
-                    let intent = if window.modifiers().secondary() {
+                    let intent = if window.modifiers().secondary(cx) {
                         secondary
                     } else {
                         primary

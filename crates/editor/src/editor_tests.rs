@@ -29737,6 +29737,63 @@ async fn test_completions_with_additional_edits_and_multiple_cursors(cx: &mut Te
 }
 
 #[gpui::test]
+async fn test_completions_resolve_shortens_label(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_with_adapter(
+        Arc::into_inner(rust_lang()).expect("Rust language should have a single owner"),
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    resolve_provider: Some(true),
+                    ..lsp::CompletionOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(|server| {
+                server.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
+                    Ok(Some(lsp::CompletionResponse::Array(vec![
+                        lsp::CompletionItem {
+                            label: "long_keyword_argument_name:".to_string(),
+                            detail: Some("=> Symbol".to_string()),
+                            ..lsp::CompletionItem::default()
+                        },
+                    ])))
+                });
+                server.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(
+                    |mut item, _| async move {
+                        item.label.clear();
+                        item.detail = Some("=> Class<>".to_string());
+                        Ok(item)
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("long_keyword_argˇ");
+    cx.dispatch_action(ShowCompletions);
+    cx.condition(|editor, _| {
+        let context_menu = editor.context_menu.borrow();
+        let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref() else {
+            return false;
+        };
+        menu.completions
+            .borrow()
+            .iter()
+            .any(|completion| completion.label.text() == " => Class<>")
+    })
+    .await;
+    cx.update(|window, cx| {
+        window.refresh();
+        let _ = window.draw(cx);
+    });
+}
+
+#[gpui::test]
 async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -36794,17 +36851,17 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         on_render: None,
     };
 
-    let primary_intent = tooltip.active_intent(Modifiers::none());
+    let primary_intent = cx.read(|cx| tooltip.active_intent(Modifiers::none(), cx));
     assert_eq!(primary_intent, GutterButtonIntent::SetBreakpoint);
     assert!(primary_intent.action().as_any().is::<ToggleBreakpoint>());
 
-    let secondary_intent = tooltip.active_intent(Modifiers::secondary_key());
+    let secondary_intent = cx.read(|cx| tooltip.active_intent(Modifiers::secondary_key(cx), cx));
     assert_eq!(secondary_intent, GutterButtonIntent::SetBookmark);
     assert!(secondary_intent.action().as_any().is::<ToggleBookmark>());
 
     // When both features are enabled, the meta text advertises the
     // modifier-click alternative.
-    let meta = tooltip.meta_text();
+    let meta = cx.read(|cx| tooltip.meta_text(cx));
     assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
     assert!(!meta.contains("-click to add a breakpoint"), "got: {meta}");
     assert!(meta.contains("right-click for more options"));
@@ -36818,7 +36875,7 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         focus_handle: tooltip.focus_handle,
         on_render: None,
     };
-    let meta = single_feature_tooltip.meta_text();
+    let meta = cx.read(|cx| single_feature_tooltip.meta_text(cx));
     assert_eq!(meta, "right-click for more options");
 }
 
@@ -36847,7 +36904,7 @@ fn test_gutter_button_tooltip_renders_modifier_transitions(cx: &mut TestAppConte
 
     assert_render("Set Breakpoint");
 
-    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    cx.simulate_modifiers_change(cx.read(Modifiers::secondary_key));
     tooltip.update_in(cx, |_, _window, cx| cx.notify());
     cx.run_until_parked();
     assert_render("Set Bookmark");
