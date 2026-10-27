@@ -1198,7 +1198,7 @@ impl Language {
             let mut captures = cursor.captures(query, tree.root_node(), text.text_provider());
             let capture_refs = iter::from_fn(move || {
                 let (query_match, capture_index) = captures.next()?;
-                let capture = query_match.captures[*capture_index];
+                let capture = query_match.captures()[*capture_index];
                 Some((
                     capture.node.byte_range(),
                     HighlightCaptureRef {
