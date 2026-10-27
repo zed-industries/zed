@@ -135,6 +135,12 @@ pub trait AgentConnection {
         false
     }
 
+    /// Whether subagents follow the ACP subagents RFD on this connection: they are discovered
+    /// only through their parent's announcements, and must never be loaded or resumed.
+    fn announces_subagents(&self) -> bool {
+        false
+    }
+
     /// Whether conversation teardown should invoke `close_session`.
     /// The default preserves existing UI cleanup; backend-owned release hooks are separate.
     /// Autonomous backends can opt out without disabling explicit close support.
@@ -988,9 +994,11 @@ mod test_support {
         supports_retry: bool,
         supports_load_session: bool,
         supports_close_session: bool,
+        announces_subagents: bool,
         close_sessions_on_release: bool,
         supports_session_additional_directories: bool,
         supports_set_title: bool,
+        supports_truncate: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
         prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
@@ -1037,9 +1045,11 @@ mod test_support {
                 supports_retry: false,
                 supports_load_session: false,
                 supports_close_session: false,
+                announces_subagents: false,
                 close_sessions_on_release: true,
                 supports_session_additional_directories: false,
                 supports_set_title: true,
+                supports_truncate: true,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
                 prompt_capabilities_rx: watch::Receiver::constant(
@@ -1175,6 +1185,11 @@ mod test_support {
             self
         }
 
+        pub fn with_announced_subagents(mut self, announces_subagents: bool) -> Self {
+            self.announces_subagents = announces_subagents;
+            self
+        }
+
         pub fn with_close_sessions_on_release(mut self, close_sessions_on_release: bool) -> Self {
             self.close_sessions_on_release = close_sessions_on_release;
             self
@@ -1208,6 +1223,11 @@ mod test_support {
 
         pub fn with_supports_set_title(mut self, supports_set_title: bool) -> Self {
             self.supports_set_title = supports_set_title;
+            self
+        }
+
+        pub fn with_supports_truncate(mut self, supports_truncate: bool) -> Self {
+            self.supports_truncate = supports_truncate;
             self
         }
 
@@ -1329,6 +1349,10 @@ mod test_support {
 
         fn supports_close_session(&self) -> bool {
             self.supports_close_session
+        }
+
+        fn announces_subagents(&self) -> bool {
+            self.announces_subagents
         }
 
         fn should_close_sessions_on_release(&self) -> bool {
@@ -1530,9 +1554,11 @@ mod test_support {
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             // Capability checks also call this; only run may consume the gate.
-            Some(Rc::new(StubAgentSessionEditor {
-                next_truncate: self.next_truncate.clone(),
-            }))
+            self.supports_truncate.then(|| {
+                Rc::new(StubAgentSessionEditor {
+                    next_truncate: self.next_truncate.clone(),
+                }) as Rc<dyn AgentSessionTruncate>
+            })
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

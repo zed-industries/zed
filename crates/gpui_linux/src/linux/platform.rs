@@ -39,7 +39,7 @@ use gpui::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
     ForegroundExecutor, GraphicalEnvironment, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
+    PlatformWindow, PowerMode, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
     WindowButtonLayout, WindowParams, WindowingModes, WindowingRequest,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -71,11 +71,11 @@ pub(crate) struct PlatformHandlers {
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
     pub(crate) system_sleep: Option<Box<dyn FnMut()>>,
     pub(crate) system_wake: Option<Box<dyn FnMut()>>,
+    pub(crate) power_mode_change: Option<Box<dyn FnMut()>>,
     pub(crate) displays_changed: Option<Box<dyn FnMut()>>,
 }
 
-/// A logind `PrepareForSleep` signal, forwarded from the D-Bus listener to
-/// the client's event loop.
+/// A system power change, forwarded from D-Bus to the client's event loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))),
@@ -84,6 +84,7 @@ pub(crate) struct PlatformHandlers {
 pub(crate) enum SystemPowerEvent {
     Sleep,
     Wake,
+    ModeChanged(PowerMode),
 }
 
 pub(crate) struct LinuxCommon {
@@ -104,6 +105,9 @@ pub(crate) struct LinuxCommon {
     )]
     power_sender: Sender<SystemPowerEvent>,
     power_listener_started: bool,
+    power_mode: PowerMode,
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    power_mode_listener: Option<Task<()>>,
     /// Runs after each foreground runnable registered by [`LinuxCommon::register_sources`].
     ///
     /// X11 uses this to handle events that a runnable's requests read into xcb's queue, where
@@ -148,6 +152,9 @@ impl LinuxCommon {
             ),
             power_sender,
             power_listener_started: false,
+            power_mode: PowerMode::Unknown,
+            #[cfg(any(feature = "wayland", feature = "x11"))]
+            power_mode_listener: None,
             after_runnable: None,
         };
 
@@ -216,9 +223,16 @@ impl LinuxCommon {
         Ok(())
     }
 
-    /// Runs the app's sleep or wake callback, without `common` borrowed, since the callback
+    /// Runs the app's power callback, without `common` borrowed, since the callback
     /// can call back into the platform.
     fn handle_system_power_event(common: &RefCell<Self>, event: SystemPowerEvent) {
+        if let SystemPowerEvent::ModeChanged(mode) = event {
+            let mut common = common.borrow_mut();
+            if common.power_mode == mode {
+                return;
+            }
+            common.power_mode = mode;
+        }
         fn slot(
             callbacks: &mut PlatformHandlers,
             event: SystemPowerEvent,
@@ -226,6 +240,7 @@ impl LinuxCommon {
             match event {
                 SystemPowerEvent::Sleep => &mut callbacks.system_sleep,
                 SystemPowerEvent::Wake => &mut callbacks.system_wake,
+                SystemPowerEvent::ModeChanged(_) => &mut callbacks.power_mode_change,
             }
         }
         let callback = slot(&mut common.borrow_mut().callbacks, event).take();
@@ -587,6 +602,34 @@ impl Platform for LinuxPlatform {
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal
+    }
+
+    fn power_mode(&self) -> PowerMode {
+        self.with_common(|common| common.power_mode)
+    }
+
+    fn on_power_mode_change(&self, callback: Box<dyn FnMut()>) {
+        self.with_common(|common| {
+            common.callbacks.power_mode_change = Some(callback);
+            #[cfg(any(feature = "wayland", feature = "x11"))]
+            if common.power_mode_listener.is_none() {
+                let sender = common.power_sender.clone();
+                common.power_mode_listener = Some(common.background_executor.spawn(async move {
+                    let result = async {
+                        let connection = ashpd::zbus::Connection::system().await?;
+                        crate::linux::power::monitor_power_mode(&connection, |mode| {
+                            sender.send(SystemPowerEvent::ModeChanged(mode))?;
+                            Ok(())
+                        })
+                        .await
+                    }
+                    .await;
+                    if let Err(error) = result {
+                        log::debug!("failed to monitor system power mode: {error:?}");
+                    }
+                }));
+            }
+        });
     }
 
     #[cfg(not(any(feature = "wayland", feature = "x11")))]
@@ -1713,6 +1756,43 @@ async fn await_idle_sleep_prevention(
 mod tests {
     use super::*;
     use gpui::{Point, px};
+
+    #[test]
+    fn power_mode_callbacks_can_reenter_and_replace_themselves() -> anyhow::Result<()> {
+        let event_loop = EventLoop::<()>::try_new()?;
+        let (common, _, _) = LinuxCommon::new(event_loop.get_signal());
+        let common = Rc::new(RefCell::new(common));
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        common.borrow_mut().callbacks.power_mode_change = Some(Box::new({
+            let common = Rc::downgrade(&common);
+            let calls = calls.clone();
+            move || {
+                let common = common.upgrade().expect("common is alive");
+                calls.borrow_mut().push((common.borrow().power_mode, false));
+                common.borrow_mut().callbacks.power_mode_change = Some(Box::new({
+                    let common = Rc::downgrade(&common);
+                    let calls = calls.clone();
+                    move || {
+                        let common = common.upgrade().expect("common is alive");
+                        calls.borrow_mut().push((common.borrow().power_mode, true));
+                    }
+                }));
+            }
+        }));
+        // Repeated reports of the same mode must not invoke the callback again.
+        for mode in [
+            PowerMode::LowPower,
+            PowerMode::LowPower,
+            PowerMode::Balanced,
+        ] {
+            LinuxCommon::handle_system_power_event(&common, SystemPowerEvent::ModeChanged(mode));
+        }
+        assert_eq!(
+            *calls.borrow(),
+            [(PowerMode::LowPower, false), (PowerMode::Balanced, true)]
+        );
+        Ok(())
+    }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
     #[test]

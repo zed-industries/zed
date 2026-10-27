@@ -1147,7 +1147,7 @@ mod selection_tests {
     use gpui::{TestAppContext, UpdateGlobal as _};
     use serde_json::json;
 
-    fn set_beta(enabled: bool, cx: &mut App) {
+    pub(super) fn set_beta(enabled: bool, cx: &mut App) {
         cx.update_flags(
             false,
             if enabled {

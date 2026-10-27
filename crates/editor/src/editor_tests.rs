@@ -29737,6 +29737,63 @@ async fn test_completions_with_additional_edits_and_multiple_cursors(cx: &mut Te
 }
 
 #[gpui::test]
+async fn test_completions_resolve_shortens_label(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_with_adapter(
+        Arc::into_inner(rust_lang()).expect("Rust language should have a single owner"),
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    resolve_provider: Some(true),
+                    ..lsp::CompletionOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(|server| {
+                server.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
+                    Ok(Some(lsp::CompletionResponse::Array(vec![
+                        lsp::CompletionItem {
+                            label: "long_keyword_argument_name:".to_string(),
+                            detail: Some("=> Symbol".to_string()),
+                            ..lsp::CompletionItem::default()
+                        },
+                    ])))
+                });
+                server.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(
+                    |mut item, _| async move {
+                        item.label.clear();
+                        item.detail = Some("=> Class<>".to_string());
+                        Ok(item)
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("long_keyword_argˇ");
+    cx.dispatch_action(ShowCompletions);
+    cx.condition(|editor, _| {
+        let context_menu = editor.context_menu.borrow();
+        let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref() else {
+            return false;
+        };
+        menu.completions
+            .borrow()
+            .iter()
+            .any(|completion| completion.label.text() == " => Class<>")
+    })
+    .await;
+    cx.update(|window, cx| {
+        window.refresh();
+        let _ = window.draw(cx);
+    });
+}
+
+#[gpui::test]
 async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
