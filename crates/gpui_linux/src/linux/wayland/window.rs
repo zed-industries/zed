@@ -1148,9 +1148,6 @@ impl WaylandWindowStatePtr {
                     // Limit interactive resizes to once per vblank
                     let throttled = configure.resizing && state.resize_throttle;
                     if !throttled {
-                        // This configure is acked now, so an older deferred one must never be
-                        // acked after it.
-                        state.deferred_configure = None;
                         if configure.resizing {
                             state.resize_throttle = true;
                         }
@@ -1174,6 +1171,10 @@ impl WaylandWindowStatePtr {
                     }
                     if throttled {
                         self.state.borrow_mut().deferred_configure = Some((serial, configure));
+                        // Only a frame acks it, and a resize step that left the size unchanged
+                        // drew nothing, so no frame may be on its way. Unacked, the compositor
+                        // stops sending resize steps.
+                        self.schedule_frame();
                         return;
                     }
                     self.state.borrow_mut().live_resize = configure.resizing;
@@ -1191,7 +1192,10 @@ impl WaylandWindowStatePtr {
                     }
                 }
             }
-            let state = self.state.borrow_mut();
+            let mut state = self.state.borrow_mut();
+            // Acking this one acks every earlier configure, and xdg-shell forbids acking an older
+            // serial after it, including one that came without a toplevel configure.
+            state.deferred_configure = None;
             state.surface_state.ack_configure(serial);
 
             let window_geometry = inset_by_tiling(
