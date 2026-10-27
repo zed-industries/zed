@@ -558,7 +558,7 @@ async-std = { version = "1.12", features = ["unstable"] }
 async-tar = { git = "https://github.com/zed-industries/async-tar", rev = "bd3ad6f89df9a9da7a8535958756d6bf465936a0" }
 async-task = "4.7"
 async-trait = "0.1"
-async-tungstenite = "0.33"
+async-tungstenite = "0.35"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.8.10", default-features = false, features = [
     "behavior-version-latest",
@@ -678,8 +678,8 @@ itertools = "0.14.0"
 js-sys = "0.3"
 jsonschema = { version = "0.51", default-features = false }
 jsonwebtoken = { version = "10.0", default-features = false }
-jupyter-protocol = "1.4.0"
-jupyter-websocket-client = "1.1.0"
+jupyter-protocol = "2.0.3"
+jupyter-websocket-client = "3.0.0"
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 libwebrtc = "0.3.26"
@@ -696,7 +696,7 @@ mime = "0.3.17"
 minidumper = "0.11"
 moka = { version = "0.12.10", features = ["sync"] }
 nanoid = "0.4"
-nbformat = "1.2.0"
+nbformat = "3.0.0"
 nix = "0.30"
 notify-rust = "4"
 nucleo = { package = "nucleo-matcher", version = "0.3" }
@@ -876,7 +876,7 @@ resvg = { version = "0.46.0", default-features = false, features = [
     "raster-images",
 ] }
 rsa = { version = "0.9", default-features = false, features = ["std", "u64_digit"] }
-runtimelib = { version = "1.4.0", default-features = false, features = [
+jupyter-zmq-client = { version = "3.0.0", default-features = false, features = [
     "async-dispatcher-runtime", "aws-lc-rs"
 ] }
 rust-embed = { version = "8.11", features = ["include-exclude", "compression"] }

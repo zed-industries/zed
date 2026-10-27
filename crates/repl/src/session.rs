@@ -32,12 +32,12 @@ use futures::FutureExt as _;
 use gpui::{
     Context, Entity, EventEmitter, Render, Subscription, Task, WeakEntity, Window, div, prelude::*,
 };
-use language::Point;
-use project::Fs;
-use runtimelib::{
+use jupyter_protocol::{
     ExecuteRequest, ExecutionState, InputReply, InterruptRequest, JupyterMessage,
     JupyterMessageContent, KernelInfoRequest, ReplyStatus, ShutdownRequest,
 };
+use language::Point;
+use project::Fs;
 use settings::Settings as _;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;

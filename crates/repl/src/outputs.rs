@@ -35,9 +35,9 @@
 
 use editor::{Editor, MultiBuffer};
 use gpui::{AnyElement, ClipboardItem, Entity, EventEmitter, Render, WeakEntity};
+use jupyter_protocol::{ExecutionState, JupyterMessage, JupyterMessageContent, Media, MediaType};
 use language::Buffer;
 use menu;
-use runtimelib::{ExecutionState, JupyterMessage, JupyterMessageContent, MimeBundle, MimeType};
 use ui::{CommonAnimationExt, CopyButton, IconButton, Tooltip, prelude::*};
 
 mod image;
@@ -65,15 +65,15 @@ use crate::repl_settings::ReplSettings;
 use settings::Settings;
 
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
-fn rank_mime_type(mimetype: &MimeType) -> usize {
+fn rank_mime_type(mimetype: &MediaType) -> usize {
     match mimetype {
-        MimeType::DataTable(_) => 7,
-        MimeType::Html(_) => 6,
-        MimeType::Json(_) => 5,
-        MimeType::Png(_) => 4,
-        MimeType::Jpeg(_) => 3,
-        MimeType::Markdown(_) => 2,
-        MimeType::Plain(_) => 1,
+        MediaType::DataTable(_) => 7,
+        MediaType::Html(_) => 6,
+        MediaType::Json(_) => 5,
+        MediaType::Png(_) => 4,
+        MediaType::Jpeg(_) => 3,
+        MediaType::Markdown(_) => 2,
+        MediaType::Plain(_) => 1,
         // All other media types are not supported in Zed at this time
         _ => 0,
     }
@@ -390,42 +390,43 @@ impl Output {
     }
 
     pub fn new(
-        data: &MimeBundle,
+        data: &Media,
         display_id: Option<String>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
         match data.richest(rank_mime_type) {
-            Some(MimeType::Json(json_value)) => match JsonView::from_value(json_value.clone()) {
+            Some(MediaType::Json(json_value)) => match JsonView::from_value(json_value.clone()) {
                 Ok(json_view) => Output::Json {
                     content: cx.new(|_| json_view),
                     display_id,
                 },
                 Err(_) => Output::Message("Failed to parse JSON".to_string()),
             },
-            Some(MimeType::Plain(text)) => Output::Plain {
+            Some(MediaType::Plain(text)) => Output::Plain {
                 content: cx.new(|cx| TerminalOutput::from(text, window, cx)),
                 display_id,
             },
-            Some(MimeType::Markdown(text)) => {
+            Some(MediaType::Markdown(text)) => {
                 let content = cx.new(|cx| MarkdownView::from(text.clone(), cx));
                 Output::Markdown {
                     content,
                     display_id,
                 }
             }
-            Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
+            Some(MediaType::Png(data)) | Some(MediaType::Jpeg(data)) => match ImageView::from(data)
+            {
                 Ok(view) => Output::Image {
                     content: cx.new(|_| view),
                     display_id,
                 },
                 Err(error) => Output::Message(format!("Failed to load image: {}", error)),
             },
-            Some(MimeType::DataTable(data)) => Output::Table {
+            Some(MediaType::DataTable(data)) => Output::Table {
                 content: cx.new(|cx| TableView::new(data, window, cx)),
                 display_id,
             },
-            Some(MimeType::Html(html_content)) => match html::html_to_markdown(html_content) {
+            Some(MediaType::Html(html_content)) => match html::html_to_markdown(html_content) {
                 Ok(markdown_text) => {
                     let content = cx.new(|cx| MarkdownView::from(markdown_text, cx));
                     Output::Markdown {
@@ -591,7 +592,7 @@ impl ExecutionView {
             }
             JupyterMessageContent::ExecuteReply(reply) => {
                 for payload in reply.payload.iter() {
-                    if let runtimelib::Payload::Page { data, .. } = payload {
+                    if let jupyter_protocol::Payload::Page { data, .. } = payload {
                         let output = Output::new(data, None, window, cx);
                         self.outputs.push(output);
                     }
@@ -659,7 +660,7 @@ impl ExecutionView {
 
     pub fn update_display_data(
         &mut self,
-        data: &MimeBundle,
+        data: &Media,
         display_id: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -844,9 +845,9 @@ impl Render for ExecutionView {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use runtimelib::{
+    use jupyter_protocol::{
         ClearOutput, ErrorOutput, ExecutionState, InputRequest, JupyterMessage,
-        JupyterMessageContent, MimeType, Status, Stdio, StreamContent,
+        JupyterMessageContent, MediaType, Status, Stdio, StreamContent,
     };
     use settings::SettingsStore;
     use std::path::Path;
@@ -854,13 +855,13 @@ mod tests {
 
     #[test]
     fn test_rank_mime_type_ordering() {
-        let data_table = MimeType::DataTable(Box::default());
-        let html = MimeType::Html(String::new());
-        let json = MimeType::Json(serde_json::json!({}));
-        let png = MimeType::Png(String::new());
-        let jpeg = MimeType::Jpeg(String::new());
-        let markdown = MimeType::Markdown(String::new());
-        let plain = MimeType::Plain(String::new());
+        let data_table = MediaType::DataTable(Box::default());
+        let html = MediaType::Html(String::new());
+        let json = MediaType::Json(serde_json::json!({}));
+        let png = MediaType::Png(String::new());
+        let jpeg = MediaType::Jpeg(String::new());
+        let markdown = MediaType::Markdown(String::new());
+        let plain = MediaType::Plain(String::new());
 
         assert_eq!(rank_mime_type(&data_table), 7);
         assert_eq!(rank_mime_type(&html), 6);
@@ -880,8 +881,8 @@ mod tests {
 
     #[test]
     fn test_rank_mime_type_unsupported_returns_zero() {
-        let svg = MimeType::Svg(String::new());
-        let latex = MimeType::Latex(String::new());
+        let svg = MediaType::Svg(String::new());
+        let latex = MediaType::Latex(String::new());
 
         assert_eq!(rank_mime_type(&svg), 0);
         assert_eq!(rank_mime_type(&latex), 0);
