@@ -4728,6 +4728,7 @@ impl Thread {
             return None;
         }
 
+        // Even with usage (reported before the stream failed), a trailing prompt has no reply yet, so keep it out of the summary.
         let insertion_ix = match self.messages.last().map(|message| &**message) {
             Some(Message::User(_)) => self.messages.len().saturating_sub(1),
             _ => self.messages.len(),
