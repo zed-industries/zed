@@ -361,9 +361,9 @@ pub fn task_contexts(
     cx: &mut App,
 ) -> Task<TaskContexts> {
     let active_item = workspace.active_item(cx);
-    let active_item_worktree = active_item
+    let active_item_project_path = active_item.as_ref().and_then(|item| item.project_path(cx));
+    let active_item_worktree = active_item_project_path
         .as_ref()
-        .and_then(|item| item.project_path(cx))
         .map(|project_path| project_path.worktree_id)
         .filter(|worktree_id| {
             workspace
@@ -380,7 +380,9 @@ pub fn task_contexts(
     });
 
     let active_editor = active_item.and_then(|item| item.act_as::<Editor>(cx));
-    let active_project_editor = active_item_worktree
+    // Files from single-file worktrees provide no worktree context, but their editors
+    // must still provide file variables such as `ZED_FILE`.
+    let active_project_editor = active_item_project_path
         .is_some()
         .then(|| active_editor.clone())
         .flatten();
@@ -540,6 +542,53 @@ mod tests {
                 )]),
                 project_env: HashMap::default(),
             }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_single_file_worktree_provides_file_context(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(path!("/dir"), json!({"test.py": "print(1)"}))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir/test.py").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/test.py"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = cx
+            .new_window_entity(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+
+        let contexts = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.add_item_to_center(Box::new(editor), window, cx);
+                task_contexts(workspace, window, cx)
+            })
+            .await;
+
+        assert!(contexts.active_worktree_context.is_none());
+        let (worktree_id, _, item_context) = contexts
+            .active_item_context
+            .as_ref()
+            .expect("single-file editor should provide an item context");
+
+        assert_eq!(*worktree_id, None);
+        assert_eq!(item_context.cwd, None);
+        assert_eq!(
+            item_context.task_variables.get(&VariableName::File),
+            Some(path!("/dir/test.py"))
+        );
+        assert_eq!(
+            item_context.task_variables.get(&VariableName::WorktreeRoot),
+            None
         );
     }
 
