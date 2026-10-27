@@ -5977,6 +5977,65 @@ mod tests {
     }
 
     #[test]
+    fn test_directory_name_uses_path_style() {
+        let cases = [
+            (
+                "/worktrees/zed/plum-warbler/zed",
+                Some("/repos/zed"),
+                PathStyle::Unix,
+                "plum-warbler",
+            ),
+            (
+                "/worktrees/feature-1",
+                Some("/repos/zed"),
+                PathStyle::Unix,
+                "feature-1",
+            ),
+            ("/worktrees/feature-1", None, PathStyle::Unix, "feature-1"),
+            (
+                r"C:\worktrees\zed\plum-warbler\zed",
+                Some(r"C:\repos\zed"),
+                PathStyle::Windows,
+                "plum-warbler",
+            ),
+            (
+                r"C:\worktrees\feature-1",
+                Some(r"C:\repos\zed"),
+                PathStyle::Windows,
+                "feature-1",
+            ),
+            (
+                r"C:\worktrees\feature-1",
+                None,
+                PathStyle::Windows,
+                "feature-1",
+            ),
+            (
+                "C:/worktrees/zed/plum-warbler/zed",
+                Some("C:/repos/zed"),
+                PathStyle::Windows,
+                "plum-warbler",
+            ),
+        ];
+
+        for (worktree_path, name_anchor, path_style, expected) in cases {
+            let worktree = Worktree {
+                path: PathBuf::from(worktree_path),
+                ref_name: None,
+                sha: "8166e3d".into(),
+                is_main: false,
+                is_bare: false,
+            };
+
+            assert_eq!(
+                worktree.directory_name(name_anchor.map(Path::new), path_style),
+                expected,
+                "directory name for {worktree_path:?} anchored at {name_anchor:?} with {path_style:?}",
+            );
+        }
+    }
+
+    #[test]
     fn test_parse_worktrees_from_str() {
         // Empty input
         let result = parse_worktrees_from_str("", None);
