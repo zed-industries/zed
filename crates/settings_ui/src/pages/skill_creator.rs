@@ -1,7 +1,7 @@
 use agent_skills::{
-    AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE, SKILL_FILE_NAME,
-    SkillMetadata, SkillsUpdatedHook, global_skills_dir, parse_skill_file_content,
-    project_skills_relative_path, slugify_skill_name, validate_description, validate_name,
+    MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE, SKILL_FILE_NAME, SkillMetadata,
+    SkillsUpdatedHook, global_skills_dir, parse_skill_file_content, project_skills_relative_path,
+    slugify_skill_name, validate_description, validate_name,
 };
 use anyhow::{Context as _, Result, anyhow};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
@@ -1240,15 +1240,12 @@ async fn write_skill_to_worktree(
     let skill_file_path = skill_dir.join(RelPath::from_unix_str(SKILL_FILE_NAME)?);
     let skill_dir_abs_path = worktree.read_with(cx, |worktree, _| worktree.absolutize(&skill_dir));
 
-    // Worktree entries skip `file_scan_exclusions`, so only collab guests fall back to them.
-    let host_check = project.read_with(cx, |project, cx| {
+    let Some(host_check) = project.read_with(cx, |project, cx| {
         project.host_path_is_dir(&skill_dir_abs_path, cx)
-    });
-    let existing_is_dir = match host_check {
-        Some(host_check) => host_check.await,
-        None => worktree_entry_is_dir(worktree, &skill_dir, cx).await,
-    }
-    .with_context(|| {
+    }) else {
+        anyhow::bail!("You can't create skills in a project someone shared with you.");
+    };
+    let existing_is_dir = host_check.await.with_context(|| {
         format!(
             "failed to check whether {} already exists",
             skill_dir_abs_path.display()
@@ -1274,33 +1271,6 @@ async fn write_skill_to_worktree(
         .with_context(|| format!("failed to write {}", skill_file_abs_path.display()))?;
 
     Ok(skill_file_abs_path)
-}
-
-async fn worktree_entry_is_dir(
-    worktree: &Entity<Worktree>,
-    skill_dir: &RelPath,
-    cx: &mut AsyncApp,
-) -> Result<Option<bool>> {
-    let agents_dir = RelPath::from_unix_str(AGENTS_DIR_NAME)?;
-    let skills_dir = RelPath::from_unix_str(project_skills_relative_path())?;
-    // Gitignored directories aren't loaded until expanded.
-    for directory in [agents_dir, skills_dir] {
-        let expand_task = worktree.update(cx, |worktree, cx| {
-            let entry_id = worktree
-                .entry_for_path(directory)
-                .filter(|entry| entry.is_dir())?
-                .id;
-            worktree.expand_entry(entry_id, cx)
-        });
-        if let Some(expand_task) = expand_task {
-            expand_task.await?;
-        }
-    }
-    Ok(worktree.read_with(cx, |worktree, _| {
-        worktree
-            .entry_for_path(skill_dir)
-            .map(|entry| entry.is_dir())
-    }))
 }
 
 fn existing_skill_path_error(
@@ -1964,27 +1934,5 @@ mod tests {
             err.to_string().contains("not a skill directory"),
             "error should explain the conflict is a non-directory, got: {err}"
         );
-    }
-
-    #[gpui::test]
-    async fn worktree_entry_is_dir_finds_ignored_skill(cx: &mut gpui::TestAppContext) {
-        let (_fs, _project, worktree) = init_worktree_test(
-            serde_json::json!({
-                ".git": {},
-                ".gitignore": ".agents\n",
-                ".agents": { "skills": { "draft-pr": { "SKILL.md": "body" } } },
-            }),
-            cx,
-        )
-        .await;
-
-        let is_dir = worktree_entry_is_dir(
-            &worktree,
-            RelPath::from_unix_str(".agents/skills/draft-pr").unwrap(),
-            &mut cx.to_async(),
-        )
-        .await
-        .expect("checking the worktree should succeed");
-        assert_eq!(is_dir, Some(true));
     }
 }
