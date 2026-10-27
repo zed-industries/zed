@@ -4072,6 +4072,13 @@ impl Workspace {
         })
     }
 
+    pub fn is_empty(&self, cx: &App) -> bool {
+        let project = self.project.read(cx);
+        !project.is_via_collab()
+            && project.worktrees(cx).next().is_none()
+            && !self.items(cx).any(|item| item.is_dirty(cx))
+    }
+
     pub fn open_workspace_for_paths(
         &mut self,
         // replace_current_window: bool,
@@ -4081,12 +4088,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         let requesting_window = window.window_handle().downcast::<MultiWorkspace>();
-        let is_remote = self.project.read(cx).is_via_collab();
-        let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
-        let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
-
-        let workspace_is_empty = !is_remote && !has_worktree && !has_dirty_items;
-        if workspace_is_empty {
+        if self.is_empty(cx) {
             open_mode = OpenMode::Activate;
         }
 
@@ -11109,10 +11111,31 @@ pub async fn find_existing_workspace(
 
     if open_options.workspace_matching != WorkspaceMatching::None {
         cx.update(|cx| {
+            // A fresh, empty window should receive the project the user picked from it,
+            // unless another window already shows that project as its active workspace.
+            // A workspace merely retained in another window's sidebar shouldn't pull
+            // the user back to that window.
+            let requesting_window_is_empty =
+                open_options
+                    .requesting_window
+                    .is_some_and(|requesting_window| {
+                        requesting_window.read(cx).is_ok_and(|multi_workspace| {
+                            multi_workspace.workspace().read(cx).is_empty(cx)
+                        })
+                    });
+
             for window in workspace_windows_for_location(location, cx) {
                 if let Ok(multi_workspace) = window.read(cx) {
+                    let active_workspace = multi_workspace.workspace();
                     for workspace in multi_workspace.workspaces() {
                         if !workspace_is_at_location(workspace, location, cx) {
+                            continue;
+                        }
+
+                        if requesting_window_is_empty
+                            && open_options.requesting_window != Some(window)
+                            && workspace != active_workspace
+                        {
                             continue;
                         }
 
