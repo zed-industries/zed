@@ -52,6 +52,14 @@ use crate::{CURSOR_ID, GEMINI_ID};
 
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
 const PARAMETERIZED_MODEL_PICKER_META_KEY: &str = "parameterizedModelPicker";
+const SESSION_ACTIVITY_META_KEY: &str = "dev.zed/sessionActivity";
+
+fn session_activity_from_meta(meta: Option<&acp::Meta>) -> Option<(u64, acp_v2::StateUpdate)> {
+    let snapshot = meta?.get(SESSION_ACTIVITY_META_KEY)?;
+    let sequence = snapshot.get("sequence")?.as_str()?.parse().ok()?;
+    let state = serde_json::from_value(snapshot.clone()).ok()?;
+    Some((sequence, state))
+}
 async fn close_session_and_drain(
     connection: &ConnectionTo<Agent>,
     session_id: acp_v2::SessionId,
@@ -178,6 +186,7 @@ struct PendingAcpSession {
 struct SessionConfigResponse {
     modes: Option<acp::SessionModeState>,
     config_options: Option<Vec<acp::SessionConfigOption>>,
+    meta: Option<acp::Meta>,
 }
 
 /// Sends `request` and returns its response. Once the response arrives, the agent's later
@@ -488,6 +497,10 @@ fn client_capabilities_for_agent(
     let mut meta = acp::Meta::from_iter([
         ("terminal_output".into(), true.into()),
         ("terminal-auth".into(), true.into()),
+        (
+            SESSION_ACTIVITY_META_KEY.into(),
+            serde_json::json!({"version": 1}),
+        ),
     ]);
 
     if agent_id.as_ref() == CURSOR_ID {
@@ -811,6 +824,17 @@ impl AcpConnection {
         default_config_task: Option<Task<()>>,
         cx: &mut App,
     ) {
+        if self
+            .agent_capabilities
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get(SESSION_ACTIVITY_META_KEY))
+            .and_then(|capability| capability.get("version"))
+            .and_then(serde_json::Value::as_u64)
+            == Some(1)
+        {
+            thread.update(cx, |thread, cx| thread.enable_legacy_session_activity(cx));
+        }
         let release_subscription = cx.observe_release(thread, {
             let session_id = session_id.clone();
             let thread = thread.downgrade();
@@ -1032,6 +1056,10 @@ impl AcpConnection {
                     let Some(connection_state) = this.upgrade() else {
                         return Ok(());
                     };
+                    let activity = response
+                        .as_ref()
+                        .ok()
+                        .and_then(|response| session_activity_from_meta(response.meta.as_ref()));
                     let (modes, config_options) = match response
                         .and_then(|response| config_state(response.modes, response.config_options))
                     {
@@ -1045,6 +1073,13 @@ impl AcpConnection {
                     };
 
                     if let Some(loaded_thread) = thread.upgrade() {
+                        if let Some((sequence, state)) = activity {
+                            loaded_thread
+                                .update(cx, |thread, cx| {
+                                    thread.update_legacy_session_activity(sequence, state, cx)
+                                })
+                                .map_err(Arc::new)?;
+                        }
                         {
                             let mut sessions = connection_state.sessions.borrow_mut();
                             let Some(session) = sessions
@@ -1379,6 +1414,8 @@ impl AgentConnection for AcpConnection {
                 .context("ACP new-session response callback was cancelled")?
                 .map_err(map_acp_error)?;
 
+            let activity = session_activity_from_meta(response.meta.as_ref());
+
             let (modes, config_options) = config_state(response.modes, response.config_options)?;
 
             let default_mode = self.defaults.mode();
@@ -1461,7 +1498,14 @@ impl AgentConnection for AcpConnection {
                     config_options,
                     default_config_task,
                     cx,
-                )
+                );
+                if let Some((sequence, state)) = activity {
+                    thread
+                        .update(cx, |thread, cx| {
+                            thread.update_legacy_session_activity(sequence, state, cx)
+                        })
+                        .log_err();
+                }
             });
 
             registered
@@ -1525,6 +1569,7 @@ impl AgentConnection for AcpConnection {
                     Ok(SessionConfigResponse {
                         modes: response.modes,
                         config_options: response.config_options,
+                        meta: response.meta,
                     })
                 })
             },
@@ -1569,6 +1614,7 @@ impl AgentConnection for AcpConnection {
                     Ok(SessionConfigResponse {
                         modes: response.modes,
                         config_options: response.config_options,
+                        meta: response.meta,
                     })
                 })
             },
@@ -6408,6 +6454,7 @@ mod tests {
                         |_, _, _, _| {
                             async move {
                                 Ok(SessionConfigResponse {
+                                    meta: None,
                                     modes: None,
                                     config_options: Some(returned),
                                 })
@@ -6759,6 +6806,7 @@ mod tests {
                     move |_, _, _, _| {
                         async move {
                             Ok(SessionConfigResponse {
+                                meta: None,
                                 modes: None,
                                 config_options: Some(initial_options),
                             })
@@ -6808,6 +6856,7 @@ mod tests {
                     move |_, _, _, _| {
                         async move {
                             Ok(SessionConfigResponse {
+                                meta: None,
                                 modes: None,
                                 config_options: Some(replacement_options),
                             })
@@ -9092,6 +9141,121 @@ exit 7
     // reconstructed thread, not dropped because the session hasn't been
     // registered yet.
     #[gpui::test]
+    async fn test_load_restores_negotiated_v1_activity_without_a_local_prompt(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use acp_thread::{ForegroundActivity, ThreadStatus};
+        use serde_json::json;
+
+        let (agent_sender, agent_received) = futures::channel::oneshot::channel();
+        let (mut connection, project, _, _, updates, _, _keep_agent_alive) =
+            connect_fake_agent_with_handle(None, Some(agent_sender), cx).await;
+        let agent = agent_received.await.expect("agent connection");
+        Rc::get_mut(&mut connection)
+            .expect("no sessions own the connection yet")
+            .agent_capabilities
+            .meta = Some(acp::Meta::from_iter([(
+            "dev.zed/sessionActivity".into(),
+            json!({"version": 1}),
+        )]));
+        let snapshot = |sequence: &str, state: &str| {
+            acp::SessionUpdate::SessionInfoUpdate(acp::SessionInfoUpdate::new().meta(
+                acp::Meta::from_iter([(
+                    "dev.zed/sessionActivity".into(),
+                    json!({"sequence": sequence, "state": state}),
+                )]),
+            ))
+        };
+        *updates.lock().expect("replay updates") = vec![snapshot("12", "running")];
+        let session_id = acp_v2::SessionId::new("retained-running-session");
+        let thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    session_id.clone(),
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("reopened session");
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            assert!(thread.latest_submission_id().is_none());
+            assert!(!thread.has_unsettled_submissions());
+        });
+        for (sequence, state, expected) in [
+            ("11", "idle", ForegroundActivity::Running),
+            ("12", "idle", ForegroundActivity::Running),
+            ("invalid-sequence", "idle", ForegroundActivity::Running),
+            ("13", "requires_action", ForegroundActivity::RequiresAction),
+            ("14", "running", ForegroundActivity::Running),
+            ("15", "idle", ForegroundActivity::Idle),
+            ("9007199254740994", "running", ForegroundActivity::Running),
+            ("9007199254740995", "idle", ForegroundActivity::Idle),
+        ] {
+            agent
+                .send_notification(acp::SessionNotification::new(
+                    acp::SessionId::new(session_id.0.clone()),
+                    snapshot(sequence, state),
+                ))
+                .expect("live activity snapshot");
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.foreground_activity(), expected);
+                assert!(!thread.has_unsettled_submissions());
+            });
+            if sequence == "14" {
+                thread
+                    .update(cx, |thread, cx| thread.send_raw("queued follow-up", cx))
+                    .await
+                    .expect("a new submission can complete independently of shared activity");
+                thread.read_with(cx, |thread, _| {
+                    assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+                    assert_eq!(thread.status(), ThreadStatus::Generating);
+                });
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_v1_activity_metadata_is_ignored_without_agent_negotiation(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (connection, project, _, _, updates, _, _keep_agent_alive) =
+            connect_fake_agent(None, cx).await;
+        *updates.lock().expect("replay updates") = vec![acp::SessionUpdate::SessionInfoUpdate(
+            acp::SessionInfoUpdate::new().meta(acp::Meta::from_iter([(
+                "dev.zed/sessionActivity".into(),
+                serde_json::json!({"sequence": "12", "state": "running"}),
+            )])),
+        )];
+        let thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    acp_v2::SessionId::new("ordinary-v1"),
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("ordinary v1 load");
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert!(!thread.uses_reported_activity());
+            assert_eq!(
+                thread.foreground_activity(),
+                acp_thread::ForegroundActivity::Idle
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_load_session_replays_notifications_sent_before_response(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -9299,6 +9463,7 @@ exit 7
                                     handle_session_notification,
                                 );
                                 Ok(SessionConfigResponse {
+                                    meta: None,
                                     modes: None,
                                     config_options: Some(vec![acp::SessionConfigOption::boolean(
                                         "web_search",
@@ -10313,6 +10478,13 @@ fn handle_session_notification(
     // Forward the update to the acp_thread as usual.
     if let Err(err) = thread
         .update(cx, |thread, cx| {
+            if let acp::SessionUpdate::SessionInfoUpdate(update) = &notification.update
+                && let Some((sequence, state)) = session_activity_from_meta(update.meta.as_ref())
+            {
+                thread
+                    .update_legacy_session_activity(sequence, state, cx)
+                    .map_err(acp::Error::from)?;
+            }
             thread.handle_session_update(notification.update.clone(), cx)
         })
         .flatten_acp()

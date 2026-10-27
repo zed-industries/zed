@@ -3534,6 +3534,7 @@ pub struct AcpThread {
     submissions: SessionSubmissions,
     activity: SessionActivity,
     received_session_state: bool,
+    legacy_activity_sequence: Option<u64>,
     reported_usage: Option<ReportedTokenUsage>,
     token_usage: Option<TokenUsage>,
     cost: Option<SessionCost>,
@@ -3895,6 +3896,7 @@ impl AcpThread {
             ),
             activity: SessionActivity::default(),
             received_session_state: false,
+            legacy_activity_sequence: None,
             reported_usage: None,
             connection,
             token_usage: None,
@@ -4159,10 +4161,36 @@ impl AcpThread {
     /// Whether the agent reports this session's foreground state, rather than Zed
     /// deriving it from its own prompt turns.
     pub fn uses_reported_activity(&self) -> bool {
-        !matches!(
-            self.submissions.transport(),
-            SubmissionTransport::Completion
-        )
+        self.legacy_activity_sequence.is_some()
+            || !matches!(
+                self.submissions.transport(),
+                SubmissionTransport::Completion
+            )
+    }
+
+    pub fn enable_legacy_session_activity(&mut self, cx: &mut Context<Self>) {
+        if self.legacy_activity_sequence.is_some() {
+            return;
+        }
+        self.legacy_activity_sequence = Some(0);
+        self.mark_activity_unconfirmed(cx);
+    }
+
+    pub fn update_legacy_session_activity(
+        &mut self,
+        sequence: u64,
+        state: acp_v2::StateUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let Some(previous) = self.legacy_activity_sequence else {
+            return Ok(());
+        };
+        if sequence <= previous {
+            return Ok(());
+        }
+        self.update_session_state(state, cx)?;
+        self.legacy_activity_sequence = Some(sequence);
+        Ok(())
     }
 
     pub fn foreground_state(&self) -> Option<&acp_v2::StateUpdate> {
@@ -7083,11 +7111,18 @@ impl AcpThread {
         cx: &mut Context<Self>,
         f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp_v1::PromptResponse>,
     ) -> Submission {
-        let cancel_task = match self
-            .request_cancellation(RequestPermissionOutcome::InterruptedByFollowUp, cx)
+        // Attaching to shared v1 activity does not make another viewer's turn
+        // this sender's previous submission. Only interrupt our own pending turn.
+        let cancel_task = if self.legacy_activity_sequence.is_some() && self.running_turn.is_none()
         {
-            Ok(task) => task,
-            Err(error) => return self.track_submission(id, None, cx, async move |_, _| Err(error)),
+            Task::ready(Ok(()))
+        } else {
+            match self.request_cancellation(RequestPermissionOutcome::InterruptedByFollowUp, cx) {
+                Ok(task) => task,
+                Err(error) => {
+                    return self.track_submission(id, None, cx, async move |_, _| Err(error));
+                }
+            }
         };
         self.clear_completed_plan_entries(cx);
         self.had_error = false;
@@ -7112,11 +7147,13 @@ impl AcpThread {
                 }
             }),
         });
-        self.set_foreground_state(
-            acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
-            cx,
-        );
-        cx.emit(AcpThreadEvent::StatusChanged);
+        if !self.uses_reported_activity() {
+            self.set_foreground_state(
+                acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                cx,
+            );
+            cx.emit(AcpThreadEvent::StatusChanged);
+        }
 
         let completion = async move |thread: WeakEntity<Self>, cx: &mut AsyncApp| {
             let response = rx.await;
@@ -7139,10 +7176,21 @@ impl AcpThread {
                 // state even when the send_task is cancelled before tx.send().
                 if is_same_turn {
                     this.running_turn.take();
-                    this.set_foreground_state(
-                        acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
-                        cx,
-                    );
+                    if !this.uses_reported_activity() {
+                        this.set_foreground_state(
+                            acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                            cx,
+                        );
+                    }
+                }
+
+                // A v1 prompt response belongs to this submission. It cannot
+                // end shared work that continued or started on another viewer.
+                if this.legacy_activity_sequence.is_some() {
+                    return match response {
+                        Ok(response) => response.map(Some),
+                        Err(_) => Ok(None),
+                    };
                 }
 
                 if this.turn_id == turn_id {
@@ -7219,18 +7267,20 @@ impl AcpThread {
                         if is_same_turn {
                             cx.emit(AcpThreadEvent::StatusChanged);
                         }
-                        let stop_reason = stop_reason_from_v1(&r.stop_reason);
-                        this.set_foreground_state(
-                            acp_v2::StateUpdate::Idle(
-                                acp_v2::IdleStateUpdate::new().stop_reason(stop_reason.clone()),
-                            ),
-                            cx,
-                        );
-                        cx.emit(AcpThreadEvent::Stopped {
-                            activity_generation: this.activity.generation(),
-                            activity_duration: this.activity.duration(),
-                            stop_reason,
-                        });
+                        if !this.uses_reported_activity() {
+                            let stop_reason = stop_reason_from_v1(&r.stop_reason);
+                            this.set_foreground_state(
+                                acp_v2::StateUpdate::Idle(
+                                    acp_v2::IdleStateUpdate::new().stop_reason(stop_reason.clone()),
+                                ),
+                                cx,
+                            );
+                            cx.emit(AcpThreadEvent::Stopped {
+                                activity_generation: this.activity.generation(),
+                                activity_duration: this.activity.duration(),
+                                stop_reason,
+                            });
+                        }
                         Ok(Some(r))
                     }
                     Err(e) => {
