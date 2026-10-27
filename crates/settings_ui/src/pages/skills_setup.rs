@@ -294,76 +294,69 @@ fn render_skill_row(
                             let app_state = workspace::AppState::global(cx);
                             let fs = app_state.fs.clone();
                             cx.spawn(async move |settings_window, cx| {
-                            if answer.await != Ok(0) {
-                                return;
-                            }
-
-                            let confirmed = settings_window
-                                .update(cx, |settings_window, cx| {
-                                    let inserted = settings_window
-                                        .hidden_deleted_skill_directory_paths
-                                        .insert(directory_path.clone());
-                                    if inserted {
-                                        cx.notify();
-                                    }
-                                    inserted
-                                })
-                                .unwrap_or(false);
-                            if !confirmed {
-                                return;
-                            }
-
-                            let trash_result = match &project {
-                                Some(project) => {
-                                    let Some(entry_id) = project.update(cx, |project, cx| {
-                                        project
-                                            .project_path_for_absolute_path(&directory_path, cx)
-                                            .and_then(|project_path| {
-                                                project
-                                                    .entry_for_path(&project_path, cx)
-                                                    .map(|entry| entry.id)
-                                            })
-                                    }) else {
-                                        log::error!(
-                                            "failed to trash skill directory {}: not in project",
-                                            directory_path.display()
-                                        );
-                                        return;
-                                    };
-                                    let Some(trash_task) = project.update(cx, |project, cx| {
-                                        project.trash_entry(entry_id, cx)
-                                    }) else {
-                                        return;
-                                    };
-                                    trash_task.await
+                                if answer.await != Ok(0) {
+                                    return;
                                 }
-                                None => {
-                                    fs.trash(
-                                        &directory_path,
-                                        RemoveOptions {
-                                            recursive: true,
-                                            ignore_if_not_exists: true,
-                                        },
-                                    )
-                                    .await
-                                }
-                            };
-                            if let Err(error) = trash_result {
-                                log::error!(
-                                    "failed to move skill directory {} to trash: {error:#}",
-                                    directory_path.display()
-                                );
-                                settings_window
+
+                                let confirmed = settings_window
                                     .update(cx, |settings_window, cx| {
-                                        settings_window
+                                        let inserted = settings_window
                                             .hidden_deleted_skill_directory_paths
-                                            .remove(&directory_path);
-                                        cx.notify();
+                                            .insert(directory_path.clone());
+                                        if inserted {
+                                            cx.notify();
+                                        }
+                                        inserted
                                     })
-                                    .ok();
-                            }
-                        })
-                        .detach();
+                                    .unwrap_or(false);
+                                if !confirmed {
+                                    return;
+                                }
+
+                                let trash_result = match &project {
+                                    Some(project) => {
+                                        let trash_task = project.update(cx, |project, cx| {
+                                            let project_path = project
+                                                .project_path_for_absolute_path(
+                                                    &directory_path,
+                                                    cx,
+                                                )?;
+                                            let entry_id =
+                                                project.entry_for_path(&project_path, cx)?.id;
+                                            project.trash_entry(entry_id, cx)
+                                        });
+                                        match trash_task {
+                                            Some(trash_task) => trash_task.await,
+                                            None => Err(anyhow::anyhow!("not in project")),
+                                        }
+                                    }
+                                    None => {
+                                        fs.trash(
+                                            &directory_path,
+                                            RemoveOptions {
+                                                recursive: true,
+                                                ignore_if_not_exists: true,
+                                            },
+                                        )
+                                        .await
+                                    }
+                                };
+                                if let Err(error) = trash_result {
+                                    log::error!(
+                                        "failed to move skill directory {} to trash: {error:#}",
+                                        directory_path.display()
+                                    );
+                                    settings_window
+                                        .update(cx, |settings_window, cx| {
+                                            settings_window
+                                                .hidden_deleted_skill_directory_paths
+                                                .remove(&directory_path);
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                }
+                            })
+                            .detach();
                         },
                     )),
                 )
