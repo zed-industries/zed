@@ -10,23 +10,27 @@ use util::paths::PathExt as _;
 use crate::pages::SkillCreatorOpenMode;
 use crate::{SettingsUiFile, SettingsWindow};
 
-/// Resolves the project that owns a project-local skill, so file operations
-/// go through the project (and thus the remote server for dev-container
-/// workspaces) instead of the host filesystem. Returns `None` for global
-/// skills, which are host-local.
 fn project_for_skill(
-    source: &SkillSource,
+    skill: &Skill,
     settings_window: &SettingsWindow,
     cx: &App,
 ) -> Option<Entity<Project>> {
-    let SkillSource::ProjectLocal { worktree_id, .. } = source else {
+    let SkillSource::ProjectLocal { worktree_id, .. } = &skill.source else {
         return None;
     };
+    let worktree_id = WorktreeId::from_usize(worktree_id.0);
+    // Collab projects use the host's worktree ids, which can repeat, so also check the path.
+    // The file path, unlike `directory_path`, is in the worktree's path style.
     crate::all_projects(settings_window.original_window.as_ref(), cx).find(|project| {
         project
             .read(cx)
-            .worktree_for_id(WorktreeId::from_usize(worktree_id.0), cx)
-            .is_some()
+            .worktree_for_id(worktree_id, cx)
+            .is_some_and(|worktree| {
+                let worktree = worktree.read(cx);
+                worktree
+                    .path_style()
+                    .starts_with(&skill.skill_file_path, worktree.abs_path())
+            })
     })
 }
 
@@ -37,7 +41,7 @@ pub(crate) fn copy_skill_share_link(
 ) -> Task<()> {
     let skill_file_path = skill.skill_file_path.clone();
     let directory_path = skill.directory_path.clone();
-    let project = project_for_skill(&skill.source, settings_window, cx);
+    let project = project_for_skill(skill, settings_window, cx);
     let fs = workspace::AppState::global(cx).fs.clone();
     cx.spawn(async move |settings_window, cx| {
         let content = match &project {
@@ -93,7 +97,7 @@ pub(crate) fn trash_skill(
     }
     cx.notify();
 
-    let project = project_for_skill(&skill.source, settings_window, cx);
+    let project = project_for_skill(skill, settings_window, cx);
     let fs = workspace::AppState::global(cx).fs.clone();
     cx.spawn(async move |settings_window, cx| {
         let trash_result = match &project {

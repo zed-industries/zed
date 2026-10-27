@@ -7255,6 +7255,35 @@ pub mod test {
     }
 
     #[gpui::test]
+    async fn test_project_skill_share_link_skips_project_with_same_worktree_id(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // Shares the project's worktree id but not its path, as a collab project can.
+        let (settings_window, cx, _project_fs, host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        host_fs
+            .insert_tree(
+                "/elsewhere",
+                serde_json::json!({ ".agents": { "skills": { "my-skill": { "SKILL.md": "elsewhere copy" } } } }),
+            )
+            .await;
+        let mut skill = project_skill(worktree_id, "my-skill");
+        skill.directory_path = PathBuf::from("/elsewhere/.agents/skills/my-skill");
+        skill.skill_file_path = skill.directory_path.join("SKILL.md");
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::copy_skill_share_link(&skill, settings_window, cx)
+            })
+            .await;
+
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(agent_skills::encode_skill_share_link("elsewhere copy"))
+        );
+    }
+
+    #[gpui::test]
     async fn test_project_skill_delete_failure_shows_skill_again(cx: &mut gpui::TestAppContext) {
         let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
             init_project_skill_test(cx).await;
