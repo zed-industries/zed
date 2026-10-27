@@ -93,10 +93,18 @@ impl PendingSessionUpdates {
         let mut notifications = Vec::new();
         // Session IDs correlate concurrent creations. The wire carries no request ID
         // on these notifications, so provisional ID reuse by the agent remains ambiguous.
+        // The new session's subagents, and theirs, are announced before their own traffic,
+        // so walking in order also collects that traffic, in the order it arrived.
+        let mut sessions = vec![session_id.clone()];
         for update in std::mem::take(&mut self.updates) {
-            if &update.notification.session_id == session_id
-                && update.generation >= creation.generation
+            if update.generation >= creation.generation
+                && sessions.contains(&update.notification.session_id)
             {
+                if let InboundSessionUpdate::Subagent(subagent) = &update.notification.update
+                    && !sessions.contains(&subagent.session_id)
+                {
+                    sessions.push(subagent.session_id.clone());
+                }
                 notifications.push(update.notification);
             } else {
                 self.updates.push_back(update);
@@ -154,6 +162,8 @@ pub enum InboundSessionUpdate {
     UserMessage(acp_v2::UserMessage),
     AgentMessage(acp_v2::AgentMessage),
     AgentThought(acp_v2::AgentThought),
+    SessionMessage(acp_v2::SessionMessage),
+    SessionMessageChunk(acp_v2::SessionMessageChunk),
     UserMessageChunk(acp_v2::ContentChunk),
     AgentMessageChunk(acp_v2::ContentChunk),
     AgentThoughtChunk(acp_v2::ContentChunk),
@@ -200,6 +210,12 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
             }
             acp_v2::SessionUpdate::AgentThought(thought) => {
                 InboundSessionUpdate::AgentThought(thought)
+            }
+            acp_v2::SessionUpdate::SessionMessage(message) => {
+                InboundSessionUpdate::SessionMessage(message)
+            }
+            acp_v2::SessionUpdate::SessionMessageChunk(chunk) => {
+                InboundSessionUpdate::SessionMessageChunk(chunk)
             }
             acp_v2::SessionUpdate::UserMessageChunk(chunk) => {
                 InboundSessionUpdate::UserMessageChunk(chunk)
@@ -280,6 +296,12 @@ impl InboundSessionNotification {
                 thread.upsert_assistant_message(message, cx)
             }
             InboundSessionUpdate::AgentThought(thought) => thread.upsert_thought(thought, cx),
+            InboundSessionUpdate::SessionMessage(message) => {
+                thread.upsert_session_message(message, cx)
+            }
+            InboundSessionUpdate::SessionMessageChunk(chunk) => {
+                thread.append_session_message_chunk(chunk, cx)
+            }
             InboundSessionUpdate::UserMessageChunk(chunk) => {
                 thread.append_message_chunk(MessageKind::User, chunk, cx)
             }

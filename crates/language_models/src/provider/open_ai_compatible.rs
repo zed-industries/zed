@@ -137,7 +137,10 @@ impl OpenAiCompatibleLanguageModelProvider {
     ) -> BoxFuture<
         'static,
         Result<
-            futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
+            futures::stream::BoxStream<
+                'static,
+                Result<ResponseStreamEvent, LanguageModelCompletionError>,
+            >,
             LanguageModelCompletionError,
         >,
     > {

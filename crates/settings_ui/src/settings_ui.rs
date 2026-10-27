@@ -18,7 +18,7 @@ use gpui::{
 
 use language::Buffer;
 use platform_title_bar::PlatformTitleBar;
-use project::{Project, ProjectPath, Worktree, WorktreeId};
+use project::{DisableAiSettings, Project, ProjectPath, Worktree, WorktreeId};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -4349,6 +4349,7 @@ impl SettingsWindow {
         self.sandbox_host_validation_error = None;
         self.sub_page_stack
             .push(SubPage::new(sub_page_link, section_header));
+        self.retry_llm_provider_authentication(cx);
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
@@ -4559,8 +4560,20 @@ impl SettingsWindow {
         {
             self.skill_creator_page = None;
         }
+        self.retry_llm_provider_authentication(cx);
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
+    }
+
+    fn retry_llm_provider_authentication(&self, cx: &mut Context<Self>) {
+        if self.sub_page_stack.last().is_some_and(|sub_page| {
+            sub_page.link.json_path == Some("llm_providers")
+                && sub_page.link.title.as_ref() == "LLM Providers"
+        }) && !DisableAiSettings::get_global(cx).disable_ai
+        {
+            language_model::LanguageModelRegistry::global(cx)
+                .update(cx, |registry, cx| registry.retry_authentication(cx));
+        }
     }
 
     pub(crate) fn active_project(&self, cx: &App) -> Option<Entity<Project>> {
@@ -5427,6 +5440,9 @@ fn render_icon_theme_picker(
 pub mod test {
 
     use super::*;
+    use credentials_provider::test_support::FakeCredentialsProvider;
+    use language_model::{ApiKeyState, EnvVar, LanguageModelProviderState, LanguageModelRegistry};
+    use language_models::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
 
     impl SettingsWindow {
         fn navbar_entry(&self) -> usize {
@@ -7284,6 +7300,76 @@ pub mod test {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_llm_provider_authentication_and_settings_retry(cx: &mut gpui::TestAppContext) {
+        let url = "https://settings-provider.example/v1";
+        let credentials = Arc::new(FakeCredentialsProvider::default());
+        let release = credentials.defer_read(url);
+        let provider = cx.update(|cx| {
+            register_settings(cx);
+            let app_state = AppState::test(cx);
+            AppState::set_global(app_state.clone(), cx);
+            let settings = r#"{"language_models":{"openai_compatible":{
+                "settings-retry":{"api_url":"https://settings-provider.example/v1",
+                "available_models":[]}
+            }}}"#;
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(settings, cx)
+                    .expect("provider settings");
+            });
+            let provider = Arc::new(OpenAiCompatibleLanguageModelProvider::new(
+                Arc::from("settings-retry"),
+                app_state.client.http_client(),
+                credentials.clone(),
+                cx,
+            ));
+            let env_var = EnvVar {
+                name: SharedString::from("TEST_SETTINGS_API_KEY"),
+                value: None,
+            };
+            let state = provider.observable_entity().expect("provider state");
+            state.update(cx, |state, _| {
+                state.api_key_state = ApiKeyState::new(SharedString::from(url), env_var);
+            });
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+                registry.authenticate_providers(cx);
+            });
+            provider
+        });
+        let (settings_window, cx) =
+            cx.add_window_view(|window, cx| SettingsWindow::new(None, window, cx));
+        cx.run_until_parked();
+        for release in [None, Some(release)] {
+            if let Some(release) = release {
+                release.send(()).expect("authentication remains live");
+                cx.run_until_parked();
+            }
+            cx.cx.update(|cx| {
+                LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                    registry.register_provider(provider.clone(), cx);
+                    registry.authenticate_providers(cx);
+                    registry.authenticate_providers(cx);
+                });
+            });
+            cx.run_until_parked();
+            credentials.assert_reads(&[url]);
+        }
+        cx.cx
+            .update(|cx| open_settings_editor(Some("llm_providers"), None, None, cx));
+        cx.run_until_parked();
+        credentials.assert_reads(&[url; 2]);
+        settings_window.update(cx, |_, cx| cx.notify());
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1000.), px(700.)),
+            |_, _| settings_window.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+        credentials.assert_reads(&[url; 2]);
     }
 
     fn settings_window_with_items(
