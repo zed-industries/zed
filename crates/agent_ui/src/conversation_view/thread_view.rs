@@ -679,7 +679,10 @@ pub struct TurnFields {
 
 enum ThreadControlsPosition {
     /// Below a finalized assistant message.
-    TurnEnd { user_message_index: Option<usize> },
+    TurnEnd {
+        user_message_index: Option<usize>,
+        is_thread_bottom: bool,
+    },
     /// Below the last entry when it isn't an assistant message.
     ThreadBottom,
 }
@@ -7234,8 +7237,10 @@ impl ThreadView {
                 .child(self.render_thread_controls(
                     &thread,
                     entry_ix,
-                    is_thread_bottom,
-                    ThreadControlsPosition::TurnEnd { user_message_index },
+                    ThreadControlsPosition::TurnEnd {
+                        user_message_index,
+                        is_thread_bottom,
+                    },
                     cx,
                 ))
                 .into_any_element()
@@ -7255,7 +7260,6 @@ impl ThreadView {
                     this.child(self.render_thread_controls(
                         &thread,
                         entry_ix,
-                        is_thread_bottom,
                         ThreadControlsPosition::ThreadBottom,
                         cx,
                     ))
@@ -7457,10 +7461,17 @@ impl ThreadView {
         &self,
         thread: &Entity<AcpThread>,
         entry_ix: usize,
-        is_thread_bottom: bool,
         position: ThreadControlsPosition,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let (user_message_index, is_thread_bottom) = match position {
+            ThreadControlsPosition::TurnEnd {
+                user_message_index,
+                is_thread_bottom,
+            } => (user_message_index, is_thread_bottom),
+            ThreadControlsPosition::ThreadBottom => (None, true),
+        };
+
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
         let needs_confirmation = thread.read(cx).is_waiting_for_confirmation()
             || self.has_pending_request_elicitation(cx);
@@ -7468,11 +7479,6 @@ impl ThreadView {
         if is_thread_bottom && (is_generating || needs_confirmation) {
             return Empty.into_any_element();
         }
-
-        let user_message_index = match position {
-            ThreadControlsPosition::TurnEnd { user_message_index } => user_message_index,
-            ThreadControlsPosition::ThreadBottom => None,
-        };
 
         // Not `Some(entry_ix)` for turn ends: a turn that only has thoughts would copy nothing
         // but still show the copied state. The search stops at `entry_ix` when it has text.
