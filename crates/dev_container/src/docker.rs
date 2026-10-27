@@ -355,14 +355,14 @@ impl DockerClient for Docker {
         Ok(())
     }
 
-    async fn run_docker_exec_status(
+    async fn run_docker_exec(
         &self,
         container_id: &str,
         remote_folder: &str,
         user: &str,
         env: &HashMap<String, String>,
         inner_command: Command,
-    ) -> Result<(bool, String), DevContainerError> {
+    ) -> Result<(), DevContainerError> {
         let mut command = Command::new(&self.docker_cli);
 
         command.args(&["exec", "-w", remote_folder, "-u", user]);
@@ -386,8 +386,13 @@ impl DockerClient for Docker {
 
         let std_out = String::from_utf8_lossy(&output.stdout);
         log::debug!("Command output:\n {std_out}");
-        let std_err = String::from_utf8_lossy(&output.stderr).into_owned();
-        Ok((output.status.success(), std_err))
+        if !output.status.success() {
+            let std_err = String::from_utf8_lossy(&output.stderr);
+            // A nonzero exit can be expected for checks such as the post-start marker.
+            log::debug!("Command produced a non-successful output. StdErr: {std_err}");
+            return Err(DevContainerError::DevContainerScriptsFailed);
+        }
+        Ok(())
     }
 
     async fn start_container(&self, id: &str) -> Result<(), DevContainerError> {
@@ -476,7 +481,7 @@ fn parse_find_process_output(raw: &str) -> Result<Option<DockerPs>, DevContainer
 }
 
 #[async_trait]
-pub(crate) trait DockerClient: Sync {
+pub(crate) trait DockerClient {
     async fn inspect(&self, id: &String) -> Result<DockerInspect, DevContainerError>;
     async fn get_docker_compose_config(
         &self,
@@ -492,9 +497,8 @@ pub(crate) trait DockerClient: Sync {
     /// Runs `inner_command` in the container, returning `Ok(())` only if it
     /// exits successfully.
     ///
-    /// A non-zero exit is logged and returned as `Err(DevContainerScriptsFailed)`.
-    /// `Err` is also returned, unchanged, if `run_docker_exec_status` itself
-    /// fails to run the command at all (e.g. the container is gone).
+    /// A non-zero exit returns `Err(DevContainerScriptsFailed)`. Failure to
+    /// launch or collect output from the Docker CLI returns a different error.
     async fn run_docker_exec(
         &self,
         container_id: &str,
@@ -502,31 +506,7 @@ pub(crate) trait DockerClient: Sync {
         user: &str,
         env: &HashMap<String, String>,
         inner_command: Command,
-    ) -> Result<(), DevContainerError> {
-        let (success, stderr) = self
-            .run_docker_exec_status(container_id, remote_folder, user, env, inner_command)
-            .await?;
-        if !success {
-            log::error!("Command produced a non-successful output. StdErr: {stderr}");
-            return Err(DevContainerError::DevContainerScriptsFailed);
-        }
-        Ok(())
-    }
-
-    /// Runs `inner_command` in the container and reports its exit outcome as
-    /// `Ok((success, stderr))`.
-    ///
-    /// `Err` is returned only if the exec mechanism itself fails to run the
-    /// command (e.g. the container is gone), a non-zero exit is not
-    /// treated as an error, it's reported as `Ok((false, stderr))`.
-    async fn run_docker_exec_status(
-        &self,
-        container_id: &str,
-        remote_folder: &str,
-        user: &str,
-        env: &HashMap<String, String>,
-        inner_command: Command,
-    ) -> Result<(bool, String), DevContainerError>;
+    ) -> Result<(), DevContainerError>;
 
     async fn start_container(&self, id: &str) -> Result<(), DevContainerError>;
     async fn find_process_by_filters(
@@ -911,6 +891,31 @@ mod test {
                 OsStr::new(given_id)
             ]
         )
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn docker_exec_returns_distinct_error_when_process_cannot_start() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let docker = Docker {
+            docker_cli: temp_dir.path().join("missing-docker").display().to_string(),
+            has_buildx: false,
+        };
+
+        let result = gpui::block_on(docker.run_docker_exec(
+            "container",
+            "/workspace",
+            "root",
+            &HashMap::new(),
+            Command::new("true"),
+        ));
+
+        assert_eq!(
+            result,
+            Err(DevContainerError::ContainerNotValid(
+                "container".to_string()
+            ))
+        );
     }
 
     #[cfg(not(target_os = "windows"))]

@@ -2383,16 +2383,22 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 // Write marker first, run command second, which matches reference implementation:
                 // https://github.com/devcontainers/cli/blob/33073dbaba2545c51b4f8396e179c18231e80124/src/spec-common/injectHeadless.ts#L433-L437
                 let should_run = if let Some(started_at) = &devcontainer_up.started_at {
-                    self.docker_client
-                        .run_docker_exec_status(
+                    match self
+                        .docker_client
+                        .run_docker_exec(
                             &devcontainer_up.container_id,
                             &remote_folder,
                             &devcontainer_up.remote_user,
                             &devcontainer_up.remote_env,
                             post_start_marker_command(started_at, &devcontainer_up.remote_user),
                         )
-                        .await?
-                        .0
+                        .await
+                    {
+                        Ok(()) => true,
+                        // Skip when the marker is current or cannot be written.
+                        Err(DevContainerError::DevContainerScriptsFailed) => false,
+                        Err(error) => return Err(error),
+                    }
                 } else {
                     container_started
                 };
@@ -4051,7 +4057,9 @@ mod test {
         .await
         .unwrap();
         devcontainer_manifest.parse_nonremote_vars().unwrap();
-        test_dependencies.docker.set_exec_success(false);
+        test_dependencies
+            .docker
+            .set_exec_result(Err(DevContainerError::DevContainerScriptsFailed));
 
         let devcontainer_up = DevContainerUp {
             started_at: Some("2026-06-23T10:00:00Z".to_string()),
@@ -4074,6 +4082,47 @@ mod test {
             .unwrap();
         // Only the marker check runs; postStartCommand itself is skipped.
         assert_eq!(docker_exec_commands.len(), 1);
+    }
+
+    #[gpui::test]
+    async fn should_propagate_post_start_marker_execution_error(cx: &mut TestAppContext) {
+        let (test_dependencies, mut devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+                "image": "test_image:latest",
+                "postStartCommand": "echo post-start"
+            }"#,
+        )
+        .await
+        .unwrap();
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        let error = DevContainerError::ContainerNotValid("container".to_string());
+        test_dependencies.docker.set_exec_result(Err(error.clone()));
+
+        let devcontainer_up = DevContainerUp {
+            started_at: Some("2026-06-23T10:00:00Z".to_string()),
+            container_id: "container".to_string(),
+            remote_user: "root".to_string(),
+            remote_workspace_folder: "/workspaces/project".to_string(),
+            extension_ids: Vec::new(),
+            remote_env: HashMap::new(),
+        };
+
+        assert_eq!(
+            devcontainer_manifest
+                .run_remote_scripts(&devcontainer_up, false, false)
+                .await,
+            Err(error)
+        );
+        assert_eq!(
+            test_dependencies
+                .docker
+                .exec_commands_recorded
+                .lock()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -7341,10 +7390,8 @@ RUN echo $RUBY_VERSION2
         /// Records the `services` argument passed to each `docker_compose_build`
         /// call so tests can assert which services were built.
         compose_build_services: Mutex<Vec<Option<Vec<String>>>>,
-        /// The success value `run_docker_exec_status` reports back for every
-        /// recorded exec call, e.g. simulating whether the `postStartCommand`
-        /// marker file was already up to date.
-        exec_success: Mutex<bool>,
+        /// The result returned for every recorded exec call, including marker checks.
+        exec_result: Mutex<Result<(), DevContainerError>>,
     }
 
     impl FakeDocker {
@@ -7355,7 +7402,7 @@ RUN echo $RUBY_VERSION2
                 exec_commands_recorded: Mutex::new(Vec::new()),
                 duplicate_container_ids: Mutex::new(None),
                 compose_build_services: Mutex::new(Vec::new()),
-                exec_success: Mutex::new(true),
+                exec_result: Mutex::new(Ok(())),
             }
         }
 
@@ -7369,8 +7416,8 @@ RUN echo $RUBY_VERSION2
         fn set_podman(&mut self, podman: bool) {
             self.podman = podman;
         }
-        fn set_exec_success(&self, result: bool) {
-            *self.exec_success.lock().expect("should be available") = result;
+        fn set_exec_result(&self, result: Result<(), DevContainerError>) {
+            *self.exec_result.lock().expect("should be available") = result;
         }
         #[cfg(not(target_os = "windows"))]
         fn set_duplicate_container_ids(&self, ids: Vec<String>) {
@@ -7689,14 +7736,14 @@ RUN echo $RUBY_VERSION2
                 .push(_services.cloned());
             Ok(())
         }
-        async fn run_docker_exec_status(
+        async fn run_docker_exec(
             &self,
             container_id: &str,
             remote_folder: &str,
             user: &str,
             env: &HashMap<String, String>,
             inner_command: Command,
-        ) -> Result<(bool, String), DevContainerError> {
+        ) -> Result<(), DevContainerError> {
             let mut record = self
                 .exec_commands_recorded
                 .lock()
@@ -7708,10 +7755,10 @@ RUN echo $RUBY_VERSION2
                 env: env.clone(),
                 _inner_command: inner_command,
             });
-            Ok((
-                *self.exec_success.lock().expect("should be available"),
-                String::new(),
-            ))
+            self.exec_result
+                .lock()
+                .expect("should be available")
+                .clone()
         }
 
         async fn start_container(&self, _id: &str) -> Result<(), DevContainerError> {
