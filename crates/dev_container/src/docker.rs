@@ -917,14 +917,14 @@ mod test {
         use indoc::indoc;
         use std::os::unix::fs::PermissionsExt;
 
-        // Record each argument on its own line for the assertion below.
+        // Print each argument on its own line for the assertion below.
         let temp_dir = tempfile::tempdir().unwrap();
         let fake_docker = temp_dir.path().join("docker.sh");
         std::fs::write(
             &fake_docker,
             indoc! {r#"
                 #!/bin/sh
-                printf '%s\n' "$@" > "$(dirname "$0")/args"
+                printf '%s\n' "$@"
             "#},
         )
         .unwrap();
@@ -938,16 +938,17 @@ mod test {
         let mut inner_command = Command::new("/bin/sh");
         inner_command.args(&["-c", "npm install"]);
 
-        let result = gpui::block_on(docker.run_docker_exec(
+        let output = gpui::block_on(docker.run_docker_exec(
             "container",
             "/workspace",
             "root",
             &HashMap::new(),
             inner_command,
-        ));
-        assert!(result.unwrap().status.success());
+        ))
+        .unwrap();
+        assert!(output.status.success());
 
-        let received_args = std::fs::read_to_string(temp_dir.path().join("args")).unwrap();
+        let received_args = String::from_utf8(output.stdout).unwrap();
         assert_eq!(
             received_args.lines().collect::<Vec<_>>(),
             vec![
