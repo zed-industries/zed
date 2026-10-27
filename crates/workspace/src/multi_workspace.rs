@@ -929,6 +929,67 @@ impl MultiWorkspace {
         true
     }
 
+    pub fn move_project_group_to(
+        &mut self,
+        source_key: &ProjectGroupKey,
+        target_key: &ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if source_key == target_key {
+            return false;
+        }
+        let Some(target_index) = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *target_key)
+        else {
+            return false;
+        };
+        self.reorder_project_group(source_key, target_index, cx)
+    }
+
+    pub fn move_project_group_to_start(
+        &mut self,
+        source_key: &ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.reorder_project_group(source_key, 0, cx)
+    }
+
+    pub fn move_project_group_to_end(
+        &mut self,
+        source_key: &ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let last_index = self.project_groups.len().saturating_sub(1);
+        self.reorder_project_group(source_key, last_index, cx)
+    }
+
+    fn reorder_project_group(
+        &mut self,
+        source_key: &ProjectGroupKey,
+        target_index: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(source_index) = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *source_key)
+        else {
+            return false;
+        };
+        if source_index == target_index {
+            return false;
+        }
+        let group = self.project_groups.remove(source_index);
+        self.project_groups
+            .insert(target_index.min(self.project_groups.len()), group);
+        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+        self.serialize(cx);
+        cx.notify();
+        true
+    }
+
     pub fn workspaces_for_project_group(
         &self,
         key: &ProjectGroupKey,
