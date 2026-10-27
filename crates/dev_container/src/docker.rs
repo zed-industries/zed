@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, process::Output};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize, de};
@@ -362,7 +362,7 @@ impl DockerClient for Docker {
         user: &str,
         env: &HashMap<String, String>,
         inner_command: Command,
-    ) -> Result<(), DevContainerError> {
+    ) -> Result<Output, DevContainerError> {
         let mut command = Command::new(&self.docker_cli);
 
         command.args(&["exec", "-w", remote_folder, "-u", user]);
@@ -386,13 +386,7 @@ impl DockerClient for Docker {
 
         let std_out = String::from_utf8_lossy(&output.stdout);
         log::debug!("Command output:\n {std_out}");
-        if !output.status.success() {
-            let std_err = String::from_utf8_lossy(&output.stderr);
-            // A nonzero exit can be expected for checks such as the post-start marker.
-            log::debug!("Command produced a non-successful output. StdErr: {std_err}");
-            return Err(DevContainerError::DevContainerScriptsFailed);
-        }
-        Ok(())
+        Ok(output)
     }
 
     async fn start_container(&self, id: &str) -> Result<(), DevContainerError> {
@@ -494,11 +488,9 @@ pub(crate) trait DockerClient {
         services: Option<&Vec<String>>,
     ) -> Result<(), DevContainerError>;
 
-    /// Runs `inner_command` in the container, returning `Ok(())` only if it
-    /// exits successfully.
-    ///
-    /// A non-zero exit returns `Err(DevContainerScriptsFailed)`. Failure to
-    /// launch or collect output from the Docker CLI returns a different error.
+    /// Returns the Docker CLI's output, including unsuccessful exit statuses.
+    /// Callers decide how to handle the status and report stderr. `Err` means
+    /// launching or collecting output from the CLI failed.
     async fn run_docker_exec(
         &self,
         container_id: &str,
@@ -506,7 +498,7 @@ pub(crate) trait DockerClient {
         user: &str,
         env: &HashMap<String, String>,
         inner_command: Command,
-    ) -> Result<(), DevContainerError>;
+    ) -> Result<Output, DevContainerError>;
 
     async fn start_container(&self, id: &str) -> Result<(), DevContainerError>;
     async fn find_process_by_filters(
@@ -920,7 +912,7 @@ mod test {
 
     #[cfg(not(target_os = "windows"))]
     #[test]
-    fn docker_exec_returns_error_on_nonzero_exit() {
+    fn docker_exec_returns_output_on_nonzero_exit() {
         let docker = Docker {
             docker_cli: "false".to_string(),
             has_buildx: false,
@@ -934,10 +926,7 @@ mod test {
             Command::new("true"),
         ));
 
-        assert!(matches!(
-            result,
-            Err(DevContainerError::DevContainerScriptsFailed)
-        ));
+        assert!(!result.unwrap().status.success());
     }
 
     // Regression test: `run_docker_exec` used to re-flatten the command through a second `sh -c` that word-split it on whitespace, e.g. postCreateCommand:
@@ -980,7 +969,7 @@ mod test {
             &HashMap::new(),
             inner_command,
         ));
-        assert!(result.is_ok(), "docker exec failed: {result:?}");
+        assert!(result.unwrap().status.success());
 
         let received_args = std::fs::read_to_string(temp_dir.path().join("args")).unwrap();
         assert_eq!(

@@ -3,6 +3,7 @@ use std::{
     fmt::Debug,
     hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
+    process::Output,
     sync::Arc,
 };
 
@@ -2336,7 +2337,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             if let Some(on_create_command) = &config.on_create_command {
                 for (command_name, command) in on_create_command.script_commands() {
                     log::debug!("Running on create command {command_name}");
-                    self.docker_client
+                    let output = self
+                        .docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
                             &remote_folder,
@@ -2345,12 +2347,14 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                             command,
                         )
                         .await?;
+                    check_lifecycle_command_output(output)?;
                 }
             }
             if let Some(update_content_command) = &config.update_content_command {
                 for (command_name, command) in update_content_command.script_commands() {
                     log::debug!("Running update content command {command_name}");
-                    self.docker_client
+                    let output = self
+                        .docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
                             &remote_folder,
@@ -2359,13 +2363,15 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                             command,
                         )
                         .await?;
+                    check_lifecycle_command_output(output)?;
                 }
             }
 
             if let Some(post_create_command) = &config.post_create_command {
                 for (command_name, command) in post_create_command.script_commands() {
                     log::debug!("Running post create command {command_name}");
-                    self.docker_client
+                    let output = self
+                        .docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
                             &remote_folder,
@@ -2374,6 +2380,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                             command,
                         )
                         .await?;
+                    check_lifecycle_command_output(output)?;
                 }
             }
         }
@@ -2383,8 +2390,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 // Write marker first, run command second, which matches reference implementation:
                 // https://github.com/devcontainers/cli/blob/33073dbaba2545c51b4f8396e179c18231e80124/src/spec-common/injectHeadless.ts#L433-L437
                 let should_run = if let Some(started_at) = &devcontainer_up.started_at {
-                    match self
-                        .docker_client
+                    self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
                             &remote_folder,
@@ -2392,20 +2398,17 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                             &devcontainer_up.remote_env,
                             post_start_marker_command(started_at, &devcontainer_up.remote_user),
                         )
-                        .await
-                    {
-                        Ok(()) => true,
-                        // Skip when the marker is current or cannot be written.
-                        Err(DevContainerError::DevContainerScriptsFailed) => false,
-                        Err(error) => return Err(error),
-                    }
+                        .await?
+                        .status
+                        .success()
                 } else {
                     container_started
                 };
                 if should_run {
                     for (command_name, command) in script_commands {
                         log::debug!("Running post start command {command_name}");
-                        self.docker_client
+                        let output = self
+                            .docker_client
                             .run_docker_exec(
                                 &devcontainer_up.container_id,
                                 &remote_folder,
@@ -2414,6 +2417,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                                 command,
                             )
                             .await?;
+                        check_lifecycle_command_output(output)?;
                     }
                 }
             }
@@ -2421,7 +2425,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         if let Some(post_attach_command) = &config.post_attach_command {
             for (command_name, command) in post_attach_command.script_commands() {
                 log::debug!("Running post attach command {command_name}");
-                self.docker_client
+                let output = self
+                    .docker_client
                     .run_docker_exec(
                         &devcontainer_up.container_id,
                         &remote_folder,
@@ -2430,6 +2435,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                         command,
                     )
                     .await?;
+                check_lifecycle_command_output(output)?;
             }
         }
 
@@ -3367,6 +3373,15 @@ fn escape_compose_interpolation(value: &str) -> String {
     value.replace('$', "$$")
 }
 
+fn check_lifecycle_command_output(output: Output) -> Result<(), DevContainerError> {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!("Lifecycle command failed. Stderr:\n{stderr}");
+        return Err(DevContainerError::DevContainerScriptsFailed);
+    }
+    Ok(())
+}
+
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
@@ -3489,6 +3504,11 @@ mod test {
         fs as std_fs,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt;
 
     use async_trait::async_trait;
     use fs::{FakeFs, Fs};
@@ -4057,9 +4077,11 @@ mod test {
         .await
         .unwrap();
         devcontainer_manifest.parse_nonremote_vars().unwrap();
-        test_dependencies
-            .docker
-            .set_exec_result(Err(DevContainerError::DevContainerScriptsFailed));
+        test_dependencies.docker.set_exec_result(Ok(Output {
+            status: ExitStatus::from_raw(1),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }));
 
         let devcontainer_up = DevContainerUp {
             started_at: Some("2026-06-23T10:00:00Z".to_string()),
@@ -4123,6 +4145,157 @@ mod test {
                 .len(),
             1
         );
+    }
+
+    #[gpui::test]
+    async fn should_check_lifecycle_command_outputs(cx: &mut TestAppContext) {
+        for lifecycle in [
+            "onCreateCommand",
+            "updateContentCommand",
+            "postCreateCommand",
+            "postStartCommand",
+            "postAttachCommand",
+        ] {
+            let mut config = serde_json::json!({ "image": "test_image:latest" });
+            config[lifecycle] = serde_json::json!("echo lifecycle-command");
+            let (dependencies, mut manifest) =
+                init_default_devcontainer_manifest(cx, &config.to_string())
+                    .await
+                    .unwrap();
+            manifest.parse_nonremote_vars().unwrap();
+            dependencies.docker.set_exec_result(Ok(Output {
+                status: ExitStatus::from_raw(1),
+                stdout: Vec::new(),
+                stderr: format!("{lifecycle} failed\npermission denied\n").into_bytes(),
+            }));
+            let devcontainer_up = DevContainerUp {
+                started_at: None,
+                container_id: "container".to_string(),
+                remote_user: "root".to_string(),
+                remote_workspace_folder: "/workspaces/project".to_string(),
+                extension_ids: Vec::new(),
+                remote_env: HashMap::new(),
+            };
+            assert_eq!(
+                manifest
+                    .run_remote_scripts(&devcontainer_up, true, true)
+                    .await,
+                Err(DevContainerError::DevContainerScriptsFailed),
+                "{lifecycle}"
+            );
+            assert_eq!(
+                dependencies
+                    .docker
+                    .exec_commands_recorded
+                    .lock()
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn lifecycle_output_reporting_preserves_diagnostics() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Isolate the process-global logger from other tests.
+        const CHILD_ENV: &str = "ZED_TEST_LIFECYCLE_OUTPUT_LOGGING";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "devcontainer_manifest::test::lifecycle_output_reporting_preserves_diagnostics",
+                    "--nocapture",
+                ])
+                .env(CHILD_ENV, "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success(),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                stdout.contains("1 passed;"),
+                "the logging test must actually run: {stdout}"
+            );
+            return;
+        }
+
+        let records = Arc::new(Mutex::new(Vec::new()));
+        let logger_records = records.clone();
+        env_logger::Builder::new()
+            .filter_level(log::LevelFilter::Error)
+            .format(move |_, record| {
+                logger_records
+                    .lock()
+                    .unwrap()
+                    .push(record.args().to_string());
+                Ok(())
+            })
+            .try_init()
+            .unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let stderr = "dependency installation failed\nadditional details\n".repeat(1_000);
+        let stdout = b"command output\n";
+        std_fs::write(temp_dir.path().join("stderr"), &stderr).unwrap();
+        std_fs::write(temp_dir.path().join("stdout"), stdout).unwrap();
+        let fake_docker = temp_dir.path().join("docker.sh");
+        std_fs::write(
+            &fake_docker,
+            indoc! {r#"
+            #!/bin/sh
+            directory="$(dirname "$0")"
+            cat "$directory/stdout"
+            cat "$directory/stderr" >&2
+            exit "$(cat "$directory/status")"
+        "#},
+        )
+        .unwrap();
+        std_fs::set_permissions(&fake_docker, std_fs::Permissions::from_mode(0o755)).unwrap();
+        let docker = gpui::block_on(crate::docker::Docker::new(
+            fake_docker.to_str().unwrap(),
+            Some(false),
+        ));
+
+        for code in [0, 2] {
+            std_fs::write(temp_dir.path().join("status"), code.to_string()).unwrap();
+            let output = gpui::block_on(docker.run_docker_exec(
+                "container",
+                "/workspace",
+                "root",
+                &HashMap::new(),
+                Command::new("true"),
+            ))
+            .unwrap();
+            assert_eq!(output.status.code(), Some(code));
+            assert_eq!(output.stdout, stdout);
+            assert_eq!(output.stderr, stderr.as_bytes());
+            assert!(
+                records.lock().unwrap().is_empty(),
+                "execution must leave reporting to the caller"
+            );
+
+            let result = super::check_lifecycle_command_output(output);
+            if code == 0 {
+                assert_eq!(result, Ok(()));
+                assert!(records.lock().unwrap().is_empty());
+            } else {
+                let error = result.unwrap_err();
+                assert_eq!(error, DevContainerError::DevContainerScriptsFailed);
+                assert!(!error.to_string().contains(&stderr));
+                let records = records.lock().unwrap();
+                assert_eq!(records.len(), 1);
+                assert!(
+                    records[0].ends_with(&stderr),
+                    "the log must retain complete multiline diagnostics"
+                );
+            }
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -7391,7 +7564,7 @@ RUN echo $RUBY_VERSION2
         /// call so tests can assert which services were built.
         compose_build_services: Mutex<Vec<Option<Vec<String>>>>,
         /// The result returned for every recorded exec call, including marker checks.
-        exec_result: Mutex<Result<(), DevContainerError>>,
+        exec_result: Mutex<Result<Output, DevContainerError>>,
     }
 
     impl FakeDocker {
@@ -7402,7 +7575,11 @@ RUN echo $RUBY_VERSION2
                 exec_commands_recorded: Mutex::new(Vec::new()),
                 duplicate_container_ids: Mutex::new(None),
                 compose_build_services: Mutex::new(Vec::new()),
-                exec_result: Mutex::new(Ok(())),
+                exec_result: Mutex::new(Ok(Output {
+                    status: ExitStatus::default(),
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                })),
             }
         }
 
@@ -7416,7 +7593,7 @@ RUN echo $RUBY_VERSION2
         fn set_podman(&mut self, podman: bool) {
             self.podman = podman;
         }
-        fn set_exec_result(&self, result: Result<(), DevContainerError>) {
+        fn set_exec_result(&self, result: Result<Output, DevContainerError>) {
             *self.exec_result.lock().expect("should be available") = result;
         }
         #[cfg(not(target_os = "windows"))]
@@ -7743,7 +7920,7 @@ RUN echo $RUBY_VERSION2
             user: &str,
             env: &HashMap<String, String>,
             inner_command: Command,
-        ) -> Result<(), DevContainerError> {
+        ) -> Result<Output, DevContainerError> {
             let mut record = self
                 .exec_commands_recorded
                 .lock()
