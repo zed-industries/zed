@@ -33,6 +33,7 @@ use std::{
 use tempfile::TempDir;
 use util::command::{Child, Command, Stdio};
 use util::{
+    ResultExt as _,
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
     shell::ShellKind,
@@ -572,6 +573,15 @@ impl RemoteConnection for SshRemoteConnection {
         let dest_path_str = dest_path.to_string();
         let src_path_display = src_path.display().to_string();
 
+        let shell_upload_command = if self.ssh_platform.os.is_windows() {
+            None
+        } else {
+            quote_posix(&dest_path_str)
+                .map(|dest| {
+                    self.shell_upload_command(format!("mkdir -p {dest} && tar -xf - -C {dest}"))
+                })
+                .log_err()
+        };
         let mut sftp_command = self.build_sftp_command();
         sftp_command.kill_on_drop(true);
         let mut scp_command =
@@ -579,6 +589,15 @@ impl RemoteConnection for SshRemoteConnection {
         scp_command.kill_on_drop(true);
 
         cx.background_spawn(async move {
+            if let Some(command) = shell_upload_command {
+                match upload_directory_through_shell(command, &src_path).await {
+                    Ok(()) => return Ok(()),
+                    Err(error) => log::warn!(
+                        "failed to upload directory through the remote shell, falling back to SFTP/SCP: {error:#}"
+                    ),
+                }
+            }
+
             // We will try SFTP first, and if that fails, we will fall back to SCP.
             // If SCP fails also, we give up and return an error.
             // The reason we allow a fallback from SFTP to SCP is that if the user has to specify a password,
@@ -1432,6 +1451,18 @@ impl SshRemoteConnection {
         let src_path_display = src_path.display().to_string();
         let dest_path_str = dest_path.display(self.path_style());
 
+        if !self.ssh_platform.os.is_windows() {
+            match self
+                .upload_file_through_shell(src_path, &dest_path_str)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(error) => log::warn!(
+                    "failed to upload file through the remote shell, falling back to SFTP/SCP: {error:#}"
+                ),
+            }
+        }
+
         // We will try SFTP first, and if that fails, we will fall back to SCP.
         // If SCP fails also, we give up and return an error.
         // The reason we allow a fallback from SFTP to SCP is that if the user has to specify a password,
@@ -1481,9 +1512,107 @@ impl SshRemoteConnection {
         );
     }
 
+    /// Uploads a file by streaming it to the remote shell. `dest_path` is relative to the remote
+    /// home directory or absolute.
+    async fn upload_file_through_shell(&self, src_path: &Path, dest_path: &str) -> Result<()> {
+        let file_size = fs::metadata(src_path)
+            .await
+            .with_context(|| format!("failed to read metadata of {}", src_path.display()))?
+            .len();
+        let quoted_dest_path = quote_posix(dest_path)?;
+        // Reading an exact number of bytes, rather than until the end of input, keeps the upload
+        // from hanging behind SSH gateways that don't forward the end of input.
+        let receive = format!("head -c {file_size} > {quoted_dest_path}");
+        let script = match dest_path.rsplit_once('/') {
+            Some((parent, _)) if !parent.is_empty() => {
+                format!("mkdir -p {} && {receive}", quote_posix(parent)?)
+            }
+            _ => receive,
+        };
+        let mut child = self
+            .shell_upload_command(script)
+            .spawn()
+            .context("failed to spawn ssh")?;
+        let mut stdin = child.stdin.take().context("ssh has no stdin")?;
+        let mut file = fs::File::open(src_path)
+            .await
+            .with_context(|| format!("failed to open {}", src_path.display()))?;
+        futures::io::copy(&mut file, &mut stdin)
+            .await
+            .context("failed to stream the file to the remote shell")?;
+        stdin.close().await?;
+        drop(stdin);
+        finish_shell_upload(child).await
+    }
+
+    /// Runs a script that reads an upload from its standard input in the remote shell.
+    ///
+    /// Uploads go through the remote shell rather than SFTP or SCP because the shell is
+    /// guaranteed to see the same filesystem as the remote server, and SFTP isn't. For example,
+    /// when SSH logins land in a container but the SFTP subsystem runs outside of it, SFTP uploads
+    /// succeed but end up where the remote server can't find them.
+    fn shell_upload_command(&self, script: String) -> Command {
+        let mut command = self.socket.ssh_command(
+            self.ssh_shell_kind,
+            "sh",
+            &["-c".to_string(), script],
+            false,
+        );
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        command
+    }
+
     async fn is_sftp_available() -> bool {
         which::which("sftp").is_ok()
     }
+}
+
+fn quote_posix(text: &str) -> Result<String> {
+    ShellKind::Posix
+        .try_quote(text)
+        .map(|quoted| quoted.into_owned())
+        .with_context(|| format!("can't quote {text:?} for the remote shell"))
+}
+
+/// Uploads a directory by streaming it as a tar archive to `command`, which unpacks it remotely.
+async fn upload_directory_through_shell(mut command: Command, src_path: &Path) -> Result<()> {
+    // The archive is built in memory, since the builder needs a `Sync` writer and uploaded
+    // directories (such as extensions) are small.
+    let mut builder = async_tar::Builder::new(Vec::new());
+    builder
+        .append_dir_all(".", src_path)
+        .await
+        .with_context(|| format!("failed to archive {}", src_path.display()))?;
+    let mut archive = builder.into_inner().await?;
+    // GNU tar reads its input in whole 10 KiB records and only stops at the end-of-archive marker
+    // once its record is full. Behind SSH gateways that don't forward the end of input, an
+    // unpadded archive leaves tar waiting for the rest of the last record forever.
+    const TAR_RECORD_SIZE: usize = 20 * 512;
+    archive.resize(archive.len().next_multiple_of(TAR_RECORD_SIZE), 0);
+
+    let mut child = command.spawn().context("failed to spawn ssh")?;
+    let mut stdin = child.stdin.take().context("ssh has no stdin")?;
+    stdin
+        .write_all(&archive)
+        .await
+        .context("failed to stream the archive to the remote shell")?;
+    stdin.close().await?;
+    drop(stdin);
+    finish_shell_upload(child).await
+}
+
+async fn finish_shell_upload(child: Child) -> Result<()> {
+    let output = child.output().await?;
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(())
 }
 
 impl SshSocket {
@@ -2292,6 +2421,50 @@ fn build_command_windows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_upload_directory_through_shell() -> Result<()> {
+        let source = tempfile::tempdir()?;
+        std::fs::write(source.path().join("extension.toml"), "id = \"glua\"\n")?;
+        std::fs::create_dir_all(source.path().join("languages/glua"))?;
+        std::fs::write(
+            source.path().join("languages/glua/config.toml"),
+            "name = \"GLua\"\n",
+        )?;
+        let destination = tempfile::tempdir()?;
+        let destination_path = destination.path().join("uploads/glua-1");
+
+        // Runs the same script as an SSH upload, but in a local shell.
+        let script = format!(
+            "mkdir -p {dest} && tar -xf - -C {dest}",
+            dest = quote_posix(&destination_path.to_string_lossy())?
+        );
+        let mut command = util::command::new_command("sh");
+        command
+            .args(["-c", &script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        smol::block_on(upload_directory_through_shell(command, source.path()))?;
+
+        assert_eq!(
+            std::fs::read_to_string(destination_path.join("extension.toml"))?,
+            "id = \"glua\"\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(destination_path.join("languages/glua/config.toml"))?,
+            "name = \"GLua\"\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_quote_posix() -> Result<()> {
+        assert_eq!(quote_posix("plain/path")?, "plain/path");
+        assert_eq!(quote_posix("with space/x")?, "'with space/x'");
+        Ok(())
+    }
 
     #[cfg(not(windows))]
     #[test]
