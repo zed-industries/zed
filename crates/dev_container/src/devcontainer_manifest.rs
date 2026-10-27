@@ -2387,7 +2387,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         if let Some(post_start_command) = &config.post_start_command {
             let script_commands = post_start_command.script_commands();
             if !script_commands.is_empty() {
-                // Write marker first, run command second, which matches reference implementation:
+                // Write the marker before running commands, matching the reference implementation:
                 // https://github.com/devcontainers/cli/blob/33073dbaba2545c51b4f8396e179c18231e80124/src/spec-common/injectHeadless.ts#L433-L437
                 let should_run = if let Some(started_at) = &devcontainer_up.started_at {
                     self.docker_client
@@ -3386,24 +3386,12 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-/// Builds the marker-file check-and-update command for `postStartCommand`.
+/// Updates the `postStartCommand` marker when `started_at` changes.
+/// Exits successfully if the marker was written; otherwise, skip the command.
+/// Lifecycle commands run separately to preserve their argument boundaries.
 ///
-/// Per the devcontainer spec, `postStartCommand` must run each time the
-/// container is successfully started
-/// <https://containers.dev/implementors/json_reference/#lifecycle-scripts>
-/// — including a real restart, but not a plain reattach to a container
-/// that's already running. Docker doesn't expose that distinction, so this
-/// mirrors the devcontainer CLI reference implementation's
-/// `updateMarkerFile`
-/// <https://github.com/devcontainers/cli/blob/33073dbaba2545c51b4f8396e179c18231e80124/src/spec-common/injectHeadless.ts#L439>:
-/// a single fixed shell command writes `started_at` to a marker file only
-/// if it differs from what's already there, and its exit status reports
-/// whether it wrote (i.e. whether `postStartCommand` should run for this
-/// start).
-///
-/// The only interpolated value is `started_at`, an internally generated
-/// timestamp, so, unlike the actual `postStartCommand` text, it never has
-/// to embed arbitrary user-provided command text into shell source.
+/// Lifecycle spec: <https://containers.dev/implementors/json_reference/#lifecycle-scripts>
+/// Marker behavior: <https://github.com/devcontainers/cli/blob/33073dbaba2545c51b4f8396e179c18231e80124/src/spec-common/injectHeadless.ts#L439>
 fn post_start_marker_command(started_at: &str, remote_user: &str) -> Command {
     let started_at = shell_single_quote(started_at);
     let remote_home_cmd = get_ent_passwd_shell_command(remote_user);
@@ -4027,9 +4015,7 @@ mod test {
             .unwrap();
         assert_eq!(docker_exec_commands.len(), 3);
 
-        // [0]: the marker check-and-update, run as its own exec (matching the
-        // devcontainer CLI reference implementation's `updateMarkerFile`), separate
-        // from the postStartCommand itself.
+        // [0]: check and update the marker in a separate exec.
         assert_eq!(
             docker_exec_commands[0]._inner_command.get_program(),
             "/bin/sh"
@@ -4055,11 +4041,10 @@ mod test {
             );
         }
 
-        // [1]: postStartCommand runs with clean argv, exactly like postCreateCommand
-        // and postAttachCommand - no generated shell text embedding it.
+        // [1]: run postStartCommand with its original argument boundaries.
         assert_clean_sh_c_command(&docker_exec_commands[1]._inner_command, "echo post-start");
 
-        // [2]: postAttachCommand, unaffected by the postStartCommand marker logic.
+        // [2]: run postAttachCommand independently of the marker.
         assert_clean_sh_c_command(&docker_exec_commands[2]._inner_command, "echo post-attach");
     }
 

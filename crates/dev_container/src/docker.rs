@@ -929,19 +929,14 @@ mod test {
         assert!(!result.unwrap().status.success());
     }
 
-    // Regression test: `run_docker_exec` used to re-flatten the command through a second `sh -c` that word-split it on whitespace, e.g. postCreateCommand:
-    // - `"npm install"` silently ran bare `npm` and did nothing
-    // - `"bash .devcontainer/post-create.sh"` silently dropped everything after `bash`
-    // - `"echo hi && echo bye"` let the outer shell reinterpret `&&`, running two unrelated commands instead of one
+    // Regression: flattening arguments through a second `sh -c` made `npm install` run bare `npm`.
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn docker_exec_keeps_lifecycle_script_as_one_argument() {
         use indoc::indoc;
         use std::os::unix::fs::PermissionsExt;
 
-        // Fake docker: records the argv it received (one per line, next to
-        // itself) instead of asserting on it in shell, so the check below can
-        // be a plain Rust `assert_eq!`.
+        // Record each argument on its own line for the assertion below.
         let temp_dir = tempfile::tempdir().unwrap();
         let fake_docker = temp_dir.path().join("docker.sh");
         std::fs::write(
