@@ -10,6 +10,7 @@ use regex::Regex;
 
 use fs::Fs;
 use http_client::HttpClient;
+use indoc::formatdoc;
 use util::{ResultExt, command::Command, paths::normalize_path};
 
 use crate::{
@@ -3385,23 +3386,23 @@ fn shell_single_quote(value: &str) -> String {
 fn post_start_marker_command(started_at: &str, remote_user: &str) -> Command {
     let started_at = shell_single_quote(started_at);
     let remote_home_cmd = get_ent_passwd_shell_command(remote_user);
-    let script = format!(
+    let script = formatdoc!(
         r#"home_directory="${{HOME:-}}"
-if [ -z "$home_directory" ]; then
-  home_directory="$({remote_home_cmd} | cut -d: -f6)"
-fi
-if [ -z "$home_directory" ]; then
-  home_directory=/root
-fi
-marker="$home_directory/.devcontainer/.postStartCommandMarker"
-if ! mkdir -p "$home_directory/.devcontainer"; then
-  exit 1
-fi
-content="$(cat "$marker" 2>/dev/null || true)"
-if [ "$content" = {started_at} ]; then
-  exit 2
-fi
-printf '%s' {started_at} > "$marker""#,
+        if [ -z "$home_directory" ]; then
+          home_directory="$({remote_home_cmd} | cut -d: -f6)"
+        fi
+        if [ -z "$home_directory" ]; then
+          home_directory=/root
+        fi
+        marker="$home_directory/.devcontainer/.postStartCommandMarker"
+        if ! mkdir -p "$home_directory/.devcontainer"; then
+          exit 1
+        fi
+        content="$(cat "$marker" 2>/dev/null || true)"
+        if [ "$content" = {started_at} ]; then
+          exit 2
+        fi
+        printf '%s' {started_at} > "$marker""#,
     );
     let mut command = Command::new("/bin/sh");
     command.args(["-c", &script]);
