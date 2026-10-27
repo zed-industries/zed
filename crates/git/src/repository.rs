@@ -351,24 +351,24 @@ impl Worktree {
             .unwrap_or(&self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)])
     }
 
-    pub fn directory_name(&self, name_anchor_path: Option<&Path>) -> String {
+    pub fn directory_name(&self, name_anchor_path: Option<&Path>, path_style: PathStyle) -> String {
         if self.is_main {
             return "main worktree".to_string();
         }
 
-        let dir_name = self
-            .path
-            .file_name()
+        let dir_name = path_style
+            .file_name(&self.path)
             .and_then(|name| name.to_str())
             .unwrap_or(self.display_name());
 
         if let Some(name_anchor_path) = name_anchor_path {
-            let name_anchor_dir = name_anchor_path.file_name().and_then(|name| name.to_str());
+            let name_anchor_dir = path_style
+                .file_name(name_anchor_path)
+                .and_then(|name| name.to_str());
             if name_anchor_dir == Some(dir_name) {
-                if let Some(parent_name) = self
-                    .path
-                    .parent()
-                    .and_then(|parent| parent.file_name())
+                if let Some(parent_name) = path_style
+                    .parent(&self.path)
+                    .and_then(|parent| path_style.file_name(parent))
                     .and_then(|name| name.to_str())
                 {
                     return parent_name.to_string();
