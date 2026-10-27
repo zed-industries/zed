@@ -410,19 +410,19 @@ impl EdgeExtend {
             .is_some_and(|own| Arc::ptr_eq(&own, device))
     }
 
-    /// The offscreen texture a frame of `size` renders to.
+    /// The offscreen texture a frame of `size` renders to, and its bind group for the copy.
     fn target(
         &mut self,
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         size: Size<DevicePixels>,
-    ) -> wgpu::TextureView {
+    ) -> (wgpu::TextureView, wgpu::BindGroup) {
         let (width, height) = (size.width.0 as u32, size.height.0 as u32);
-        if let Some((texture, view, _)) = &self.target
+        if let Some((texture, view, bind_group)) = &self.target
             && texture.width() == width
             && texture.height() == height
         {
-            return view.clone();
+            return (view.clone(), bind_group.clone());
         }
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("edge_extend_frame"),
@@ -453,8 +453,8 @@ impl EdgeExtend {
                 },
             ],
         });
-        self.target = Some((texture, view.clone(), bind_group));
-        view
+        self.target = Some((texture, view.clone(), bind_group.clone()));
+        (view, bind_group)
     }
 
     /// `core`'s [`WgpuRendererCore::render_frame`] for a frame larger than the `drawable` the
@@ -470,12 +470,9 @@ impl EdgeExtend {
         clear_color: wgpu::Color,
     ) -> Result<wgpu::SubmissionIndex> {
         let device = Arc::clone(&core.resources.device);
-        let offscreen = self.target(&device, core.target_format, size);
+        let (offscreen, bind_group) = self.target(&device, core.target_format, size);
         core.render_frame(scene, &offscreen, size, premultiplied_alpha, clear_color)?;
 
-        let Some((_, _, bind_group)) = &self.target else {
-            unreachable!("created above");
-        };
         let queue = &core.resources.queue;
         queue.write_buffer(
             &self.params,
@@ -501,7 +498,7 @@ impl EdgeExtend {
                 ..Default::default()
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
+            pass.set_bind_group(0, &bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
         Ok(queue.submit(Some(encoder.finish())))
@@ -2925,6 +2922,13 @@ impl RenderingParameters {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{
+        BorderStyle, ColorSpace, ContentMask, Corners, Edges, Hsla, MonochromeSprite,
+        PolychromeSprite, Quad, Shadow, Size, SubpixelSprite, Underline, linear_color_stop,
+        linear_gradient,
+    };
+    #[cfg(target_os = "linux")]
+    use gpui::{DevicePixels, PlatformHeadlessRenderer, Scene};
 
     #[test]
     fn live_resize_keeps_the_surface_while_the_drawable_fits() {
@@ -2997,14 +3001,6 @@ mod tests {
             [0, 0, 0, 0]
         );
     }
-
-    use gpui::{
-        BorderStyle, ColorSpace, ContentMask, Corners, Edges, Hsla, MonochromeSprite,
-        PolychromeSprite, Quad, Shadow, Size, SubpixelSprite, Underline, linear_color_stop,
-        linear_gradient,
-    };
-    #[cfg(target_os = "linux")]
-    use gpui::{DevicePixels, PlatformHeadlessRenderer, Scene};
 
     #[cfg(target_os = "linux")]
     fn device_size(width: i32, height: i32) -> Size<DevicePixels> {
