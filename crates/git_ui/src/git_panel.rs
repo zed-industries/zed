@@ -11086,14 +11086,14 @@ mod tests {
     async fn history_panel_for_project(
         fs: Arc<FakeFs>,
         cx: &mut TestAppContext,
-    ) -> Entity<GitPanel> {
+    ) -> (Entity<Workspace>, Entity<GitPanel>, VisualTestContext) {
         let project = Project::test(fs, [Path::new(path!("/root/project"))], cx).await;
         let window_handle =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
-        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
 
         cx.read(|cx| {
             project
@@ -11109,12 +11109,12 @@ mod tests {
         .await;
         cx.executor().run_until_parked();
 
-        let panel = workspace.update_in(cx, GitPanel::new);
-        panel.update_in(cx, |panel, window, cx| {
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        panel.update_in(&mut cx, |panel, window, cx| {
             panel.activate_history_tab(&ActivateHistoryTab, window, cx);
         });
         cx.run_until_parked();
-        panel
+        (workspace, panel, cx)
     }
 
     async fn wait_for_commit_history_to_settle(panel: &Entity<GitPanel>, cx: &mut TestAppContext) {
@@ -11139,7 +11139,7 @@ mod tests {
         })
         .unwrap();
 
-        let panel = history_panel_for_project(fs.clone(), cx).await;
+        let (_, panel, _) = history_panel_for_project(fs.clone(), cx).await;
 
         wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
@@ -11168,7 +11168,7 @@ mod tests {
         })
         .unwrap();
 
-        let panel = history_panel_for_project(fs.clone(), cx).await;
+        let (_, panel, _) = history_panel_for_project(fs.clone(), cx).await;
 
         wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
@@ -11204,7 +11204,7 @@ mod tests {
         .unwrap();
         fs.set_graph_error(dot_git, Some("simulated git log failure".into()));
 
-        let panel = history_panel_for_project(fs.clone(), cx).await;
+        let (_, panel, _) = history_panel_for_project(fs.clone(), cx).await;
 
         wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
@@ -11219,7 +11219,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree("/root", json!({ "project": {} })).await;
 
-        let panel = history_panel_for_project(fs.clone(), cx).await;
+        let (_, panel, _) = history_panel_for_project(fs.clone(), cx).await;
 
         panel.read_with(cx, |panel, _| {
             assert_eq!(panel.commit_history, CommitHistory::Loading);
@@ -11266,8 +11266,6 @@ mod tests {
         [Oid; 3],
         VisualTestContext,
     ) {
-        init_test(cx);
-
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree("/root", json!({ "project": { ".git": {} } }))
             .await;
@@ -11289,21 +11287,8 @@ mod tests {
         })
         .unwrap();
 
-        let project = Project::test(fs, [Path::new(path!("/root/project"))], cx).await;
-        let window_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = window_handle
-            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
-            .unwrap();
-        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
-        cx.run_until_parked();
-
-        let panel = workspace.update_in(&mut cx, GitPanel::new);
-        panel.update_in(&mut cx, |panel, window, cx| {
-            panel.activate_history_tab(&ActivateHistoryTab, window, cx);
-        });
+        let (workspace, panel, mut cx) = history_panel_for_project(fs, cx).await;
         wait_for_commit_history_to_settle(&panel, &mut cx).await;
-        cx.run_until_parked();
 
         (workspace, panel, shas, cx)
     }
@@ -11340,6 +11325,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_history_tab_highlights_opened_commit_view(cx: &mut TestAppContext) {
+        init_test(cx);
+
         let (workspace, panel, [_, middle_sha, _], mut cx) = history_panel_with_commits(cx).await;
 
         assert_eq!(
@@ -11354,6 +11341,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_history_tab_clears_highlight_for_non_commit_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+
         let (workspace, panel, [_, middle_sha, _], mut cx) = history_panel_with_commits(cx).await;
         open_history_commit(middle_sha, &workspace, &panel, &mut cx);
         let commit_view = workspace
@@ -11385,6 +11374,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_history_tab_focuses_active_commit_after_reload(cx: &mut TestAppContext) {
+        init_test(cx);
+
         let (workspace, panel, [_, _, oldest_sha], mut cx) = history_panel_with_commits(cx).await;
         open_history_commit(oldest_sha, &workspace, &panel, &mut cx);
 
@@ -11406,6 +11397,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_history_tab_highlights_next_commit_view_after_close(cx: &mut TestAppContext) {
+        init_test(cx);
+
         let (workspace, panel, [_, middle_sha, oldest_sha], mut cx) =
             history_panel_with_commits(cx).await;
         open_history_commit(middle_sha, &workspace, &panel, &mut cx);
