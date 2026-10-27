@@ -690,10 +690,10 @@ impl UniformList {
     }
 
     /// Sets whether the list is flipped vertically, such that item 0 appears at the bottom.
-    pub fn y_flipped(mut self, y_flipped: bool) -> Self {
+    pub fn y_flipped(self, y_flipped: bool) -> Self {
         if let Some(ref scroll_handle) = self.scroll_handle {
             let mut scroll_state = scroll_handle.0.borrow_mut();
-            let mut base_handle = &scroll_state.base_handle;
+            let base_handle = &scroll_state.base_handle;
             let offset = base_handle.offset();
             match scroll_state.last_item_size {
                 Some(last_size) if scroll_state.y_flipped != y_flipped => {

@@ -55,7 +55,7 @@ pub fn insert_task_json_into_editor(
 
     let mut last_offset = None;
     while let Some(mat) = matches.next() {
-        if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end) {
+        if let Some(pos) = mat.captures().first().map(|m| m.node.byte_range().end) {
             last_offset = Some(MultiBufferOffset(pos))
         }
     }
@@ -73,7 +73,7 @@ pub fn insert_task_json_into_editor(
         );
 
         if let Some(mat) = matches.next() {
-            if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end - 1) {
+            if let Some(pos) = mat.captures().first().map(|m| m.node.byte_range().end - 1) {
                 edits.push((
                     MultiBufferOffset(pos)..MultiBufferOffset(pos),
                     format!("\n{new_task}\n"),

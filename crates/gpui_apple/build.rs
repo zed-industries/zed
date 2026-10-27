@@ -157,19 +157,23 @@ mod apple_build {
         };
 
         let shader_path = "./src/shaders.metal";
-        let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");
-        let metallib_output_path =
-            PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metallib");
+        let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+        let air_output_path = out_dir.join("shaders.air");
+        let metallib_output_path = out_dir.join("shaders.metallib");
         println!("cargo:rerun-if-changed={}", shader_path);
 
         // The metal compiler records the resolved absolute path of its input
         // unconditionally. Compile a copy staged in OUT_DIR so the recorded
         // location is the build's canonical output directory, never the
         // checkout (corgi rejects artifacts that embed the build path).
-        let staged_shader_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metal");
+        let staged_shader_path = out_dir.join("shaders.metal");
         std::fs::copy(shader_path, &staged_shader_path).unwrap();
 
+        // When targeting macOS 12+, both `metal` and `metallib` also record
+        // their working directory in the metallib. Run them from OUT_DIR so
+        // that path isn't the checkout either.
         let output = Command::new("xcrun")
+            .current_dir(&out_dir)
             .arg("-sdk")
             .arg(&sdk)
             .args([
@@ -194,6 +198,7 @@ mod apple_build {
         }
 
         let output = Command::new("xcrun")
+            .current_dir(&out_dir)
             .arg("-sdk")
             .arg(&sdk)
             .arg("metallib")
@@ -211,10 +216,7 @@ mod apple_build {
             process::exit(1);
         }
 
-        // The .air intermediate records the compiler's working directory in
-        // its debug info; the metallib built from it does not. Nothing reads
-        // the .air after this point, so drop it rather than leave a
-        // checkout-path-bearing file in OUT_DIR.
+        // Nothing reads the .air intermediate after this point.
         std::fs::remove_file(&air_output_path).unwrap();
     }
 }
