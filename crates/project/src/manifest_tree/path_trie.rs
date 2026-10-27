@@ -64,9 +64,9 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
         for key in path.0.iter() {
             path_so_far = path_so_far.join(RelPath::from_unix_str(key.as_ref()).unwrap());
             current = match current.children.entry(key.clone()) {
-                Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(RootPathTrie::new_with_key(path_so_far.clone().into()))
-                }
+                Entry::Vacant(vacant_entry) => vacant_entry.insert(RootPathTrie::new_with_key(
+                    Arc::from(path_so_far.as_rel_path()),
+                )),
                 Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
             };
         }

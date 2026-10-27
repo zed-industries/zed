@@ -11,6 +11,9 @@
     "int8" "int16" "int32" "int64" "rune" "string" "uint" "uint8" "uint16" "uint32" "uint64"
     "uintptr"))
 
+(type_parameter_declaration
+  name: (identifier) @type)
+
 (field_identifier) @property
 
 (package_identifier) @namespace
@@ -101,32 +104,35 @@
 ] @operator
 
 [
-  "break"
-  "case"
   "chan"
   "const"
+  "func"
+  "import"
+  "interface"
+  "map"
+  "package"
+  "struct"
+  "type"
+  "var"
+] @keyword
+
+[
+  "break"
+  "case"
   "continue"
   "default"
   "defer"
   "else"
   "fallthrough"
   "for"
-  "func"
   "go"
   "goto"
   "if"
-  "import"
-  "interface"
-  "map"
-  "package"
   "range"
   "return"
   "select"
-  "struct"
   "switch"
-  "type"
-  "var"
-] @keyword
+] @keyword.control
 
 [
   (interpreted_string_literal)

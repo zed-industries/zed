@@ -6,12 +6,14 @@ use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, hash_map};
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task, WeakEntity, prelude::*,
+    App, Asset, AssetLogger, AsyncApp, Context, Entity, EventEmitter, ImageCacheError, ImageSource,
+    Img, RenderImage, Subscription, Task, WeakEntity, prelude::*,
 };
 pub use image::ImageFormat;
 use image::{ExtendedColorType, GenericImageView, ImageReader};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _, TypedEnvelope, proto};
+use std::future::Future;
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -105,6 +107,45 @@ pub struct ImageItem {
     pub image: Arc<gpui::Image>,
     reload_task: Option<Task<()>>,
     pub image_metadata: Option<ImageMetadata>,
+}
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct ProjectImageSource {
+    project: WeakEntity<Project>,
+    path: ProjectPath,
+}
+
+enum ProjectImageAsset {}
+
+impl Asset for ProjectImageAsset {
+    type Source = ProjectImageSource;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    fn load(
+        source: Self::Source,
+        cx: &mut App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let svg_renderer = cx.svg_renderer();
+        let load_image = cx.spawn(async move |cx| {
+            let open_image = source
+                .project
+                .update(cx, |project, cx| project.open_image(source.path, cx))?;
+            let image = open_image.await?;
+            Ok::<_, anyhow::Error>(image.read_with(cx, |image, _cx| image.image.clone()))
+        });
+
+        async move {
+            let image = load_image.await?;
+            image.to_image_data(svg_renderer).map_err(Into::into)
+        }
+    }
+}
+
+pub fn project_image_source(project: WeakEntity<Project>, path: ProjectPath) -> ImageSource {
+    let source = ProjectImageSource { project, path };
+    ImageSource::from(move |window: &mut gpui::Window, cx: &mut App| {
+        window.use_asset::<AssetLogger<ProjectImageAsset>>(&source, cx)
+    })
 }
 
 impl ImageItem {

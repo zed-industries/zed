@@ -1,4 +1,5 @@
 use gpui::BackgroundExecutor;
+use path::{PathStyle, rel_path::RelPath};
 use std::{
     cmp::Ordering,
     sync::{
@@ -6,7 +7,6 @@ use std::{
         atomic::{self, AtomicBool},
     },
 };
-use util::{paths::PathStyle, rel_path::RelPath};
 
 use nucleo::Utf32Str;
 use nucleo::pattern::Pattern;
@@ -134,6 +134,19 @@ fn get_filename_match_bonus(
     score as f64 / filename.len().max(1) as f64
 }
 
+const TAIL_REWARD_SCALE: f64 = 1.5;
+
+#[inline]
+fn get_tail_proximity_bonus(matched_chars: &[u32], haystack_len: u32) -> f64 {
+    debug_assert!(
+        haystack_len != 0 && matched_chars.len() != 0,
+        "This should only be called on a successful match."
+    );
+    let trailing: u32 = matched_chars.iter().map(|&i| haystack_len - 1 - i).sum();
+    let mean_trailing = trailing as f64 / matched_chars.len() as f64;
+    (1.0 / (1.0 + mean_trailing)) * TAIL_REWARD_SCALE
+}
+
 fn path_match_helper<'a>(
     matcher: &mut nucleo::Matcher,
     query: &Query,
@@ -193,7 +206,9 @@ fn path_match_helper<'a>(
 
         let length_penalty = candidate_buf.len() as f64 * LENGTH_PENALTY;
         let filename_bonus = get_filename_match_bonus(&candidate_buf, &query.pattern, matcher);
-        let positive = (score as f64 + filename_bonus) * case_penalty(case_mismatches);
+        let tail_proximity_bonus = get_tail_proximity_bonus(&matched_chars, haystack.len() as u32);
+        let positive =
+            (score as f64 + filename_bonus + tail_proximity_bonus) * case_penalty(case_mismatches);
         let adjusted_score = positive - length_penalty;
         let positions = positions_from_sorted(&candidate_buf, &matched_chars);
 
@@ -256,7 +271,7 @@ pub fn match_fixed_path_set(
         &AtomicBool::new(false),
     )
     .ok();
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     matcher::return_matcher(matcher);
     results
 }
@@ -351,6 +366,6 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     }
 
     let mut results = segment_results.concat();
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }

@@ -389,6 +389,7 @@ pub async fn run_repair(
                     content: Some(open_ai::MessageContent::Plain(teacher_response.clone())),
                     tool_calls: vec![],
                     reasoning_content: None,
+                    reasoning_details: None,
                 },
                 // Turn 3: Repair critique and instructions
                 open_ai::RequestMessage::User {

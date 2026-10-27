@@ -1,12 +1,13 @@
 pub mod extension;
 pub mod registry;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
+use context_server::client::StdinPrefix;
 use context_server::oauth::{self, McpOAuthTokenProvider, OAuthDiscovery, OAuthSession};
 use context_server::transport::HttpTransport;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
@@ -20,7 +21,7 @@ use http_client::HttpClient;
 use itertools::Itertools;
 use rand::Rng as _;
 use registry::ContextServerDescriptorRegistry;
-use remote::{Interactive, RemoteClient};
+use remote::{RemoteClient, command::RemoteCommand};
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use settings::{Settings as _, SettingsLocation, SettingsStore, WorktreeId};
 use util::{ResultExt as _, rel_path::RelPath};
@@ -161,6 +162,7 @@ pub enum ContextServerConfiguration {
     Custom {
         command: ContextServerCommand,
         remote: bool,
+        launcher: Option<RemoteStdioLauncher>,
     },
     Extension {
         command: ContextServerCommand,
@@ -173,6 +175,12 @@ pub enum ContextServerConfiguration {
         timeout: Option<u64>,
         oauth: Option<OAuthClientSettings>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteStdioLauncher {
+    pub command: ContextServerCommand,
+    pub stdin_prefix: StdinPrefix,
 }
 
 impl ContextServerConfiguration {
@@ -215,7 +223,11 @@ impl ContextServerConfiguration {
                 enabled: _,
                 command,
                 remote,
-            } => Some(ContextServerConfiguration::Custom { command, remote }),
+            } => Some(ContextServerConfiguration::Custom {
+                command,
+                remote,
+                launcher: None,
+            }),
             ContextServerSettings::Extension {
                 enabled: _,
                 settings,
@@ -296,6 +308,13 @@ pub struct ContextServerStore {
     registry: Entity<ContextServerDescriptorRegistry>,
     update_servers_task: Option<Task<Result<()>>>,
     context_server_factory: Option<ContextServerFactory>,
+    /// The working directory each server was last started with. The working
+    /// directory of a stdio server depends on the resolved project root, which
+    /// can only become available after the server has already started (e.g. a
+    /// worktree is added moments after launch). Tracking it lets
+    /// `maintain_servers` restart a server when its working directory changes,
+    /// since the working directory is not part of `ContextServerConfiguration`.
+    server_working_directories: HashMap<ContextServerId, Option<Arc<Path>>>,
     needs_server_update: bool,
     ai_disabled: bool,
     _subscriptions: Vec<Subscription>,
@@ -439,6 +458,7 @@ impl ContextServerStore {
                 timeout: None,
             },
             remote: false,
+            launcher: None,
         });
         self.run_server(server, configuration, cx);
     }
@@ -492,6 +512,8 @@ impl ContextServerStore {
                         | WorktreeStoreEvent::WorktreeRemoved(_, _)
                 ) && !DisableAiSettings::get_global(cx).disable_ai
                 {
+                    this.context_server_settings =
+                        Self::resolve_all_context_server_settings(&this.worktree_store, cx);
                     this.available_context_servers_changed(cx);
                 }
             }));
@@ -511,6 +533,7 @@ impl ContextServerStore {
             server_ids: Default::default(),
             update_servers_task: None,
             context_server_factory,
+            server_working_directories: HashMap::default(),
         };
         if maintain_server_loop && !DisableAiSettings::get_global(cx).disable_ai {
             this.available_context_servers_changed(cx);
@@ -855,6 +878,7 @@ impl ContextServerStore {
             .servers
             .remove(id)
             .context("Context server not found")?;
+        self.server_working_directories.remove(id);
 
         if let ContextServerConfiguration::Http { url, .. } = state.configuration().as_ref() {
             let server_url = url.clone();
@@ -876,6 +900,31 @@ impl ContextServerStore {
         });
         cx.notify();
         Ok(())
+    }
+
+    /// The project root a locally-spawned stdio server should use as its working
+    /// directory: the active project directory, falling back to the first visible
+    /// worktree. Resolves to `None` before any worktree is available.
+    fn resolve_root_path(&self, cx: &App) -> Option<Arc<Path>> {
+        self.project
+            .as_ref()
+            .and_then(|project| {
+                project
+                    .read_with(cx, |project, cx| project.active_project_directory(cx))
+                    .ok()
+                    .flatten()
+            })
+            .or_else(|| {
+                self.worktree_store.read_with(cx, |store, cx| {
+                    store.visible_worktrees(cx).fold(None, |acc, item| {
+                        if acc.is_none() {
+                            item.read(cx).root_dir()
+                        } else {
+                            acc
+                        }
+                    })
+                })
+            })
     }
 
     pub async fn create_context_server(
@@ -902,27 +951,8 @@ impl ContextServerStore {
             (remote_state, this.is_remote_project())
         })?;
 
-        let root_path: Option<Arc<Path>> = this.update(cx, |this, cx| {
-            this.project
-                .as_ref()
-                .and_then(|project| {
-                    project
-                        .read_with(cx, |project, cx| project.active_project_directory(cx))
-                        .ok()
-                        .flatten()
-                })
-                .or_else(|| {
-                    this.worktree_store.read_with(cx, |store, cx| {
-                        store.visible_worktrees(cx).fold(None, |acc, item| {
-                            if acc.is_none() {
-                                item.read(cx).root_dir()
-                            } else {
-                                acc
-                            }
-                        })
-                    })
-                })
-        })?;
+        let root_path: Option<Arc<Path>> =
+            this.update(cx, |this, cx| this.resolve_root_path(cx))?;
 
         let configuration = if let Some((project_id, upstream_client)) = remote_state {
             let root_dir = root_path.as_ref().map(|p| p.display().to_string());
@@ -939,25 +969,35 @@ impl ContextServerStore {
                 })
                 .await?;
 
-            let remote_command = upstream_client.update(cx, |client, _| {
-                client.build_command(
-                    Some(response.path),
-                    &response.args,
-                    &response.env.into_iter().collect(),
-                    root_dir,
-                    None,
-                    Interactive::Yes,
-                )
-            })?;
-
             let command = ContextServerCommand {
-                path: remote_command.program.into(),
-                args: remote_command.args,
-                env: Some(remote_command.env.into_iter().collect()),
+                path: PathBuf::from(&response.path),
+                args: response.args.clone(),
+                env: Some(response.env.clone().into_iter().collect()),
                 timeout: None,
             };
 
-            Arc::new(ContextServerConfiguration::Custom { command, remote })
+            let (launcher_command, stdin_prefix) = upstream_client.update(cx, |client, _| {
+                client.build_stdio_command(RemoteCommand {
+                    program: response.path,
+                    args: response.args,
+                    env: response.env.into_iter().collect(),
+                    working_dir: root_dir,
+                })
+            })?;
+
+            Arc::new(ContextServerConfiguration::Custom {
+                command,
+                remote,
+                launcher: Some(RemoteStdioLauncher {
+                    command: ContextServerCommand {
+                        path: launcher_command.program.into(),
+                        args: launcher_command.args,
+                        env: Some(launcher_command.env.into_iter().collect()),
+                        timeout: None,
+                    },
+                    stdin_prefix: StdinPrefix(stdin_prefix),
+                }),
+            })
         } else {
             configuration
         };
@@ -1027,10 +1067,22 @@ impl ContextServerStore {
                     )))
                 }
                 _ => {
-                    let mut command = configuration
-                        .command()
-                        .context("Missing command configuration for stdio context server")?
-                        .clone();
+                    let (mut command, stdin_prefix) = match configuration.as_ref() {
+                        ContextServerConfiguration::Custom {
+                            launcher: Some(launcher),
+                            ..
+                        } => (
+                            launcher.command.clone(),
+                            Some(launcher.stdin_prefix.clone()),
+                        ),
+                        _ => (
+                            configuration
+                                .command()
+                                .context("Missing command configuration for stdio context server")?
+                                .clone(),
+                            None,
+                        ),
+                    };
                     command.timeout = Some(
                         command
                             .timeout
@@ -1044,6 +1096,7 @@ impl ContextServerStore {
                         id,
                         command,
                         working_directory,
+                        stdin_prefix,
                     )))
                 }
             }
@@ -1767,7 +1820,7 @@ impl ContextServerStore {
         let mut servers_to_remove = HashSet::default();
         let mut servers_to_stop = HashSet::default();
 
-        this.update(cx, |this, _cx| {
+        this.update(cx, |this, cx| {
             for server_id in this.servers.keys() {
                 // All servers that are not in desired_servers should be removed from the store.
                 // This can happen if the user removed a server from the context server settings.
@@ -1780,13 +1833,28 @@ impl ContextServerStore {
                 }
             }
 
+            let is_remote_project = this.is_remote_project();
+            let root_path = this.resolve_root_path(cx);
+
             for (id, config) in configured_servers {
                 let state = this.servers.get(&id);
                 let is_stopped = matches!(state, Some(ContextServerState::Stopped { .. }));
                 let existing_config = state.as_ref().map(|state| state.configuration());
-                if existing_config.as_deref() != Some(&config) || is_stopped {
+                let working_directory =
+                    working_directory_for(&config, root_path.clone(), is_remote_project);
+                // A running server that was started before the project root became
+                // available keeps its stale working directory, since the working
+                // directory is not part of `ContextServerConfiguration`. Restart it
+                // when the resolved working directory no longer matches.
+                let working_directory_changed = state.is_some()
+                    && !is_stopped
+                    && this.server_working_directories.get(&id) != Some(&working_directory);
+                if existing_config.as_deref() != Some(&config)
+                    || is_stopped
+                    || working_directory_changed
+                {
                     let config = Arc::new(config);
-                    servers_to_start.push((id.clone(), config));
+                    servers_to_start.push((id.clone(), config, working_directory));
                     if this.servers.contains_key(&id) {
                         servers_to_stop.insert(id);
                     }
@@ -1806,10 +1874,12 @@ impl ContextServerStore {
             anyhow::Ok(())
         })??;
 
-        for (id, config) in servers_to_start {
+        for (id, config, working_directory) in servers_to_start {
             match Self::create_context_server(this.clone(), id.clone(), config, cx).await {
                 Ok((server, config)) => {
                     this.update(cx, |this, cx| {
+                        this.server_working_directories
+                            .insert(id.clone(), working_directory);
                         this.run_server(server, config, cx);
                     })?;
                 }
@@ -1827,6 +1897,21 @@ impl ContextServerStore {
         }
 
         Ok(())
+    }
+}
+
+/// The working directory a server will be spawned with, mirroring the choice
+/// made in [`ContextServerStore::create_context_server`]: only locally-spawned
+/// stdio servers use the project root; HTTP and remote servers use none.
+fn working_directory_for(
+    configuration: &ContextServerConfiguration,
+    root_path: Option<Arc<Path>>,
+    is_remote_project: bool,
+) -> Option<Arc<Path>> {
+    match configuration {
+        ContextServerConfiguration::Http { .. } => None,
+        _ if is_remote_project => None,
+        _ => root_path,
     }
 }
 

@@ -18,7 +18,8 @@ use ui::{Clickable as _, Color, IconButton, IconSize, Toggleable as _};
 
 use crate::{
     CodeActionSource, Editor, EditorSettings, EditorStyle, RangeToAnchorExt, SpawnNearestTask,
-    ToggleCodeActions, UPDATE_DEBOUNCE, display_map::DisplayRow,
+    ToggleCodeActions, UPDATE_DEBOUNCE,
+    display_map::{DisplayPoint, DisplayRow},
 };
 
 #[derive(Debug)]
@@ -65,6 +66,10 @@ impl RunnableData {
         status: RunnableTaskStatus,
     ) {
         self.task_statuses.insert((buffer_id, buffer_row), status);
+    }
+
+    pub fn clear_task_status(&mut self, (buffer_id, buffer_row): (BufferId, BufferRow)) {
+        self.task_statuses.remove(&(buffer_id, buffer_row));
     }
 
     pub fn task_key_for_offset(
@@ -439,6 +444,31 @@ impl Editor {
         self.runnables
             .set_task_status((buffer_id, buffer_row), status);
         cx.notify();
+    }
+
+    pub(crate) fn clear_runnable_task_status(
+        &mut self,
+        buffer_id: BufferId,
+        buffer_row: BufferRow,
+        cx: &mut Context<Self>,
+    ) {
+        self.runnables.clear_task_status((buffer_id, buffer_row));
+        cx.notify();
+    }
+
+    pub(crate) fn runnable_task_key_for_display_row(
+        &self,
+        display_row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(BufferId, BufferRow)> {
+        let snapshot = self.snapshot(window, cx);
+        let multibuffer_row =
+            MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(&snapshot).row);
+        let (buffer_snapshot, range) = snapshot
+            .buffer_snapshot()
+            .buffer_line_for_row(multibuffer_row)?;
+        Some((buffer_snapshot.remote_id(), range.start.row))
     }
 
     pub(crate) fn runnable_task_key_for_offset(

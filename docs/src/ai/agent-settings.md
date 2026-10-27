@@ -38,6 +38,7 @@ Some Zed AI features have their own model or prompt settings in `settings.json`,
 - `agent.inline_assistant_model`
 - `agent.commit_message_model`
 - `agent.thread_summary_model`
+- `agent.compaction_model`
 - `agent.subagent_model`
 - `agent.commit_message_instructions`
 - `agent.inline_alternatives`
@@ -82,6 +83,29 @@ The `threshold` value can be one of:
 `0` is not a valid threshold. If the threshold is invalid, Zed falls back to `90%`.
 
 You can compact a Zed Agent thread manually at any time by typing `/compact` in the Agent Panel message editor. For more on thread token usage and compaction behavior, see [Token Usage and Compaction](./agent-panel.md#token-usage).
+
+## Compaction Model {#compaction-model}
+
+By default, context compaction (both `/compact` and auto-compaction) uses the thread's currently selected model. Set `agent.compaction_model` to use a different model:
+
+```json [settings]
+{
+  "agent": {
+    "default_model": {
+      "provider": "anthropic",
+      "model": "claude-opus-4-6"
+    },
+    "compaction_model": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5"
+    }
+  }
+}
+```
+
+**Notes:**
+
+- The configured model should have a context window at least as large as the thread's primary model for predictable behavior.
 
 ## External Agents {#external-agents}
 
@@ -131,6 +155,50 @@ Some AI settings are not configured on the AI settings pages:
 Zed supports feature-specific model settings for Inline Assistant, Git commit generation, thread summaries, and subagents. Configure these in settings when you need a different model for a specific workflow.
 
 See [LLM Providers](./llm-providers.md) for model access, and [All Settings](../reference/all-settings.md) for the complete settings reference.
+
+### Subagent Models {#subagent-models}
+
+By default, Zed Agent's subagents inherit the parent thread's model, thinking setting, reasoning effort, and speed. Set `agent.subagent_model` in `settings.json` to choose separate model, reasoning, and speed settings. You can override the model by asking the agent to use a specific model for a subagent. When that model matches the provider and model in `agent.subagent_model`, its `enable_thinking`, `effort`, and `speed` settings are preserved. This setting does not configure [External Agents](./external-agents.md).
+
+Configure this setting with a `provider` and `model`. To choose a reasoning effort for a model that supports it, also set `enable_thinking` and `effort`:
+
+```json [settings]
+{
+  "agent": {
+    "subagent_model": {
+      "effort": "low",
+      "enable_thinking": true,
+      "model": "claude-opus-4-6",
+      "provider": "anthropic"
+    }
+  }
+}
+```
+
+Choose an `effort` value supported by the selected model. Omitting `effort` from this object does not inherit the parent's effort. It leaves effort to the selected provider and model's default behavior. Omitting `enable_thinking` defaults to `false`, although models that cannot disable thinking still use it.
+
+To find supported effort values:
+
+1. Choose the target provider and model from the model selector in a native Zed Agent thread, even if it is already selected, to save it as `agent.default_model`.
+2. Enable thinking if it is off, then open the thinking effort menu. The "Change Thinking Effort" menu lists the model's supported levels. If the model offers no effort choices, omit `effort`.
+3. Choose a level and read `agent.default_model.effort` in `settings.json` for the exact value to use in `agent.subagent_model.effort`.
+
+These controls change the current thread and saved default model settings, and can update a matching favorite model. Restore your previous selections afterward if needed.
+
+The optional `speed` field accepts `"fast"` or `"standard"`. It applies only to models that support fast mode. Omitting it from `agent.subagent_model` leaves speed unspecified rather than inheriting the parent's speed.
+
+| Model Selection                                                                         | Settings Applied                                                                                                                                                            |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No specific model requested, and `agent.subagent_model` is unset                        | Inherits the parent thread's current thinking, effort, and speed settings.                                                                                                  |
+| No specific model requested, and `agent.subagent_model` is configured                   | Uses `enable_thinking`, `effort`, and `speed` from `agent.subagent_model`.                                                                                                  |
+| Requested model matches the provider and model in `agent.subagent_model`                | Uses `enable_thinking`, `effort`, and `speed` from `agent.subagent_model`.                                                                                                  |
+| Requested model differs from `agent.subagent_model`, or `agent.subagent_model` is unset | Uses matching `agent.default_model` settings. Without a match, enables thinking if supported, uses the model's default effort when available, and leaves speed unspecified. |
+
+When using matching `agent.default_model` settings, unsupported or omitted `effort` falls back to the selected model's default effort, when available.
+
+If the configured model is unavailable, subagents use the parent thread's model and its thinking, effort, and speed settings.
+
+The agent can only request a model for a subagent, not a separate effort or speed. Requesting the parent's own model is not the same as requesting no specific model: the table's rules for requested models apply instead of inheriting the parent's current settings. Subagents with a requested or configured model do not follow later changes to the parent's model, reasoning, or speed settings. Resuming a subagent keeps its existing model, reasoning, and speed settings.
 
 ## Model Temperature {#model-temperature}
 

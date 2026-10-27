@@ -9,12 +9,13 @@ use crate::application_menu::{ApplicationMenu, show_menus};
 use crate::plan_chip::PlanChip;
 use agent_settings::{AgentSettings, WindowLayout};
 use arrayvec::ArrayVec;
-use git_ui::worktree_picker::WorktreePicker;
+use git_ui_core::worktree_picker::WorktreePicker;
+use path::PathStyle;
 pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
 };
-use project::{linked_worktree_short_name, repo_identity_path};
+use project::{linked_worktree_short_name, repo_identity_path, repo_identity_path_if_local};
 
 #[cfg(not(target_os = "macos"))]
 use crate::application_menu::{
@@ -41,6 +42,7 @@ use remote::RemoteConnectionOptions;
 use settings::{Settings as _, SettingsStore};
 
 use std::any::TypeId;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ActiveTheme;
@@ -63,6 +65,18 @@ pub use onboarding_banner::restore_banner;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 const MAX_SHORT_SHA_LENGTH: usize = 8;
+
+fn linked_worktree_name_anchor<'a>(
+    main_worktree_path: Option<&'a Path>,
+    repository_identity_path: Option<&'a Path>,
+    is_linked_worktree: bool,
+) -> Option<&'a Path> {
+    main_worktree_path.or_else(|| {
+        is_linked_worktree
+            .then_some(repository_identity_path)
+            .flatten()
+    })
+}
 
 actions!(
     collab,
@@ -236,7 +250,8 @@ impl Render for TitleBar {
         let mut repository = None;
         let mut linked_worktree_name = None;
         if let Some(worktree) = self.effective_active_worktree(cx) {
-            repository = self.get_repository_for_worktree(&worktree, cx);
+            let path_style = worktree.read(cx).path_style();
+            repository = self.get_repository_for_worktree(&worktree, path_style, cx);
             let worktree_abs_path = worktree.read(cx).abs_path();
             project_name = worktree
                 .read(cx)
@@ -245,38 +260,49 @@ impl Render for TitleBar {
                 .map(|name| SharedString::from(name.to_string()));
             if let Some(repo) = &repository {
                 let repo = repo.read(cx);
-                linked_worktree_name = repo
-                    .main_worktree_abs_path()
-                    .and_then(|main_worktree_path| {
-                        linked_worktree_short_name(
-                            main_worktree_path,
-                            repo.work_directory_abs_path.as_ref(),
-                        )
-                    })
-                    .or_else(|| {
-                        repo.is_linked_worktree()
-                            .then_some(project_name.clone())
-                            .flatten()
-                    });
-
-                let identity = repo_identity_path(&repo.common_dir_abs_path);
+                let identity = repo_identity_path(&repo.common_dir_abs_path, path_style);
+                let identity_fallback =
+                    repo_identity_path_if_local(&repo.common_dir_abs_path, path_style);
+                linked_worktree_name = linked_worktree_name_anchor(
+                    repo.main_worktree_abs_path(),
+                    identity_fallback,
+                    repo.is_linked_worktree(),
+                )
+                .and_then(|name_anchor_path| {
+                    linked_worktree_short_name(
+                        name_anchor_path,
+                        repo.work_directory_abs_path.as_ref(),
+                        path_style,
+                    )
+                })
+                .or_else(|| {
+                    repo.is_linked_worktree()
+                        .then_some(project_name.clone())
+                        .flatten()
+                });
 
                 let display_name = if identity.extension() == Some(std::ffi::OsStr::new("git")) {
                     identity.file_stem()
                 } else {
-                    identity.file_name()
+                    path_style.file_name(identity)
                 };
 
                 if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
-                    let visible_worktrees_in_repo = self.visible_worktrees_in_repository(repo, cx);
+                    let visible_worktrees_in_repo =
+                        self.visible_worktrees_in_repository(repo, path_style, cx);
                     let name = if visible_worktrees_in_repo == 1 {
-                        if let Ok(relative) =
-                            worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
+                        if let Ok(relative) = path_style
+                            .strip_prefix(&worktree_abs_path, &*repo.work_directory_abs_path)
                         {
                             if relative.as_os_str().is_empty() {
                                 repo_name.to_string()
                             } else {
-                                format!("{}/{}", repo_name, relative.display())
+                                format!(
+                                    "{}{}{}",
+                                    repo_name,
+                                    path_style.primary_separator(),
+                                    relative.display()
+                                )
                             }
                         } else {
                             repo_name.to_string()
@@ -466,7 +492,6 @@ impl TitleBar {
         );
 
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
-        subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(
             cx.subscribe(&git_store, move |_, _, event, cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
@@ -559,6 +584,7 @@ impl TitleBar {
     fn get_repository_for_worktree(
         &self,
         worktree: &Entity<project::Worktree>,
+        path_style: PathStyle,
         cx: &App,
     ) -> Option<Entity<project::git_store::Repository>> {
         let project = self.project.read(cx);
@@ -570,7 +596,8 @@ impl TitleBar {
             .values()
             .filter(|repo| {
                 let repo_path = &repo.read(cx).work_directory_abs_path;
-                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+                worktree_path == *repo_path
+                    || path_style.starts_with(&worktree_path, repo_path.as_ref())
             })
             .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
             .cloned()
@@ -579,6 +606,7 @@ impl TitleBar {
     fn visible_worktrees_in_repository(
         &self,
         repository: &project::git_store::Repository,
+        path_style: PathStyle,
         cx: &App,
     ) -> usize {
         let repo_path = &repository.work_directory_abs_path;
@@ -587,7 +615,8 @@ impl TitleBar {
             .visible_worktrees(cx)
             .filter(|worktree| {
                 let worktree_path = worktree.read(cx).abs_path();
-                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+                worktree_path == *repo_path
+                    || path_style.starts_with(&worktree_path, repo_path.as_ref())
             })
             .count()
     }
@@ -1050,14 +1079,12 @@ impl TitleBar {
 
                 PopoverMenu::new("branch-menu")
                     .menu(move |window, cx| {
-                        Some(git_ui::git_picker::popover(
+                        git_ui_core::build_branch_picker(
                             workspace.downgrade(),
                             effective_repository.clone(),
-                            git_ui::git_picker::GitPickerTab::Branches,
-                            gpui::rems(34.),
                             window,
                             cx,
-                        ))
+                        )
                     })
                     .trigger_with_tooltip(trigger, move |_window, cx| {
                         let meta = if is_detached_head {
@@ -1097,23 +1124,6 @@ impl TitleBar {
                 .children(branch_picker)
                 .into_any_element(),
         )
-    }
-
-    fn window_activation_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if window.is_window_active() {
-            ActiveCall::global(cx)
-                .update(cx, |call, cx| call.set_location(Some(&self.project), cx))
-                .detach_and_log_err(cx);
-        } else if cx.active_window().is_none() {
-            ActiveCall::global(cx)
-                .update(cx, |call, cx| call.set_location(None, cx))
-                .detach_and_log_err(cx);
-        }
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace.update_active_view_for_followers(window, cx);
-            })
-            .ok();
     }
 
     fn active_call_changed(&mut self, cx: &mut Context<Self>) {
@@ -1334,7 +1344,7 @@ impl TitleBar {
                         )
                         .separator()
                     })
-                    .map(|this| {
+                    .when(is_signed_in, |this| {
                         let mut this = this.header("Organization");
 
                         for (organization, plan) in &organizations {
@@ -1440,5 +1450,54 @@ impl TitleBar {
                 .into()
             })
             .anchor(Anchor::TopRight)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use util::paths::PathStyle;
+
+    #[test]
+    fn test_foreign_path_style_does_not_use_repository_identity_as_name_anchor() {
+        let (common_dir, foreign_path_style) = match PathStyle::local() {
+            PathStyle::Unix => (Path::new(r"C:\repos\zed"), PathStyle::Windows),
+            PathStyle::Windows => (Path::new("/repos/zed"), PathStyle::Unix),
+        };
+        let repository_identity_path = repo_identity_path_if_local(common_dir, foreign_path_style);
+
+        assert_eq!(
+            linked_worktree_name_anchor(None, repository_identity_path, true),
+            None
+        );
+    }
+
+    #[test]
+    fn test_local_path_style_uses_bare_repository_worktree_name() {
+        let (repository_identity_path, work_directory_path) = match PathStyle::local() {
+            PathStyle::Unix => (
+                Path::new("/repos/zed"),
+                Path::new("/worktrees/zed/plum-warbler/zed"),
+            ),
+            PathStyle::Windows => (
+                Path::new(r"C:\repos\zed"),
+                Path::new(r"C:\worktrees\zed\plum-warbler\zed"),
+            ),
+        };
+
+        let repository_identity_path =
+            repo_identity_path_if_local(repository_identity_path, PathStyle::local());
+        let name_anchor_path = linked_worktree_name_anchor(None, repository_identity_path, true);
+
+        assert_eq!(
+            name_anchor_path.and_then(|name_anchor_path| {
+                linked_worktree_short_name(
+                    name_anchor_path,
+                    work_directory_path,
+                    PathStyle::local(),
+                )
+            }),
+            Some("plum-warbler".into())
+        );
     }
 }

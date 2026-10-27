@@ -55,7 +55,7 @@ pub(super) struct InlineDiagnostic {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct ActiveDiagnosticGroup {
     active_range: Range<Anchor>,
-    active_message: String,
+    active_message: language::DiagnosticMessage,
     group_id: usize,
     blocks: HashSet<CustomBlockId>,
 }
@@ -276,6 +276,7 @@ impl Editor {
 
     pub fn disable_diagnostics(&mut self, cx: &mut Context<Self>) {
         self.diagnostics_enabled = false;
+        self.set_max_diagnostics_severity(DiagnosticSeverity::Off, cx);
         self.dismiss_diagnostics(cx);
         self.inline_diagnostics_update = Task::ready(());
         self.inline_diagnostics.clear();
@@ -304,7 +305,11 @@ impl Editor {
     }
 
     pub fn set_max_diagnostics_severity(&mut self, severity: DiagnosticSeverity, cx: &mut App) {
-        self.diagnostics_max_severity = severity;
+        self.diagnostics_max_severity = if self.diagnostics_enabled() {
+            severity
+        } else {
+            DiagnosticSeverity::Off
+        };
         self.display_map.update(cx, |display_map, _| {
             display_map.diagnostics_max_severity = self.diagnostics_max_severity;
         });
@@ -369,7 +374,10 @@ impl Editor {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
                         && entry.range.start == primary_range_start
-                        && entry.diagnostic.message == active_diagnostics.active_message
+                        && entry
+                            .diagnostic
+                            .message
+                            .rendered_eq(&active_diagnostics.active_message)
                 });
 
             if !is_valid {
@@ -495,11 +503,16 @@ impl Editor {
                         let message = diagnostic_entry
                             .diagnostic
                             .message
+                            .as_str()
                             .split_once('\n')
                             .map(|(line, _)| line)
                             .map(SharedString::new)
                             .unwrap_or_else(|| {
-                                SharedString::new(&*diagnostic_entry.diagnostic.message)
+                                diagnostic_entry
+                                    .diagnostic
+                                    .message
+                                    .as_shared_string()
+                                    .clone()
                             });
                         let start_anchor = snapshot.anchor_before(diagnostic_entry.range.start);
                         let (Ok(i) | Err(i)) = inline_diagnostics
@@ -611,6 +624,7 @@ mod tests {
     use indoc::indoc;
     use language::DiagnosticSourceKind;
     use lsp::LanguageServerId;
+    use project::project_settings::DiagnosticSeverity;
     use settings::{DelayMs, SettingsStore};
     use std::sync::{
         Arc,
@@ -654,7 +668,7 @@ mod tests {
                                     lsp::Position::new(0, 15),
                                 ),
                                 severity: Some(lsp::DiagnosticSeverity::ERROR),
-                                message: "cannot find value `def`".to_string(),
+                                message: lsp::DiagnosticMessage::from("cannot find value `def`"),
                                 ..Default::default()
                             }],
                         },
@@ -674,6 +688,22 @@ mod tests {
                 1,
                 "inline diagnostics should appear after the language server publishes them"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_disabled_diagnostics_ignore_severity_changes(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.update_editor(|editor, _, cx| {
+            assert!(editor.display_snapshot(cx).diagnostics_visible());
+
+            editor.disable_diagnostics(cx);
+            assert!(!editor.display_snapshot(cx).diagnostics_visible());
+
+            editor.set_max_diagnostics_severity(DiagnosticSeverity::Hint, cx);
+            assert!(!editor.display_snapshot(cx).diagnostics_visible());
         });
     }
 

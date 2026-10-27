@@ -30,9 +30,9 @@ image.workspace = true
 language_model_core.workspace = true
 log.workspace = true
 parking_lot.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+credentials_provider = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }

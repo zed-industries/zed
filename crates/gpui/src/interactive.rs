@@ -1,6 +1,6 @@
 use crate::{
-    Bounds, Capslock, Context, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
-    Window, point, seal::Sealed,
+    BackGestureEvent, Bounds, Capslock, Context, Empty, IntoElement, Keystroke, LongPressEvent,
+    Modifiers, Pixels, Point, Render, TouchDragEvent, Window, point, seal::Sealed,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
@@ -103,8 +103,8 @@ pub enum TouchPhase {
 /// [`TouchPhase::Started`] through [`TouchPhase::Ended`] or
 /// [`TouchPhase::Cancelled`].
 ///
-/// The value is opaque and platform-defined; it is only guaranteed to be
-/// stable for the duration of the touch and unique among concurrent touches.
+/// The value is opaque and assigned by the platform. A platform window must
+/// not reuse an identifier for a later touch.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TouchId(pub u64);
 
@@ -123,6 +123,15 @@ pub struct TouchEvent {
     pub phase: TouchPhase,
     /// The position of the touch in window coordinates.
     pub position: Point<Pixels>,
+    /// Where the platform predicts the touch will be roughly one frame from
+    /// now, in the same coordinate space as `position`, when the platform
+    /// offers a prediction for a [`TouchPhase::Moved`] event.
+    ///
+    /// Best-effort latency compensation only: it may influence how far a
+    /// recognized pan scrolls within a frame, but never hit testing, gesture
+    /// classification, or velocity estimation, and any error it introduces
+    /// must be corrected by later events for the same touch.
+    pub predicted_position: Option<Point<Pixels>>,
     /// Normalized touch force in `0.0..=1.0`, if the hardware reports it.
     pub force: Option<f32>,
 }
@@ -508,31 +517,52 @@ impl MouseMoveEvent {
     }
 }
 
-/// A mouse wheel event from the platform.
+/// One step of scrolling from a mouse wheel, trackpad, or touch pan.
 #[derive(Clone, Debug, Default)]
-pub struct ScrollWheelEvent {
-    /// The position of the mouse on the window.
+pub struct ScrollEvent {
+    /// The position the scroll targets. For touch pans this is where the pan
+    /// started, so the whole gesture stays with the container it began on.
     pub position: Point<Pixels>,
 
-    /// The change in scroll wheel position for this event.
+    /// The change in scroll position for this event.
     pub delta: ScrollDelta,
 
-    /// The modifiers that were held down when the mouse was moved.
+    /// The modifiers that were held down when the scroll happened.
     pub modifiers: Modifiers,
 
-    /// The phase of the touch event.
+    /// The phase of the scroll gesture.
     pub touch_phase: TouchPhase,
+
+    /// The kind of input that produced this scroll.
+    pub source: ScrollSource,
 }
 
-impl Sealed for ScrollWheelEvent {}
-impl InputEvent for ScrollWheelEvent {
+/// The former name of [`ScrollEvent`].
+#[deprecated(note = "renamed to `ScrollEvent`")]
+pub type ScrollWheelEvent = ScrollEvent;
+
+/// The kind of input that produced a [`ScrollEvent`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScrollSource {
+    /// A scroll the platform reported from a pointing device, such as a mouse
+    /// wheel or a trackpad. [`ScrollDelta::precise`] tells continuous devices
+    /// apart from wheel notches.
+    #[default]
+    Pointer,
+    /// A pan of a finger on a touchscreen, recognized by GPUI, including the
+    /// momentum GPUI synthesizes after the finger lifts.
+    Touch,
+}
+
+impl Sealed for ScrollEvent {}
+impl InputEvent for ScrollEvent {
     fn to_platform_input(self) -> PlatformInput {
-        PlatformInput::ScrollWheel(self)
+        PlatformInput::Scroll(self)
     }
 }
-impl MouseEvent for ScrollWheelEvent {}
+impl MouseEvent for ScrollEvent {}
 
-impl Deref for ScrollWheelEvent {
+impl Deref for ScrollEvent {
     type Target = Modifiers;
 
     fn deref(&self) -> &Self::Target {
@@ -540,7 +570,7 @@ impl Deref for ScrollWheelEvent {
     }
 }
 
-/// The scroll delta for a scroll wheel event.
+/// The scroll delta for a [`ScrollEvent`].
 #[derive(Clone, Copy, Debug)]
 pub enum ScrollDelta {
     /// An exact scroll delta in pixels.
@@ -691,6 +721,31 @@ impl ExternalPaths {
     }
 }
 
+/// Data offered to the platform when an internal drag leaves the window and is
+/// promoted to a native drag session.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ExternalDragPayload {
+    /// Real on-disk paths, handed to the platform as an outbound file drag.
+    Files(FileDragPaths),
+}
+
+/// Paths handed to the platform for a native file drag. Directory metadata is
+/// provided by the caller to avoid querying it when the platform drag starts.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct FileDragPaths(SmallVec<[(PathBuf, bool); 2]>);
+
+impl FileDragPaths {
+    /// Creates a native file-drag payload from paths paired with whether each path is a directory.
+    pub fn new(entries: impl IntoIterator<Item = (PathBuf, bool)>) -> Self {
+        Self(entries.into_iter().collect())
+    }
+
+    /// The dragged paths, each paired with whether it is a directory.
+    pub fn entries(&self) -> &[(PathBuf, bool)] {
+        &self.0
+    }
+}
+
 impl Render for ExternalPaths {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         // the platform will render icons for the dragged files
@@ -720,6 +775,8 @@ pub enum FileDropEvent {
     },
     /// The user has stopped dragging the files over the window.
     Exited,
+    /// The platform-owned drag session has ended.
+    Ended,
 }
 
 impl Sealed for FileDropEvent {}
@@ -749,10 +806,17 @@ pub enum PlatformInput {
     MouseMove(MouseMoveEvent),
     /// The mouse exited the window.
     MouseExited(MouseExitEvent),
-    /// The scroll wheel was used.
-    ScrollWheel(ScrollWheelEvent),
+    /// A mouse wheel or trackpad scrolled. Touch pans reach the window as
+    /// [`PlatformInput::Touch`] and are recognized into scrolls by GPUI.
+    Scroll(ScrollEvent),
     /// A pinch gesture was performed.
     Pinch(PinchEvent),
+    /// A long-press gesture recognized from touch input.
+    LongPress(LongPressEvent),
+    /// A direct touch drag claimed by an element.
+    TouchDrag(TouchDragEvent),
+    /// A back-navigation gesture recognized by the platform.
+    BackGesture(BackGestureEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
     /// A raw touch event on a touch screen.
@@ -770,8 +834,11 @@ impl PlatformInput {
             PlatformInput::MouseMove(event) => Some(event),
             PlatformInput::MousePressure(event) => Some(event),
             PlatformInput::MouseExited(event) => Some(event),
-            PlatformInput::ScrollWheel(event) => Some(event),
+            PlatformInput::Scroll(event) => Some(event),
             PlatformInput::Pinch(event) => Some(event),
+            PlatformInput::LongPress(event) => Some(event),
+            PlatformInput::TouchDrag(event) => Some(event),
+            PlatformInput::BackGesture(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
             PlatformInput::Touch(_) => None,
         }
@@ -787,10 +854,35 @@ impl PlatformInput {
             PlatformInput::MouseMove(_) => None,
             PlatformInput::MousePressure(_) => None,
             PlatformInput::MouseExited(_) => None,
-            PlatformInput::ScrollWheel(_) => None,
+            PlatformInput::Scroll(_) => None,
             PlatformInput::Pinch(_) => None,
+            PlatformInput::LongPress(_) => None,
+            PlatformInput::TouchDrag(_) => None,
+            PlatformInput::BackGesture(_) => None,
             PlatformInput::FileDrop(_) => None,
             PlatformInput::Touch(_) => None,
+        }
+    }
+
+    /// A short static name for this input's variant, for diagnostics and
+    /// telemetry.
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            PlatformInput::KeyDown(_) => "key_down",
+            PlatformInput::KeyUp(_) => "key_up",
+            PlatformInput::ModifiersChanged(_) => "modifiers_changed",
+            PlatformInput::MouseDown(_) => "mouse_down",
+            PlatformInput::MouseUp(_) => "mouse_up",
+            PlatformInput::MousePressure(_) => "mouse_pressure",
+            PlatformInput::MouseMove(_) => "mouse_move",
+            PlatformInput::MouseExited(_) => "mouse_exited",
+            PlatformInput::Scroll(_) => "scroll",
+            PlatformInput::Pinch(_) => "pinch",
+            PlatformInput::LongPress(_) => "long_press",
+            PlatformInput::TouchDrag(_) => "touch_drag",
+            PlatformInput::BackGesture(_) => "back_gesture",
+            PlatformInput::FileDrop(_) => "file_drop",
+            PlatformInput::Touch(_) => "touch",
         }
     }
 
@@ -808,7 +900,7 @@ mod test {
 
     use crate::{
         self as gpui, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
-        KeyBinding, Keystroke, ParentElement, Render, TestAppContext, Window, div,
+        KeyBinding, Keystroke, Modifiers, ParentElement, Render, TestAppContext, Window, div,
     };
 
     struct TestView {
@@ -874,5 +966,33 @@ mod test {
                 assert!(test_view.saw_action);
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_multi_modifier_gesture_does_not_dispatch_standalone_modifier_binding(
+        cx: &mut TestAppContext,
+    ) {
+        let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
+            saw_key_down: false,
+            saw_action: false,
+            focus_handle: cx.focus_handle(),
+        });
+
+        cx.update(|_, cx| {
+            cx.bind_keys(vec![KeyBinding::new("shift", TestAction, None)]);
+        });
+        test_view.update_in(cx, |test_view, window, cx| {
+            window.focus(&test_view.focus_handle, cx);
+        });
+
+        cx.simulate_modifiers_change(Modifiers::alt());
+        cx.simulate_modifiers_change(Modifiers::alt() | Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert!(!test_view.read_with(cx, |test_view, _| test_view.saw_action));
+
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert!(test_view.read_with(cx, |test_view, _| test_view.saw_action));
     }
 }

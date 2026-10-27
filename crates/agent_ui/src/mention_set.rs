@@ -1,7 +1,7 @@
 use crate::diagnostics::{DiagnosticsOptions, codeblock_fence_for_path, collect_diagnostics};
 use acp_thread::{MentionUri, selection_name};
 use agent::{ThreadStore, outline};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -424,7 +424,12 @@ impl MentionSet {
 
         let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
-            let buffer = buffer.await?;
+            let buffer = match buffer.await {
+                Ok(buffer) => buffer,
+                Err(_error) => {
+                    return Ok(Mention::Link);
+                }
+            };
             let buffer_content = outline::get_buffer_content_or_outline(
                 buffer.clone(),
                 Some(&abs_path.to_string_lossy()),
@@ -520,6 +525,7 @@ impl MentionSet {
         source_range: Range<text::Anchor>,
         selections: Vec<(Entity<Buffer>, Range<text::Anchor>, Range<usize>)>,
         editor: Entity<Editor>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -559,6 +565,8 @@ impl MentionSet {
                 selection_name(abs_path.as_deref(), &line_range).into(),
                 uri.icon_path(cx),
                 uri.tooltip_text(),
+                Some(uri.clone()),
+                Some(workspace.clone()),
                 range,
                 editor.downgrade(),
             );
@@ -1042,6 +1050,10 @@ pub(crate) fn paste_images_as_context(
         return None;
     }
 
+    // When this handles the paste, the caller stops the editor's own text paste, so fall
+    // back to pasting the clipboard's text (e.g. non-image file paths) if no images load.
+    let fallback_text = clipboard.text();
+
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
         let default_name: SharedString = "Image".into();
@@ -1054,21 +1066,26 @@ pub(crate) fn paste_images_as_context(
             })
             .partition_map::<Vec<_>, Vec<_>, _, _, _>(std::convert::identity);
 
-        if !paths.is_empty() {
-            images.extend(
-                cx.background_spawn(async move {
+        // A bitmap and image files in the clipboard are usually the same image (e.g. a
+        // screenshot saved to a temporary file), so only load files when there's no bitmap.
+        if images.is_empty() && !paths.is_empty() {
+            images = cx
+                .background_spawn(async move {
                     paths
                         .into_iter()
                         .flat_map(|paths| paths.paths().to_owned())
                         .filter_map(|path| load_external_image_from_path(&path, &default_name))
                         .collect::<Vec<_>>()
                 })
-                .await,
-            );
+                .await;
         }
 
         if !images.is_empty() {
             insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
+        } else if let Some(text) = fallback_text {
+            editor
+                .update_in(cx, |editor, window, cx| editor.insert(&text, window, cx))
+                .ok();
         }
     }))
 }
@@ -1143,11 +1160,20 @@ pub(crate) fn crease_for_mention(
     label: SharedString,
     icon_path: SharedString,
     tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     range: Range<Anchor>,
     editor_entity: WeakEntity<Editor>,
 ) -> Crease<Anchor> {
     let placeholder = FoldPlaceholder {
-        render: render_fold_icon_button(icon_path.clone(), label.clone(), tooltip, editor_entity),
+        render: render_fold_icon_button(
+            icon_path.clone(),
+            label.clone(),
+            tooltip,
+            mention_uri,
+            workspace,
+            editor_entity,
+        ),
         merge_adjacent: false,
         ..Default::default()
     };
@@ -1162,6 +1188,8 @@ fn render_fold_icon_button(
     icon_path: SharedString,
     label: SharedString,
     tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     editor: WeakEntity<Editor>,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new({
@@ -1171,6 +1199,8 @@ fn render_fold_icon_button(
                 .unwrap_or_default();
 
             MentionCrease::new(fold_id, icon_path.clone(), label.clone())
+                .mention_uri(mention_uri.clone())
+                .workspace(workspace.clone())
                 .is_toggled(is_in_text_selection)
                 .when_some(tooltip.clone(), |this, tooltip_text| {
                     this.tooltip(tooltip_text)
