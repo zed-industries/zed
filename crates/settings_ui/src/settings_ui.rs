@@ -7285,9 +7285,10 @@ pub mod test {
 
     #[gpui::test]
     async fn test_project_skill_delete_failure_shows_skill_again(cx: &mut gpui::TestAppContext) {
-        let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
+        let (settings_window, cx, project_fs, _host_fs, worktree_id) =
             init_project_skill_test(cx).await;
-        let skill = project_skill(worktree_id, "missing-skill");
+        let skill = project_skill(worktree_id, "my-skill");
+        project_fs.set_remove_dir_error(&skill.directory_path, "permission denied".into());
 
         settings_window
             .update(cx, |settings_window, cx| {
@@ -7298,6 +7299,29 @@ pub mod test {
         settings_window.read_with(cx, |settings_window, _| {
             assert!(
                 !settings_window
+                    .hidden_deleted_skill_directory_paths
+                    .contains(&skill.directory_path)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_delete_keeps_already_deleted_skill_hidden(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        let skill = project_skill(worktree_id, "deleted-outside-zed");
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::trash_skill(&skill, settings_window, cx)
+            })
+            .await;
+
+        settings_window.read_with(cx, |settings_window, _| {
+            assert!(
+                settings_window
                     .hidden_deleted_skill_directory_paths
                     .contains(&skill.directory_path)
             );

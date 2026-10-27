@@ -1,4 +1,5 @@
 use agent_skills::{Skill, SkillIndex, SkillSource, encode_skill_share_link};
+use anyhow::Context as _;
 use fs::RemoveOptions;
 use gpui::{App, ClipboardItem, Entity, PromptLevel, ScrollHandle, SharedString, Task, prelude::*};
 use project::{Project, WorktreeId};
@@ -103,18 +104,29 @@ pub(crate) fn trash_skill(
         let trash_result = match &project {
             Some(project) => {
                 let trash_task = project.update(cx, |project, cx| {
-                    let project_path =
-                        project.project_path_for_absolute_path(&directory_path, cx)?;
-                    let entry_id = project.entry_for_path(&project_path, cx)?.id;
-                    project.trash_entry(entry_id, cx)
+                    let project_path = project
+                        .project_path_for_absolute_path(&directory_path, cx)
+                        .context("not in project")?;
+                    // Already deleted outside Zed.
+                    let Some(entry_id) = project
+                        .entry_for_path(&project_path, cx)
+                        .map(|entry| entry.id)
+                    else {
+                        return Ok(None);
+                    };
+                    project
+                        .trash_entry(entry_id, cx)
+                        .context("worktree not found")
+                        .map(Some)
                 });
                 match trash_task {
-                    Some(trash_task) => trash_task.await,
-                    None => Err(anyhow::anyhow!("not in project")),
+                    Ok(Some(trash_task)) => trash_task.await.map(|_| ()),
+                    Ok(None) => Ok(()),
+                    Err(error) => Err(error),
                 }
             }
-            None => {
-                fs.trash(
+            None => fs
+                .trash(
                     &directory_path,
                     RemoveOptions {
                         recursive: true,
@@ -122,7 +134,7 @@ pub(crate) fn trash_skill(
                     },
                 )
                 .await
-            }
+                .map(|_| ()),
         };
         if let Err(error) = trash_result {
             log::error!(
