@@ -13,7 +13,7 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
 use language::{Buffer, language_settings::SoftWrap};
-use project::Worktree;
+use project::{Project, Worktree};
 use settings::{ActionSequence, Settings};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -75,7 +75,10 @@ struct ImportedSkill {
 
 enum ScopeChoice {
     Global,
-    Project(Entity<Worktree>),
+    Project {
+        project: Entity<Project>,
+        worktree: Entity<Worktree>,
+    },
 }
 
 fn scope_for_settings_file(
@@ -86,7 +89,7 @@ fn scope_for_settings_file(
     if let SettingsUiFile::Project((worktree_id, _)) = current_file {
         for project in all_projects(original_window, cx) {
             if let Some(worktree) = project.read(cx).worktree_for_id(*worktree_id, cx) {
-                return ScopeChoice::Project(worktree);
+                return ScopeChoice::Project { project, worktree };
             }
         }
     }
@@ -643,8 +646,9 @@ impl SkillCreatorPage {
                     )
                     .await
                 }
-                ScopeChoice::Project(worktree) => {
+                ScopeChoice::Project { project, worktree } => {
                     write_skill_to_worktree(
+                        project,
                         worktree,
                         &name,
                         &description,
@@ -1223,6 +1227,7 @@ async fn write_skill_to_disk(
 }
 
 async fn write_skill_to_worktree(
+    project: &Entity<Project>,
     worktree: &Entity<Worktree>,
     name: &str,
     description: &str,
@@ -1230,34 +1235,27 @@ async fn write_skill_to_worktree(
     disable_model_invocation: bool,
     cx: &mut AsyncApp,
 ) -> Result<PathBuf> {
-    let agents_dir = RelPath::from_unix_str(AGENTS_DIR_NAME)?;
     let skills_dir = RelPath::from_unix_str(project_skills_relative_path())?;
     let skill_dir = skills_dir.join(RelPath::from_unix_str(name)?);
     let skill_file_path = skill_dir.join(RelPath::from_unix_str(SKILL_FILE_NAME)?);
+    let skill_dir_abs_path = worktree.read_with(cx, |worktree, _| worktree.absolutize(&skill_dir));
 
-    // Gitignored directories aren't loaded until expanded.
-    for directory in [agents_dir, skills_dir] {
-        let expand_task = worktree.update(cx, |worktree, cx| {
-            let entry_id = worktree
-                .entry_for_path(directory)
-                .filter(|entry| entry.is_dir())?
-                .id;
-            worktree.expand_entry(entry_id, cx)
-        });
-        if let Some(expand_task) = expand_task {
-            expand_task.await.with_context(|| {
-                format!("failed to check whether skill \"{name}\" already exists")
-            })?;
-        }
-    }
-
-    let existing_entry_error = worktree.read_with(cx, |worktree, _| {
-        worktree.entry_for_path(&skill_dir).map(|entry| {
-            existing_skill_path_error(name, &worktree.absolutize(&skill_dir), entry.is_dir())
-        })
+    // Worktree entries skip `file_scan_exclusions`, so only collab guests fall back to them.
+    let host_check = project.read_with(cx, |project, cx| {
+        project.host_path_is_dir(&skill_dir_abs_path, cx)
     });
-    if let Some(error) = existing_entry_error {
-        return Err(error);
+    let existing_is_dir = match host_check {
+        Some(host_check) => host_check.await,
+        None => worktree_entry_is_dir(worktree, &skill_dir, cx).await,
+    }
+    .with_context(|| {
+        format!(
+            "failed to check whether {} already exists",
+            skill_dir_abs_path.display()
+        )
+    })?;
+    if let Some(is_dir) = existing_is_dir {
+        return Err(existing_skill_path_error(name, &skill_dir_abs_path, is_dir));
     }
 
     let content = format_skill_file(name, description, body, disable_model_invocation)?;
@@ -1276,6 +1274,33 @@ async fn write_skill_to_worktree(
         .with_context(|| format!("failed to write {}", skill_file_abs_path.display()))?;
 
     Ok(skill_file_abs_path)
+}
+
+async fn worktree_entry_is_dir(
+    worktree: &Entity<Worktree>,
+    skill_dir: &RelPath,
+    cx: &mut AsyncApp,
+) -> Result<Option<bool>> {
+    let agents_dir = RelPath::from_unix_str(AGENTS_DIR_NAME)?;
+    let skills_dir = RelPath::from_unix_str(project_skills_relative_path())?;
+    // Gitignored directories aren't loaded until expanded.
+    for directory in [agents_dir, skills_dir] {
+        let expand_task = worktree.update(cx, |worktree, cx| {
+            let entry_id = worktree
+                .entry_for_path(directory)
+                .filter(|entry| entry.is_dir())?
+                .id;
+            worktree.expand_entry(entry_id, cx)
+        });
+        if let Some(expand_task) = expand_task {
+            expand_task.await?;
+        }
+    }
+    Ok(worktree.read_with(cx, |worktree, _| {
+        worktree
+            .entry_for_path(skill_dir)
+            .map(|entry| entry.is_dir())
+    }))
 }
 
 fn existing_skill_path_error(
@@ -1830,14 +1855,14 @@ mod tests {
     async fn init_worktree_test(
         tree: serde_json::Value,
         cx: &mut gpui::TestAppContext,
-    ) -> (Arc<FakeFs>, Entity<Worktree>) {
+    ) -> (Arc<FakeFs>, Entity<Project>, Entity<Worktree>) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/project"), tree).await;
-        let project = project::Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let worktree = project.read_with(cx, |project, cx| {
             project
                 .worktrees(cx)
@@ -1845,15 +1870,17 @@ mod tests {
                 .expect("project should have a worktree")
         });
         cx.run_until_parked();
-        (fs, worktree)
+        (fs, project, worktree)
     }
 
-    #[gpui::test]
-    async fn write_skill_to_worktree_creates_directory_and_file(cx: &mut gpui::TestAppContext) {
-        let (fs, worktree) = init_worktree_test(serde_json::json!({}), cx).await;
-
-        let path = write_skill_to_worktree(
-            &worktree,
+    async fn write_draft_pr_skill(
+        project: &Entity<Project>,
+        worktree: &Entity<Worktree>,
+        cx: &mut gpui::TestAppContext,
+    ) -> Result<PathBuf> {
+        write_skill_to_worktree(
+            project,
+            worktree,
             "draft-pr",
             "Push a draft PR",
             "Body of the skill.",
@@ -1861,7 +1888,15 @@ mod tests {
             &mut cx.to_async(),
         )
         .await
-        .expect("write should succeed");
+    }
+
+    #[gpui::test]
+    async fn write_skill_to_worktree_creates_directory_and_file(cx: &mut gpui::TestAppContext) {
+        let (fs, project, worktree) = init_worktree_test(serde_json::json!({}), cx).await;
+
+        let path = write_draft_pr_skill(&project, &worktree, cx)
+            .await
+            .expect("write should succeed");
 
         assert_eq!(
             path,
@@ -1875,30 +1910,30 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn write_skill_to_worktree_refuses_to_overwrite_ignored_skill(
+    async fn write_skill_to_worktree_refuses_to_overwrite_excluded_skill(
         cx: &mut gpui::TestAppContext,
     ) {
         let existing_content = "---\nname: draft-pr\ndescription: existing\n---\nbody\n";
-        let (fs, worktree) = init_worktree_test(
+        let (fs, project, worktree) = init_worktree_test(
             serde_json::json!({
-                ".git": {},
-                ".gitignore": ".agents\n",
+                ".zed": { "settings.json": r#"{ "file_scan_exclusions": [".agents"] }"# },
                 ".agents": { "skills": { "draft-pr": { "SKILL.md": existing_content } } },
             }),
             cx,
         )
         .await;
+        worktree.read_with(cx, |worktree, _| {
+            assert!(
+                worktree
+                    .entry_for_path(RelPath::from_unix_str(".agents/skills/draft-pr").unwrap())
+                    .is_none(),
+                "the excluded skill should be missing from the worktree"
+            );
+        });
 
-        let err = write_skill_to_worktree(
-            &worktree,
-            "draft-pr",
-            "Push a draft PR",
-            "Body of the skill.",
-            false,
-            &mut cx.to_async(),
-        )
-        .await
-        .expect_err("writing over an existing skill must fail");
+        let err = write_draft_pr_skill(&project, &worktree, cx)
+            .await
+            .expect_err("writing over an existing skill must fail");
         assert!(
             err.to_string().contains("already exists"),
             "error message should mention the conflict, got: {err}"
@@ -1916,25 +1951,40 @@ mod tests {
     async fn write_skill_to_worktree_rejects_non_directory_at_skill_path(
         cx: &mut gpui::TestAppContext,
     ) {
-        let (_fs, worktree) = init_worktree_test(
+        let (_fs, project, worktree) = init_worktree_test(
             serde_json::json!({ ".agents": { "skills": { "draft-pr": "i am a stray file" } } }),
             cx,
         )
         .await;
 
-        let err = write_skill_to_worktree(
-            &worktree,
-            "draft-pr",
-            "Push a draft PR",
-            "Body of the skill.",
-            false,
-            &mut cx.to_async(),
-        )
-        .await
-        .expect_err("writing where a file already lives must fail");
+        let err = write_draft_pr_skill(&project, &worktree, cx)
+            .await
+            .expect_err("writing where a file already lives must fail");
         assert!(
             err.to_string().contains("not a skill directory"),
             "error should explain the conflict is a non-directory, got: {err}"
         );
+    }
+
+    #[gpui::test]
+    async fn worktree_entry_is_dir_finds_ignored_skill(cx: &mut gpui::TestAppContext) {
+        let (_fs, _project, worktree) = init_worktree_test(
+            serde_json::json!({
+                ".git": {},
+                ".gitignore": ".agents\n",
+                ".agents": { "skills": { "draft-pr": { "SKILL.md": "body" } } },
+            }),
+            cx,
+        )
+        .await;
+
+        let is_dir = worktree_entry_is_dir(
+            &worktree,
+            RelPath::from_unix_str(".agents/skills/draft-pr").unwrap(),
+            &mut cx.to_async(),
+        )
+        .await
+        .expect("checking the worktree should succeed");
+        assert_eq!(is_dir, Some(true));
     }
 }
