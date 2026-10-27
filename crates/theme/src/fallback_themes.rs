@@ -42,6 +42,23 @@ pub fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
             *bg_color = Some(fg_color.opacity(0.25));
         }
     }
+
+    apply_staged_status_color_defaults(status);
+}
+
+/// Uses the regular status colors for staged changes wherever no staged color is set.
+// Themes and overrides that don't distinguish staged changes keep their regular
+// status colors, rather than inheriting the staged colors of the base theme.
+pub fn apply_staged_status_color_defaults(status: &mut StatusColorsRefinement) {
+    for (fg_color, staged_color) in [
+        (&status.created, &mut status.created_staged),
+        (&status.deleted, &mut status.deleted_staged),
+        (&status.modified, &mut status.modified_staged),
+    ] {
+        if staged_color.is_none() {
+            *staged_color = *fg_color;
+        }
+    }
 }
 
 /// Applies default theme color values derived from player colors.
@@ -287,9 +304,11 @@ pub(crate) fn zed_default_dark() -> Theme {
                 created: green,
                 created_background: green,
                 created_border: green,
+                created_staged: green,
                 deleted: red,
                 deleted_background: red,
                 deleted_border: red,
+                deleted_staged: red,
                 error: red,
                 error_background: red,
                 error_border: red,
@@ -308,6 +327,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 modified: yellow,
                 modified_background: yellow,
                 modified_border: yellow,
+                modified_staged: yellow,
                 predictive: gray,
                 predictive_background: gray,
                 predictive_border: gray,

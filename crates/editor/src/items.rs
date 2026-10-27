@@ -2282,22 +2282,30 @@ pub fn entry_diagnostic_aware_icon_decoration_and_color(
     }
 }
 
-/// Opacity applied to the label color of a fully-staged (index-only) status,
-/// so staged ("done") entries read as de-emphasized relative to unstaged ("todo") ones.
-const STAGED_LABEL_OPACITY: f32 = 0.6;
-
 fn git_status_color_for(status: TrackedSummary) -> Option<Color> {
     if status.deleted > 0 {
         Some(Color::Deleted)
     } else if status.modified > 0 {
         Some(Color::Modified)
-    } else if status.renamed > 0 {
-        Some(Color::Renamed)
     } else if status.added > 0 {
         Some(Color::Created)
     } else {
         None
     }
+}
+
+fn staged_git_status_color_for(status: TrackedSummary, cx: &App) -> Option<Color> {
+    let colors = cx.theme().status();
+    let color = if status.deleted > 0 {
+        colors.deleted_staged
+    } else if status.modified > 0 {
+        colors.modified_staged
+    } else if status.added > 0 {
+        colors.created_staged
+    } else {
+        return None;
+    };
+    Some(Color::Custom(color))
 }
 
 pub fn entry_git_aware_label_color(
@@ -2311,13 +2319,13 @@ pub fn entry_git_aware_label_color(
     }
 
     // Prefer the worktree (unstaged/"todo") status when present; a file that's
-    // only changed in the index is fully staged ("done") and gets a faded tint.
-    // A partially-staged file (both index and worktree have changes) is treated
-    // as unstaged/"todo" since there's still work left on it.
-    let (status, faded) = if git_status.worktree != TrackedSummary::UNCHANGED {
-        (git_status.worktree, false)
+    // only changed in the index is fully staged ("done") and uses the theme's
+    // staged colors. A partially-staged file (both index and worktree have
+    // changes) is treated as unstaged/"todo" since there's still work left on it.
+    let color = if git_status.worktree != TrackedSummary::UNCHANGED {
+        git_status_color_for(git_status.worktree)
     } else if git_status.index != TrackedSummary::UNCHANGED {
-        (git_status.index, true)
+        staged_git_status_color_for(git_status.index, cx)
     } else if git_status.untracked > 0 {
         return Color::Untracked;
     } else if ignored {
@@ -2326,15 +2334,7 @@ pub fn entry_git_aware_label_color(
         return entry_label_color(selected);
     };
 
-    let Some(color) = git_status_color_for(status) else {
-        return entry_label_color(selected);
-    };
-
-    if faded {
-        Color::Custom(color.color(cx).opacity(STAGED_LABEL_OPACITY))
-    } else {
-        color
-    }
+    color.unwrap_or_else(|| entry_label_color(selected))
 }
 
 fn path_for_buffer<'a>(
@@ -2783,10 +2783,6 @@ mod tests {
             Some(Color::Modified)
         );
         assert_eq!(
-            git_status_color_for(TrackedSummary::RENAMED),
-            Some(Color::Renamed)
-        );
-        assert_eq!(
             git_status_color_for(TrackedSummary::ADDED),
             Some(Color::Created)
         );
@@ -2797,9 +2793,9 @@ mod tests {
             git_status_color_for(TrackedSummary::DELETED + TrackedSummary::ADDED),
             Some(Color::Deleted)
         );
-        // Modified takes priority over renamed/added.
+        // Modified takes priority over added.
         assert_eq!(
-            git_status_color_for(TrackedSummary::MODIFIED + TrackedSummary::RENAMED),
+            git_status_color_for(TrackedSummary::MODIFIED + TrackedSummary::ADDED),
             Some(Color::Modified)
         );
     }
@@ -2831,16 +2827,6 @@ mod tests {
                 Color::Modified
             );
 
-            // Renamed gets its own distinct color.
-            let git_status = GitSummary {
-                worktree: TrackedSummary::RENAMED,
-                ..GitSummary::UNCHANGED
-            };
-            assert_eq!(
-                entry_git_aware_label_color(git_status, false, false, cx),
-                Color::Renamed
-            );
-
             // Partially-staged: unstaged work remains, so it reads as
             // full-strength "todo" modified, not the faded staged-added color.
             let git_status = GitSummary {
@@ -2853,15 +2839,14 @@ mod tests {
                 Color::Modified
             );
 
-            // Fully staged (index-only): faded "done" color.
+            // Fully staged (index-only): the theme's staged color.
             let git_status = GitSummary {
                 index: TrackedSummary::ADDED,
                 ..GitSummary::UNCHANGED
             };
-            let expected = Color::Custom(Color::Created.color(cx).opacity(STAGED_LABEL_OPACITY));
             assert_eq!(
                 entry_git_aware_label_color(git_status, false, false, cx),
-                expected
+                Color::Custom(cx.theme().status().created_staged)
             );
 
             // Untracked.

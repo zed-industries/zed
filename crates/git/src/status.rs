@@ -250,11 +250,9 @@ impl StatusCode {
                 deleted: 1,
                 ..TrackedSummary::UNCHANGED
             },
-            StatusCode::Renamed => TrackedSummary {
-                renamed: 1,
-                ..TrackedSummary::UNCHANGED
-            },
-            StatusCode::Copied | StatusCode::Unmodified => TrackedSummary::UNCHANGED,
+            StatusCode::Renamed | StatusCode::Copied | StatusCode::Unmodified => {
+                TrackedSummary::UNCHANGED
+            }
         }
     }
 
@@ -289,7 +287,6 @@ pub struct TrackedSummary {
     pub added: usize,
     pub modified: usize,
     pub deleted: usize,
-    pub renamed: usize,
 }
 
 impl TrackedSummary {
@@ -297,35 +294,24 @@ impl TrackedSummary {
         added: 0,
         modified: 0,
         deleted: 0,
-        renamed: 0,
     };
 
     pub const ADDED: Self = Self {
         added: 1,
         modified: 0,
         deleted: 0,
-        renamed: 0,
     };
 
     pub const MODIFIED: Self = Self {
         added: 0,
         modified: 1,
         deleted: 0,
-        renamed: 0,
     };
 
     pub const DELETED: Self = Self {
         added: 0,
         modified: 0,
         deleted: 1,
-        renamed: 0,
-    };
-
-    pub const RENAMED: Self = Self {
-        added: 0,
-        modified: 0,
-        deleted: 0,
-        renamed: 1,
     };
 }
 
@@ -334,7 +320,6 @@ impl std::ops::AddAssign for TrackedSummary {
         self.added += rhs.added;
         self.modified += rhs.modified;
         self.deleted += rhs.deleted;
-        self.renamed += rhs.renamed;
     }
 }
 
@@ -346,7 +331,6 @@ impl std::ops::Add for TrackedSummary {
             added: self.added + rhs.added,
             modified: self.modified + rhs.modified,
             deleted: self.deleted + rhs.deleted,
-            renamed: self.renamed + rhs.renamed,
         }
     }
 }
@@ -359,7 +343,6 @@ impl std::ops::Sub for TrackedSummary {
             added: self.added - rhs.added,
             modified: self.modified - rhs.modified,
             deleted: self.deleted - rhs.deleted,
-            renamed: self.renamed - rhs.renamed,
         }
     }
 }
@@ -640,7 +623,7 @@ mod tests {
         status::{FileStatus, GitStatus, TreeDiff, TreeDiffStatus},
     };
 
-    use super::{DiffStat, StatusCode, TrackedSummary, parse_numstat};
+    use super::{DiffStat, parse_numstat};
 
     fn lookup<'a>(entries: &'a [(RepoPath, DiffStat)], path: &str) -> Option<&'a DiffStat> {
         let path = RepoPath::new(path).unwrap();
@@ -775,43 +758,5 @@ mod tests {
                 .collect()
             }
         )
-    }
-
-    #[test]
-    fn test_status_code_to_summary() {
-        assert_eq!(StatusCode::Modified.to_summary(), TrackedSummary::MODIFIED);
-        assert_eq!(
-            StatusCode::TypeChanged.to_summary(),
-            TrackedSummary::MODIFIED
-        );
-        assert_eq!(StatusCode::Added.to_summary(), TrackedSummary::ADDED);
-        assert_eq!(StatusCode::Deleted.to_summary(), TrackedSummary::DELETED);
-        assert_eq!(StatusCode::Renamed.to_summary(), TrackedSummary::RENAMED);
-        assert_eq!(StatusCode::Copied.to_summary(), TrackedSummary::UNCHANGED);
-        assert_eq!(
-            StatusCode::Unmodified.to_summary(),
-            TrackedSummary::UNCHANGED
-        );
-    }
-
-    #[test]
-    fn test_tracked_summary_arithmetic() {
-        let sum = TrackedSummary::ADDED + TrackedSummary::RENAMED;
-        assert_eq!(
-            sum,
-            TrackedSummary {
-                added: 1,
-                modified: 0,
-                deleted: 0,
-                renamed: 1,
-            }
-        );
-
-        let mut acc = TrackedSummary::UNCHANGED;
-        acc += TrackedSummary::RENAMED;
-        acc += TrackedSummary::RENAMED;
-        assert_eq!(acc.renamed, 2);
-
-        assert_eq!(sum - TrackedSummary::RENAMED, TrackedSummary::ADDED);
     }
 }
