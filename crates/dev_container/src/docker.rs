@@ -476,7 +476,7 @@ fn parse_find_process_output(raw: &str) -> Result<Option<DockerPs>, DevContainer
 }
 
 #[async_trait]
-pub(crate) trait DockerClient: Send + Sync {
+pub(crate) trait DockerClient: Sync {
     async fn inspect(&self, id: &String) -> Result<DockerInspect, DevContainerError>;
     async fn get_docker_compose_config(
         &self,
