@@ -12,8 +12,8 @@ use serde_json::json;
 use settings::{SettingsStore, SplicingVec};
 use util::{path, rel_path::rel_path};
 use workspace::{
-    AppState, CloseActiveItem, Item, MultiWorkspace, OpenOptions, ToggleFileFinder, Workspace,
-    open_paths,
+    AppState, CloseActiveItem, Item, MultiWorkspace, OpenOptions, OpenVisible, ToggleFileFinder,
+    Workspace, invalid_item_view::InvalidItemView, open_paths,
 };
 
 #[ctor::ctor(unsafe)]
@@ -397,6 +397,379 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
             Vec::new(),
             "Mismatching abs path should produce no matches"
         )
+    });
+}
+
+#[gpui::test]
+async fn test_exact_excluded_paths(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                    "**/docs".to_string(),
+                    "**/.DS_Store".to_string(),
+                    "**/a".to_string(),
+                    "**/b".to_string(),
+                ]));
+            });
+        });
+    });
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "docs": { "spec.json": "first\nsecond\nthird" },
+                ".DS_Store": "metadata",
+                "a": { "config.json": "excluded" },
+                "config.json": "root",
+            }),
+        )
+        .await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, workspace, cx) = build_find_picker(project.clone(), cx);
+
+    for query in [
+        "spec.json",
+        "docs/sp",
+        "docs/missing.json",
+        "./b/config.json",
+        ".\\b/config.json",
+        "a/missing.json",
+    ] {
+        assert_eq!(
+            search_file_paths(&picker, query, cx).await,
+            vec![None],
+            "query: {query}"
+        );
+    }
+    for query in ["docs/", "a/", "b/"] {
+        assert_eq!(search_file_paths(&picker, query, cx).await, Vec::new());
+    }
+    for (query, expected_path) in [
+        (path!("/root/docs/spec.json"), path!("/root/docs/spec.json")),
+        (path!("/root/.DS_Store"), path!("/root/.DS_Store")),
+        ("docs/spec.json", path!("/root/docs/spec.json")),
+        ("./docs/spec.json", path!("/root/docs/spec.json")),
+        (".\\docs/spec.json", path!("/root/docs/spec.json")),
+        ("a/config.json", path!("/root/a/config.json")),
+        ("./a/config.json", path!("/root/a/config.json")),
+        ("b/config.json", path!("/root/config.json")),
+        ("b\\config.json", path!("/root/config.json")),
+        ("docs/spec.json:2:3", path!("/root/docs/spec.json")),
+    ] {
+        assert_eq!(
+            search_file_paths(&picker, query, cx).await,
+            vec![Some(PathBuf::from(expected_path))],
+            "query: {query}"
+        );
+    }
+    cx.dispatch_action(Confirm);
+    cx.read(|cx| {
+        let editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(editor.read(cx).text(cx), "first\nsecond\nthird");
+        let worktree = project.read(cx).visible_worktrees(cx).next().unwrap();
+        assert!(
+            worktree
+                .read(cx)
+                .entry_for_path(rel_path("docs/spec.json"))
+                .is_none()
+        );
+    });
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/other"),
+            json!({
+                "docs": { "spec.json": "other" },
+            }),
+        )
+        .await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/other"), true, cx)
+        })
+        .await
+        .unwrap();
+    let picker = open_file_picker(&workspace, cx);
+    assert_eq!(
+        search_file_paths(&picker, "other/docs/spec.json", cx).await,
+        vec![Some(PathBuf::from(path!("/other/docs/spec.json")))]
+    );
+}
+
+#[gpui::test]
+async fn test_absolute_paths_outside_project(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    bind_default_keymap(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "project": {},
+                "outside": { ".DS_Store": "metadata", "文件.txt": "first\nsecond" },
+            }),
+        )
+        .await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root/project").as_ref()], cx).await;
+    let (picker, workspace, cx) = build_find_picker(project.clone(), cx);
+
+    for query in [path!("/root/outside/missing.txt"), path!("/root/outside")] {
+        assert_eq!(search_file_paths(&picker, query, cx).await, Vec::new());
+    }
+    let positioned_path = format!("{}:2:3", path!("/root/outside/文件.txt"));
+    for (query, expected_path) in [
+        (
+            path!("/root/outside/.DS_Store"),
+            path!("/root/outside/.DS_Store"),
+        ),
+        (positioned_path.as_str(), path!("/root/outside/文件.txt")),
+    ] {
+        assert_eq!(
+            search_file_paths(&picker, query, cx).await,
+            vec![Some(PathBuf::from(expected_path))]
+        );
+        cx.read(|cx| assert_eq!(project.read(cx).visible_worktrees(cx).count(), 1));
+    }
+    cx.simulate_keystrokes("enter");
+    cx.read(|cx| assert!(workspace.read(cx).active_modal::<FileFinder>(cx).is_none()));
+    cx.update(|_, cx| {
+        let editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "first\nsecond");
+            assert_eq!(
+                editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head(),
+                Point::new(1, 2)
+            );
+        });
+    });
+
+    let picker = open_file_picker(&workspace, cx);
+    assert_eq!(
+        search_file_paths(&picker, "", cx).await,
+        vec![Some(PathBuf::from(path!("/root/outside/文件.txt")))]
+    );
+    for query in [
+        path!("/root/outside/.DS_Store"),
+        path!("/root/outside/文件.txt"),
+    ] {
+        let paths = search_file_paths(&picker, query, cx).await;
+        let index = paths
+            .iter()
+            .position(|path| path.as_deref() == Some(Path::new(query)))
+            .unwrap();
+        picker.update_in(cx, |picker, window, cx| {
+            let (name, _) = picker.delegate.labels_for_match(
+                picker.delegate.matches.get(index).unwrap(),
+                window,
+                cx,
+            );
+            assert_eq!(
+                name.text(),
+                Path::new(query).file_name().unwrap().to_str().unwrap()
+            );
+            picker.delegate.toggle_item_selected(index, window, cx);
+        });
+    }
+    for query in [".DS_Store", "文件.txt"] {
+        assert_eq!(
+            search_file_paths(&picker, query, cx)
+                .await
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>(),
+            vec![
+                PathBuf::from(path!("/root/outside/.DS_Store")),
+                PathBuf::from(path!("/root/outside/文件.txt"))
+            ]
+        );
+    }
+    cx.dispatch_action(pane::SplitRight::default());
+    cx.read(|cx| {
+        let workspace = workspace.read(cx);
+        assert_eq!(workspace.panes().len(), 2);
+        assert_eq!(
+            workspace
+                .active_item_as::<Editor>(cx)
+                .unwrap()
+                .read(cx)
+                .title(cx),
+            "文件.txt"
+        );
+        let mut titles = workspace
+            .active_pane()
+            .read(cx)
+            .items()
+            .map(|item| item.downcast::<Editor>().unwrap().read(cx).title(cx))
+            .collect::<Vec<_>>();
+        titles.sort();
+        assert_eq!(titles, vec![".DS_Store", "文件.txt"]);
+    });
+
+    let picker = open_file_picker(&workspace, cx);
+    search_file_paths(&picker, ".DS_Store", cx).await;
+    picker.update_in(cx, |picker, window, cx| {
+        picker.delegate.toggle_item_selected(0, window, cx);
+    });
+    assert_eq!(
+        search_file_paths(&picker, path!("/root/outside/.DS_Store"), cx).await,
+        vec![Some(PathBuf::from(path!("/root/outside/.DS_Store")))]
+    );
+}
+
+#[gpui::test]
+async fn test_binary_absolute_path_history(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    bind_default_keymap(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "main.rs": "fn main() {}",
+                    "binary.dat": "\0".repeat(1024),
+                },
+                "outside": { ".DS_Store": "\0".repeat(1024) },
+            }),
+        )
+        .await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root/project").as_ref()], cx).await;
+    let (picker, workspace, cx) = build_find_picker(project.clone(), cx);
+    let project_file = path!("/root/project/main.rs");
+    assert_eq!(
+        search_file_paths(&picker, "main.rs", cx).await,
+        vec![Some(PathBuf::from(project_file))]
+    );
+    cx.simulate_keystrokes("enter");
+    drop(picker);
+    let picker = open_file_picker(&workspace, cx);
+    let absolute_path = path!("/root/outside/.DS_Store");
+    let query = format!("{absolute_path}\n");
+    assert_eq!(
+        search_file_paths(&picker, &query, cx).await,
+        vec![Some(PathBuf::from(absolute_path))]
+    );
+    cx.simulate_keystrokes("enter");
+    cx.condition(&workspace, |workspace, cx| {
+        workspace.active_modal::<FileFinder>(cx).is_none()
+    })
+    .await;
+    drop(picker);
+    let (item, external_worktree_id) = cx.read(|cx| {
+        let workspace = workspace.read(cx);
+        let item = workspace.active_item_as::<InvalidItemView>(cx).unwrap();
+        assert_eq!(
+            item.read(cx).error.as_ref(),
+            "Binary files are not supported"
+        );
+        (
+            item.downgrade(),
+            item.read(cx).active_project_path(cx).unwrap().worktree_id,
+        )
+    });
+    let picker = open_file_picker(&workspace, cx);
+    assert_eq!(
+        search_file_paths(&picker, "", cx).await,
+        vec![
+            Some(PathBuf::from(absolute_path)),
+            Some(PathBuf::from(project_file)),
+        ]
+    );
+    assert_eq!(
+        search_file_paths(&picker, "main.rs", cx).await,
+        vec![Some(PathBuf::from(project_file))]
+    );
+    cx.simulate_keystrokes("escape");
+    drop(picker);
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.activate_item(0, true, true, window, cx);
+            });
+            workspace.clear_navigation_history(window, cx);
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_item_by_id(item.entity_id(), pane::SaveIntent::Close, window, cx)
+            })
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(item.upgrade().is_none());
+        assert!(
+            project
+                .read(cx)
+                .worktree_for_id(external_worktree_id, cx)
+                .is_none()
+        );
+    });
+    let picker = open_file_picker(&workspace, cx);
+    assert_eq!(
+        search_file_paths(&picker, "", cx).await,
+        vec![
+            Some(PathBuf::from(project_file)),
+            Some(PathBuf::from(absolute_path)),
+        ]
+    );
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_selected_index(1, None, false, window, cx);
+    });
+    cx.dispatch_action(pane::SplitRight::default());
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let workspace = workspace.read(cx);
+        assert_eq!(workspace.panes().len(), 2);
+        let reopened = workspace.active_item_as::<InvalidItemView>(cx).unwrap();
+        assert_ne!(reopened.entity_id(), item.entity_id());
+        assert_eq!(
+            reopened.read(cx).error.as_ref(),
+            "Binary files are not supported"
+        );
+    });
+    drop(picker);
+    let picker = open_file_picker(&workspace, cx);
+    let deleted_path = path!("/root/project/binary.dat");
+    assert_eq!(
+        search_file_paths(&picker, deleted_path, cx).await,
+        vec![Some(PathBuf::from(deleted_path))]
+    );
+    cx.simulate_keystrokes("enter");
+    drop(picker);
+    app_state
+        .fs
+        .remove_file(Path::new(deleted_path), RemoveOptions::default())
+        .await
+        .unwrap();
+    advance_worktree_update_refresh(cx);
+    cx.dispatch_action(CloseActiveItem::default());
+    cx.read(|cx| {
+        let mut history = workspace
+            .read(cx)
+            .recent_navigation_history(None, cx)
+            .into_iter()
+            .map(|(path, absolute_path)| {
+                absolute_path.or_else(|| project.read(cx).absolute_path(&path, cx))
+            })
+            .collect::<Vec<_>>();
+        history.sort();
+        assert_eq!(
+            history,
+            vec![
+                Some(PathBuf::from(absolute_path)),
+                Some(PathBuf::from(project_file)),
+            ]
+        );
     });
 }
 
@@ -3543,6 +3916,187 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
 }
 
 #[gpui::test]
+async fn test_remote_diff_prefix_avoids_unnecessary_metadata(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    cx.update(|cx| release_channel::init("0.0.0".parse().unwrap(), cx));
+    server_cx.update(|cx| release_channel::init("0.0.0".parse().unwrap(), cx));
+    let app_state = init_test(cx);
+    let server_app_state = init_test(server_cx);
+    let server_fs = server_app_state.fs.as_fake();
+    server_fs
+        .insert_tree(
+            path!("/remote"),
+            json!({
+                "first": {
+                    ".zed": {
+                        "settings.json": r#"{"file_scan_exclusions": ["**/a"]}"#,
+                    },
+                    "a": { "file.rs": "" },
+                },
+                "second": { "a": { "file.rs": "" } },
+            }),
+        )
+        .await;
+
+    let (options, session, _) = RemoteClient::fake_server(cx, server_cx);
+    server_cx.update(HeadlessProject::init);
+    let _headless_project = server_cx.new(|cx| {
+        HeadlessProject::new(
+            HeadlessAppState {
+                session,
+                fs: server_app_state.fs.clone(),
+                http_client: server_app_state.client.http_client(),
+                node_runtime: server_app_state.node_runtime.clone(),
+                languages: server_app_state.languages.clone(),
+                extension_host_proxy: Arc::default(),
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+    let remote = RemoteClient::connect_mock(options, cx).await;
+    let project = cx.update(|cx| {
+        Project::init(&app_state.client, cx);
+        Project::remote(
+            remote,
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            false,
+            cx,
+        )
+    });
+    let (first_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/remote/first"), true, cx)
+        })
+        .await
+        .unwrap();
+    let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+        window.activate_window();
+        let workspace =
+            cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx));
+        window.focus(&workspace.read(cx).focus_handle(cx), cx);
+        MultiWorkspace::new(workspace, window, cx)
+    });
+    let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+    let picker = open_file_picker(&workspace, cx);
+    cx.run_until_parked();
+    first_worktree.read_with(cx, |worktree, cx| {
+        assert!(worktree.as_remote().is_some());
+        assert_eq!(worktree.scan_id(), worktree.completed_scan_id());
+        assert!(worktree.entry_for_path(rel_path("a")).is_none());
+        assert!(
+            WorktreeSettings::get(
+                Some(SettingsLocation {
+                    worktree_id: worktree.id(),
+                    path: rel_path("a"),
+                }),
+                cx,
+            )
+            .is_path_excluded(rel_path("a"))
+        );
+    });
+
+    let baseline = server_fs.metadata_call_count();
+    let strip_prefix = picker
+        .read_with(cx, |picker, cx| {
+            picker.delegate.should_strip_diff_prefix("a", cx)
+        })
+        .await;
+    cx.run_until_parked();
+    assert!(!strip_prefix);
+    assert_eq!(server_fs.metadata_call_count() - baseline, 1);
+
+    let baseline = server_fs.metadata_call_count();
+    picker.update_in(cx, |picker, window, cx| {
+        picker.update_matches("x".to_string(), window, cx);
+        picker.update_matches("a/file.rs".to_string(), window, cx);
+    });
+    cx.run_until_parked();
+    let mut metadata_calls = vec![(
+        "search debounce",
+        server_fs.metadata_call_count() - baseline,
+    )];
+    picker.update_in(cx, |picker, window, cx| {
+        picker.update_matches("x".to_string(), window, cx)
+    });
+    cx.executor().advance_clock(SEARCH_DEBOUNCE);
+    cx.run_until_parked();
+    metadata_calls.push((
+        "search cancellation",
+        server_fs.metadata_call_count() - baseline,
+    ));
+
+    let (second_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/remote/second"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    server_fs
+        .touch_path(path!("/remote/first/.zed/settings.json"))
+        .await;
+    advance_worktree_update_refresh(cx);
+    project.read_with(cx, |project, cx| {
+        assert_eq!(
+            project
+                .worktrees(cx)
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    assert_eq!(worktree.scan_id(), worktree.completed_scan_id());
+                    (
+                        worktree.id(),
+                        worktree
+                            .entry_for_path(rel_path("a"))
+                            .map(|entry| entry.is_dir()),
+                        WorktreeSettings::get(
+                            Some(SettingsLocation {
+                                worktree_id: worktree.id(),
+                                path: rel_path("a"),
+                            }),
+                            cx,
+                        )
+                        .is_path_excluded(rel_path("a")),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                (first_worktree.read(cx).id(), None, true),
+                (second_worktree.read(cx).id(), Some(true), false),
+            ]
+        );
+    });
+
+    let baseline = server_fs.metadata_call_count();
+    let strip_prefix = picker
+        .read_with(cx, |picker, cx| {
+            picker.delegate.should_strip_diff_prefix("a", cx)
+        })
+        .await;
+    cx.run_until_parked();
+    assert!(!strip_prefix);
+    metadata_calls.push((
+        "later indexed directory",
+        server_fs.metadata_call_count() - baseline,
+    ));
+    assert_eq!(
+        metadata_calls,
+        vec![
+            ("search debounce", 0),
+            ("search cancellation", 0),
+            ("later indexed directory", 0),
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_deleted_remote_history_items_not_shown(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
@@ -5033,6 +5587,46 @@ fn simulate_input(cx: &mut VisualTestContext, input: &str) {
     cx.run_until_parked();
 }
 
+fn bind_default_keymap(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let asset = if cfg!(target_os = "macos") {
+            "keymaps/default-macos.json"
+        } else if cfg!(target_os = "windows") {
+            "keymaps/default-windows.json"
+        } else {
+            "keymaps/default-linux.json"
+        };
+        let bindings = settings::KeymapFile::load_asset_allow_partial_failure(asset, cx).unwrap();
+        cx.bind_keys(bindings);
+    });
+}
+
+async fn search_file_paths(
+    picker: &Entity<Picker<FileFinderDelegate>>,
+    query: &str,
+    cx: &mut VisualTestContext,
+) -> Vec<Option<PathBuf>> {
+    picker.update_in(cx, |picker, window, cx| picker.set_query(query, window, cx));
+    cx.run_until_parked();
+    cx.condition(picker, |picker, _| {
+        !picker
+            .delegate
+            .search_in_flight
+            .load(atomic::Ordering::Relaxed)
+    })
+    .await;
+    cx.run_until_parked();
+    picker.read_with(cx, |picker, cx| {
+        picker
+            .delegate
+            .matches
+            .matches
+            .iter()
+            .map(|entry| entry.abs_path(&picker.delegate.project, cx))
+            .collect()
+    })
+}
+
 fn advance_worktree_update_refresh(cx: &mut VisualTestContext) {
     cx.executor()
         .advance_clock(FS_WATCH_LATENCY + WORKTREE_UPDATE_REFRESH_DEBOUNCE);
@@ -5060,11 +5654,13 @@ struct SearchEntries {
     history_found_paths: Vec<FoundPath>,
     search: Vec<Arc<RelPath>>,
     search_matches: Vec<PathMatch>,
+    absolute: Vec<PathBuf>,
 }
 
 impl SearchEntries {
     #[track_caller]
     fn search_paths_only(self) -> Vec<Arc<RelPath>> {
+        assert_eq!(self.absolute, Vec::<PathBuf>::new());
         assert!(
             self.history.is_empty(),
             "Should have no history matches, but got: {:?}",
@@ -5075,6 +5671,7 @@ impl SearchEntries {
 
     #[track_caller]
     fn search_matches_only(self) -> Vec<PathMatch> {
+        assert_eq!(self.absolute, Vec::<PathBuf>::new());
         assert!(
             self.history.is_empty(),
             "Should have no history matches, but got: {:?}",
@@ -5111,6 +5708,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                     .push(path_match.0.path_prefix.join(&path_match.0.path).into());
                 search_entries.search_matches.push(path_match.0.clone());
             }
+            Match::Absolute(path) => search_entries.absolute.push(path.clone()),
             Match::CreateNew(_) => {}
             Match::Channel { .. } => {}
         }
@@ -5335,6 +5933,7 @@ fn assert_match_at_position(
     let match_file_name = match &match_item {
         Match::History { path, .. } => path.absolute.file_name().and_then(|s| s.to_str()),
         Match::Search(path_match) => path_match.0.path.file_name(),
+        Match::Absolute(path) => path.file_name().and_then(|name| name.to_str()),
         Match::CreateNew(project_path) => project_path.path.file_name(),
         Match::Channel { channel_name, .. } => Some(channel_name.as_str()),
     }

@@ -70,6 +70,7 @@ use gpui::{
     transparent_black,
 };
 pub use history_manager::*;
+use invalid_item_view::InvalidItemView;
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
@@ -1071,6 +1072,7 @@ impl ProjectItemRegistry {
                     .is_some_and(|entry| entry.is_file());
                 let entry_abs_path = project.read(cx).absolute_path(&project_path, cx);
                 let is_local = project.read(cx).is_local();
+                let worktree = project.read(cx).worktree_for_id(project_path.worktree_id, cx);
                 let project_item =
                     <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
                 let project = project.clone();
@@ -1113,6 +1115,11 @@ impl ProjectItemRegistry {
                                             )
                                         })?
                                     {
+                                        let broken_project_item_view = if let Some(worktree) = worktree {
+                                            broken_project_item_view.with_project_path(worktree, project_path)
+                                        } else {
+                                            broken_project_item_view
+                                        };
                                         let build_workspace_item = Box::new(
                                             move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
                                                 cx.new(|_| broken_project_item_view).boxed_clone()
@@ -6358,6 +6365,9 @@ impl Workspace {
                 if item
                     .project_path(cx)
                     .is_some_and(|path| self.is_deleted_history_path(&path, cx))
+                    || item
+                        .downcast::<InvalidItemView>()
+                        .is_some_and(|view| view.read(cx).has_deleted_file(cx))
                 {
                     pane.update(cx, |pane, _| {
                         pane.nav_history_mut().remove_item(item.item_id())

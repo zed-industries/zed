@@ -1,6 +1,7 @@
-use std::{path::Path, sync::Arc};
+use std::{fmt, path::Path, sync::Arc};
 
-use gpui::{EventEmitter, FocusHandle, Focusable};
+use gpui::{Entity, EventEmitter, FocusHandle, Focusable};
+use project::{ProjectPath, Worktree};
 use ui::{
     App, Button, ButtonCommon, ButtonStyle, Clickable, Context, FluentBuilder, InteractiveElement,
     KeyBinding, Label, LabelCommon, LabelSize, ParentElement, Render, SharedString, Styled as _,
@@ -8,10 +9,9 @@ use ui::{
 };
 use zed_actions::workspace::OpenWithSystem;
 
-use crate::Item;
+use crate::{Item, ItemNavHistory, Workspace};
 
 /// A view to display when a certain buffer/image/other item fails to open.
-#[derive(Debug)]
 pub struct InvalidItemView {
     /// Which path was attempted to open.
     pub abs_path: Arc<Path>,
@@ -19,6 +19,8 @@ pub struct InvalidItemView {
     pub error: SharedString,
     is_local: bool,
     focus_handle: FocusHandle,
+    project_identity: Option<(Entity<Worktree>, ProjectPath)>,
+    nav_history: Option<ItemNavHistory>,
 }
 
 impl InvalidItemView {
@@ -34,7 +36,36 @@ impl InvalidItemView {
             abs_path: Arc::from(abs_path),
             error: format!("{}", e.root_cause()).into(),
             focus_handle: cx.focus_handle(),
+            project_identity: None,
+            nav_history: None,
         }
+    }
+
+    pub(crate) fn with_project_path(
+        mut self,
+        worktree: Entity<Worktree>,
+        project_path: ProjectPath,
+    ) -> Self {
+        self.project_identity = Some((worktree, project_path));
+        self
+    }
+
+    pub(crate) fn has_deleted_file(&self, cx: &App) -> bool {
+        self.project_identity
+            .as_ref()
+            .is_some_and(|(worktree, project_path)| {
+                Workspace::history_path_is_removed(worktree.read(cx), &project_path.path, cx)
+            })
+    }
+}
+
+impl fmt::Debug for InvalidItemView {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InvalidItemView")
+            .field("abs_path", &self.abs_path)
+            .field("error", &self.error)
+            .finish_non_exhaustive()
     }
 }
 
@@ -64,6 +95,24 @@ impl Item for InvalidItemView {
         };
 
         SharedString::new(path.to_string_lossy())
+    }
+
+    fn active_project_path(&self, _: &App) -> Option<ProjectPath> {
+        self.project_identity
+            .as_ref()
+            .map(|(_, project_path)| project_path.clone())
+    }
+
+    fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut Window, _: &mut Context<Self>) {
+        self.nav_history = Some(history);
+    }
+
+    fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some((_, project_path)) = &self.project_identity
+            && let Some(history) = &mut self.nav_history
+        {
+            history.push_path(project_path.clone(), self.abs_path.to_path_buf(), cx);
+        }
     }
 }
 
