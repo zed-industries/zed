@@ -1987,6 +1987,8 @@ impl X11ClientState {
                 window_ref.refresh_state = Some(RefreshState::Hidden { refresh_rate });
             }
             (true, Some(RefreshState::Hidden { refresh_rate })) => {
+                // A hidden window gets no follow_window_crtc, so it may have changed monitors.
+                let refresh_rate = self.window_refresh_rate(x_window).unwrap_or(refresh_rate);
                 let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
                 let Some(window_ref) = self.windows.get_mut(&x_window) else {
                     return;
@@ -1997,7 +1999,13 @@ impl X11ClientState {
                 });
             }
             (true, None) => {
-                let refresh_rate = self.window_refresh_rate(x_window);
+                let refresh_rate = self.window_refresh_rate(x_window).unwrap_or_else(|| {
+                    log::error!(
+                        "Failed to get screen mode info from xrandr, \
+                        defaulting to 60hz refresh rate."
+                    );
+                    Duration::from_micros(1_000_000 / 60)
+                });
                 let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
                 let Some(window_ref) = self.windows.get_mut(&x_window) else {
                     return;
@@ -2011,53 +2019,51 @@ impl X11ClientState {
     }
 
     /// The refresh of the CRTC showing the window's center, so each window is paced by the
-    /// monitor it is on rather than by whichever CRTC randr lists first.
-    fn window_refresh_rate(&self, x_window: xproto::Window) -> Duration {
-        let screen_resources = get_reply(
-            || "Failed to get screen resources",
-            self.xcb_connection
-                .randr_get_screen_resources_current(x_window),
-        )
-        .log_err();
-        let crtcs: Vec<CrtcArea> = screen_resources
+    /// monitor it is on rather than by whichever CRTC randr lists first. `None` when randr knows
+    /// no CRTC with a mode. Runs on every ConfigureNotify, so the requests are pipelined rather
+    /// than waiting on a round trip per CRTC.
+    fn window_refresh_rate(&self, x_window: xproto::Window) -> Option<Duration> {
+        let resources_cookie = self
+            .xcb_connection
+            .randr_get_screen_resources_current(x_window)
+            .ok()?;
+        let geometry_cookie = self.xcb_connection.get_geometry(x_window).ok();
+        let resources = resources_cookie.reply().ok()?;
+        let crtc_cookies: Vec<_> = resources
+            .crtcs
             .iter()
-            .flat_map(|resources| {
-                resources.crtcs.iter().filter_map(|crtc| {
-                    let info = self
-                        .xcb_connection
-                        .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
-                        .ok()?
-                        .reply()
-                        .ok()?;
-                    let mode = resources.modes.iter().find(|m| m.id == info.mode)?;
-                    Some(CrtcArea {
-                        x: info.x.into(),
-                        y: info.y.into(),
-                        width: info.width.into(),
-                        height: info.height.into(),
-                        refresh: mode_refresh_rate(mode),
-                    })
+            .filter_map(|crtc| {
+                self.xcb_connection
+                    .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
+                    .ok()
+            })
+            .collect();
+        let center = geometry_cookie
+            .and_then(|cookie| cookie.reply().ok())
+            .and_then(|geometry| self.window_center(x_window, &geometry));
+        let crtcs: Vec<CrtcArea> = crtc_cookies
+            .into_iter()
+            .filter_map(|cookie| {
+                let info = cookie.reply().ok()?;
+                let mode = resources.modes.iter().find(|m| m.id == info.mode)?;
+                Some(CrtcArea {
+                    x: info.x.into(),
+                    y: info.y.into(),
+                    width: info.width.into(),
+                    height: info.height.into(),
+                    refresh: mode_refresh_rate(mode),
                 })
             })
             .collect();
-        let center = self.window_center(x_window);
-        crtc_refresh_at(&crtcs, center).unwrap_or_else(|| {
-            log::error!(
-                "Failed to get screen mode info from xrandr, \
-                defaulting to 60hz refresh rate."
-            );
-            Duration::from_micros(1_000_000 / 60)
-        })
+        crtc_refresh_at(&crtcs, center)
     }
 
-    /// The window's center in root coordinates.
-    fn window_center(&self, x_window: xproto::Window) -> Option<(i32, i32)> {
-        let geometry = self
-            .xcb_connection
-            .get_geometry(x_window)
-            .ok()?
-            .reply()
-            .ok()?;
+    /// The center of a window with `geometry`, in root coordinates.
+    fn window_center(
+        &self,
+        x_window: xproto::Window,
+        geometry: &xproto::GetGeometryReply,
+    ) -> Option<(i32, i32)> {
         let translated = self
             .xcb_connection
             .translate_coordinates(
@@ -2082,7 +2088,9 @@ impl X11ClientState {
             return;
         };
         let current = *refresh_rate;
-        let refresh_rate = self.window_refresh_rate(x_window);
+        let Some(refresh_rate) = self.window_refresh_rate(x_window) else {
+            return;
+        };
         if refresh_rate == current {
             return;
         }
