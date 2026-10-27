@@ -1337,8 +1337,9 @@ fn minimum_frame_interval(
     inactive_without_high_rate_input: bool,
     inactive_frame_interval: Option<Duration>,
     thermal_state: ThermalState,
-    low_power_mode_enabled: bool,
+    power_mode: crate::PowerMode,
 ) -> Option<Duration> {
+    let low_power_mode_enabled = power_mode == crate::PowerMode::LowPower;
     if !should_throttle {
         None
     } else if inactive_without_high_rate_input {
@@ -1850,9 +1851,7 @@ impl Window {
                     mem::take(&mut deferred_force_render) || request_frame_options.force_render;
 
                 let power_state = handle
-                    .update(&mut cx, |_, _, cx| {
-                        (cx.thermal_state(), cx.low_power_mode_enabled())
-                    })
+                    .update(&mut cx, |_, _, cx| (cx.thermal_state(), cx.power_mode()))
                     .log_err();
 
                 // Throttle frame rate based on conditions:
@@ -1865,14 +1864,14 @@ impl Window {
                 let inactive_without_high_rate_input = should_throttle
                     && !active.get()
                     && !input_rate_tracker.borrow_mut().is_high_rate();
-                let (thermal_state, low_power_mode_enabled) =
-                    power_state.unwrap_or((ThermalState::Nominal, false));
+                let (thermal_state, power_mode) =
+                    power_state.unwrap_or((ThermalState::Nominal, crate::PowerMode::Unknown));
                 let min_frame_interval = minimum_frame_interval(
                     should_throttle,
                     inactive_without_high_rate_input,
                     inactive_frame_interval,
                     thermal_state,
-                    low_power_mode_enabled,
+                    power_mode,
                 );
 
                 let now = Instant::now();
@@ -1902,7 +1901,7 @@ impl Window {
                             Instant::now(),
                             if inactive_without_high_rate_input {
                                 profiler::journal::FrameSkipReason::InactiveFrameRateLimit
-                            } else if low_power_mode_enabled {
+                            } else if power_mode == crate::PowerMode::LowPower {
                                 profiler::journal::FrameSkipReason::LowPowerFrameRateLimit
                             } else {
                                 profiler::journal::FrameSkipReason::ThermalFrameRateLimit
@@ -8488,11 +8487,37 @@ mod tests {
     }
 
     #[test]
-    fn low_power_mode_throttles_active_windows_to_thirty_fps() {
-        assert_eq!(
-            super::minimum_frame_interval(true, false, None, ThermalState::Nominal, true),
-            Some(super::THIRTY_FPS_INTERVAL)
-        );
+    fn power_modes_preserve_frame_limits() {
+        for (power_mode, active_interval, thermal_interval) in [
+            (
+                crate::PowerMode::LowPower,
+                Some(super::THIRTY_FPS_INTERVAL),
+                super::THIRTY_FPS_INTERVAL,
+            ),
+            (crate::PowerMode::Unknown, None, super::SIXTY_FPS_INTERVAL),
+            (crate::PowerMode::Balanced, None, super::SIXTY_FPS_INTERVAL),
+            (crate::PowerMode::HighPower, None, super::SIXTY_FPS_INTERVAL),
+        ] {
+            assert_eq!(
+                super::minimum_frame_interval(true, false, None, ThermalState::Nominal, power_mode),
+                active_interval,
+            );
+            assert_eq!(
+                super::minimum_frame_interval(true, false, None, ThermalState::Serious, power_mode),
+                Some(thermal_interval),
+            );
+            let inactive_interval = Duration::from_millis(100);
+            assert_eq!(
+                super::minimum_frame_interval(
+                    true,
+                    true,
+                    Some(inactive_interval),
+                    ThermalState::Nominal,
+                    power_mode,
+                ),
+                Some(inactive_interval),
+            );
+        }
     }
 
     struct EmptyView;

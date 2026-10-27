@@ -13,8 +13,8 @@ use gpui::{
     Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
     CursorStyle, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
     OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task,
-    ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, PowerMode, Result, SystemMenuType,
+    Task, ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
     popup::PopupNotSupportedError,
 };
 use gpui_apple::{
@@ -1074,7 +1074,7 @@ impl Platform for MacPlatform {
         self.ensure_system_power_observers();
     }
 
-    fn on_low_power_mode_change(&self, callback: Box<dyn FnMut()>) {
+    fn on_power_mode_change(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().on_low_power_mode_change = Some(callback);
     }
 
@@ -1094,16 +1094,20 @@ impl Platform for MacPlatform {
         )))
     }
 
-    fn low_power_mode_enabled(&self) -> bool {
+    fn power_mode(&self) -> PowerMode {
         unsafe {
             let process_info = NSProcessInfo::processInfo();
             let supported: Bool =
                 msg_send![&*process_info, respondsToSelector: sel!(isLowPowerModeEnabled)];
             if !supported.as_bool() {
-                return false;
+                return PowerMode::Unknown;
             }
             let enabled: Bool = msg_send![&*process_info, isLowPowerModeEnabled];
-            enabled.as_bool()
+            if enabled.as_bool() {
+                PowerMode::LowPower
+            } else {
+                PowerMode::Unknown
+            }
         }
     }
 

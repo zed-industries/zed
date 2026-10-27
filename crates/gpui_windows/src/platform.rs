@@ -890,11 +890,15 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    fn low_power_mode_enabled(&self) -> bool {
-        self.inner.state.low_power_mode_enabled.get()
+    fn power_mode(&self) -> PowerMode {
+        if self.inner.state.low_power_mode_enabled.get() {
+            PowerMode::LowPower
+        } else {
+            PowerMode::HighPower
+        }
     }
 
-    fn on_low_power_mode_change(&self, callback: Box<dyn FnMut()>) {
+    fn on_power_mode_change(&self, callback: Box<dyn FnMut()>) {
         self.inner
             .state
             .callbacks
