@@ -7934,18 +7934,17 @@ impl GitPanel {
                                                 )
                                             },
                                         )
-                                        .when(is_active, |this| {
-                                            this.bg(cx.theme().colors().element_selected)
-                                        })
-                                        .hover(|s| {
-                                            s.bg(if is_active {
-                                                cx.theme().colors().element_selected
+                                        .map(|this| {
+                                            if is_active {
+                                                this.bg(cx.theme().colors().element_selected)
                                             } else {
-                                                cx.theme().colors().element_hover
-                                            })
-                                        })
-                                        .when(is_context_menu_target && !is_active, |this| {
-                                            this.bg(cx.theme().colors().element_hover)
+                                                this.hover(|s| {
+                                                    s.bg(cx.theme().colors().element_hover)
+                                                })
+                                                .when(is_context_menu_target, |this| {
+                                                    this.bg(cx.theme().colors().element_hover)
+                                                })
+                                            }
                                         })
                                         .child(
                                             h_flex()
