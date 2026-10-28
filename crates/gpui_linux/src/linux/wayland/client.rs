@@ -657,7 +657,11 @@ impl WaylandClientStatePtr {
     }
 
     pub fn activation_context(&self) -> Option<ActivationContext> {
-        self.0.upgrade()?.borrow().serial_tracker.activation_context()
+        self.0
+            .upgrade()?
+            .borrow()
+            .serial_tracker
+            .activation_context()
     }
 
     pub fn start_external_drag(
@@ -1392,9 +1396,10 @@ impl WaylandConnection {
 
     pub(crate) fn open_uri(&self, uri: &str) {
         let state = self.0.borrow();
-        if let (Some(activation), Some(context)) =
-            (state.globals.activation.clone(), state.serial_tracker.activation_context())
-        {
+        if let (Some(activation), Some(context)) = (
+            state.globals.activation.clone(),
+            state.serial_tracker.activation_context(),
+        ) {
             let token = activation
                 .get_activation_token(&state.globals.qh, PendingActivation::Uri(uri.to_string()));
             token.set_serial(context.serial.as_raw(), &state.wl_seat);
@@ -1408,9 +1413,10 @@ impl WaylandConnection {
 
     pub(crate) fn reveal_path(&self, path: PathBuf) {
         let state = self.0.borrow();
-        if let (Some(activation), Some(context)) =
-            (state.globals.activation.clone(), state.serial_tracker.activation_context())
-        {
+        if let (Some(activation), Some(context)) = (
+            state.globals.activation.clone(),
+            state.serial_tracker.activation_context(),
+        ) {
             let token =
                 activation.get_activation_token(&state.globals.qh, PendingActivation::Path(path));
             token.set_serial(context.serial.as_raw(), &state.wl_seat);
