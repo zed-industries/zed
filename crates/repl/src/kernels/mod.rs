@@ -23,10 +23,11 @@ use std::collections::HashMap;
 use anyhow::Result;
 use futures::{FutureExt, StreamExt};
 use gpui::{AppContext, AsyncWindowContext, Context};
-use jupyter_protocol::{JupyterKernelspec, JupyterMessageContent};
-use runtimelib::{
+use jupyter_protocol::{
+    ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
+};
+use jupyter_zmq_client::{
     ClientControlConnection, ClientIoPubConnection, ClientShellConnection, ClientStdinConnection,
-    ExecutionState, JupyterMessage, KernelInfoReply,
 };
 use ui::{Icon, IconName, SharedString};
 use util::rel_path::RelPath;
@@ -129,8 +130,8 @@ pub fn start_kernel_tasks<S: KernelSession + 'static>(
                             .ok();
                     }
                     Err(
-                        ref err @ (runtimelib::RuntimeError::ParseError { .. }
-                        | runtimelib::RuntimeError::SerdeError(_)),
+                        ref err @ (jupyter_zmq_client::RuntimeError::ParseError { .. }
+                        | jupyter_zmq_client::RuntimeError::SerdeError(_)),
                     ) => {
                         let error_detail = format!("Kernel issue on {channel} channel\n\n{err}");
                         log::warn!("kernel: {error_detail}");
@@ -763,5 +764,29 @@ impl Kernel {
             | Kernel::ErroredLaunch(_)
             | Kernel::Shutdown => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_kernel_info_accepts_versionless_codemirror_mode() -> anyhow::Result<()> {
+        let reply: jupyter_protocol::KernelInfoReply = serde_json::from_value(serde_json::json!({
+            "status": "ok",
+            "protocol_version": "5.3",
+            "implementation": "Deno kernel",
+            "implementation_version": "2.9.3",
+            "banner": "Deno",
+            "language_info": {
+                "name": "typescript",
+                "version": "5.8.3",
+                "mimetype": "text/x.typescript",
+                "file_extension": ".ts",
+                "codemirror_mode": { "name": "typescript" }
+            }
+        }))?;
+        assert!(matches!(reply.language_info.codemirror_mode,
+            Some(jupyter_protocol::CodeMirrorMode::Simple(name)) if name == "typescript"));
+        Ok(())
     }
 }
