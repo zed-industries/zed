@@ -57,7 +57,7 @@ fn format_with_line_numbers(text: &str, start_line: u32) -> String {
         return String::new();
     }
 
-    let mut output = String::with_capacity(text.len().min(MAX_LINE_LEN * 4) + text.len() / 4);
+    let mut output = String::with_capacity(text.len() + text.len() / 4);
     write_lines_numbered(&mut output, std::iter::once(text), start_line);
     output
 }
