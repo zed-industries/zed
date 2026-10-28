@@ -6453,6 +6453,275 @@ async fn test_single_file_worktree_deleted(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_directory_worktree_root_deleted_emits_single_event_and_stops_scanning(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let root = Path::new(path!("/root/project"));
+    fs.insert_tree(root, json!({"file.txt": "content"})).await;
+    let tree = Worktree::local(
+        root,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("worktree should open");
+    cx.read(|cx| {
+        tree.read(cx)
+            .as_local()
+            .expect("local worktree")
+            .scan_complete()
+    })
+    .await;
+    cx.run_until_parked();
+    let deleted = Rc::new(Cell::new(0));
+    let events = Rc::new(Cell::new(0));
+    let _subscription = cx.update({
+        let deleted = deleted.clone();
+        let events = events.clone();
+        |cx| {
+            cx.subscribe(&tree, move |_, event, _| {
+                events.set(events.get() + 1);
+                if matches!(event, Event::Deleted) {
+                    deleted.set(deleted.get() + 1);
+                }
+            })
+        }
+    });
+    fs.remove_dir(
+        root,
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("root should delete");
+    cx.run_until_parked();
+    assert_eq!(deleted.get(), 0);
+    cx.background_executor
+        .advance_clock(worktree::ROOT_PATH_CHECK_INTERVAL);
+    cx.run_until_parked();
+    assert_eq!(deleted.get(), 1);
+    let event_count = events.get();
+    let scan_id = tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.abs_path().as_ref(), root);
+        tree.scan_id()
+    });
+    let metadata_calls = fs.metadata_call_count();
+    let read_dir_calls = fs.read_dir_call_count();
+    fs.insert_tree(root, json!({"new.txt": "new content"}))
+        .await;
+    for _ in 0..3 {
+        cx.background_executor
+            .advance_clock(worktree::ROOT_PATH_CHECK_INTERVAL);
+        cx.run_until_parked();
+    }
+    assert_eq!(deleted.get(), 1);
+    assert_eq!(events.get(), event_count);
+    assert_eq!(tree.read_with(cx, |tree, _| tree.scan_id()), scan_id);
+    assert_eq!(fs.metadata_call_count(), metadata_calls);
+    assert_eq!(fs.read_dir_call_count(), read_dir_calls);
+}
+
+#[gpui::test]
+async fn test_directory_worktree_root_metadata_error_is_not_deleted(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let root = Path::new(path!("/root/project"));
+    fs.insert_tree(path!("/root/project"), json!({"file.txt": "content"}))
+        .await;
+    let tree = Worktree::local(
+        root,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("worktree should open");
+    cx.read(|cx| {
+        tree.read(cx)
+            .as_local()
+            .expect("local worktree")
+            .scan_complete()
+    })
+    .await;
+    cx.run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        assert!(!tree.is_single_file());
+        assert!(tree.entry_for_path(rel_path("file.txt")).is_some());
+    });
+    let deleted = Rc::new(Cell::new(0));
+    let _subscription = cx.update({
+        let deleted = deleted.clone();
+        |cx| {
+            cx.subscribe(&tree, move |_, event, _| {
+                if matches!(event, Event::Deleted) {
+                    deleted.set(deleted.get() + 1);
+                }
+            })
+        }
+    });
+
+    // Removing the root makes canonicalization fail; the injected metadata error
+    // must still win over absence so deletion cannot be confirmed.
+    fs.fail_metadata(root, std::io::ErrorKind::PermissionDenied);
+    fs.remove_dir(
+        root,
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("root should delete");
+    cx.run_until_parked();
+    assert_eq!(deleted.get(), 0);
+    for _ in 0..3 {
+        let metadata_calls = fs.metadata_call_count();
+        cx.background_executor
+            .advance_clock(worktree::ROOT_PATH_CHECK_INTERVAL);
+        cx.run_until_parked();
+        assert_eq!(deleted.get(), 0);
+        assert!(fs.metadata_call_count() > metadata_calls);
+    }
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.abs_path().as_ref(), root);
+        assert!(tree.entry_for_path(rel_path("")).is_some());
+    });
+}
+
+#[gpui::test]
+async fn test_single_file_worktree_root_metadata_error_is_not_deleted(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let root = Path::new(path!("/root/project/file.txt"));
+    fs.insert_tree(path!("/root/project"), json!({"file.txt": "content"}))
+        .await;
+    let tree = Worktree::local(
+        root,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("worktree should open");
+    cx.read(|cx| {
+        tree.read(cx)
+            .as_local()
+            .expect("local worktree")
+            .scan_complete()
+    })
+    .await;
+    cx.run_until_parked();
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.is_single_file());
+        assert!(tree.entry_for_path(rel_path("")).is_some());
+    });
+    let deleted = Rc::new(Cell::new(0));
+    let _subscription = cx.update({
+        let deleted = deleted.clone();
+        |cx| {
+            cx.subscribe(&tree, move |_, event, _| {
+                if matches!(event, Event::Deleted) {
+                    deleted.set(deleted.get() + 1);
+                }
+            })
+        }
+    });
+
+    // Removing the root makes canonicalization fail; the injected metadata error
+    // must still win over absence so deletion cannot be confirmed.
+    fs.fail_metadata(root, std::io::ErrorKind::PermissionDenied);
+    fs.remove_file(root, Default::default())
+        .await
+        .expect("root should delete");
+    cx.run_until_parked();
+    assert_eq!(deleted.get(), 0);
+    for _ in 0..3 {
+        let metadata_calls = fs.metadata_call_count();
+        cx.background_executor
+            .advance_clock(worktree::ROOT_PATH_CHECK_INTERVAL);
+        cx.run_until_parked();
+        assert_eq!(deleted.get(), 0);
+        assert!(fs.metadata_call_count() > metadata_calls);
+    }
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.abs_path().as_ref(), root);
+        assert!(tree.entry_for_path(rel_path("")).is_some());
+    });
+}
+
+#[gpui::test]
+async fn test_directory_worktree_root_recreated_is_not_deleted(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let root = Path::new(path!("/root/project"));
+    fs.insert_tree(root, json!({"file.txt": "content"})).await;
+    let tree = Worktree::local(
+        root,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("worktree should open");
+    cx.read(|cx| {
+        tree.read(cx)
+            .as_local()
+            .expect("local worktree")
+            .scan_complete()
+    })
+    .await;
+    cx.run_until_parked();
+    let deleted = Rc::new(Cell::new(0));
+    let _subscription = cx.update({
+        let deleted = deleted.clone();
+        |cx| {
+            cx.subscribe(&tree, move |_, event, _| {
+                if matches!(event, Event::Deleted) {
+                    deleted.set(deleted.get() + 1);
+                }
+            })
+        }
+    });
+    fs.remove_dir(
+        root,
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("root should delete");
+    cx.run_until_parked();
+    assert_eq!(deleted.get(), 0);
+    fs.insert_tree(root, json!({"file.txt": "recreated"})).await;
+    cx.run_until_parked();
+    for _ in 0..3 {
+        cx.background_executor
+            .advance_clock(worktree::ROOT_PATH_CHECK_INTERVAL);
+        cx.run_until_parked();
+    }
+    assert_eq!(deleted.get(), 0);
+    tree.read_with(cx, |tree, _| assert_eq!(tree.abs_path().as_ref(), root));
+}
+
+#[gpui::test]
 async fn test_root_ancestor_rename_is_detected_without_fs_events(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());

@@ -1465,6 +1465,7 @@ struct FakeFsState {
     events_paused: bool,
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
+    metadata_failures: BTreeMap<PathBuf, std::io::ErrorKind>,
     read_dir_call_count: usize,
     read_dir_hooks: BTreeMap<PathBuf, BoxFuture<'static, ()>>,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
@@ -1862,6 +1863,7 @@ impl FakeFs {
             events_paused: false,
             read_dir_call_count: 0,
             metadata_call_count: 0,
+            metadata_failures: Default::default(),
             read_dir_hooks: Default::default(),
             path_write_counts: Default::default(),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
@@ -2088,6 +2090,13 @@ impl FakeFs {
     /// The paths currently registered with the watcher backend.
     pub fn registered_watch_paths(&self) -> Vec<PathBuf> {
         self.state.lock().watches.registered_paths.clone()
+    }
+
+    pub fn fail_metadata(&self, path: impl Into<PathBuf>, kind: std::io::ErrorKind) {
+        self.state
+            .lock()
+            .metadata_failures
+            .insert(normalize_path(&path.into()), kind);
     }
 
     /// Runs once, immediately before the next `read_dir` resolves `path`.
@@ -3364,6 +3373,9 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         let mut state = self.state.lock();
         state.metadata_call_count += 1;
+        if let Some(kind) = state.metadata_failures.get(&path) {
+            return Err(anyhow::anyhow!("injected error: {kind:?}"));
+        }
         if let Some((mut entry, _)) = state.try_entry(&path, false) {
             let is_symlink = entry.is_symlink();
             if is_symlink {

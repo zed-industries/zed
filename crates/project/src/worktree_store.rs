@@ -994,8 +994,12 @@ impl WorktreeStore {
                     cx.emit(WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, *id))
                 }
                 worktree::Event::Deleted => {
-                    // The worktree root itself has been deleted (for single-file worktrees)
-                    // The worktree will be removed via the observe_release callback
+                    let store = cx.weak_entity();
+                    cx.defer(move |cx| {
+                        if let Some(store) = store.upgrade() {
+                            store.update(cx, |store, cx| store.remove_worktree(worktree_id, cx));
+                        }
+                    });
                 }
                 worktree::Event::UpdatedRootRepoCommonDir { .. } => {
                     cx.emit(WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(
@@ -1010,11 +1014,22 @@ impl WorktreeStore {
                 handle_id,
                 worktree.id(),
             ));
-            cx.emit(WorktreeStoreEvent::WorktreeRemoved(
-                handle_id,
-                worktree.id(),
-            ));
-            this.send_project_updates(cx);
+            let registered = this.worktrees.iter().any(|handle| match handle {
+                WorktreeHandle::Strong(handle) => handle.entity_id() == handle_id,
+                WorktreeHandle::Weak(handle) => handle.entity_id() == handle_id,
+            });
+            if registered {
+                this.worktrees.retain(|handle| match handle {
+                    WorktreeHandle::Strong(handle) => handle.entity_id() != handle_id,
+                    WorktreeHandle::Weak(handle) => handle.entity_id() != handle_id,
+                });
+                cx.emit(WorktreeStoreEvent::WorktreeRemoved(
+                    handle_id,
+                    worktree.id(),
+                ));
+                this.update_initial_scan_state(cx);
+                this.send_project_updates(cx);
+            }
         })
         .detach();
     }
@@ -1520,5 +1535,89 @@ impl WorktreeHandle {
             WorktreeHandle::Strong(handle) => Some(handle.clone()),
             WorktreeHandle::Weak(handle) => handle.upgrade(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::{FakeFs, RemoveOptions};
+    use gpui::TestAppContext;
+    use settings::SettingsStore;
+    use std::{cell::Cell, rc::Rc};
+
+    #[gpui::test]
+    async fn test_deleted_root_is_unregistered_while_retained(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+        });
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let root = Path::new(util::path!("/root/project"));
+        fs.insert_tree(root, serde_json::json!({"file.txt": "content"}))
+            .await;
+        let store = cx.new(|_| WorktreeStore::local(true, fs.clone(), Default::default()));
+        let tree = Worktree::local(
+            root,
+            true,
+            fs.clone(),
+            Default::default(),
+            true,
+            WorktreeId::from_proto(1),
+            &mut cx.to_async(),
+        )
+        .await
+        .expect("worktree should open");
+        cx.read(|cx| {
+            tree.read(cx)
+                .as_local()
+                .expect("local worktree")
+                .scan_complete()
+        })
+        .await;
+        store.update(cx, |store, cx| store.add(&tree, cx));
+        let id = tree.read_with(cx, |tree, _| tree.id());
+        let removed = Rc::new(Cell::new(0));
+        let released = Rc::new(Cell::new(0));
+        let _subscription = cx.update({
+            let removed = removed.clone();
+            let released = released.clone();
+            |cx| {
+                cx.subscribe(&store, move |_, event, _| match event {
+                    WorktreeStoreEvent::WorktreeRemoved(_, _) => removed.set(removed.get() + 1),
+                    WorktreeStoreEvent::WorktreeReleased(_, _) => released.set(released.get() + 1),
+                    _ => {}
+                })
+            }
+        });
+        cx.run_until_parked();
+        assert!(fs.registered_watch_paths().iter().any(|path| path == root));
+        fs.remove_dir(
+            root,
+            RemoveOptions {
+                recursive: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("root should delete");
+        cx.run_until_parked();
+        assert!(store.read_with(cx, |store, cx| store.worktree_for_id(id, cx).is_some()));
+        cx.background_executor
+            .advance_clock(worktree::ROOT_PATH_CHECK_INTERVAL);
+        cx.run_until_parked();
+        assert!(store.read_with(cx, |store, cx| store.worktree_for_id(id, cx).is_none()));
+        assert!(
+            fs.registered_watch_paths()
+                .iter()
+                .all(|path| !path.starts_with(root))
+        );
+        assert_eq!(removed.get(), 1);
+        assert_eq!(released.get(), 0);
+        tree.read_with(cx, |tree, _| assert_eq!(tree.abs_path().as_ref(), root));
+        cx.update(|_| drop(tree));
+        cx.run_until_parked();
+        assert_eq!(removed.get(), 1);
+        assert_eq!(released.get(), 1);
     }
 }

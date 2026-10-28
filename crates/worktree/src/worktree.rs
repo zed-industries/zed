@@ -447,6 +447,12 @@ impl DerefMut for LocalSnapshot {
     }
 }
 
+enum RootStatus {
+    Moved,
+    Missing,
+    Unknown,
+}
+
 enum ScanState {
     Started,
     Updated {
@@ -475,7 +481,7 @@ pub enum Event {
         old: Option<Arc<SanitizedPath>>,
     },
     DeletedEntry(ProjectEntryId),
-    /// The worktree root itself has been deleted (for single-file worktrees)
+    /// The worktree root itself has been deleted.
     Deleted,
 }
 
@@ -1427,10 +1433,7 @@ impl LocalWorktree {
                             this.update_abs_path_and_refresh(new_path, cx);
                         }
                         ScanState::RootDeleted => {
-                            log::info!(
-                                "worktree root {} no longer exists, closing worktree",
-                                this.abs_path().display()
-                            );
+                            *this.is_scanning.0.borrow_mut() = false;
                             cx.emit(Event::Deleted);
                         }
                     }
@@ -4564,6 +4567,8 @@ impl BackgroundScanner {
             drop(state);
         }
 
+        let mut missing_root_path = None;
+
         // Process any any FS events that occurred while performing the initial scan.
         // For these events, update events cannot be as precise, because we didn't
         // have the previous state loaded yet.
@@ -4572,20 +4577,32 @@ impl BackgroundScanner {
             while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                 paths.extend(more_paths);
             }
-            self.process_events(
-                paths
-                    .into_iter()
-                    .filter(|event| event.kind.is_some())
-                    .collect(),
-            )
-            .await;
+            if !self
+                .process_events(
+                    paths
+                        .into_iter()
+                        .filter(|event| event.kind.is_some())
+                        .collect(),
+                    &mut missing_root_path,
+                )
+                .await
+            {
+                return;
+            }
         }
         if let Some(abs_path) = containing_git_repository {
-            self.process_events(vec![PathEvent {
-                path: abs_path,
-                kind: Some(fs::PathEventKind::Changed),
-            }])
-            .await;
+            if !self
+                .process_events(
+                    vec![PathEvent {
+                        path: abs_path,
+                        kind: Some(fs::PathEventKind::Changed),
+                    }],
+                    &mut missing_root_path,
+                )
+                .await
+            {
+                return;
+            }
         }
 
         // Continue processing events until the worktree is dropped.
@@ -4593,7 +4610,6 @@ impl BackgroundScanner {
 
         let root_path_check_timer = self.executor.timer(ROOT_PATH_CHECK_INTERVAL).fuse();
         futures::pin_mut!(root_path_check_timer);
-        let mut root_path_missing = false;
 
         loop {
             select_biased! {
@@ -4626,11 +4642,13 @@ impl BackgroundScanner {
                         };
 
                         if let Some(abs_path) = self.fs.canonicalize(&abs_path).await.log_err() {
-                            self.process_events(vec![PathEvent {
+                            if !self.process_events(vec![PathEvent {
                                 path: abs_path,
                                 kind: Some(fs::PathEventKind::Changed),
-                            }])
-                            .await;
+                            }], &mut missing_root_path)
+                            .await {
+                                break;
+                            }
                         }
                     }
                     self.send_status_update(false, request.done, &[]).await;
@@ -4641,7 +4659,9 @@ impl BackgroundScanner {
                     while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_paths);
                     }
-                    self.process_events(paths.into_iter().filter(|event| event.kind.is_some()).collect()).await;
+                    if !self.process_events(paths.into_iter().filter(|event| event.kind.is_some()).collect(), &mut missing_root_path).await {
+                        break;
+                    }
                 }
 
                 _ = global_gitignore_events.next().fuse() => {
@@ -4653,11 +4673,24 @@ impl BackgroundScanner {
                 _ = root_path_check_timer => {
                     let root_path = self.state.lock().await.snapshot.abs_path.clone();
                     match self.fs.canonicalize(root_path.as_path()).await {
-                        Ok(_) => root_path_missing = false,
-                        Err(error) => {
-                            if !root_path_missing {
-                                root_path_missing = true;
-                                self.report_root_moved_or_deleted(&root_path, &error).await;
+                        Ok(_) => missing_root_path = None,
+                        Err(_) => {
+                            match self.report_root_moved_or_deleted(&root_path).await {
+                                RootStatus::Moved => missing_root_path = None,
+                                RootStatus::Missing if self.is_single_file
+                                    || missing_root_path.as_ref() == Some(&root_path) => {
+                                    log::info!("worktree root {} no longer exists, unregistering", root_path.as_path().display());
+                                    self.unwatch_deleted_root(root_path.as_path()).await;
+                                    self.status_updates_tx.unbounded_send(ScanState::RootDeleted).log_err();
+                                    break;
+                                }
+                                RootStatus::Missing => missing_root_path = Some(root_path),
+                                RootStatus::Unknown => {
+                                    if missing_root_path.is_none() {
+                                        log::error!("worktree root {} could not be canonicalized and is not missing, keeping it", root_path.as_path().display());
+                                    }
+                                    missing_root_path = None;
+                                }
                             }
                         }
                     }
@@ -4797,14 +4830,7 @@ impl BackgroundScanner {
         events
     }
 
-    /// Called when the worktree root can no longer be canonicalized. Uses the
-    /// open handle on the root to find where it moved to, and reports the new
-    /// location (or, for single-file worktrees, the deletion) to the worktree.
-    async fn report_root_moved_or_deleted(
-        &self,
-        root_path: &Arc<SanitizedPath>,
-        canonicalize_error: &anyhow::Error,
-    ) {
+    async fn report_root_moved_or_deleted(&self, root_path: &Arc<SanitizedPath>) -> RootStatus {
         let new_path = self
             .state
             .lock()
@@ -4822,7 +4848,15 @@ impl BackgroundScanner {
             .map(|path| SanitizedPath::new_arc(&path))
             .filter(|new_path| new_path != root_path);
 
-        if let Some(new_path) = new_path {
+        // A transient metadata error must not turn a handle-reported rename into deletion.
+        let new_path_is_absent = if let Some(new_path) = &new_path {
+            matches!(self.fs.metadata(new_path.as_path()).await, Ok(None))
+        } else {
+            false
+        };
+        if let Some(new_path) = new_path
+            && !new_path_is_absent
+        {
             log::info!(
                 "root renamed from {:?} to {:?}",
                 root_path.as_path(),
@@ -4830,31 +4864,52 @@ impl BackgroundScanner {
             );
             self.status_updates_tx
                 .unbounded_send(ScanState::RootUpdated { new_path })
-                .ok();
-        } else {
-            log::error!("root path could not be canonicalized: {canonicalize_error:#}");
+                .log_err();
+            return RootStatus::Moved;
+        }
 
-            // For single-file worktrees, if we can't canonicalize and the file handle
-            // fallback also failed, the file is gone - close the worktree
-            if self.is_single_file {
-                log::info!(
-                    "single-file worktree root {:?} no longer exists, marking as deleted",
-                    root_path.as_path()
-                );
-                self.status_updates_tx
-                    .unbounded_send(ScanState::RootDeleted)
-                    .ok();
-            }
+        match self.fs.metadata(root_path.as_path()).await {
+            Ok(None) => RootStatus::Missing,
+            Ok(Some(_)) | Err(_) => RootStatus::Unknown,
         }
     }
 
-    async fn process_events(&self, mut events: Vec<PathEvent>) {
+    async fn unwatch_deleted_root(&self, root_path: &Path) {
+        let mut state = self.state.lock().await;
+        state.remove_path_from_snapshot_and_unwatch(RelPath::empty(), self.watcher.as_ref(), false);
+        self.watcher.remove(root_path).log_err();
+    }
+
+    async fn process_events(
+        &self,
+        mut events: Vec<PathEvent>,
+        missing_root_path: &mut Option<Arc<SanitizedPath>>,
+    ) -> bool {
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
-            Ok(path) => path,
-            Err(error) => {
-                self.report_root_moved_or_deleted(&root_path, &error).await;
-                return;
+            Ok(path) => {
+                *missing_root_path = None;
+                path
+            }
+            Err(_) => {
+                let status = self.report_root_moved_or_deleted(&root_path).await;
+                if matches!(status, RootStatus::Missing) {
+                    *missing_root_path = Some(root_path.clone());
+                } else {
+                    *missing_root_path = None;
+                }
+                if self.is_single_file && matches!(status, RootStatus::Missing) {
+                    log::info!(
+                        "worktree root {} no longer exists, unregistering",
+                        root_path.as_path().display()
+                    );
+                    self.unwatch_deleted_root(root_path.as_path()).await;
+                    self.status_updates_tx
+                        .unbounded_send(ScanState::RootDeleted)
+                        .log_err();
+                    return false;
+                }
+                return true;
             }
         };
         let root_canonical_path = SanitizedPath::new(&root_canonical_path);
@@ -5148,7 +5203,7 @@ impl BackgroundScanner {
         }
 
         if relative_paths.is_empty() && dot_git_abs_paths.is_empty() {
-            return;
+            return true;
         }
 
         if !work_dirs_needing_exclude_update.is_empty() {
@@ -5217,6 +5272,7 @@ impl BackgroundScanner {
         }
         self.send_status_update(false, SmallVec::new(), &relative_paths)
             .await;
+        true
     }
 
     async fn update_global_gitignore(&self, abs_path: &Path) {

@@ -1637,6 +1637,7 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
+    closing_rootless_project: bool,
     open_in_dev_container: bool,
     _dev_container_task: Option<Task<Result<()>>>,
     _panels_task: Option<Task<Result<()>>>,
@@ -1760,6 +1761,46 @@ impl Workspace {
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
                     this.update_history(cx);
+                    cx.defer_in(window, |this, window, cx| {
+                        let project = this.project.read(cx);
+                        if this.closing_rootless_project
+                            || this.removing
+                            || project.is_via_collab()
+                            || project.visible_worktrees(cx).next().is_some()
+                            || this.items(cx).any(|item| item.is_dirty(cx))
+                        {
+                            return;
+                        }
+                        let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten()
+                        else {
+                            return;
+                        };
+                        // Never prompt after deletion: leave workspaces with unsaved edits
+                        // open instead of closing them.
+                        this.closing_rootless_project = true;
+                        let workspace = cx.entity();
+                        // Release the workspace lease before remove reads the active workspace.
+                        window.defer(cx, move |window, cx| {
+                            if workspace.read(cx).removing
+                                || !multi_workspace
+                                    .read(cx)
+                                    .workspaces()
+                                    .any(|open| *open == workspace)
+                            {
+                                return;
+                            }
+                            multi_workspace
+                                .update(cx, |multi_workspace, cx| {
+                                    multi_workspace.remove(
+                                        [workspace],
+                                        RemovalIntent::CloseProject,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .detach_and_log_err(cx);
+                        });
+                    });
                 }
 
                 &project::Event::WorktreeAdded(id) => {
@@ -2146,6 +2187,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
+            closing_rootless_project: false,
             sidebar_focus_handle: None,
             multi_workspace,
             active_workspace_id: None,
