@@ -174,7 +174,7 @@ fn general_page(cx: &App) -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "On New Window",
-                description: "What to show when opening a new window.",
+                description: "What to show when opening a new window; Readme opens a project's README when no items are open, leaving the pane empty if none is found.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("on_new_window"),
@@ -1282,6 +1282,7 @@ fn appearance_page() -> SettingsPage {
                             .as_ref()?
                             .font_family
                             .as_ref()
+                            .or(settings_content.theme.ui_font_family.as_ref())
                     },
                     write: |settings_content, value, _| {
                         settings_content
@@ -1305,6 +1306,7 @@ fn appearance_page() -> SettingsPage {
                             .as_ref()?
                             .code_font_family
                             .as_ref()
+                            .or(settings_content.theme.buffer_font_family.as_ref())
                     },
                     write: |settings_content, value, _| {
                         settings_content
@@ -1365,7 +1367,33 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn text_rendering_section() -> [SettingsPageItem; 2] {
+    fn mermaid_font_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Mermaid Font"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Family",
+                description: "Font family for Mermaid diagrams in the agent panel and markdown preview. Falls back to the UI font family.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("mermaid_font_family"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .mermaid_font_family
+                            .as_ref()
+                            .or(settings_content.theme.ui_font_family.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.mermaid_font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn text_rendering_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Text Rendering"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1379,6 +1407,20 @@ fn appearance_page() -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.workspace.text_rendering_mode = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Display P3",
+                description: "(macOS only) render windows using the Display P3 color space.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("use_display_p3"),
+                    pick: |settings_content| settings_content.workspace.use_display_p3.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.use_display_p3 = value;
                     },
                 }),
                 metadata: None,
@@ -1633,6 +1675,7 @@ fn appearance_page() -> SettingsPage {
         ui_font_section(),
         agent_panel_font_section(),
         markdown_preview_font_section(),
+        mermaid_font_section(),
         text_rendering_section(),
         cursor_section(),
         highlighting_section(),

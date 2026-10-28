@@ -50,6 +50,21 @@ done
 
 shift $((OPTIND-1))
 
+if [[ -z "${SDKROOT+x}" ]]; then
+    SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
+fi
+if [[ "$SDKROOT" != /* || ! -f "$SDKROOT/SDKSettings.plist" ]] ||
+    ! sdk_name=$(/usr/libexec/PlistBuddy -c 'Print :CanonicalName' "$SDKROOT/SDKSettings.plist" 2>/dev/null) ||
+    ! sdk_version=$(/usr/libexec/PlistBuddy -c 'Print :Version' "$SDKROOT/SDKSettings.plist" 2>/dev/null) ||
+    [[ ! "$sdk_name" =~ ^macosx[0-9]+(\.[0-9]+){0,2}$ ||
+       ! "$sdk_version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] ||
+    (( 10#${sdk_version%%.*} < 26 )); then
+    echo "macOS SDK 26 or newer is required; set SDKROOT to a valid macOS SDK directory (selected: $SDKROOT)." >&2
+    exit 1
+fi
+export SDKROOT
+export MACOSX_DEPLOYMENT_TARGET=12.0
+echo "Using macOS SDK $sdk_version at $SDKROOT (deployment target 12.0)"
 
 # Get release channel
 pushd crates/zed
@@ -91,7 +106,12 @@ script/generate-licenses
 rustup target add $target_triple
 
 echo "Compiling zed binaries"
-cargo --config .cargo/bundle-config.toml build ${build_flag} ${zed_features} --package zed --package cli --target $target_triple
+if [[ "$target_dir" = "release" ]]; then
+    cargo --config .cargo/bundle-config.toml rustc ${build_flag} ${zed_features} --package zed --bin zed --target $target_triple -- -C 'link-arg=-Wl,-unexported_symbol,__R*'
+    cargo --config .cargo/bundle-config.toml build ${build_flag} --package cli --target $target_triple
+else
+    cargo --config .cargo/bundle-config.toml build ${build_flag} ${zed_features} --package zed --package cli --target $target_triple
+fi
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
 cargo --config .cargo/bundle-config.toml build ${build_flag} ${remote_server_features} --package remote_server --target $target_triple

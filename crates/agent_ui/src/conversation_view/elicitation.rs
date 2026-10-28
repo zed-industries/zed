@@ -1,5 +1,5 @@
 use acp_thread::{Elicitation, ElicitationEntryId, ElicitationStatus};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use collections::{HashMap, HashSet};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use editor::Editor;
@@ -51,14 +51,23 @@ impl ElicitationFormState {
         let mut fields = HashMap::default();
 
         for (name, property) in &schema.properties {
+            // The store rejects forms whose required properties can't be rendered, so these
+            // are optional and left out of the form.
+            if !acp_thread::is_renderable_elicitation_property(property) {
+                continue;
+            }
             let is_required = required.iter().any(|required| required == name);
+            let title = property_title(name, property);
             let field = match property {
                 acp::ElicitationPropertySchema::String(schema) => {
                     let options = single_select_options(schema);
                     if options.is_empty() {
+                        let default = schema.default.as_ref().filter(|default| {
+                            validate_string_value(title.clone(), schema, default).is_ok()
+                        });
                         let editor = cx.new(|cx| {
                             let mut editor = Editor::single_line(window, cx);
-                            if let Some(default) = &schema.default {
+                            if let Some(default) = default {
                                 editor.set_text(default.clone(), window, cx);
                             }
                             editor
@@ -74,20 +83,34 @@ impl ElicitationFormState {
                     }
                 }
                 acp::ElicitationPropertySchema::Number(schema) => {
+                    let default =
+                        schema
+                            .default
+                            .map(|default| default.to_string())
+                            .filter(|default| {
+                                validate_number_value(title.clone(), schema, default).is_ok()
+                            });
                     let editor = cx.new(|cx| {
                         let mut editor = Editor::single_line(window, cx);
-                        if let Some(default) = schema.default {
-                            editor.set_text(default.to_string(), window, cx);
+                        if let Some(default) = default {
+                            editor.set_text(default, window, cx);
                         }
                         editor
                     });
                     ElicitationFieldState::Text(editor)
                 }
                 acp::ElicitationPropertySchema::Integer(schema) => {
+                    let default =
+                        schema
+                            .default
+                            .map(|default| default.to_string())
+                            .filter(|default| {
+                                validate_integer_value(title.clone(), schema, default).is_ok()
+                            });
                     let editor = cx.new(|cx| {
                         let mut editor = Editor::single_line(window, cx);
-                        if let Some(default) = schema.default {
-                            editor.set_text(default.to_string(), window, cx);
+                        if let Some(default) = default {
+                            editor.set_text(default, window, cx);
                         }
                         editor
                     });
@@ -98,9 +121,7 @@ impl ElicitationFormState {
                 }
                 acp::ElicitationPropertySchema::Array(schema) => {
                     ElicitationFieldState::MultiSelect(
-                        schema
-                            .default
-                            .clone()
+                        multi_select_default_value(schema)
                             .unwrap_or_default()
                             .into_iter()
                             .collect(),
@@ -481,7 +502,8 @@ mod tests {
                 // Click handlers activate buttons on key release, not key press.
                 window.dispatch_event(
                     PlatformInput::KeyUp(KeyUpEvent {
-                        keystroke: Keystroke::parse(key).expect("valid test keystroke"),
+                        keystroke: Keystroke::parse_with_os(key, cx.platform_info().os)
+                            .expect("valid test keystroke"),
                     }),
                     cx,
                 );
@@ -722,6 +744,23 @@ mod tests {
                 .to_string(),
             "Email must be an email address"
         );
+
+        let format = acp::StringFormat::Other("future-email".into());
+        assert_eq!(string_format_json_name(&format), None);
+        assert_eq!(string_format_label(&format), None);
+        let schema = acp::StringPropertySchema::new().format(format);
+        validate_string_value("Email".into(), &schema, "not-an-email")
+            .expect("unknown formats should be annotations");
+
+        let schema = schema.pattern("^prod-[0-9]+$");
+        validate_string_value("Email".into(), &schema, "prod-42")
+            .expect("known constraints should still apply alongside unknown formats");
+        assert_eq!(
+            validate_string_value("Email".into(), &schema, "not-an-email")
+                .expect_err("unknown formats should not bypass known constraints")
+                .to_string(),
+            "Email does not match the requested pattern"
+        );
     }
 
     #[test]
@@ -957,31 +996,118 @@ mod tests {
     }
 
     #[gpui::test]
-    fn form_state_preserves_string_whitespace(cx: &mut TestAppContext) {
+    async fn form_state_preserves_string_whitespace(cx: &mut TestAppContext) {
         crate::conversation_view::tests::init_test(cx);
 
-        cx.add_window(|window, cx| {
-            let schema = acp::ElicitationSchema::new().property(
+        let metadata = |level: &str| {
+            serde_json::Map::from_iter([(
+                "fixture".into(),
+                serde_json::json!({"level": level, "nested": [null, {"enabled": true}]}),
+            )])
+        };
+        let mut scopes = acp::MultiSelectPropertySchema::titled(vec![
+            acp::EnumOption::new("repository", "Repository")
+                .description("Read repositories")
+                .meta(metadata("item-choice")),
+        ])
+        .default_value(vec!["repository".into()])
+        .meta(metadata("array-property"));
+        let acp::MultiSelectItems::Titled(items) = &mut scopes.items else {
+            panic!("expected titled items");
+        };
+        items.meta = Some(metadata("items"));
+        let schema = acp::ElicitationSchema::new()
+            .meta(metadata("schema"))
+            .property(
                 "token",
                 acp::StringPropertySchema::new()
                     .title("Token")
-                    .default_value("  secret  "),
+                    .default_value("  secret  ")
+                    .format(acp::StringFormat::Other("future-token".into()))
+                    .meta(metadata("string-property")),
                 true,
-            );
-            let form_state = ElicitationFormState::new(&schema, window, cx);
-            let content = form_state
-                .collect(&schema, cx)
-                .expect("string with whitespace should be submitted");
+            )
+            .property(
+                "environment",
+                acp::StringPropertySchema::new()
+                    .one_of(vec![
+                        acp::EnumOption::new("production", "Production")
+                            .description("Use live resources")
+                            .meta(metadata("choice")),
+                    ])
+                    .meta(metadata("select-property")),
+                true,
+            )
+            .property("scopes", scopes, true);
+        let request = acp::CreateElicitationRequest::new(
+            acp::ElicitationFormMode::new(preview_request_scope(0), schema),
+            "Provide a token and access choices",
+        )
+        .meta(metadata("request"));
+        let expected_content = BTreeMap::from([
+            (
+                "token".into(),
+                acp::ElicitationContentValue::from("  secret  "),
+            ),
+            (
+                "environment".into(),
+                acp::ElicitationContentValue::from("production"),
+            ),
+            (
+                "scopes".into(),
+                acp::ElicitationContentValue::from(vec!["repository".to_string()]),
+            ),
+        ]);
+        let store = cx.update(|cx| cx.new(|_| acp_thread::ElicitationStore::default()));
+        let (elicitation_id, response_task) = store.update(cx, |store, cx| {
+            store
+                .request_elicitation_with_id(request.clone(), cx)
+                .expect("form request should be accepted")
+        });
 
-            assert_eq!(
-                content.get("token"),
-                Some(&acp::ElicitationContentValue::String(
-                    "  secret  ".to_string()
-                ))
-            );
+        cx.add_window(|window, cx| {
+            let schema = store.read_with(cx, |store, _cx| {
+                let (_, elicitation) = store.elicitation(&elicitation_id).expect("stored form");
+                assert_eq!(elicitation.request, request);
+                let acp::ElicitationMode::Form(mode) = &elicitation.request.mode else {
+                    panic!("expected form mode");
+                };
+                mode.requested_schema.clone()
+            });
+            let mut form_state = ElicitationFormState::new(&schema, window, cx);
+            assert!(matches!(
+                form_state.fields.get("token"),
+                Some(ElicitationFieldState::Text(_))
+            ));
+            let submission = form_state
+                .begin_submission(cx)
+                .expect("submission should start");
+            let content = submission
+                .validate(&schema)
+                .expect("unknown format annotations should not reject valid existing fields");
+            assert!(form_state.validation_matches_current_values(&submission, cx));
+            assert_eq!(content, expected_content);
+            store.update(cx, |store, cx| {
+                store.respond_to_elicitation(
+                    &elicitation_id,
+                    acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                        acp::ElicitationAcceptAction::new().content(content),
+                    )),
+                    cx,
+                );
+                let (_, elicitation) = store.elicitation(&elicitation_id).expect("submitted form");
+                assert_eq!(elicitation.request, request);
+                assert!(matches!(elicitation.status, ElicitationStatus::Accepted));
+            });
 
             Editor::single_line(window, cx)
         });
+        assert_eq!(
+            response_task.await,
+            acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                acp::ElicitationAcceptAction::new().content(expected_content),
+            ))
+        );
     }
 
     #[gpui::test]
@@ -1049,6 +1175,42 @@ mod tests {
                 .expect("invalid optional default should be ignored");
 
             assert_eq!(content.get("environment"), None);
+
+            Editor::single_line(window, cx)
+        });
+    }
+
+    #[gpui::test]
+    fn form_state_skips_unrenderable_optional_properties_and_invalid_defaults(
+        cx: &mut TestAppContext,
+    ) {
+        crate::conversation_view::tests::init_test(cx);
+
+        cx.add_window(|window, cx| {
+            let schema: acp::ElicitationSchema = serde_json::from_value(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "when": {"type": "_future"},
+                    "labels": {"type": "array", "items": {"type": "_future"}},
+                    "code": {"type": "string", "pattern": "^[0-9]+$", "default": "abc"},
+                    "count": {"type": "integer", "minimum": 1, "default": 0},
+                    "ratio": {"type": "number", "maximum": 1, "default": 2},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["a", "b"]},
+                        "default": ["a", "c"],
+                    },
+                },
+            }))
+            .expect("form schema");
+            let form_state = ElicitationFormState::new(&schema, window, cx);
+            assert!(!form_state.fields.contains_key("when"));
+            assert!(!form_state.fields.contains_key("labels"));
+            let content = form_state
+                .collect(&schema, cx)
+                .expect("invalid defaults should be ignored");
+
+            assert!(content.is_empty(), "{content:?}");
 
             Editor::single_line(window, cx)
         });
@@ -1421,6 +1583,20 @@ fn single_select_default_value(
         .cloned()
 }
 
+/// A default with an unknown value or the wrong number of selections doesn't match its schema
+/// and is ignored.
+fn multi_select_default_value(schema: &acp::MultiSelectPropertySchema) -> Option<Vec<String>> {
+    let default = schema.default.as_ref()?;
+    let options = multi_select_options(schema);
+    let all_offered = default
+        .iter()
+        .all(|value| options.iter().any(|option| &option.value == value));
+    let count = default.len() as u64;
+    let count_allowed = schema.min_items.is_none_or(|min_items| count >= min_items)
+        && schema.max_items.is_none_or(|max_items| count <= max_items);
+    (all_offered && count_allowed).then(|| default.clone())
+}
+
 fn multi_select_options(schema: &acp::MultiSelectPropertySchema) -> Vec<ElicitationOption> {
     match &schema.items {
         acp::MultiSelectItems::String(items) => items
@@ -1538,7 +1714,13 @@ fn validate_string_pattern_and_format(
     schema: &acp::StringPropertySchema,
     value: &str,
 ) -> Result<(), SharedString> {
-    if schema.pattern.is_none() && schema.format.and_then(string_format_json_name).is_none() {
+    if schema.pattern.is_none()
+        && schema
+            .format
+            .as_ref()
+            .and_then(string_format_json_name)
+            .is_none()
+    {
         return Ok(());
     }
     if schema
@@ -1563,7 +1745,7 @@ fn validate_string_pattern_and_format(
             serde_json::Value::String(pattern.clone()),
         );
     }
-    if let Some(format) = schema.format.and_then(string_format_json_name) {
+    if let Some(format) = schema.format.as_ref().and_then(string_format_json_name) {
         validation_schema.insert(
             "format".to_string(),
             serde_json::Value::String(format.into()),
@@ -1601,7 +1783,7 @@ fn validate_string_pattern_and_format(
 
     match (
         schema.pattern.is_some(),
-        schema.format.and_then(string_format_label),
+        schema.format.as_ref().and_then(string_format_label),
     ) {
         (true, Some(_)) => Err(format!("{title} does not match the requested constraints").into()),
         (true, None) => Err(format!("{title} does not match the requested pattern").into()),
@@ -1610,7 +1792,7 @@ fn validate_string_pattern_and_format(
     }
 }
 
-fn string_format_json_name(format: acp::StringFormat) -> Option<&'static str> {
+fn string_format_json_name(format: &acp::StringFormat) -> Option<&'static str> {
     match format {
         acp::StringFormat::Email => Some("email"),
         acp::StringFormat::Uri => Some("uri"),
@@ -1620,7 +1802,7 @@ fn string_format_json_name(format: acp::StringFormat) -> Option<&'static str> {
     }
 }
 
-fn string_format_label(format: acp::StringFormat) -> Option<&'static str> {
+fn string_format_label(format: &acp::StringFormat) -> Option<&'static str> {
     match format {
         acp::StringFormat::Email => Some("an email address"),
         acp::StringFormat::Uri => Some("a URI"),

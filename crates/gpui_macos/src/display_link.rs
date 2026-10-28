@@ -50,9 +50,9 @@
 //! is a std implementation detail, not a guarantee; if it changes, the cost
 //! is added latency under contention, not incorrectness.)
 
+use crate::main_thread_marker;
 use anyhow::Result;
 use core_graphics::display::CGDirectDisplayID;
-use core_video::host_time;
 use dispatch2::{
     _dispatch_source_type_data_add, DispatchObject, DispatchQueue, DispatchRetained, DispatchSource,
 };
@@ -113,17 +113,11 @@ fn lock_registry() -> MutexGuard<'static, Registry> {
 }
 
 fn debug_assert_main_thread() {
-    #[cfg(debug_assertions)]
-    {
-        use objc::{class, msg_send, sel, sel_impl};
-        let is_main_thread: objc::runtime::BOOL =
-            unsafe { msg_send![class!(NSThread), isMainThread] };
-        debug_assert!(
-            is_main_thread == objc::runtime::YES,
-            "display link registry mutations must happen on the main thread; \
-             the registry's lock ordering and state consistency depend on it"
-        );
-    }
+    debug_assert!(
+        main_thread_marker().is_some(),
+        "display link registry mutations must happen on the main thread; \
+         the registry's lock ordering and state consistency depend on it"
+    );
 }
 
 unsafe extern "C" fn display_link_output_callback(
@@ -136,9 +130,9 @@ unsafe extern "C" fn display_link_output_callback(
 ) -> i32 {
     let signal_at = PlatformFrameSignal::capture(|| {
         // Instant cannot be constructed from Mach ticks, so sample both clock domains.
-        let current_host_time = host_time::get_current_host_time();
+        let current_host_time = objc2_core_video::CVGetCurrentHostTime();
         let received_at = Instant::now();
-        let host_clock_frequency = host_time::get_host_clock_frequency();
+        let host_clock_frequency = objc2_core_video::CVGetHostClockFrequency();
         // SAFETY: CoreVideo owns this timestamp for the lifetime of the callback.
         let current_time = unsafe { current_time.as_ref() };
         frame_request_instant(
