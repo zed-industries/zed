@@ -3652,6 +3652,10 @@ pub struct AcpThread {
     submissions: SessionSubmissions,
     activity: SessionActivity,
     received_session_state: bool,
+    /// Each idle state a subagent reported, with how many entries it had then. The subagent
+    /// reports one state for all its work, so this is what shows the outcome of an earlier
+    /// message to it after it has received later ones.
+    subagent_outcomes: Vec<(usize, acp_v2::StateUpdate)>,
     reported_usage: Option<ReportedTokenUsage>,
     token_usage: Option<TokenUsage>,
     cost: Option<SessionCost>,
@@ -4013,6 +4017,7 @@ impl AcpThread {
             ),
             activity: SessionActivity::default(),
             received_session_state: false,
+            subagent_outcomes: Vec::new(),
             reported_usage: None,
             connection,
             token_usage: None,
@@ -4301,6 +4306,14 @@ impl AcpThread {
     /// Distinguishes a received snapshot from the default Idle used by new sessions.
     pub fn has_received_session_state(&self) -> bool {
         self.received_session_state
+    }
+
+    /// The first idle state this subagent reported after the entry at `entry_ix` arrived.
+    pub fn subagent_outcome_after(&self, entry_ix: usize) -> Option<&acp_v2::StateUpdate> {
+        self.subagent_outcomes
+            .iter()
+            .find(|(entry_count, _)| *entry_count > entry_ix)
+            .map(|(_, state)| state)
     }
 
     pub fn foreground_activity(&self) -> ForegroundActivity {
@@ -4667,6 +4680,10 @@ impl AcpThread {
         let previous = self.foreground_activity();
         let was_in_progress = self.activity.in_progress();
         self.received_session_state = true;
+        if self.subagent_association.is_some() && matches!(state, acp_v2::StateUpdate::Idle(_)) {
+            self.subagent_outcomes
+                .push((self.entries.len(), state.clone()));
+        }
         self.set_foreground_state(state, cx);
         if let Some(acp_v2::StateUpdate::Idle(idle)) = self.activity.state() {
             let stop_reason = idle.stop_reason.clone();
