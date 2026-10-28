@@ -124,14 +124,22 @@ impl DevContainerContext {
     }
 
     pub async fn environment(&self, cx: &mut impl AppContext) -> HashMap<String, String> {
-        let Ok(task) = self.environment.update(cx, |this, cx| {
+        let environment = match self.environment.update(cx, |this, cx| {
             this.local_directory_environment(&Shell::System, self.project_directory.clone(), cx)
-        }) else {
-            return HashMap::default();
+        }) {
+            Ok(task) => task.await,
+            Err(_) => None,
         };
-        task.await
-            .map(|env| env.into_iter().collect::<std::collections::HashMap<_, _>>())
-            .unwrap_or_default()
+        // `localEnv` is resolved from this map alone, so falling back to an empty map
+        // would blank out every variable when the shell environment can't be captured.
+        environment
+            .map(|env| env.into_iter().collect())
+            .unwrap_or_else(|| {
+                log::warn!(
+                    "Failed to load project environment for Dev Container, using Zed's process environment"
+                );
+                std::env::vars().collect()
+            })
     }
 }
 
@@ -1684,12 +1692,32 @@ async fn get_ghcr_features(
 
 #[cfg(test)]
 mod tests {
+    use std::{path::Path, sync::Arc};
+
+    use fs::FakeFs;
+    use gpui::{TestAppContext, WeakEntity};
     use http_client::{FakeHttpClient, anyhow};
 
     use crate::{
-        DevContainerTemplatesResponse, devcontainer_templates_repository,
+        DevContainerContext, DevContainerTemplatesResponse, devcontainer_templates_repository,
         get_deserializable_oci_blob, ghcr_registry,
     };
+
+    #[gpui::test]
+    async fn test_environment_falls_back_to_process_environment(cx: &mut TestAppContext) {
+        let context = DevContainerContext {
+            project_directory: Arc::from(Path::new("/project")),
+            use_podman: false,
+            use_buildkit: None,
+            fs: FakeFs::new(cx.executor()),
+            http_client: FakeHttpClient::with_404_response(),
+            environment: WeakEntity::new_invalid(),
+        };
+
+        let environment = context.environment(cx).await;
+
+        assert_eq!(environment.get("PATH"), std::env::var("PATH").ok().as_ref());
+    }
 
     #[gpui::test]
     async fn test_get_devcontainer_templates() {
