@@ -2092,6 +2092,7 @@ mod test {
             "path outside skills dir should be rejected"
         );
     }
+
     #[test]
     fn test_write_lines_numbered_truncation() {
         let short = "short line\n";
