@@ -134,20 +134,21 @@ pub fn init(cx: &mut App) {
                                 let default_context = TaskContext::default();
                                 workspace
                                     .update_in(cx, |workspace, window, cx| {
+                                        let task_context = task_contexts
+                                            .context_for_task(&task_source_kind, &original_task)
+                                            .unwrap_or(&default_context);
                                         workspace.schedule_task(
                                             task_source_kind,
                                             &original_task,
-                                            task_contexts
-                                                .active_context()
-                                                .unwrap_or(&default_context),
+                                            task_context,
                                             false,
                                             window,
                                             cx,
-                                        )
+                                        );
                                     })
                                     .ok()
                             })
-                            .detach()
+                            .detach();
                         } else {
                             let resolved = &mut last_scheduled_task.resolved;
 
@@ -498,12 +499,12 @@ mod tests {
     use language::{Language, LanguageConfig};
     use project::{BasicContextProvider, FakeFs, Project, task_store::TaskStore};
     use serde_json::json;
-    use task::{TaskContext, TaskVariables, VariableName};
+    use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
     use util::{path, rel_path::rel_path};
     use workspace::{AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace};
 
-    use crate::{Spawn, task_contexts};
+    use crate::{Rerun, Spawn, task_contexts};
 
     #[gpui::test]
     async fn test_non_project_active_editor_uses_visible_worktree_context(cx: &mut TestAppContext) {
@@ -604,7 +605,48 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let (_, workspace, cx) = init_project_with_worktree_task(cx).await;
+        open_external_file_in_single_file_worktree(&workspace, cx).await;
 
+        assert_task_spawned_by_name_in_project_root(&workspace, cx);
+    }
+
+    #[gpui::test]
+    async fn test_spawn_by_name_resolves_worktree_task_with_invisible_worktree_editor_active(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace, cx) = init_project_with_worktree_task(cx).await;
+
+        open_external_file_in_invisible_worktree(&project, &workspace, cx).await;
+
+        assert_task_spawned_by_name_in_project_root(&workspace, cx);
+    }
+
+    #[gpui::test]
+    async fn test_reevaluated_rerun_resolves_worktree_task_with_single_file_editor_active(
+        cx: &mut TestAppContext,
+    ) {
+        let (_, workspace, cx) = init_project_with_worktree_task(cx).await;
+        spawn_task_with_project_file_active(&workspace, cx).await;
+        open_external_file_in_single_file_worktree(&workspace, cx).await;
+
+        assert_reevaluated_rerun_in_project_root(&workspace, cx);
+    }
+
+    #[gpui::test]
+    async fn test_reevaluated_rerun_resolves_worktree_task_with_invisible_worktree_editor_active(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace, cx) = init_project_with_worktree_task(cx).await;
+        spawn_task_with_project_file_active(&workspace, cx).await;
+        open_external_file_in_invisible_worktree(&project, &workspace, cx).await;
+
+        assert_reevaluated_rerun_in_project_root(&workspace, cx);
+    }
+
+    async fn open_external_file_in_single_file_worktree(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) {
         workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
@@ -619,16 +661,13 @@ mod tests {
             })
             .await
             .unwrap();
-
-        assert_task_spawned_by_name_in_project_root(&workspace, cx);
     }
 
-    #[gpui::test]
-    async fn test_spawn_by_name_resolves_worktree_task_with_invisible_worktree_editor_active(
-        cx: &mut TestAppContext,
+    async fn open_external_file_in_invisible_worktree(
+        project: &Entity<Project>,
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
     ) {
-        let (project, workspace, cx) = init_project_with_worktree_task(cx).await;
-
         let (external_worktree, _) = project
             .update(cx, |project, cx| {
                 project.find_or_create_worktree(path!("/external"), false, cx)
@@ -650,8 +689,34 @@ mod tests {
             })
             .await
             .unwrap();
+    }
 
-        assert_task_spawned_by_name_in_project_root(&workspace, cx);
+    async fn spawn_task_with_project_file_active(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) {
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/project/main.rs")),
+                    OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        cx.dispatch_action(Spawn::ByName {
+            task_name: "print worktree root and file".to_string(),
+            reveal_target: None,
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            last_scheduled_task(workspace, cx).resolved.args,
+            vec![path!("/project").to_string(), "main.rs".to_string()]
+        );
     }
 
     async fn init_project_with_worktree_task(
@@ -668,6 +733,11 @@ mod tests {
                             "label": "print worktree root",
                             "command": "echo",
                             "args": ["$ZED_WORKTREE_ROOT"]
+                        },
+                        {
+                            "label": "print worktree root and file",
+                            "command": "echo",
+                            "args": ["$ZED_WORKTREE_ROOT", "${ZED_RELATIVE_FILE:no file}"]
                         }
                     ]"#,
                 },
@@ -697,6 +767,42 @@ mod tests {
         });
         cx.run_until_parked();
 
+        let scheduled_task = last_scheduled_task(workspace, cx);
+        assert_eq!(
+            scheduled_task.resolved.args,
+            vec![path!("/project").to_string()]
+        );
+        assert_eq!(
+            scheduled_task.resolved.cwd.as_deref(),
+            Some(Path::new(path!("/project")))
+        );
+    }
+
+    fn assert_reevaluated_rerun_in_project_root(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.dispatch_action(Rerun {
+            reevaluate_context: true,
+            ..Rerun::default()
+        });
+        cx.run_until_parked();
+
+        let scheduled_task = last_scheduled_task(workspace, cx);
+        assert_eq!(
+            scheduled_task.resolved.args,
+            vec![path!("/project").to_string(), "no file".to_string()]
+        );
+        assert_eq!(
+            scheduled_task.resolved.cwd.as_deref(),
+            Some(Path::new(path!("/project")))
+        );
+    }
+
+    fn last_scheduled_task(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> ResolvedTask {
         let task_inventory = workspace
             .read_with(cx, |workspace, cx| {
                 workspace
@@ -710,16 +816,8 @@ mod tests {
             .expect("project should have a task inventory");
         let (_, scheduled_task) = task_inventory
             .read_with(cx, |inventory, _| inventory.last_scheduled_task(None))
-            .expect("worktree task should be spawned by name");
-
-        assert_eq!(
-            scheduled_task.resolved.args,
-            vec![path!("/project").to_string()]
-        );
-        assert_eq!(
-            scheduled_task.resolved.cwd.as_deref(),
-            Some(Path::new(path!("/project")))
-        );
+            .expect("a task should be scheduled");
+        scheduled_task
     }
 
     #[gpui::test]
