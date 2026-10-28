@@ -618,6 +618,8 @@
   "fullscreen_mode": "native",
   // Titlebar related settings
   "title_bar": {
+    // When to show the title bar: "always" | "never" | "hide_in_full_screen".
+    "show": "always",
     // Whether to show git status indicators on the branch icon in the titlebar.
     "show_branch_status_icon": false,
     // Whether to show the branch name button in the titlebar.

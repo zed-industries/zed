@@ -667,6 +667,7 @@ struct MacWindowState {
     last_left_mouse_down_event: Option<Retained<AnyObject>>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
+    traffic_lights_visible: bool,
     traffic_light_frames: Option<TrafficLightFrames>,
     pre_fullscreen_traffic_light_frames: Option<TrafficLightFrames>,
     transparent_titlebar: bool,
@@ -698,6 +699,10 @@ struct MacWindowState {
 
 impl MacWindowState {
     fn move_traffic_light(&mut self) {
+        if !self.traffic_lights_visible {
+            self.update_traffic_light_visibility();
+        }
+
         if let Some(traffic_light_position) = self.traffic_light_position {
             if self.is_fullscreen() && !self.is_exiting_fullscreen {
                 self.restore_traffic_light();
@@ -753,6 +758,19 @@ impl MacWindowState {
                 buttons.close.updateTrackingAreas();
                 buttons.minimize.updateTrackingAreas();
                 buttons.zoom.updateTrackingAreas();
+            }
+        }
+    }
+
+    fn update_traffic_light_visibility(&self) {
+        let window = self.native_window();
+        for button in [
+            Objc2NSWindowButton::CloseButton,
+            Objc2NSWindowButton::MiniaturizeButton,
+            Objc2NSWindowButton::ZoomButton,
+        ] {
+            if let Some(button) = window.standardWindowButton(button) {
+                button.setHidden(!self.traffic_lights_visible);
             }
         }
     }
@@ -1092,6 +1110,7 @@ impl MacWindow {
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
+                traffic_lights_visible: true,
                 traffic_light_frames: None,
                 pre_fullscreen_traffic_light_frames: None,
                 transparent_titlebar: titlebar
@@ -1603,6 +1622,14 @@ impl PlatformWindow for MacWindow {
                 );
             }
             let _: () = msg_send![unarchiver, release];
+        }
+    }
+
+    fn set_traffic_light_visibility(&self, visible: bool) {
+        let mut state = self.0.lock();
+        if state.traffic_lights_visible != visible {
+            state.traffic_lights_visible = visible;
+            state.update_traffic_light_visibility();
         }
     }
 
