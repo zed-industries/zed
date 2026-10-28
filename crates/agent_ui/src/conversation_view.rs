@@ -20323,68 +20323,6 @@ pub(crate) mod tests {
         assert_eq!(label(&acp_child, cx), "Parent title");
     }
 
-    #[test]
-    fn session_message_side_follows_the_transcripts_own_session() {
-        use thread_view::{SessionMessageSide, session_message_side};
-
-        let own = acp_v2::SessionId::new("own");
-        let other = acp_v2::SessionId::new("other");
-        for (sender, recipient, expected) in [
-            (
-                Some("own"),
-                Some("other"),
-                SessionMessageSide::Outgoing {
-                    recipient: Some(&other),
-                },
-            ),
-            (
-                Some("own"),
-                None,
-                SessionMessageSide::Outgoing { recipient: None },
-            ),
-            (
-                Some("other"),
-                Some("own"),
-                SessionMessageSide::Incoming {
-                    sender: Some(&other),
-                },
-            ),
-            (
-                None,
-                Some("own"),
-                SessionMessageSide::Incoming { sender: None },
-            ),
-            (
-                Some("other"),
-                None,
-                SessionMessageSide::Incoming {
-                    sender: Some(&other),
-                },
-            ),
-            (
-                None,
-                Some("other"),
-                SessionMessageSide::Outgoing {
-                    recipient: Some(&other),
-                },
-            ),
-            (None, None, SessionMessageSide::Unknown),
-        ] {
-            let message = acp_thread::SessionMessage {
-                identity: acp_thread::MessageIdentity::Keyed("message".into()),
-                sender_session_id: sender.map(acp_v2::SessionId::new),
-                recipient_session_id: recipient.map(acp_v2::SessionId::new),
-                meta: None,
-                content: acp_thread::MessageContent::default(),
-            };
-            assert_eq!(
-                session_message_side(&message, &own),
-                expected,
-                "{sender:?} -> {recipient:?}"
-            );
-        }
-    }
-
     #[gpui::test]
     async fn test_session_message_participant_opens_its_session(cx: &mut TestAppContext) {
         init_test(cx);
@@ -20414,12 +20352,36 @@ pub(crate) mod tests {
         });
         // Each ACP notification is applied in its own update, as here.
         root.update(cx, |root, cx| root.register_subagent(child.clone(), cx));
+        // The subagent's own view of its reply sits between entries that overflow the view.
+        let long_text = vec!["Working on it"; 40].join("\n\n");
+        for message_id in ["work-1", "work-2", "work-3", "reply", "work-4", "work-5"] {
+            child
+                .update(cx, |child, cx| {
+                    if message_id == "reply" {
+                        child.upsert_session_message(
+                            acp_v2::SessionMessage::new("reply")
+                                .sender_session_id(acp_v2::SessionId::new("child"))
+                                .recipient_session_id(root_session_id.clone())
+                                .content(vec!["Found it".into()]),
+                            cx,
+                        )
+                    } else {
+                        child.upsert_user_message(
+                            acp_v2::UserMessage::new(message_id)
+                                .content(vec![long_text.as_str().into()]),
+                            cx,
+                        )
+                    }
+                })
+                .expect("subagent entry");
+        }
         // An outgoing message to a subagent is its card, so this test uses its reply.
         root.update(cx, |root, cx| {
             root.upsert_session_message(
                 acp_v2::SessionMessage::new("from-child")
                     .sender_session_id(acp_v2::SessionId::new("child"))
                     .recipient_session_id(root_session_id.clone())
+                    .sender_message_id(acp_v2::MessageId::new("reply"))
                     .content(vec!["Found it".into()]),
                 cx,
             )
@@ -20459,9 +20421,18 @@ pub(crate) mod tests {
             .expect("the sender links to its session");
         cx.simulate_click(link.center(), gpui::Modifiers::default());
         cx.run_until_parked();
-        let active_session_id = active_thread(&conversation_view, cx)
-            .read_with(cx, |view, cx| view.thread.read(cx).session_id().clone());
+        let (active_session_id, scroll_top) =
+            active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+                (
+                    view.thread.read(cx).session_id().clone(),
+                    view.list_state.logical_scroll_top().item_ix,
+                )
+            });
         assert_eq!(active_session_id, acp_v2::SessionId::new("child"));
+        assert_eq!(
+            scroll_top, 3,
+            "the link opens the subagent at its view of the message"
+        );
     }
 
     #[gpui::test]

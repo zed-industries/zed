@@ -11,7 +11,8 @@ use std::{cell::RefCell, path::Path};
 use acp_thread::{
     Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity, OutputTokensUpdate,
     SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason,
-    SubmissionId, SubmissionResponse, SubmissionState, ToolCallLocation, decode_path_escapes,
+    SessionMessageSide, SubmissionId, SubmissionResponse, SubmissionState, ToolCallLocation,
+    decode_path_escapes,
 };
 use agent::{
     SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
@@ -57,38 +58,6 @@ use super::elicitation::{
 };
 use super::subagent_card::{SubagentCardId, SubagentCardState, SubagentStatus, acp_subagent_card};
 use super::*;
-
-/// Which side of a session message a transcript shows, and the other participant when it
-/// is known.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SessionMessageSide<'a> {
-    Outgoing {
-        recipient: Option<&'a acp_v2::SessionId>,
-    },
-    Incoming {
-        sender: Option<&'a acp_v2::SessionId>,
-    },
-    Unknown,
-}
-
-/// The transcript's own session is always one participant, so a single known participant
-/// that is another session also tells the direction.
-pub(super) fn session_message_side<'a>(
-    message: &'a acp_thread::SessionMessage,
-    own_session_id: &acp_v2::SessionId,
-) -> SessionMessageSide<'a> {
-    let sender = message.sender_session_id.as_ref();
-    let recipient = message.recipient_session_id.as_ref();
-    if sender == Some(own_session_id) {
-        SessionMessageSide::Outgoing { recipient }
-    } else if recipient == Some(own_session_id) || sender.is_some() {
-        SessionMessageSide::Incoming { sender }
-    } else if recipient.is_some() {
-        SessionMessageSide::Outgoing { recipient }
-    } else {
-        SessionMessageSide::Unknown
-    }
-}
 
 /// How a parent's view names a subagent. An ACP parent's own title for the subagent
 /// describes it in that view, so it wins over the subagent's title for itself.
@@ -8151,6 +8120,14 @@ impl ThreadView {
         cx.notify();
     }
 
+    pub(crate) fn scroll_to_entry(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
+        self.list_state.scroll_to(ListOffset {
+            item_ix: entry_ix,
+            offset_in_item: px(0.),
+        });
+        cx.notify();
+    }
+
     fn handle_feedback_click(
         &mut self,
         feedback: ThreadFeedback,
@@ -8910,7 +8887,7 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> Div {
         let own_session_id = self.thread.read(cx).session_id().clone();
-        let (icon, direction, participant) = match session_message_side(message, &own_session_id) {
+        let (icon, direction, participant) = match message.side(&own_session_id) {
             SessionMessageSide::Outgoing { recipient } => (IconName::Send, "To", recipient),
             SessionMessageSide::Incoming { sender } => (IconName::Envelope, "From", sender),
             SessionMessageSide::Unknown => (IconName::Envelope, "Message between sessions", None),
@@ -8926,11 +8903,12 @@ impl ThreadView {
                             .on_click(cx.listener({
                                 let session_id = session_id.clone();
                                 move |this, _, window, cx| {
-                                    this.server_view
-                                        .update(cx, |view, cx| {
-                                            view.navigate_to_thread(session_id.clone(), window, cx)
-                                        })
-                                        .log_err();
+                                    this.open_session_message_participant(
+                                        entry_ix,
+                                        &session_id,
+                                        window,
+                                        cx,
+                                    );
                                 }
                             })),
                     )
@@ -9000,6 +8978,41 @@ impl ThreadView {
             .gap_3()
             .debug_selector(move || format!("subagent-card-{entry_ix}"))
             .child(content)
+    }
+
+    /// Opens the other participant of the session message at `entry_ix`, at its view of the
+    /// message when the two views are linked.
+    fn open_session_message_participant(
+        &mut self,
+        entry_ix: usize,
+        session_id: &acp_v2::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(server_view) = self.server_view.upgrade() else {
+            return;
+        };
+        let participant_view = server_view.read(cx).thread_view(session_id);
+        let thread = self.thread.read(cx);
+        let linked_entry_ix = participant_view.as_ref().and_then(|participant_view| {
+            let Some(AgentThreadEntry::SessionMessage(message)) = thread.entries().get(entry_ix)
+            else {
+                return None;
+            };
+            participant_view
+                .read(cx)
+                .thread
+                .read(cx)
+                .linked_session_message(message, thread.session_id())
+        });
+        server_view.update(cx, |view, cx| {
+            view.navigate_to_thread(session_id.clone(), window, cx)
+        });
+        if let Some(participant_view) = participant_view
+            && let Some(linked_entry_ix) = linked_entry_ix
+        {
+            participant_view.update(cx, |view, cx| view.scroll_to_entry(linked_entry_ix, cx));
+        }
     }
 
     /// How this conversation names another of its sessions, or `None` when it has no thread
