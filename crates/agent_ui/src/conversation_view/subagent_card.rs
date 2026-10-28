@@ -1,12 +1,12 @@
 use acp_thread::{
-    AcpThread, AgentThreadEntry, MessageIdentity, SessionMessage, ToolCall, ToolCallContent,
-    ToolCallStatus,
+    AcpThread, AgentThreadEntry, MessageIdentity, SessionMessage, SessionMessageSide, ToolCall,
+    ToolCallContent, ToolCallStatus,
 };
 use agent_client_protocol::schema::v2 as acp_v2;
 use gpui::{App, Entity, SharedString};
 use std::{fmt, ops::Range};
 
-use super::thread_view::{SessionMessageSide, session_message_side, subagent_label};
+use super::thread_view::subagent_label;
 
 /// Native subagent tool calls report a user cancellation as output with this text.
 const USER_CANCELED_OUTPUT: &str = "User canceled";
@@ -43,7 +43,7 @@ pub(crate) fn acp_subagent_card(
     let own_session_id = thread.session_id();
     let SessionMessageSide::Outgoing {
         recipient: Some(recipient),
-    } = session_message_side(message, own_session_id)
+    } = message.side(own_session_id)
     else {
         return None;
     };
@@ -55,7 +55,7 @@ pub(crate) fn acp_subagent_card(
         matches!(
             entry,
             AgentThreadEntry::SessionMessage(earlier)
-                if session_message_side(earlier, own_session_id)
+                if earlier.side(own_session_id)
                     == SessionMessageSide::Outgoing { recipient: Some(recipient) }
         )
     });

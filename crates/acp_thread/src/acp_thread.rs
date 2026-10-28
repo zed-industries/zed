@@ -376,11 +376,45 @@ pub struct SessionMessage {
     pub identity: MessageIdentity,
     pub sender_session_id: Option<acp_v2::SessionId>,
     pub recipient_session_id: Option<acp_v2::SessionId>,
+    /// On an incoming view, the ID of the outgoing view in the sender's transcript.
+    pub sender_message_id: Option<acp_v2::MessageId>,
+    /// On an outgoing view, the ID of the incoming view in the recipient's transcript.
+    pub recipient_message_id: Option<acp_v2::MessageId>,
     pub meta: Option<acp_v2::Meta>,
     pub content: MessageContent,
 }
 
+/// Which side of a session message a transcript shows, and the other participant when it
+/// is known.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionMessageSide<'a> {
+    Outgoing {
+        recipient: Option<&'a acp_v2::SessionId>,
+    },
+    Incoming {
+        sender: Option<&'a acp_v2::SessionId>,
+    },
+    Unknown,
+}
+
 impl SessionMessage {
+    /// The side of this message that the transcript of `own_session_id` shows. That session
+    /// is always one participant, so a single known participant that is another session
+    /// also tells the direction.
+    pub fn side<'a>(&'a self, own_session_id: &acp_v2::SessionId) -> SessionMessageSide<'a> {
+        let sender = self.sender_session_id.as_ref();
+        let recipient = self.recipient_session_id.as_ref();
+        if sender == Some(own_session_id) {
+            SessionMessageSide::Outgoing { recipient }
+        } else if recipient == Some(own_session_id) || sender.is_some() {
+            SessionMessageSide::Incoming { sender }
+        } else if recipient.is_some() {
+            SessionMessageSide::Outgoing { recipient }
+        } else {
+            SessionMessageSide::Unknown
+        }
+    }
+
     fn to_markdown(&self, cx: &App) -> String {
         let heading = match (&self.sender_session_id, &self.recipient_session_id) {
             (Some(sender), Some(recipient)) => {
@@ -4927,6 +4961,16 @@ impl AcpThread {
                                 .recipient_session_id
                                 .map_value(|id| acp_v2::SessionId::new(id.0)),
                         )
+                        .sender_message_id(
+                            message
+                                .sender_message_id
+                                .map_value(|id| acp_v2::MessageId::new(id.0)),
+                        )
+                        .recipient_message_id(
+                            message
+                                .recipient_message_id
+                                .map_value(|id| acp_v2::MessageId::new(id.0)),
+                        )
                         .content(content)
                         .meta(message.meta),
                     MetadataUpdate::V1,
@@ -5006,12 +5050,25 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let previous_entry_count = self.entries.len();
-        let location = self.session_message_location(
-            update.message_id,
-            update.sender_session_id,
-            update.recipient_session_id,
-            cx,
-        )?;
+        let location = self.keyed_message_location(MessageKind::Session, update.message_id, cx)?;
+        let Some(AgentThreadEntry::SessionMessage(message)) =
+            self.entries.get_mut(location.entry_index())
+        else {
+            anyhow::bail!("session message disappeared during update");
+        };
+        // Omitted keeps the stored value, `null` clears it, and a value replaces it.
+        update
+            .sender_session_id
+            .update_to(&mut message.sender_session_id);
+        update
+            .recipient_session_id
+            .update_to(&mut message.recipient_session_id);
+        update
+            .sender_message_id
+            .update_to(&mut message.sender_message_id);
+        update
+            .recipient_message_id
+            .update_to(&mut message.recipient_message_id);
         self.replace_message_content(
             location,
             MessageKind::Session,
@@ -5020,6 +5077,83 @@ impl AcpThread {
             previous_entry_count,
             cx,
         )
+    }
+
+    /// The index of this transcript's view of `message`, a session message whose other view
+    /// is in the transcript of `message_session_id`. The views are linked by `message`'s
+    /// reference to the view here or, when it has none, by a view here that refers back to
+    /// it. Views whose references name other messages are unlinked, and a referenced view
+    /// that has not arrived yet is not found.
+    pub fn linked_session_message(
+        &self,
+        message: &SessionMessage,
+        message_session_id: &acp_v2::SessionId,
+    ) -> Option<usize> {
+        let MessageIdentity::Keyed(message_id) = &message.identity else {
+            return None;
+        };
+        let own_session_id = self.session_id();
+        let (reference, other_participant, message_is_outgoing) =
+            match message.side(message_session_id) {
+                SessionMessageSide::Outgoing { recipient } => {
+                    (message.recipient_message_id.as_ref(), recipient, true)
+                }
+                SessionMessageSide::Incoming { sender } => {
+                    (message.sender_message_id.as_ref(), sender, false)
+                }
+                SessionMessageSide::Unknown => return None,
+            };
+        if other_participant.is_some_and(|participant| participant != own_session_id) {
+            return None;
+        }
+        /// A view of the same message here is on the other side. Returns that view's
+        /// participant in `message_session_id`'s place, when known, and its reference back.
+        fn other_view<'a>(
+            view: &'a SessionMessage,
+            own_session_id: &acp_v2::SessionId,
+            message_is_outgoing: bool,
+        ) -> Option<(Option<&'a acp_v2::SessionId>, Option<&'a acp_v2::MessageId>)> {
+            match view.side(own_session_id) {
+                SessionMessageSide::Incoming { sender } if message_is_outgoing => {
+                    Some((sender, view.sender_message_id.as_ref()))
+                }
+                SessionMessageSide::Outgoing { recipient } if !message_is_outgoing => {
+                    Some((recipient, view.recipient_message_id.as_ref()))
+                }
+                SessionMessageSide::Unknown if message_is_outgoing => {
+                    Some((None, view.sender_message_id.as_ref()))
+                }
+                SessionMessageSide::Unknown => Some((None, view.recipient_message_id.as_ref())),
+                _ => None,
+            }
+        }
+        let mut session_messages =
+            self.entries
+                .iter()
+                .enumerate()
+                .filter_map(|(entry_ix, entry)| match entry {
+                    AgentThreadEntry::SessionMessage(view) => Some((entry_ix, view)),
+                    _ => None,
+                });
+        if let Some(reference) = reference {
+            let (entry_ix, view) = session_messages.find(
+                |(_, view)| matches!(&view.identity, MessageIdentity::Keyed(id) if id == reference),
+            )?;
+            let (participant, back_reference) =
+                other_view(view, own_session_id, message_is_outgoing)?;
+            (participant.is_none_or(|participant| participant == message_session_id)
+                && back_reference.is_none_or(|back_reference| back_reference == message_id))
+            .then_some(entry_ix)
+        } else {
+            // The view's reference is a message ID in `message_session_id`'s transcript, so
+            // it only identifies `message` when that participant is known.
+            session_messages.find_map(|(entry_ix, view)| {
+                let (participant, back_reference) =
+                    other_view(view, own_session_id, message_is_outgoing)?;
+                (participant == Some(message_session_id) && back_reference == Some(message_id))
+                    .then_some(entry_ix)
+            })
+        }
     }
 
     pub fn append_session_message_chunk(
@@ -5037,32 +5171,6 @@ impl AcpThread {
             previous_entry_count,
             cx,
         )
-    }
-
-    fn session_message_location(
-        &mut self,
-        id: acp_v2::MessageId,
-        sender: MaybeUndefined<acp_v2::SessionId>,
-        recipient: MaybeUndefined<acp_v2::SessionId>,
-        cx: &mut Context<Self>,
-    ) -> Result<MessageLocation> {
-        let location = self.keyed_message_location(MessageKind::Session, id, cx)?;
-        let Some(AgentThreadEntry::SessionMessage(message)) =
-            self.entries.get_mut(location.entry_index())
-        else {
-            anyhow::bail!("session message disappeared during update");
-        };
-        for (stored, reported) in [
-            (&mut message.sender_session_id, sender),
-            (&mut message.recipient_session_id, recipient),
-        ] {
-            match reported {
-                MaybeUndefined::Undefined => {}
-                MaybeUndefined::Null => *stored = None,
-                MaybeUndefined::Value(reported) => *stored = Some(reported),
-            }
-        }
-        Ok(location)
     }
 
     fn update_keyed_message(
@@ -5256,6 +5364,8 @@ impl AcpThread {
                         identity,
                         sender_session_id: None,
                         recipient_session_id: None,
+                        sender_message_id: None,
+                        recipient_message_id: None,
                         meta: None,
                         content: MessageContent::default(),
                     }));
@@ -13662,7 +13772,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_session_messages_patch_participants_and_convert_from_v1(cx: &mut TestAppContext) {
+    async fn test_session_messages_patch_participants_and_references_and_convert_from_v1(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
         thread.update(cx, |thread, cx| {
@@ -13700,6 +13812,25 @@ mod tests {
                 )
                 .expect("null clears a participant");
             thread
+                .upsert_session_message(
+                    acp_v2::SessionMessage::new("task")
+                        .sender_message_id(acp_v2::MessageId::new("sent"))
+                        .recipient_message_id(acp_v2::MessageId::new("received")),
+                    cx,
+                )
+                .expect("references can arrive after the message started");
+            thread
+                .upsert_session_message(acp_v2::SessionMessage::new("task"), cx)
+                .expect("an update without references keeps them");
+            thread
+                .upsert_session_message(
+                    acp_v2::SessionMessage::new("task")
+                        .sender_message_id(MaybeUndefined::Null)
+                        .recipient_message_id(acp_v2::MessageId::new("replaced")),
+                    cx,
+                )
+                .expect("null clears a reference, and a value replaces it");
+            thread
                 .upsert_assistant_message(
                     acp_v2::AgentMessage::new("task").content(vec!["answer".into()]),
                     cx,
@@ -13716,6 +13847,8 @@ mod tests {
             assert_eq!(message.identity, MessageIdentity::Keyed("task".into()));
             assert_eq!(message.sender_session_id, Some("other".into()));
             assert_eq!(message.recipient_session_id, None);
+            assert_eq!(message.sender_message_id, None);
+            assert_eq!(message.recipient_message_id, Some("replaced".into()));
             assert_eq!(
                 message.content.source_blocks(),
                 &["Start by ".into(), "reproducing".into()]
@@ -13737,6 +13870,7 @@ mod tests {
                     "sessionUpdate": "session_message",
                     "messageId": "reply",
                     "recipientSessionId": "parent",
+                    "senderMessageId": "sent",
                     "_meta": {"second": true},
                 }),
                 json!({
@@ -13756,6 +13890,7 @@ mod tests {
             };
             assert_eq!(message.sender_session_id, Some("child".into()));
             assert_eq!(message.recipient_session_id, Some("parent".into()));
+            assert_eq!(message.sender_message_id, Some("sent".into()));
             assert_eq!(
                 message.meta,
                 Some(acp_v2::Meta::from_iter([("second".into(), json!(true))]))
@@ -13765,6 +13900,209 @@ mod tests {
                 &["Done".into(), " now".into()]
             );
         });
+    }
+
+    #[test]
+    fn session_message_side_follows_the_transcripts_own_session() {
+        let own = acp_v2::SessionId::new("own");
+        let other = acp_v2::SessionId::new("other");
+        for (sender, recipient, expected) in [
+            (
+                Some("own"),
+                Some("other"),
+                SessionMessageSide::Outgoing {
+                    recipient: Some(&other),
+                },
+            ),
+            (
+                Some("own"),
+                None,
+                SessionMessageSide::Outgoing { recipient: None },
+            ),
+            (
+                Some("other"),
+                Some("own"),
+                SessionMessageSide::Incoming {
+                    sender: Some(&other),
+                },
+            ),
+            (
+                None,
+                Some("own"),
+                SessionMessageSide::Incoming { sender: None },
+            ),
+            (
+                Some("other"),
+                None,
+                SessionMessageSide::Incoming {
+                    sender: Some(&other),
+                },
+            ),
+            (
+                None,
+                Some("other"),
+                SessionMessageSide::Outgoing {
+                    recipient: Some(&other),
+                },
+            ),
+            (None, None, SessionMessageSide::Unknown),
+        ] {
+            let message = SessionMessage {
+                identity: MessageIdentity::Keyed("message".into()),
+                sender_session_id: sender.map(acp_v2::SessionId::new),
+                recipient_session_id: recipient.map(acp_v2::SessionId::new),
+                sender_message_id: None,
+                recipient_message_id: None,
+                meta: None,
+                content: MessageContent::default(),
+            };
+            assert_eq!(message.side(&own), expected, "{sender:?} -> {recipient:?}");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_linked_session_message_follows_references(cx: &mut TestAppContext) {
+        init_test(cx);
+        let parent = new_test_thread(cx).await;
+        let child = new_test_thread(cx).await;
+        let parent_id = parent.read_with(cx, |thread, _| thread.session_id().clone());
+        let child_id = child.read_with(cx, |thread, _| thread.session_id().clone());
+        assert_ne!(parent_id, child_id);
+        let send = |thread: &Entity<AcpThread>,
+                    message: acp_v2::SessionMessage,
+                    cx: &mut TestAppContext| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .upsert_session_message(message.content(vec!["text".into()]), cx)
+                    .expect("session message")
+            });
+        };
+        // Both views of a message from the parent to the child have the same participants.
+        let to_child = |message_id: &str| {
+            acp_v2::SessionMessage::new(message_id)
+                .sender_session_id(parent_id.clone())
+                .recipient_session_id(child_id.clone())
+        };
+
+        // Both views name each other.
+        send(
+            &parent,
+            to_child("out-1").recipient_message_id(acp_v2::MessageId::new("in-1")),
+            cx,
+        );
+        send(
+            &child,
+            to_child("in-1").sender_message_id(acp_v2::MessageId::new("out-1")),
+            cx,
+        );
+        // Only the incoming view names the outgoing one.
+        send(&parent, to_child("out-2"), cx);
+        send(
+            &child,
+            to_child("in-2").sender_message_id(acp_v2::MessageId::new("out-2")),
+            cx,
+        );
+        // The incoming view names another message.
+        send(
+            &parent,
+            to_child("out-3").recipient_message_id(acp_v2::MessageId::new("in-3")),
+            cx,
+        );
+        send(
+            &child,
+            to_child("in-3").sender_message_id(acp_v2::MessageId::new("out-other")),
+            cx,
+        );
+        // The referenced view has not arrived yet.
+        send(
+            &parent,
+            to_child("out-4").recipient_message_id(acp_v2::MessageId::new("in-4")),
+            cx,
+        );
+        // A reference back from a view with no known sender is a message ID in an unknown
+        // transcript.
+        send(&parent, to_child("out-5"), cx);
+        send(
+            &child,
+            acp_v2::SessionMessage::new("in-5").sender_message_id(acp_v2::MessageId::new("out-5")),
+            cx,
+        );
+        // A message to another session.
+        send(
+            &parent,
+            acp_v2::SessionMessage::new("out-6")
+                .sender_session_id(parent_id.clone())
+                .recipient_session_id(acp_v2::SessionId::new("other-child"))
+                .recipient_message_id(acp_v2::MessageId::new("in-1")),
+            cx,
+        );
+
+        let linked = |from: &Entity<AcpThread>,
+                      message_id: &str,
+                      to: &Entity<AcpThread>,
+                      cx: &mut TestAppContext| {
+            let from = from.read_with(cx, |thread, _| thread.session_id().clone());
+            let message_ix = |thread: &AcpThread, message_id: &str| {
+                thread.entries().iter().position(|entry| {
+                    matches!(
+                        entry,
+                        AgentThreadEntry::SessionMessage(message)
+                            if message.identity == MessageIdentity::Keyed(message_id.into())
+                    )
+                })
+            };
+            let source = if from == parent_id { &parent } else { &child };
+            source.read_with(cx, |source, cx| {
+                let entry_ix = message_ix(source, message_id).expect("message");
+                let Some(AgentThreadEntry::SessionMessage(message)) =
+                    source.entries().get(entry_ix)
+                else {
+                    panic!("expected a session message");
+                };
+                let target = to.read(cx);
+                target
+                    .linked_session_message(message, &from)
+                    .map(|linked_ix| match target.entries().get(linked_ix) {
+                        Some(AgentThreadEntry::SessionMessage(view)) => match &view.identity {
+                            MessageIdentity::Keyed(id) => id.to_string(),
+                            other => panic!("unexpected identity {other:?}"),
+                        },
+                        other => panic!("expected a session message, got {other:?}"),
+                    })
+            })
+        };
+        for (message_id, expected) in [
+            ("out-1", Some("in-1")),
+            ("out-2", Some("in-2")),
+            ("out-3", None),
+            ("out-4", None),
+            ("out-5", None),
+            ("out-6", None),
+        ] {
+            assert_eq!(
+                linked(&parent, message_id, &child, cx).as_deref(),
+                expected,
+                "{message_id}"
+            );
+        }
+        for (message_id, expected) in [
+            ("in-1", Some("out-1")),
+            ("in-2", Some("out-2")),
+            ("in-3", None),
+        ] {
+            assert_eq!(
+                linked(&child, message_id, &parent, cx).as_deref(),
+                expected,
+                "{message_id}"
+            );
+        }
+
+        send(&child, to_child("in-4"), cx);
+        assert_eq!(
+            linked(&parent, "out-4", &child, cx).as_deref(),
+            Some("in-4"),
+            "a referenced view links once it arrives"
+        );
     }
 
     #[gpui::test]
