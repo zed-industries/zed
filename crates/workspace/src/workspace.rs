@@ -98,8 +98,8 @@ pub use persistence::{
 use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 use postage::stream::Stream;
 use project::{
-    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
-    WorktreeSettings,
+    DirectoryLister, PathChange, Project, ProjectEntryId, ProjectPath, ResolvedPath,
+    UpdatedEntriesSet, Worktree, WorktreeId, WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     git_store::{GitStoreEvent, RepositoryEvent},
     project_settings::ProjectSettings,
@@ -1774,7 +1774,8 @@ impl Workspace {
                         this.update_history(cx);
                     }
                 }
-                project::Event::WorktreeUpdatedEntries(..) => {
+                project::Event::WorktreeUpdatedEntries(worktree_id, changes) => {
+                    this.remove_deleted_navigation_history(*worktree_id, changes, cx);
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
                 }
@@ -3068,6 +3069,7 @@ impl Workspace {
             }
         }
 
+        recent_history.retain(|(path, _)| !self.is_deleted_history_path(path, cx));
         recent_history.into_iter()
     }
 
@@ -3088,6 +3090,103 @@ impl Workspace {
         self.persisted_recent_navigation_history.clear();
         self.last_active_project_path = None;
         self.serialize_workspace(window, cx);
+    }
+
+    fn is_deleted_history_path(&self, path: &ProjectPath, cx: &App) -> bool {
+        let project = self.project.read(cx);
+        project.get_open_buffer(path, cx).is_some_and(|buffer| {
+            buffer
+                .read(cx)
+                .file()
+                .is_some_and(|file| file.disk_state().is_deleted())
+        }) && project
+            .worktree_for_id(path.worktree_id, cx)
+            .is_some_and(|worktree| {
+                Self::history_path_is_removed(worktree.read(cx), &path.path, cx)
+            })
+    }
+
+    fn history_path_is_removed(worktree: &Worktree, path: &RelPath, cx: &App) -> bool {
+        let settings = WorktreeSettings::get(
+            Some(SettingsLocation {
+                worktree_id: worktree.id(),
+                path: RelPath::empty(),
+            }),
+            cx,
+        );
+        worktree.entry_for_path(path).is_none()
+            && !settings.is_path_excluded(path)
+            && !path
+                .ancestors()
+                .skip(1)
+                .find_map(|ancestor| worktree.entry_for_path(ancestor))
+                .is_some_and(|entry| entry.kind.is_unloaded())
+    }
+
+    fn remove_deleted_navigation_history(
+        &mut self,
+        worktree_id: WorktreeId,
+        changes: &UpdatedEntriesSet,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project.read(cx);
+        let Some(worktree) = project.worktree_for_id(worktree_id, cx) else {
+            return;
+        };
+        let worktree = worktree.read(cx);
+        let removed_paths = changes
+            .iter()
+            .filter(|(path, entry_id, change)| {
+                *change == PathChange::Removed
+                    && worktree.entry_for_id(*entry_id).is_none()
+                    && Self::history_path_is_removed(worktree, path, cx)
+            })
+            .map(|(path, _, _)| path.clone())
+            .collect::<HashSet<_>>();
+        if removed_paths.is_empty() {
+            return;
+        }
+
+        let (paths, absolute_paths): (HashSet<_>, HashSet<_>) =
+            self.recent_navigation_history_iter(cx)
+                .chain(self.persisted_recent_navigation_history.iter().filter_map(
+                    |absolute_path| {
+                        let path = project.project_path_for_absolute_path(absolute_path, cx)?;
+                        Some((path, Some(absolute_path.clone())))
+                    },
+                ))
+                .filter(|(path, _)| {
+                    path.worktree_id == worktree_id
+                        && path
+                            .path
+                            .ancestors()
+                            .any(|ancestor| removed_paths.contains(ancestor))
+                        && worktree.entry_for_path(&path.path).is_none()
+                })
+                .filter_map(|(path, _)| {
+                    let absolute_path = project.absolute_path(&path, cx)?;
+                    Some((path, absolute_path))
+                })
+                .unzip();
+
+        if paths.is_empty() {
+            return;
+        }
+        self.persisted_recent_navigation_history
+            .retain(|path| !absolute_paths.contains(path));
+        for pane in &self.panes {
+            pane.update(cx, |pane, cx| {
+                pane.remove_navigation_history_paths(&paths, cx)
+            });
+        }
+        if self
+            .last_active_project_path
+            .as_ref()
+            .is_some_and(|path| paths.contains(path))
+        {
+            self.last_active_project_path = None;
+        }
+        cx.notify();
     }
 
     fn rename_persisted_navigation_history_paths(
@@ -6256,6 +6355,14 @@ impl Workspace {
                 serialize_workspace = false;
             }
             pane::Event::RemovedItem { item } => {
+                if item
+                    .project_path(cx)
+                    .is_some_and(|path| self.is_deleted_history_path(&path, cx))
+                {
+                    pane.update(cx, |pane, _| {
+                        pane.nav_history_mut().remove_item(item.item_id())
+                    });
+                }
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(window, cx);
                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(item.item_id())
@@ -6750,7 +6857,10 @@ impl Workspace {
         if active_project_path_changed {
             match active_entry.as_ref() {
                 None => self.last_active_project_path = None,
-                Some(path) if self.remember_navigation_history_path(path, cx) => {
+                Some(path)
+                    if !self.is_deleted_history_path(path, cx)
+                        && self.remember_navigation_history_path(path, cx) =>
+                {
                     self.serialize_workspace(window, cx);
                 }
                 Some(_) => {}
@@ -12611,14 +12721,14 @@ mod tests {
         },
         persistence::model::DockData,
     };
-    use fs::FakeFs;
+    use fs::{FakeFs, RemoveOptions};
     use gpui::{
-        DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
-        UpdateGlobal, VisualTestContext, px,
+        DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Modifiers, Render,
+        TestAppContext, UpdateGlobal, VisualTestContext, px,
     };
     use project::{Project, ProjectEntryId, WorktreeId};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{SettingsStore, SplicingVec};
     use util::path;
     use util::rel_path::rel_path;
 
@@ -19684,6 +19794,339 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_recent_navigation_history_tracks_removed_entries(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "dir": { "deleted.rs": "", "excluded.rs": "" },
+                "dir2": { "retained.rs": "" },
+                "replaced.rs": "old",
+            }),
+        )
+        .await;
+        fs.insert_tree(path!("/other"), json!({ "dir": { "deleted.rs": "" } }))
+            .await;
+        let project = Project::test(
+            fs.clone(),
+            [path!("/project").as_ref(), path!("/other").as_ref()],
+            cx,
+        )
+        .await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let database = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = database.next_id().await.unwrap();
+        let original_history = [
+            path!("/project/dir/deleted.rs"),
+            path!("/project/dir/excluded.rs"),
+            path!("/project/dir2/retained.rs"),
+            path!("/project/replaced.rs"),
+            path!("/other/dir/deleted.rs"),
+        ]
+        .map(PathBuf::from)
+        .to_vec();
+        workspace.update(cx, |workspace, _| {
+            workspace.set_database_id(workspace_id);
+            workspace.persisted_recent_navigation_history = original_history.clone();
+        });
+        let excluded_path = project.read_with(cx, |project, cx| {
+            project
+                .project_path_for_absolute_path(Path::new(path!("/project/dir/excluded.rs")), cx)
+                .unwrap()
+        });
+        let _excluded_buffer = project
+            .update(cx, |project, cx| project.open_buffer(excluded_path, cx))
+            .await
+            .unwrap();
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
+                        Some(SplicingVec::from(vec!["**/excluded.rs".to_owned()]));
+                });
+            });
+        });
+        cx.run_until_parked();
+        project.read_with(cx, |project, cx| {
+            let path = project
+                .project_path_for_absolute_path(Path::new(path!("/project/dir/excluded.rs")), cx)
+                .unwrap();
+            assert!(project.entry_for_path(&path, cx).is_none());
+        });
+        assert_eq!(
+            workspace.read_with(cx, |workspace, _| workspace
+                .persisted_recent_navigation_history
+                .clone()),
+            original_history
+        );
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .recent_navigation_history_iter(cx)
+                    .map(|(_, path)| path.unwrap())
+                    .collect::<Vec<_>>(),
+                original_history
+            );
+        });
+
+        fs.pause_events();
+        fs.remove_file(
+            Path::new(path!("/project/replaced.rs")),
+            RemoveOptions::default(),
+        )
+        .await
+        .unwrap();
+        fs.insert_file(path!("/project/replaced.rs"), b"new".to_vec())
+            .await;
+        fs.unpause_events_and_flush();
+        cx.run_until_parked();
+        assert_eq!(
+            workspace.read_with(cx, |workspace, _| workspace
+                .persisted_recent_navigation_history
+                .clone()),
+            original_history
+        );
+
+        let (worktree_id, directory_entry_id) = project.read_with(cx, |project, cx| {
+            let path = project
+                .project_path_for_absolute_path(Path::new(path!("/project/dir")), cx)
+                .unwrap();
+            (
+                path.worktree_id,
+                project.entry_for_path(&path, cx).unwrap().id,
+            )
+        });
+        fs.remove_dir(
+            Path::new(path!("/project/dir")),
+            RemoveOptions {
+                recursive: true,
+                ..RemoveOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+        let expected = [
+            path!("/project/dir2/retained.rs"),
+            path!("/project/replaced.rs"),
+            path!("/other/dir/deleted.rs"),
+        ]
+        .map(PathBuf::from)
+        .to_vec();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.persisted_recent_navigation_history, expected);
+            assert_eq!(
+                workspace
+                    .recent_navigation_history_iter(cx)
+                    .map(|(_, path)| path.unwrap())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        });
+        let metadata_calls = fs.metadata_call_count();
+        workspace.update(cx, |workspace, cx| {
+            workspace.persisted_recent_navigation_history = original_history;
+            workspace.remove_deleted_navigation_history(
+                worktree_id,
+                &vec![(
+                    rel_path("dir").into(),
+                    directory_entry_id,
+                    PathChange::Removed,
+                )]
+                .into(),
+                cx,
+            );
+            assert_eq!(workspace.persisted_recent_navigation_history, expected);
+        });
+        cx.run_until_parked();
+        assert_eq!(fs.metadata_call_count(), metadata_calls);
+        cx.executor().advance_clock(SERIALIZATION_THROTTLE_TIME);
+        cx.run_until_parked();
+        assert_eq!(
+            database
+                .workspace_for_id(workspace_id)
+                .unwrap()
+                .recent_navigation_history,
+            expected
+        );
+    }
+
+    #[gpui::test]
+    async fn test_recent_navigation_history_preserves_live_deleted_buffers(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({ "a.rs": "a", "b.rs": "b", "c.rs": "c" }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let path_a = project.read_with(cx, |project, cx| {
+            project
+                .project_path_for_absolute_path(Path::new(path!("/project/a.rs")), cx)
+                .unwrap()
+        });
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(path_a.clone(), cx))
+            .await
+            .unwrap();
+        let (entry_id_a, entry_id_b) = project.read_with(cx, |project, cx| {
+            let path_b = ProjectPath {
+                worktree_id: path_a.worktree_id,
+                path: rel_path("b.rs").into(),
+            };
+            (
+                project.entry_for_path(&path_a, cx).unwrap().id.to_proto(),
+                project.entry_for_path(&path_b, cx).unwrap().id.to_proto(),
+            )
+        });
+        let item_a = cx.new(|cx| {
+            TestItem::new(cx).with_dirty(true).with_project_items(&[
+                TestProjectItem::new_in_worktree(entry_id_a, "a.rs", path_a.worktree_id, cx),
+            ])
+        });
+        let item_b = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new_in_worktree(
+                entry_id_b,
+                "b.rs",
+                path_a.worktree_id,
+                cx,
+            )])
+        });
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_a.clone()), None, true, window, cx);
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_b.clone()), None, true, window, cx);
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_a, false, false, window, cx);
+        });
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(
+                workspace.persisted_recent_navigation_history,
+                vec![
+                    PathBuf::from(path!("/project/a.rs")),
+                    PathBuf::from(path!("/project/b.rs"))
+                ]
+            );
+        });
+        fs.remove_file(Path::new(path!("/project/a.rs")), RemoveOptions::default())
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        let expected = vec![PathBuf::from(path!("/project/b.rs"))];
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.persisted_recent_navigation_history, expected);
+            assert_eq!(workspace.last_active_project_path, None);
+            assert_eq!(
+                workspace
+                    .recent_navigation_history_iter(cx)
+                    .map(|(_, path)| path.unwrap())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        });
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(pane.items_len(), 2);
+            let mut paths = Vec::new();
+            pane.nav_history()
+                .for_each_entry(cx, &mut |entry, (path, _)| {
+                    if entry.item.id() == item_a.entity_id() {
+                        paths.push(path);
+                    }
+                });
+            assert_eq!(paths, vec![path_a.clone()]);
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_b, false, false, window, cx);
+        });
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.go_back(pane.downgrade(), window, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace.read_with(cx, |workspace, cx| workspace
+                .active_item(cx)
+                .unwrap()
+                .item_id()),
+            item_a.entity_id()
+        );
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        item_a.update(cx, |_, cx| cx.emit(ItemEvent::UpdateBreadcrumbs));
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(
+                workspace.persisted_recent_navigation_history,
+                vec![
+                    PathBuf::from(path!("/project/a.rs")),
+                    PathBuf::from(path!("/project/b.rs"))
+                ]
+            );
+        });
+
+        let path_c = ProjectPath {
+            worktree_id: path_a.worktree_id,
+            path: rel_path("c.rs").into(),
+        };
+        let buffer_c = project
+            .update(cx, |project, cx| project.open_buffer(path_c.clone(), cx))
+            .await
+            .unwrap();
+        let entry_id_c = project.read_with(cx, |project, cx| {
+            project.entry_for_path(&path_c, cx).unwrap().id.to_proto()
+        });
+        let item_c = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new_in_worktree(
+                entry_id_c,
+                "c.rs",
+                path_a.worktree_id,
+                cx,
+            )])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_c.clone()), None, true, window, cx);
+        });
+        for path in [path!("/project/a.rs"), path!("/project/c.rs")] {
+            fs.remove_file(Path::new(path), RemoveOptions::default())
+                .await
+                .unwrap();
+        }
+        cx.run_until_parked();
+        pane.update_in(cx, |pane, window, cx| {
+            pane.remove_item(item_a.entity_id(), false, false, window, cx);
+            pane.remove_item(item_c.entity_id(), false, false, window, cx);
+        });
+        drop(buffer);
+        drop(buffer_c);
+        drop(item_a);
+        drop(item_c);
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.persisted_recent_navigation_history, expected);
+            assert_eq!(
+                workspace
+                    .recent_navigation_history_iter(cx)
+                    .map(|(_, path)| path.unwrap())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_recent_navigation_history_includes_persisted_paths(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -20310,6 +20753,77 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_panel_buttons_work_while_dock_is_zoomed(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        // Workspace actions are registered on the `MultiWorkspace` root, so a bare `Workspace`
+        // window wouldn't route dispatched actions to the workspace.
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        let (zoomed_panel, sibling_panel) = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.register_action(|workspace, _: &ToggleSecondTestPanel, window, cx| {
+                workspace.toggle_panel_focus::<SecondTestPanel>(window, cx);
+            });
+            let sibling_panel = cx.new(|cx| SecondTestPanel {
+                focus_handle: cx.focus_handle(),
+                zoomed: false,
+            });
+            workspace.add_panel(sibling_panel.clone(), window, cx);
+            let zoomed_panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
+            workspace.add_panel(zoomed_panel.clone(), window, cx);
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+            (zoomed_panel, sibling_panel)
+        });
+        zoomed_panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Bottom));
+        });
+
+        let sibling_button = cx
+            .debug_bounds("ICON-Terminal")
+            .expect("sibling panel button should be rendered in the status bar");
+        cx.simulate_click(sibling_button.center(), Modifiers::none());
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(dock.is_open());
+            assert_eq!(
+                dock.active_panel().map(|panel| panel.panel_id()),
+                Some(sibling_panel.entity_id()),
+            );
+            assert!(
+                sibling_panel
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            );
+        });
+
+        sibling_panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Bottom));
+        });
+
+        let close_button = cx
+            .debug_bounds("ICON-Terminal")
+            .expect("active panel button should be rendered in the status bar");
+        cx.simulate_click(close_button.center(), Modifiers::none());
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(!workspace.bottom_dock().read(cx).is_open());
+            assert_eq!(workspace.zoomed_position, None);
+        });
+    }
+
+    actions!(test_only, [ToggleSecondTestPanel]);
+
     struct SecondTestPanel {
         focus_handle: FocusHandle,
         zoomed: bool,
@@ -20355,15 +20869,15 @@ mod tests {
         }
 
         fn icon(&self, _: &Window, _: &App) -> Option<ui::IconName> {
-            None
+            Some(ui::IconName::Terminal)
         }
 
         fn icon_tooltip(&self, _: &Window, _: &App) -> Option<&'static str> {
-            None
+            Some("Second Test Panel")
         }
 
         fn toggle_action(&self) -> Box<dyn Action> {
-            crate::dock::test::ToggleTestPanel.boxed_clone()
+            ToggleSecondTestPanel.boxed_clone()
         }
 
         fn activation_priority(&self) -> u32 {

@@ -40,10 +40,9 @@ use git::{
     repository::{
         Branch, BranchesScanResult, CommitData, CommitDetails, CommitFileStatus, CommitOptions,
         CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions, FileHistoryChangedFileSets,
-        GitCommitTemplate, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData,
-        LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
-        SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
-        is_binary_content,
+        GitCommitTemplate, GitRepository, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
+        Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
+        Worktree as GitWorktree, delete_branch_flag, is_binary_content,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -492,11 +491,6 @@ struct LocalDownstreamState {
     project_id: ProjectId,
     updates_tx: mpsc::UnboundedSender<DownstreamUpdate>,
     _task: Task<Result<()>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct GitStoreCheckpoint {
-    checkpoints_by_work_dir_abs_path: HashMap<Arc<Path>, GitRepositoryCheckpoint>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1065,12 +1059,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_run_hook);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
-        client.add_entity_request_handler(Self::handle_create_checkpoint);
         client.add_entity_request_handler(Self::handle_create_archive_checkpoint);
-        client.add_entity_request_handler(Self::handle_restore_checkpoint);
         client.add_entity_request_handler(Self::handle_restore_archive_checkpoint);
-        client.add_entity_request_handler(Self::handle_compare_checkpoints);
-        client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_add_path_to_gitignore);
@@ -2150,92 +2140,6 @@ impl GitStore {
     ) -> Option<FileStatus> {
         let (repo, repo_path) = self.repository_and_path_for_project_path(project_path, cx)?;
         Some(repo.read(cx).status_for_path(&repo_path)?.status)
-    }
-
-    pub fn checkpoint(&self, cx: &mut App) -> Task<Result<GitStoreCheckpoint>> {
-        let mut work_directory_abs_paths = Vec::new();
-        let mut checkpoints = Vec::new();
-        for repository in self.repositories.values() {
-            repository.update(cx, |repository, _| {
-                work_directory_abs_paths.push(repository.snapshot.work_directory_abs_path.clone());
-                checkpoints.push(repository.checkpoint().map(|checkpoint| checkpoint?));
-            });
-        }
-
-        cx.background_executor().spawn(async move {
-            let checkpoints = future::try_join_all(checkpoints).await?;
-            Ok(GitStoreCheckpoint {
-                checkpoints_by_work_dir_abs_path: work_directory_abs_paths
-                    .into_iter()
-                    .zip(checkpoints)
-                    .collect(),
-            })
-        })
-    }
-
-    pub fn restore_checkpoint(
-        &self,
-        checkpoint: GitStoreCheckpoint,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        let repositories_by_work_dir_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
-            .collect::<HashMap<_, _>>();
-
-        let mut tasks = Vec::new();
-        for (work_dir_abs_path, checkpoint) in checkpoint.checkpoints_by_work_dir_abs_path {
-            if let Some(repository) = repositories_by_work_dir_abs_path.get(&work_dir_abs_path) {
-                let restore = repository.update(cx, |repository, _| {
-                    repository.restore_checkpoint(checkpoint)
-                });
-                tasks.push(async move { restore.await? });
-            }
-        }
-        cx.background_spawn(async move {
-            future::try_join_all(tasks).await?;
-            Ok(())
-        })
-    }
-
-    /// Compares two checkpoints, returning true if they are equal.
-    pub fn compare_checkpoints(
-        &self,
-        left: GitStoreCheckpoint,
-        mut right: GitStoreCheckpoint,
-        cx: &mut App,
-    ) -> Task<Result<bool>> {
-        let repositories_by_work_dir_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
-            .collect::<HashMap<_, _>>();
-
-        let mut tasks = Vec::new();
-        for (work_dir_abs_path, left_checkpoint) in left.checkpoints_by_work_dir_abs_path {
-            if let Some(right_checkpoint) = right
-                .checkpoints_by_work_dir_abs_path
-                .remove(&work_dir_abs_path)
-            {
-                if let Some(repository) = repositories_by_work_dir_abs_path.get(&work_dir_abs_path)
-                {
-                    let compare = repository.update(cx, |repository, _| {
-                        repository.compare_checkpoints(left_checkpoint, right_checkpoint)
-                    });
-
-                    tasks.push(async move { compare.await? });
-                }
-            } else {
-                return Task::ready(Ok(false));
-            }
-        }
-        cx.background_spawn(async move {
-            Ok(future::try_join_all(tasks)
-                .await?
-                .into_iter()
-                .all(|result| result))
-        })
     }
 
     /// Blames a buffer.
@@ -4453,23 +4357,6 @@ impl GitStore {
         })
     }
 
-    async fn handle_create_checkpoint(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GitCreateCheckpoint>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::GitCreateCheckpointResponse> {
-        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
-        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-
-        let checkpoint = repository_handle
-            .update(&mut cx, |repository, _| repository.checkpoint())
-            .await??;
-
-        Ok(proto::GitCreateCheckpointResponse {
-            commit_sha: checkpoint.commit_sha.as_bytes().to_vec(),
-        })
-    }
-
     async fn handle_create_archive_checkpoint(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitCreateArchiveCheckpoint>,
@@ -4490,27 +4377,6 @@ impl GitStore {
         })
     }
 
-    async fn handle_restore_checkpoint(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GitRestoreCheckpoint>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
-        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-
-        let checkpoint = GitRepositoryCheckpoint {
-            commit_sha: Oid::from_bytes(&envelope.payload.commit_sha)?,
-        };
-
-        repository_handle
-            .update(&mut cx, |repository, _| {
-                repository.restore_checkpoint(checkpoint)
-            })
-            .await??;
-
-        Ok(proto::Ack {})
-    }
-
     async fn handle_restore_archive_checkpoint(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitRestoreArchiveCheckpoint>,
@@ -4528,54 +4394,6 @@ impl GitStore {
             .await??;
 
         Ok(proto::Ack {})
-    }
-
-    async fn handle_compare_checkpoints(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GitCompareCheckpoints>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::GitCompareCheckpointsResponse> {
-        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
-        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-
-        let left = GitRepositoryCheckpoint {
-            commit_sha: Oid::from_bytes(&envelope.payload.left_commit_sha)?,
-        };
-        let right = GitRepositoryCheckpoint {
-            commit_sha: Oid::from_bytes(&envelope.payload.right_commit_sha)?,
-        };
-
-        let equal = repository_handle
-            .update(&mut cx, |repository, _| {
-                repository.compare_checkpoints(left, right)
-            })
-            .await??;
-
-        Ok(proto::GitCompareCheckpointsResponse { equal })
-    }
-
-    async fn handle_diff_checkpoints(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GitDiffCheckpoints>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::GitDiffCheckpointsResponse> {
-        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
-        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-
-        let base = GitRepositoryCheckpoint {
-            commit_sha: Oid::from_bytes(&envelope.payload.base_commit_sha)?,
-        };
-        let target = GitRepositoryCheckpoint {
-            commit_sha: Oid::from_bytes(&envelope.payload.target_commit_sha)?,
-        };
-
-        let diff = repository_handle
-            .update(&mut cx, |repository, _| {
-                repository.diff_checkpoints(base, target)
-            })
-            .await??;
-
-        Ok(proto::GitDiffCheckpointsResponse { diff })
     }
 
     async fn handle_load_commit_diff(
@@ -9986,53 +9804,6 @@ impl Repository {
         )
     }
 
-    pub fn checkpoint(&mut self) -> oneshot::Receiver<Result<GitRepositoryCheckpoint>> {
-        let id = self.id;
-        self.send_job("checkpoint", None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.checkpoint().await
-                }
-                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    let response = client
-                        .request(proto::GitCreateCheckpoint {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                        })
-                        .await?;
-
-                    Ok(GitRepositoryCheckpoint {
-                        commit_sha: Oid::from_bytes(&response.commit_sha)?,
-                    })
-                }
-            }
-        })
-    }
-
-    pub fn restore_checkpoint(
-        &mut self,
-        checkpoint: GitRepositoryCheckpoint,
-    ) -> oneshot::Receiver<Result<()>> {
-        let id = self.id;
-        self.send_job("restore_checkpoint", None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.restore_checkpoint(checkpoint).await
-                }
-                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    client
-                        .request(proto::GitRestoreCheckpoint {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            commit_sha: checkpoint.commit_sha.as_bytes().to_vec(),
-                        })
-                        .await?;
-                    Ok(())
-                }
-            }
-        })
-    }
-
     pub(crate) fn apply_remote_update(
         &mut self,
         update: proto::UpdateRepository,
@@ -10132,60 +9903,6 @@ impl Repository {
         }
         self.clear_pending_ops(cx);
         Ok(())
-    }
-
-    pub fn compare_checkpoints(
-        &mut self,
-        left: GitRepositoryCheckpoint,
-        right: GitRepositoryCheckpoint,
-    ) -> oneshot::Receiver<Result<bool>> {
-        let id = self.id;
-        self.send_job("compare_checkpoints", None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.compare_checkpoints(left, right).await
-                }
-                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    let response = client
-                        .request(proto::GitCompareCheckpoints {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            left_commit_sha: left.commit_sha.as_bytes().to_vec(),
-                            right_commit_sha: right.commit_sha.as_bytes().to_vec(),
-                        })
-                        .await?;
-                    Ok(response.equal)
-                }
-            }
-        })
-    }
-
-    pub fn diff_checkpoints(
-        &mut self,
-        base_checkpoint: GitRepositoryCheckpoint,
-        target_checkpoint: GitRepositoryCheckpoint,
-    ) -> oneshot::Receiver<Result<String>> {
-        let id = self.id;
-        self.send_job("diff_checkpoints", None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend
-                        .diff_checkpoints(base_checkpoint, target_checkpoint)
-                        .await
-                }
-                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    let response = client
-                        .request(proto::GitDiffCheckpoints {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            base_commit_sha: base_checkpoint.commit_sha.as_bytes().to_vec(),
-                            target_commit_sha: target_checkpoint.commit_sha.as_bytes().to_vec(),
-                        })
-                        .await?;
-                    Ok(response.diff)
-                }
-            }
-        })
     }
 
     fn clear_pending_ops(&mut self, cx: &mut Context<Self>) {
