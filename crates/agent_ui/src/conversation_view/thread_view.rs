@@ -5207,9 +5207,10 @@ impl ThreadView {
             return false;
         };
 
-        // An ACP subagent reports its own outcome; a native one's is its parent's tool call.
+        // A subagent that reports its own state shows that. Otherwise, as for a native
+        // subagent saved before it recorded outcomes, its outcome is its parent's tool call.
         let thread = self.thread.read(cx);
-        if thread.subagent_association().is_some() {
+        if thread.subagent_association().is_some() && thread.has_received_session_state() {
             return SubagentCardState::from_acp_subagent(thread, None)
                 .status
                 .is_failed_or_canceled();
@@ -11957,11 +11958,16 @@ impl ThreadView {
                 .and_then(|connected| connected.threads.get(&session_id))
         });
 
+        let state = SubagentCardState::for_subagent_tool_call(
+            tool_call,
+            subagent_thread_view.map(|view| view.read(cx).thread.read(cx)),
+            cx,
+        );
         let content = self.render_subagent_card(
             active_session_id,
             entry_ix,
             &SubagentCardId::ToolCall(tool_call.id.clone()),
-            &SubagentCardState::from_tool_call(tool_call, cx),
+            &state,
             subagent_thread_view,
             focus_handle,
             window,

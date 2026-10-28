@@ -4052,6 +4052,12 @@ impl AcpThread {
         self
     }
 
+    /// Marks a subagent session whose parent runs in Zed, such as a native subagent. Unlike
+    /// `agent_owned`, Zed still submits its prompts.
+    pub fn set_subagent_association(&mut self, association: subagents::SubagentAssociation) {
+        self.subagent_association = Some(association);
+    }
+
     pub fn subagent_association(&self) -> Option<&subagents::SubagentAssociation> {
         self.subagent_association.as_ref()
     }
@@ -4306,6 +4312,32 @@ impl AcpThread {
     /// Distinguishes a received snapshot from the default Idle used by new sessions.
     pub fn has_received_session_state(&self) -> bool {
         self.received_session_state
+    }
+
+    /// Restores the outcomes a subagent reported before it was saved, each with the entry
+    /// count when it was reported, after its entries have been replayed. The last one is
+    /// also its current state, unless entries followed it, as when Zed quit mid-run.
+    pub fn restore_subagent_outcomes(
+        &mut self,
+        outcomes: Vec<(usize, acp_v2::StateUpdate)>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            self.subagent_association.is_some(),
+            "Session is not a subagent"
+        );
+        let current = outcomes
+            .last()
+            .filter(|(entry_count, _)| *entry_count == self.entries.len())
+            .map(|(_, state)| state.clone());
+        self.subagent_outcomes = outcomes;
+        match current {
+            Some(state) => self.update_session_state(state, cx),
+            None => {
+                cx.notify();
+                Ok(())
+            }
+        }
     }
 
     /// The first idle state this subagent reported after the entry at `entry_ix` arrived.
@@ -4681,8 +4713,14 @@ impl AcpThread {
         let was_in_progress = self.activity.in_progress();
         self.received_session_state = true;
         if self.subagent_association.is_some() && matches!(state, acp_v2::StateUpdate::Idle(_)) {
-            self.subagent_outcomes
-                .push((self.entries.len(), state.clone()));
+            let entry_count = self.entries.len();
+            // An idle report with no entries since the previous one restates that outcome.
+            match self.subagent_outcomes.last_mut() {
+                Some((last_entry_count, last_state)) if *last_entry_count == entry_count => {
+                    *last_state = state.clone();
+                }
+                _ => self.subagent_outcomes.push((entry_count, state.clone())),
+            }
         }
         self.set_foreground_state(state, cx);
         if let Some(acp_v2::StateUpdate::Idle(idle)) = self.activity.state() {

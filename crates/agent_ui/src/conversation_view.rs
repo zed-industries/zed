@@ -6952,6 +6952,111 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_finished_subagent_tool_call_shows_its_runs_reported_outcome(
+        cx: &mut TestAppContext,
+    ) {
+        use super::subagent_card::{SubagentCardState, SubagentStatus};
+
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+        let parent = cx.update(|cx| {
+            create_test_acp_thread(None, "parent", connection.clone(), project.clone(), cx)
+        });
+        let parent_session_id = parent.read_with(cx, |thread, _| thread.session_id().clone());
+        let reporting = cx.update(|cx| {
+            create_test_acp_subagent(
+                parent_session_id.clone(),
+                "reporting",
+                connection.clone(),
+                project.clone(),
+                cx,
+            )
+        });
+        let silent = cx.update(|cx| {
+            create_test_acp_subagent(
+                parent_session_id.clone(),
+                "silent",
+                connection.clone(),
+                project.clone(),
+                cx,
+            )
+        });
+        let without_association = cx.update(|cx| {
+            create_test_acp_thread(
+                Some(parent_session_id),
+                "unassociated",
+                connection,
+                project,
+                cx,
+            )
+        });
+        for subagent in [&reporting, &silent, &without_association] {
+            subagent
+                .update(cx, |subagent, cx| {
+                    subagent.upsert_assistant_message(
+                        acp_v2::AgentMessage::new("work").content(vec!["Working".into()]),
+                        cx,
+                    )
+                })
+                .expect("subagent work");
+        }
+        reporting
+            .update(cx, |subagent, cx| {
+                subagent.update_session_state(
+                    acp_v2::StateUpdate::Idle(
+                        acp_v2::IdleStateUpdate::new().stop_reason(acp_v2::StopReason::Cancelled),
+                    ),
+                    cx,
+                )
+            })
+            .expect("reported outcome");
+
+        let spawn = |id: &str, status, end, cx: &mut TestAppContext| {
+            let session_info = acp_v2::Meta::from_iter([(
+                acp_thread::SUBAGENT_SESSION_INFO_META_KEY.into(),
+                serde_json::to_value(acp_thread::SubagentSessionInfo {
+                    session_id: acp_v2::SessionId::new("child"),
+                    message_start_index: 0,
+                    message_end_index: end,
+                })
+                .expect("subagent session info should serialize"),
+            )]);
+            parent
+                .update(cx, |thread, cx| {
+                    thread.upsert_wire_tool_call(
+                        acp_v2::ToolCallUpdate::new(id)
+                            .title("Explore")
+                            .status(status)
+                            .content(vec!["Found it".into()])
+                            .meta(session_info),
+                        cx,
+                    )
+                })
+                .expect("spawn tool call should apply");
+        };
+        spawn("finished", acp_v2::ToolCallStatus::Completed, Some(0), cx);
+        spawn("running", acp_v2::ToolCallStatus::InProgress, None, cx);
+
+        for (id, subagent, expected) in [
+            ("finished", &reporting, SubagentStatus::Canceled),
+            ("finished", &silent, SubagentStatus::Completed),
+            ("finished", &without_association, SubagentStatus::Completed),
+            ("running", &reporting, SubagentStatus::Running),
+        ] {
+            let state = cx.update(|cx| {
+                let parent = parent.read(cx);
+                let (_, tool_call) = parent
+                    .tool_call(&acp_v2::ToolCallId::new(id))
+                    .expect("spawn tool call should exist");
+                SubagentCardState::for_subagent_tool_call(tool_call, Some(subagent.read(cx)), cx)
+            });
+            let subagent_id = subagent.read_with(cx, |subagent, _| subagent.session_id().clone());
+            assert_eq!(state.status, expected, "{id} with {subagent_id}");
+        }
+    }
+
+    #[gpui::test]
     async fn test_referenced_subagents_load_only_without_the_subagents_rfd(
         cx: &mut TestAppContext,
     ) {

@@ -146,6 +146,18 @@ pub struct SubagentContext {
 
     /// Current depth level (0 = root agent, 1 = first-level subagent, etc.)
     pub depth: u8,
+
+    /// How each run of this subagent ended, so its cards keep their outcomes after a reload.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outcomes: Vec<SubagentOutcome>,
+}
+
+/// How one run of a subagent ended.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubagentOutcome {
+    /// The number of entries in the subagent's transcript when the run ended.
+    pub entry_count: usize,
+    pub stop_reason: acp_v2::StopReason,
 }
 
 /// The ID of the user prompt that initiated a request.
@@ -1382,6 +1394,7 @@ impl Thread {
         thread.subagent_context = Some(SubagentContext {
             parent_thread_id: parent_thread.read(cx).id().clone(),
             depth: parent_thread.read(cx).depth() + 1,
+            outcomes: Vec::new(),
         });
         thread.inherit_parent_settings(parent_thread, cx);
         let model_selection = model_selection
@@ -4569,6 +4582,23 @@ impl Thread {
 
     pub fn depth(&self) -> u8 {
         self.subagent_context.as_ref().map(|c| c.depth).unwrap_or(0)
+    }
+
+    pub fn subagent_outcomes(&self) -> &[SubagentOutcome] {
+        self.subagent_context
+            .as_ref()
+            .map_or(&[], |context| context.outcomes.as_slice())
+    }
+
+    pub fn record_subagent_outcome(&mut self, outcome: SubagentOutcome, cx: &mut Context<Self>) {
+        let Some(context) = self.subagent_context.as_mut() else {
+            return;
+        };
+        match context.outcomes.last_mut() {
+            Some(last) if last.entry_count == outcome.entry_count => *last = outcome,
+            _ => context.outcomes.push(outcome),
+        }
+        cx.notify();
     }
 
     #[cfg(any(test, feature = "test-support"))]
