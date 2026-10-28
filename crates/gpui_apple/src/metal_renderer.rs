@@ -801,7 +801,7 @@ impl MetalRenderer {
                 PrimitiveBatch::Shadows(range) => {
                     self.draw_shadows(range, instance_bindings, viewport_size, &command_encoder)
                 }
-                PrimitiveBatch::Quads(range) => {
+                PrimitiveBatch::Quads { range, .. } => {
                     self.draw_quads(range, instance_bindings, viewport_size, &command_encoder)
                 }
                 PrimitiveBatch::PathTiles(range) => {

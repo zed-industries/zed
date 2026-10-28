@@ -1517,7 +1517,7 @@ impl WgpuRendererCore {
 
             for batch in scene.batches() {
                 match batch {
-                    PrimitiveBatch::Quads(range) => self.draw_instances(
+                    PrimitiveBatch::Quads { range, .. } => self.draw_instances(
                         &instance_bindings.quads,
                         &self.resources().pipelines.quads,
                         instance_range(range),
