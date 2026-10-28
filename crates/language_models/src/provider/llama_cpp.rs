@@ -691,6 +691,11 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
+    fn refresh_models(&self, cx: &mut App) {
+        self.state
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
+    }
+
     fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.clone();
         Some(ProviderSettingsView::SubPage(
@@ -1470,46 +1475,12 @@ impl Render for ConfigurationView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use credentials_provider::test_support::FakeCredentialsProvider;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
-    use language_model::LanguageModelToolUse;
+    use language_model::{LanguageModelRegistry, LanguageModelToolUse};
     use parking_lot::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
-
-    struct FakeCredentialsProvider {
-        api_key: Vec<u8>,
-    }
-
-    impl CredentialsProvider for FakeCredentialsProvider {
-        fn read_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>,
-        > {
-            let api_key = self.api_key.clone();
-            Box::pin(async move { Ok(Some(("Bearer".to_string(), api_key))) })
-        }
-
-        fn write_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _username: &'a str,
-            _password: &'a [u8],
-            _cx: &'a AsyncApp,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn delete_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
-    }
 
     fn entry(id: &str, n_ctx: Option<u64>, n_ctx_train: Option<u64>) -> ModelEntry {
         ModelEntry {
@@ -1816,9 +1787,7 @@ mod tests {
         let provider = cx.update(|cx| {
             LlamaCppLanguageModelProvider::new(
                 FakeHttpClient::with_404_response(),
-                Arc::new(FakeCredentialsProvider {
-                    api_key: Vec::new(),
-                }),
+                Arc::new(FakeCredentialsProvider::default()),
                 cx,
             )
         });
@@ -1882,6 +1851,79 @@ mod tests {
     }
 
     #[gpui::test]
+    fn registry_refreshes_models_while_credentials_are_pending(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        let request_count = AtomicUsize::new(0);
+        let http_client = FakeHttpClient::create(move |request| {
+            let first_request = request_count.fetch_add(1, Ordering::SeqCst) == 0;
+            async move {
+                let (status, body) = match request.uri().path() {
+                    "/v1/models" if first_request => (503, "not ready"),
+                    "/v1/models" => (200, r#"{"data":[{"id":"refreshed-model"}]}"#),
+                    "/props" => (200, "{}"),
+                    path => anyhow::bail!("unexpected request: {path}"),
+                };
+                Ok(http_client::Response::builder()
+                    .status(status)
+                    .body(http_client::AsyncBody::from(body))?)
+            }
+        });
+        let credentials = Arc::new(FakeCredentialsProvider::default());
+        let pending_credentials = credentials.defer_read(LLAMA_CPP_API_URL);
+        let provider = cx.update(|cx| {
+            let provider = Arc::new(LlamaCppLanguageModelProvider::new(
+                http_client,
+                credentials.clone(),
+                cx,
+            ));
+            provider.state.update(cx, |state, cx| {
+                state.api_key_state = ApiKeyState::new(
+                    LlamaCppLanguageModelProvider::api_url(cx),
+                    EnvVar {
+                        name: SharedString::from(API_KEY_ENV_VAR_NAME),
+                        value: None,
+                    },
+                );
+            });
+            provider
+        });
+        cx.run_until_parked();
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(provider.clone(), cx);
+            registry.authenticate_providers(cx);
+        });
+        cx.run_until_parked();
+        assert!(cx.update(|cx| provider.provided_models(cx).is_empty()));
+        credentials.assert_reads(&[LLAMA_CPP_API_URL]);
+
+        registry.update(cx, |registry, cx| registry.authenticate_providers(cx));
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|cx| provider
+                .provided_models(cx)
+                .into_iter()
+                .map(|model| model.id.0.to_string())
+                .collect::<Vec<_>>()),
+            ["refreshed-model"]
+        );
+        credentials.assert_reads(&[LLAMA_CPP_API_URL]);
+        assert!(!pending_credentials.is_canceled());
+        let provider_id = provider.id();
+        drop(provider);
+        registry.update(cx, |registry, cx| {
+            registry.unregister_provider(provider_id, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|_| ());
+        cx.run_until_parked();
+        assert!(pending_credentials.is_canceled());
+    }
+
+    #[gpui::test]
     async fn authenticate_fetches_models_after_loading_api_key(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -1932,9 +1974,12 @@ mod tests {
                 }
             }
         });
-        let credentials_provider = Arc::new(FakeCredentialsProvider {
-            api_key: b"loaded-key".to_vec(),
-        });
+        let credentials_provider = Arc::new(FakeCredentialsProvider::default());
+        credentials_provider
+            .state
+            .lock()
+            .keys
+            .insert(LLAMA_CPP_API_URL.to_string(), b"loaded-key".to_vec());
         let provider = cx
             .update(|cx| LlamaCppLanguageModelProvider::new(http_client, credentials_provider, cx));
 
@@ -1963,9 +2008,7 @@ mod tests {
                 .status(500)
                 .body(http_client::AsyncBody::from("server error"))?)
         });
-        let credentials_provider = Arc::new(FakeCredentialsProvider {
-            api_key: b"test-key".to_vec(),
-        });
+        let credentials_provider = Arc::new(FakeCredentialsProvider::default());
         let provider = cx
             .update(|cx| LlamaCppLanguageModelProvider::new(http_client, credentials_provider, cx));
         cx.run_until_parked();
