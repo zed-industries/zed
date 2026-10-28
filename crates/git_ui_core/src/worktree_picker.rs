@@ -678,9 +678,8 @@ impl WorktreePickerDelegate {
         multi_workspace
             .read(cx)
             .workspaces_for_project_group(&group_key, cx)
-            .into_iter()
             .find(|group_workspace| {
-                *group_workspace != workspace
+                *group_workspace != &workspace
                     && group_workspace
                         .read(cx)
                         .project()
@@ -688,6 +687,7 @@ impl WorktreePickerDelegate {
                         .visible_worktrees(cx)
                         .any(|worktree| worktree.read(cx).abs_path().as_ref() == worktree_path)
             })
+            .cloned()
     }
 
     fn remove_worktree_from_window(
