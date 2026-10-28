@@ -4655,8 +4655,8 @@ pub(crate) mod tests {
             response: response.clone(),
         };
         let (conversation_view, cx) = setup_conversation_view(server, cx).await;
-        let first_request_id = acp_v1::RequestId::Number(1);
-        let second_request_id = acp_v1::RequestId::Number(2);
+        let first_request_id = acp_v2::RequestId::Number(1);
+        let second_request_id = acp_v2::RequestId::Number(2);
         let first_elicitation_id = store.read_with(cx, |store, _cx| {
             assert_eq!(
                 store.elicitations().len(),
@@ -7472,8 +7472,8 @@ pub(crate) mod tests {
                 .available_commands()
                 .to_vec();
             assert_eq!(available_commands.len(), 1);
-            assert_eq!(available_commands[0].name.as_str(), "help");
-            assert_eq!(available_commands[0].description.as_str(), "Get help");
+            assert_eq!(available_commands[0].name(), "help");
+            assert_eq!(available_commands[0].description(), "Get help");
         });
 
         assert_eq!(
@@ -7494,6 +7494,7 @@ pub(crate) mod tests {
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _cx| view.thread.clone());
         let command_payload = json!({
+            "type": "command",
             "name": "deploy",
             "description": "Updated command",
             "input": {
@@ -10149,7 +10150,7 @@ pub(crate) mod tests {
                     .request_elicitation(
                         acp_v2::CreateElicitationRequest::new(
                             acp_v2::ElicitationFormMode::new(
-                                acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                                acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                                 acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
@@ -10165,7 +10166,7 @@ pub(crate) mod tests {
                             acp_v2::CreateElicitationRequest::new(
                                 acp_v2::ElicitationFormMode::new(
                                     acp_v2::ElicitationRequestScope::new(
-                                        acp_v1::RequestId::Number(2),
+                                        acp_v2::RequestId::Number(2),
                                     ),
                                     acp_v2::ElicitationSchema::new().string("account", true),
                                 ),
@@ -10281,7 +10282,7 @@ pub(crate) mod tests {
                     .request_elicitation(
                         acp_v2::CreateElicitationRequest::new(
                             acp_v2::ElicitationFormMode::new(
-                                acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                                acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                                 acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
@@ -10435,22 +10436,25 @@ pub(crate) mod tests {
                 authenticated: Arc::new(Mutex::new(false)),
                 error_source: AuthErrorSource::Marker,
                 auth_methods: vec![
-                    acp_v2::AuthMethod::Other(
-                        acp_v2::OtherAuthMethod::new(
-                            "_future_login",
-                            Self::OTHER_AUTH_METHOD_ID,
-                            "Future Login",
-                            std::collections::BTreeMap::from([
-                                ("args".into(), json!(["must-not-run"])),
-                                ("details".into(), json!({"nested": [1, {"preserve": true}]})),
-                            ]),
-                        )
-                        .description("Not supported by this client")
-                        .meta(serde_json::Map::from_iter([(
-                            "terminal-auth".into(),
-                            json!({"command": "must-not-run", "args": ["login"]}),
-                        )])),
-                    ),
+                    acp_v2::AuthMethod::Other(acp_v2::OtherAuthMethod::new(
+                        "_future_login",
+                        Self::OTHER_AUTH_METHOD_ID,
+                        "Future Login",
+                        std::collections::BTreeMap::from([
+                            ("args".into(), json!(["must-not-run"])),
+                            ("details".into(), json!({"nested": [1, {"preserve": true}]})),
+                            ("description".into(), json!("Not supported by this client")),
+                            (
+                                "_meta".into(),
+                                json!({
+                                    "terminal-auth": {
+                                        "command": "must-not-run",
+                                        "args": ["login"],
+                                    },
+                                }),
+                            ),
+                        ]),
+                    )),
                     acp_v2::AuthMethod::Agent(
                         acp_v2::AuthMethodAgent::new(Self::AUTH_METHOD_ID, "Test Login")
                             .description("Sign in with the test provider")
@@ -18639,7 +18643,7 @@ pub(crate) mod tests {
         click_generic_permission(first_id, None, cx);
         assert_eq!(
             first_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         thread.read_with(cx, |thread, _| {
             let (_, tool) = thread.tool_call(&"permission-tool".into()).expect("tool");
@@ -18869,7 +18873,10 @@ pub(crate) mod tests {
                 );
             });
             click_generic_permission(request_id, None, cx);
-            assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+            assert_eq!(
+                response.await,
+                acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+            );
             assert!(
                 cx.debug_bounds("generic-permission-title-**Permission title**")
                     .is_none()
@@ -19034,7 +19041,7 @@ pub(crate) mod tests {
         click_generic_permission(third_id, None, cx);
         assert_eq!(
             third_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         drop(original_root);
     }
@@ -19099,7 +19106,7 @@ pub(crate) mod tests {
         click_generic_permission(generic_id, None, cx);
         assert_eq!(
             generic_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         cx.focus(&thread_view);
         cx.dispatch_action(crate::AllowOnce);
@@ -19221,7 +19228,7 @@ pub(crate) mod tests {
         click_generic_permission(child_id, None, cx);
         assert_eq!(
             child_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         assert!(root.read_with(cx, |thread, _| thread.permission_request(root_id).is_some()));
         conversation_view.update_in(cx, |view, window, cx| {
@@ -19231,7 +19238,7 @@ pub(crate) mod tests {
         click_generic_permission(root_id, None, cx);
         assert_eq!(
             root_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
     }
 
@@ -19325,7 +19332,7 @@ pub(crate) mod tests {
             click_generic_permission(later_id, None, cx);
             assert_eq!(
                 later_response.await,
-                acp_v2::RequestPermissionOutcome::Cancelled
+                acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
             );
         }
         root.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));

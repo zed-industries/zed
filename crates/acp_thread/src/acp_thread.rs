@@ -154,9 +154,8 @@ pub fn meta_with_command_category(category: CommandCategory) -> acp_v2::Meta {
     acp_v2::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), category.as_str().into())])
 }
 
-pub fn command_category_from_meta(meta: &Option<acp_v2::Meta>) -> Option<CommandCategory> {
-    meta.as_ref()
-        .and_then(|m| m.get(COMMAND_CATEGORY_META_KEY))
+pub fn command_category_from_meta(meta: Option<&acp_v2::Meta>) -> Option<CommandCategory> {
+    meta.and_then(|m| m.get(COMMAND_CATEGORY_META_KEY))
         .and_then(|v| v.as_str())
         .and_then(CommandCategory::from_str)
 }
@@ -1138,7 +1137,7 @@ impl From<acp_v2::ToolCallLocation> for ToolCallLocation {
     fn from(location: acp_v2::ToolCallLocation) -> Self {
         Self {
             path: location.path.0,
-            line: location.line,
+            line: location.line.map(std::num::NonZeroU32::get),
             meta: location.meta,
         }
     }
@@ -1976,6 +1975,14 @@ impl From<acp_v1::ToolCallStatus> for ToolCallStatus {
     }
 }
 
+/// Lets v1 handlers answer an unknown terminal with `-32002`, as the protocol's error page asks.
+/// The data mirrors the `sessionId` that the error page specifies for unknown sessions.
+fn terminal_not_found(terminal_id: &acp_v2::TerminalId) -> anyhow::Error {
+    acp_v1::Error::from(acp_v1::ErrorCode::ResourceNotFound)
+        .data(serde_json::json!({ "terminalId": terminal_id.0.as_ref() }))
+        .into()
+}
+
 impl ToolCallStatus {
     fn from_reported(status: Option<&acp_v2::ToolCallStatus>) -> Option<Self> {
         match status? {
@@ -1984,7 +1991,8 @@ impl ToolCallStatus {
             acp_v2::ToolCallStatus::Completed => Some(Self::Completed),
             acp_v2::ToolCallStatus::Failed => Some(Self::Failed),
             acp_v2::ToolCallStatus::Cancelled => Some(Self::Canceled),
-            _ => None,
+            // The protocol says to treat an unrecognized status as still in progress.
+            _ => Some(Self::InProgress),
         }
     }
 
@@ -4836,12 +4844,12 @@ impl AcpThread {
                         .sender_session_id(
                             message
                                 .sender_session_id
-                                .map(|id| acp_v2::SessionId::new(id.0)),
+                                .map_value(|id| acp_v2::SessionId::new(id.0)),
                         )
                         .recipient_session_id(
                             message
                                 .recipient_session_id
-                                .map(|id| acp_v2::SessionId::new(id.0)),
+                                .map_value(|id| acp_v2::SessionId::new(id.0)),
                         )
                         .content(content)
                         .meta(message.meta),
@@ -4943,9 +4951,7 @@ impl AcpThread {
         chunk: acp_v2::SessionMessageChunk,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        // A chunk carries only content: its metadata does not patch the message's, and the
-        // RFD keeps a message's participants on `session_message`, so the participant fields
-        // that this schema version still has on chunks are ignored.
+        // A chunk carries only content: its metadata does not patch the message's.
         let previous_entry_count = self.entries.len();
         let location = self.keyed_message_location(MessageKind::Session, chunk.message_id, cx)?;
         self.append_message_content(
@@ -4957,13 +4963,11 @@ impl AcpThread {
         )
     }
 
-    /// Participants that an update omits keep their earlier value, and a known participant
-    /// cannot change.
     fn session_message_location(
         &mut self,
         id: acp_v2::MessageId,
-        sender: Option<acp_v2::SessionId>,
-        recipient: Option<acp_v2::SessionId>,
+        sender: MaybeUndefined<acp_v2::SessionId>,
+        recipient: MaybeUndefined<acp_v2::SessionId>,
         cx: &mut Context<Self>,
     ) -> Result<MessageLocation> {
         let location = self.keyed_message_location(MessageKind::Session, id, cx)?;
@@ -4976,14 +4980,11 @@ impl AcpThread {
             (&mut message.sender_session_id, sender),
             (&mut message.recipient_session_id, recipient),
         ] {
-            let Some(reported) = reported else {
-                continue;
-            };
-            anyhow::ensure!(
-                stored.as_ref().is_none_or(|stored| stored == &reported),
-                "Session message participants cannot change"
-            );
-            *stored = Some(reported);
+            match reported {
+                MaybeUndefined::Undefined => {}
+                MaybeUndefined::Null => *stored = None,
+                MaybeUndefined::Value(reported) => *stored = Some(reported),
+            }
         }
         Ok(location)
     }
@@ -6379,7 +6380,9 @@ impl AcpThread {
             cx.spawn(async move |_, _| {
                 receiver
                     .await
-                    .unwrap_or(acp_v2::RequestPermissionOutcome::Cancelled)
+                    .unwrap_or(acp_v2::RequestPermissionOutcome::Cancelled(
+                        Default::default(),
+                    ))
             }),
         ))
     }
@@ -6649,7 +6652,9 @@ impl AcpThread {
                 respond_tx.send(outcome).is_ok()
             }
             PermissionRequestData::Generic { respond_tx, .. } => respond_tx
-                .send(acp_v2::RequestPermissionOutcome::Cancelled)
+                .send(acp_v2::RequestPermissionOutcome::Cancelled(
+                    Default::default(),
+                ))
                 .is_ok(),
         };
         if !delivered {
@@ -7883,7 +7888,7 @@ impl AcpThread {
     ) -> Result<()> {
         self.terminals
             .get(&terminal_id)
-            .context("Terminal not found")?
+            .ok_or_else(|| terminal_not_found(&terminal_id))?
             .update(cx, |terminal, cx| {
                 terminal.kill(cx);
             });
@@ -7898,7 +7903,7 @@ impl AcpThread {
     ) -> Result<()> {
         self.terminals
             .remove(&terminal_id)
-            .context("Terminal not found")?
+            .ok_or_else(|| terminal_not_found(&terminal_id))?
             .update(cx, |terminal, cx| {
                 terminal.kill(cx);
             });
@@ -7909,8 +7914,8 @@ impl AcpThread {
     pub fn terminal(&self, terminal_id: acp_v2::TerminalId) -> Result<Entity<Terminal>> {
         self.terminals
             .get(&terminal_id)
-            .context("Terminal not found")
             .cloned()
+            .ok_or_else(|| terminal_not_found(&terminal_id))
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
@@ -8313,14 +8318,14 @@ mod tests {
                 CommandCategory::Native | CommandCategory::Mcp => {}
             }
             let meta = meta_with_command_category(category);
-            assert_eq!(command_category_from_meta(&Some(meta)), Some(category));
+            assert_eq!(command_category_from_meta(Some(&meta)), Some(category));
         }
 
         // Absent meta and unknown categories both decode to `None`.
-        assert_eq!(command_category_from_meta(&None), None);
+        assert_eq!(command_category_from_meta(None), None);
         let unknown =
             acp_v1::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), "future-category".into())]);
-        assert_eq!(command_category_from_meta(&Some(unknown)), None);
+        assert_eq!(command_category_from_meta(Some(&unknown)), None);
     }
 
     #[test]
@@ -11596,7 +11601,10 @@ mod tests {
             let (_, elicitation) = thread.elicitation(&elicitation_id).expect("elicitation");
             assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
         });
-        assert_eq!(generic.await, acp_v2::RequestPermissionOutcome::Cancelled);
+        assert_eq!(
+            generic.await,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+        );
         assert!(matches!(legacy.await, RequestPermissionOutcome::Cancelled));
         assert!(matches!(
             elicitation.await.action,
@@ -12092,7 +12100,7 @@ mod tests {
         assert_eq!(elicitation.await.action, acp_v2::ElicitationAction::Cancel);
         assert_eq!(
             generic_permission.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
@@ -12184,7 +12192,7 @@ mod tests {
         });
         assert_eq!(
             generic_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         assert!(matches!(
             local_response.await,
@@ -12980,7 +12988,7 @@ mod tests {
         });
         assert_eq!(
             permission.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         cx.run_until_parked();
         assert_eq!(
@@ -13573,7 +13581,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_session_messages_keep_participants_and_convert_from_v1(cx: &mut TestAppContext) {
+    async fn test_session_messages_patch_participants_and_convert_from_v1(cx: &mut TestAppContext) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
         thread.update(cx, |thread, cx| {
@@ -13593,19 +13601,23 @@ mod tests {
                 .expect("participants can arrive later");
             thread
                 .append_session_message_chunk(
-                    acp_v2::SessionMessageChunk::new("task", "reproducing".into())
-                        .sender_session_id(acp_v2::SessionId::new("other")),
+                    acp_v2::SessionMessageChunk::new("task", "reproducing".into()),
                     cx,
                 )
-                .expect("a chunk's participant fields are ignored");
-            let error = thread
+                .expect("a chunk appends content");
+            thread
                 .upsert_session_message(
                     acp_v2::SessionMessage::new("task")
                         .sender_session_id(acp_v2::SessionId::new("other")),
                     cx,
                 )
-                .expect_err("a known participant cannot change");
-            assert!(error.to_string().contains("cannot change"), "{error}");
+                .expect("a reported participant replaces the known one");
+            thread
+                .upsert_session_message(
+                    acp_v2::SessionMessage::new("task").recipient_session_id(MaybeUndefined::Null),
+                    cx,
+                )
+                .expect("null clears a participant");
             thread
                 .upsert_assistant_message(
                     acp_v2::AgentMessage::new("task").content(vec!["answer".into()]),
@@ -13621,8 +13633,8 @@ mod tests {
                 panic!("expected a session message, then an assistant message");
             };
             assert_eq!(message.identity, MessageIdentity::Keyed("task".into()));
-            assert_eq!(message.sender_session_id, Some("parent".into()));
-            assert_eq!(message.recipient_session_id, Some("child".into()));
+            assert_eq!(message.sender_session_id, Some("other".into()));
+            assert_eq!(message.recipient_session_id, None);
             assert_eq!(
                 message.content.source_blocks(),
                 &["Start by ".into(), "reproducing".into()]
@@ -16499,7 +16511,7 @@ mod tests {
                 call.reported_status,
                 Some(acp_v2::ToolCallStatus::Other("_future_status".into()))
             );
-            assert_eq!(call.status(), ToolCallStatus::Pending);
+            assert_eq!(call.status(), ToolCallStatus::InProgress);
             assert_eq!(call.name.as_deref(), Some("named"));
             assert_eq!(
                 serde_json::to_value(&call.meta).expect("metadata"),
@@ -19595,7 +19607,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
@@ -19864,7 +19876,7 @@ mod tests {
                 .request_elicitation_with_id(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
@@ -19906,7 +19918,7 @@ mod tests {
             })
         });
 
-        let request_id = acp_v1::RequestId::Number(1);
+        let request_id = acp_v2::RequestId::Number(1);
         let (elicitation_id, response_task) = store.update(cx, |store, cx| {
             store
                 .request_elicitation_with_id(
@@ -19947,7 +19959,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
@@ -19979,7 +19991,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
@@ -19993,7 +20005,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(2)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(2)),
                             acp_v2::ElicitationSchema::new().string("account", true),
                         ),
                         "Provide an account",
@@ -20043,7 +20055,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
@@ -20057,7 +20069,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(2)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(2)),
                             acp_v2::ElicitationSchema::new().string("account", true),
                         ),
                         "Provide an account",
@@ -20071,7 +20083,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationUrlMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(3)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(3)),
                             url_elicitation_id,
                             "https://example.com/complete",
                         ),
@@ -20154,7 +20166,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationUrlMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -20233,7 +20245,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationUrlMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -20470,7 +20482,7 @@ mod tests {
                 acp_v2::CreateElicitationRequest::new(
                     acp_v2::OtherElicitationMode::new(
                         "future",
-                        acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                        acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                         std::collections::BTreeMap::new(),
                     ),
                     "Use a future input mode",
@@ -24162,12 +24174,37 @@ mod tests {
         );
         for (id, response) in pending {
             thread.update(cx, |thread, cx| thread.cancel_permission_request(id, cx));
-            assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+            assert_eq!(
+                response.await,
+                acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+            );
         }
         thread.read_with(cx, |thread, _| {
             assert_eq!(thread.pending_permission_requests().count(), 0);
             assert!(thread.entries().is_empty());
             assert!(thread.is_idle_for_retention());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_unknown_terminal_is_resource_not_found(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let errors = [
+                thread.terminal(acp_v2::TerminalId::new("missing")).err(),
+                thread
+                    .kill_terminal(acp_v2::TerminalId::new("missing"), cx)
+                    .err(),
+                thread
+                    .release_terminal(acp_v2::TerminalId::new("missing"), cx)
+                    .err(),
+            ];
+            for error in errors {
+                let error = acp_v1::Error::from(error.expect("unknown terminal fails"));
+                assert_eq!(error.code, acp_v1::ErrorCode::ResourceNotFound);
+                assert_eq!(error.data, Some(json!({"terminalId": "missing"})));
+            }
         });
     }
 
@@ -24246,7 +24283,7 @@ mod tests {
         );
         assert_eq!(
             second_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
     }
 
@@ -24329,7 +24366,7 @@ mod tests {
         );
         assert_eq!(
             cancelled_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(
@@ -24440,7 +24477,10 @@ mod tests {
         drop(released_thread);
         cx.run_until_parked();
         assert!(released.upgrade().is_none());
-        assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+        );
     }
 
     #[gpui::test]
@@ -24497,7 +24537,10 @@ mod tests {
             );
         });
         thread.update(cx, |thread, cx| thread.cancel_permission_request(id, cx));
-        assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+        );
         assert_eq!(*events.borrow(), [(true, id), (false, id)]);
     }
 
@@ -24684,11 +24727,11 @@ mod tests {
             );
             assert_eq!(
                 first_response.await,
-                acp_v2::RequestPermissionOutcome::Cancelled
+                acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
             );
             assert_eq!(
                 second_response.await,
-                acp_v2::RequestPermissionOutcome::Cancelled
+                acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
             );
         }
 
@@ -24744,7 +24787,10 @@ mod tests {
                 thread.update(cx, |thread, cx| thread.cancel_permission_request(id, cx));
             }
             assert_eq!(*events.borrow(), [(true, id), (false, id)]);
-            assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+            assert_eq!(
+                response.await,
+                acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+            );
         }
     }
 

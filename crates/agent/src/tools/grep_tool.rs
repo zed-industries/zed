@@ -686,7 +686,7 @@ mod tests {
             locations.iter().any(|location| {
                 location.path.0.to_string_lossy().replace('\\', "/")
                     == path!("/root/src/alpha.txt").replace('\\', "/")
-                    && location.line == Some(1)
+                    && location.line.map(std::num::NonZeroU32::get) == Some(1)
             }),
             "missing location for alpha.txt, got: {locations:?}"
         );
@@ -694,7 +694,7 @@ mod tests {
             locations.iter().any(|location| {
                 location.path.0.to_string_lossy().replace('\\', "/")
                     == path!("/root/beta.txt").replace('\\', "/")
-                    && location.line == Some(1)
+                    && location.line.map(std::num::NonZeroU32::get) == Some(1)
             }),
             "missing location for beta.txt, got: {locations:?}"
         );

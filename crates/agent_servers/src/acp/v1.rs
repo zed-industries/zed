@@ -2602,7 +2602,7 @@ mod tests {
         let meta =
             acp_v2::Meta::from_iter([("custom".into(), json!({"values": [null, 7, "keep"]}))]);
         let status = acp_v2::TerminalExitStatus::new()
-            .exit_code(u32::MAX)
+            .exit_code(-1)
             .signal("SIG_CUSTOM")
             .meta(meta);
         let expected_status = json!({
@@ -3229,7 +3229,7 @@ mod tests {
                 .await
                 .expect("local cancellation response")
                 .outcome,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
 
         let (response, _cancellation) = harness.request(request, cx);
@@ -3258,7 +3258,7 @@ mod tests {
                 .await
                 .expect("dropped-owner response")
                 .outcome,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
     }
 
@@ -3709,16 +3709,18 @@ mod tests {
             })
         });
         let first = json!([
-            {"name": "opaque/手動", "description": "First command",
+            {"type": "command", "name": "opaque/手動", "description": "First command",
                 "input": {"type": "text", "hint": "Describe the task", "_meta": {"scope": "input"}},
                 "_meta": {"scope": "command", "retain": [null, 7]}},
-            {"name": "future", "description": "Unknown input",
-                "input": {"type": "_future", "payload": {"retain": [false, null]}}}
+            {"type": "command", "name": "future", "description": "Unknown input",
+                "input": {"type": "_future", "payload": {"retain": [false, null]}}},
+            {"type": "_future_kind", "name": "skill", "description": "Unknown command kind",
+                "payload": {"retain": [true]}}
         ]);
         let mut expected_events = Vec::new();
         for commands in [
             first,
-            json!([{"name": "only", "description": "Replacement command"}]),
+            json!([{"type": "command", "name": "only", "description": "Replacement command"}]),
             json!([]),
         ] {
             let expected: Vec<acp_v2::AvailableCommand> =
@@ -4877,7 +4879,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn v2_terminal_sdk_invalid_base64_is_atomic(cx: &mut gpui::TestAppContext) {
+    async fn v2_terminal_sdk_invalid_snapshot_keeps_output_and_applies_other_fields(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let harness = V2SessionHarness::new(cx).await;
         harness.send(
             serde_json::json!({
@@ -4891,31 +4895,25 @@ mod tests {
         );
         harness.drain(cx).await;
         let terminal = harness.terminal("terminal-1", cx);
-        let observe = |cx: &gpui::TestAppContext| {
+        let observe_output = |cx: &gpui::TestAppContext| {
             terminal.read_with(cx, |terminal, cx| {
                 let display = terminal.display_state().expect("display state");
                 let output = terminal.output().expect("completed terminal");
                 (
-                    display.command().map(str::to_owned),
-                    terminal.working_dir().clone(),
-                    display.meta.clone(),
                     display.output_meta.clone(),
-                    output.exit_status.clone(),
-                    output.ended_at,
                     output.content.clone(),
                     terminal.inner().read(cx).get_content(),
                 )
             })
         };
-        let before = observe(cx);
+        let output_before = observe_output(cx);
         let received_before = harness.received.lock().expect("receive mutex").len();
         for terminal_id in ["terminal-1", "unseen"] {
             harness.send(
                 serde_json::json!({
                     "sessionUpdate": "terminal_update", "terminalId": terminal_id,
-                    "command": "must not apply", "cwd": "/changed",
+                    "command": "applied", "cwd": "/changed",
                     "output": {"data": "not base64!", "_meta": {"scope": "bad snapshot"}},
-                    "exitStatus": {"exitCode": 99, "_meta": {"scope": "bad exit"}},
                     "_meta": {"scope": "bad terminal"}
                 }),
                 Some(v2_terminal_meta("bad envelope")),
@@ -4930,10 +4928,8 @@ mod tests {
                             "_meta": {"scope": "malformed envelope"},
                             "update": {
                                 "sessionUpdate": "terminal_update", "terminalId": terminal_id,
-                                "command": "must not apply", "cwd": "/changed",
                                 "output": {"data": 42},
-                                "exitStatus": {"exitCode": 99, "_meta": {"scope": "bad exit"}},
-                                "_meta": {"scope": "bad terminal"}
+                                "_meta": {"scope": "malformed terminal"}
                             }
                         }),
                     )
@@ -4953,14 +4949,26 @@ mod tests {
             }
         }
         harness.drain(cx).await;
-        assert_eq!(observe(cx), before);
+        assert_eq!(observe_output(cx), output_before);
         assert_eq!(harness.terminal("terminal-1", cx), terminal);
-        harness.thread.read_with(cx, |thread, _| {
-            assert!(thread.terminal(acp_v2::TerminalId::new("unseen")).is_err());
+        terminal.read_with(cx, |terminal, _| {
+            let display = terminal.display_state().expect("display state");
+            assert_eq!(display.command(), Some("applied"));
+            assert_eq!(terminal.working_dir(), &Some(PathBuf::from("/changed")));
+            assert_eq!(display.meta, Some(v2_terminal_meta("malformed terminal")));
         });
+        let unseen = harness.terminal("unseen", cx);
+        unseen.read_with(cx, |terminal, cx| {
+            assert_eq!(
+                terminal.display_state().expect("display state").command(),
+                Some("applied")
+            );
+            assert!(terminal.inner().read(cx).get_content().trim().is_empty());
+        });
+        // Only the four snapshot updates decode; every invalid chunk is ignored.
         assert_eq!(
             harness.received.lock().expect("receive mutex").len(),
-            received_before
+            received_before + 4
         );
         assert!(harness.fallback.lock().expect("fallback mutex").is_empty());
         harness.send(
@@ -4981,14 +4989,10 @@ mod tests {
                     .trim_end(),
                 "old!"
             );
-            assert_eq!(
-                terminal.display_state().expect("display").meta,
-                Some(v2_terminal_meta("terminal"))
-            );
         });
         assert_eq!(
             harness.received.lock().expect("receive mutex").len(),
-            received_before + 1
+            received_before + 5
         );
     }
 
@@ -5381,7 +5385,7 @@ mod tests {
             let acp_v2::ElicitationScope::Request(scope) = elicitation.request.scope() else {
                 panic!("expected request-scoped elicitation");
             };
-            assert_eq!(scope.request_id, request_id);
+            assert_eq!(scope.request_id, acp_v2::RequestId::Number(1));
             elicitation.id.clone()
         });
         assert!(
@@ -5480,7 +5484,7 @@ mod tests {
             let acp_v2::ElicitationScope::Request(scope) = elicitation.request.scope() else {
                 panic!("expected request-scoped elicitation");
             };
-            assert_eq!(scope.request_id, request_id);
+            assert_eq!(scope.request_id, acp_v2::RequestId::Number(1));
             assert!(matches!(
                 elicitation.status,
                 acp_thread::ElicitationStatus::Pending { .. }
@@ -5591,7 +5595,7 @@ mod tests {
             let acp_v2::ElicitationScope::Request(scope) = elicitation.request.scope() else {
                 panic!("expected request-scoped elicitation");
             };
-            assert_eq!(scope.request_id, request_id);
+            assert_eq!(scope.request_id, acp_v2::RequestId::Number(1));
             elicitation.id.clone()
         });
 
@@ -10525,7 +10529,13 @@ fn process_output_to_v1(output: acp_thread::ProcessOutput) -> acp::TerminalOutpu
 
 fn terminal_exit_status_to_v1(status: acp_v2::TerminalExitStatus) -> acp::TerminalExitStatus {
     acp::TerminalExitStatus::new()
-        .exit_code(status.exit_code)
+        // v1 exit codes are unsigned, so a negative platform code (such as a Windows NTSTATUS)
+        // keeps the 32-bit pattern that v1 Agents have always received.
+        .exit_code(
+            status
+                .exit_code
+                .and_then(|code| i32::try_from(code).ok().map(|code| code as u32)),
+        )
         .signal(status.signal)
         .meta(status.meta)
 }
