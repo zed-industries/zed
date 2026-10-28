@@ -206,6 +206,21 @@ impl LineLayout {
         };
         let mut last_boundary_x = px(0.);
         let mut prev_ch = '\0';
+        // Breaking inside a scheme makes the continuation look like a relative URL.
+        // A break before the scheme stays allowed so the whole URL can move to the next line.
+        let url_prefixes: SmallVec<[Range<usize>; 1]> = text
+            .match_indices("://")
+            .filter_map(|(end, _)| {
+                let start = text[..end]
+                    .bytes()
+                    .rposition(|byte| !byte.is_ascii_alphanumeric() && !b"+-.".contains(&byte))
+                    .map_or(0, |index| index + 1);
+                text.as_bytes()
+                    .get(start)
+                    .filter(|byte| byte.is_ascii_alphabetic())
+                    .map(|_| start + 1..end + 4)
+            })
+            .collect();
         let mut glyphs = self
             .runs
             .iter()
@@ -229,7 +244,11 @@ impl LineLayout {
 
             // Here is very similar to `LineWrapper::wrap_line` to determine text wrapping,
             // but there are some differences, so we have to duplicate the code here.
-            if LineWrapper::is_word_char(ch) {
+            let index = self.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+            let in_url_prefix = url_prefixes.iter().any(|prefix| prefix.contains(&index));
+            if in_url_prefix {
+                // Very narrow layouts may overflow the prefix, then wrap within the host.
+            } else if LineWrapper::is_word_char(ch) {
                 if prev_ch == ' ' && ch != ' ' && first_non_whitespace_ix.is_some() {
                     last_candidate_ix = Some(boundary);
                     last_candidate_x = x;
@@ -248,7 +267,7 @@ impl LineLayout {
             let next_x = glyphs.peek().map_or(self.width, |(_, _, x)| *x);
             let width = next_x - last_boundary_x;
 
-            if width > wrap_width && boundary > last_boundary {
+            if width > wrap_width && boundary > last_boundary && !in_url_prefix {
                 // When used line_clamp, we should limit the number of lines.
                 if let Some(max_lines) = max_lines
                     && boundaries.len() >= max_lines.saturating_sub(1)
@@ -856,6 +875,115 @@ mod tests {
             .iter()
             .map(|g| f32::from(g.position.x))
             .collect()
+    }
+
+    fn monospace_layout(text: &str) -> LineLayout {
+        let mut layout = make_layout(
+            text.char_indices()
+                .enumerate()
+                .map(|(column, (index, _))| glyph_at(column as f32, index))
+                .collect(),
+        );
+        layout.width = px(text.chars().count() as f32);
+        layout.len = text.len();
+        layout
+    }
+
+    fn wrapped_slices<'a>(
+        layout: &LineLayout,
+        text: &'a str,
+        width: f32,
+        max_lines: Option<usize>,
+    ) -> Vec<&'a str> {
+        let boundaries = layout.compute_wrap_boundaries(text, px(width), max_lines);
+        let mut start = 0;
+        let mut slices = Vec::new();
+        for boundary in boundaries {
+            let end = layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+            slices.push(&text[start..end]);
+            start = end;
+        }
+        slices.push(&text[start..]);
+        slices
+    }
+
+    #[test]
+    fn url_prefix_survives_narrow_soft_wraps() {
+        for scheme in ["http", "https", "git+ssh", "mock.test", "mock-test"] {
+            let text = format!("{scheme}://example.test/path/to/resource?key=value");
+            let layout = monospace_layout(&text);
+            for width in 1..text.len() {
+                let slices = wrapped_slices(&layout, &text, width as f32, None);
+                assert!(
+                    slices[0].starts_with(&format!("{scheme}://e")),
+                    "{slices:?}"
+                );
+                assert_eq!(slices.concat(), text);
+                assert_eq!(layout.len, text.len());
+            }
+        }
+    }
+
+    #[test]
+    fn url_prefix_wraps_after_leading_text_and_across_shaped_runs() {
+        let text = "See https://example.test/path and http://example.test/query";
+        let mut layout = monospace_layout(text);
+        let trailing_glyphs = layout.runs[0].glyphs.split_off(9);
+        layout.runs.push(ShapedRun {
+            font_id: FontId(1),
+            glyphs: trailing_glyphs,
+        });
+        for width in 1..text.len() {
+            let slices = wrapped_slices(&layout, text, width as f32, None);
+            assert!(
+                slices.iter().any(|slice| slice.contains("https://e")),
+                "{slices:?}"
+            );
+            assert!(
+                slices.iter().any(|slice| slice.contains("http://e")),
+                "{slices:?}"
+            );
+            assert_eq!(slices.concat(), text);
+        }
+    }
+
+    #[test]
+    fn url_moves_to_the_next_line_when_it_fits() {
+        for (text, width, expected) in [
+            ("See https://a.io", 12., ["See ", "https://a.io"]),
+            (
+                "Docs at https://zed.dev",
+                16.,
+                ["Docs at ", "https://zed.dev"],
+            ),
+        ] {
+            let layout = monospace_layout(text);
+            assert_eq!(wrapped_slices(&layout, text, width, None), expected);
+        }
+    }
+
+    #[test]
+    fn url_prefix_wrapping_preserves_utf8_and_line_clamp() {
+        let text = "https://例子.example.test/路径";
+        let layout = monospace_layout(text);
+        let slices = wrapped_slices(&layout, text, 2., None);
+        assert!(slices[0].starts_with("https://例"));
+        assert_eq!(slices.concat(), text);
+        assert_eq!(wrapped_slices(&layout, text, 2., Some(1)), [text]);
+        let clamped = wrapped_slices(&layout, text, 2., Some(2));
+        assert_eq!(clamped.len(), 2);
+        assert_eq!(clamped.concat(), text);
+    }
+
+    #[test]
+    fn paths_and_invalid_schemes_keep_their_wrap_opportunities() {
+        for text in ["123://example.test/path", "/path/to/resource", "a?b=c&d=e"] {
+            let layout = monospace_layout(text);
+            let slices = wrapped_slices(&layout, text, 2., None);
+            assert!(slices.len() > 1);
+            assert!(slices[0].chars().count() <= 2);
+            assert_eq!(slices.concat(), text);
+        }
     }
 
     #[test]
