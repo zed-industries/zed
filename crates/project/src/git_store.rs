@@ -6505,7 +6505,9 @@ impl MergeDetails {
 
 impl Repository {
     pub fn is_trusted(&self) -> bool {
-        match self.repository_state.peek() {
+        // The worker awaits its own shared state. Poll this wrapper too, so
+        // auto-fetch does not depend on a manual operation initializing it first.
+        match self.repository_state.clone().now_or_never() {
             Some(Ok(RepositoryState::Local(state))) => state.backend.is_trusted(),
             _ => false,
         }
@@ -8823,15 +8825,15 @@ impl Repository {
             // than the task handle controlling when it stops.
             let fetch = async {
                 let state = repository_state.await.map_err(|error| anyhow!(error))?;
-                // Callers gate on `Repository::is_trusted`, which only ever reports
-                // true for local repositories.
+                // The checkout is local to the host even when clients access it
+                // remotely. Only that host schedules auto-fetch and checks trust.
                 let RepositoryState::Local(LocalRepositoryState {
                     backend,
                     environment,
                     ..
                 }) = state
                 else {
-                    anyhow::bail!("auto-fetch is only supported for local repositories");
+                    anyhow::bail!("auto-fetch must run on the repository host");
                 };
                 backend
                     .fetch(
@@ -11667,6 +11669,42 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[gpui::test]
+    async fn test_auto_fetch_without_manual_git_operation(cx: &mut TestAppContext) {
+        use util::path;
+
+        init_test(cx);
+        cx.update(|cx| {
+            crate::trusted_worktrees::init(Default::default(), cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.set_user_settings(
+                    r#"{"session":{"trust_all_worktrees":true},"git":{"auto_fetch":{"enabled":true,"interval_secs":15}}}"#,
+                    cx,
+                ).expect("valid settings");
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({".git": {}, "README.md": "project"}),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+        let fetches = fs
+            .with_git_state(Path::new(path!("/project/.git")), false, |state| {
+                state.fetch_count.clone()
+            })
+            .expect("repository exists");
+        assert_eq!(fetches.load(atomic::Ordering::SeqCst), 0);
+        cx.executor().advance_clock(Duration::from_secs(15));
+        cx.run_until_parked();
+        assert_eq!(fetches.load(atomic::Ordering::SeqCst), 1);
     }
 
     type TestPasswordPrompt = (

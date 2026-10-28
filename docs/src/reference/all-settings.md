@@ -2920,6 +2920,13 @@ Example:
 - `enabled`: Whether to automatically fetch from all remotes in the background.
 - `interval_secs`: How often to automatically fetch from all remotes, in seconds. Only applies when `enabled` is `true`. Values below 15 are clamped to 15.
 
+In remote development, auto-fetch runs on the host that owns the checkout and
+sends repository updates to your local Zed window. Your user settings are forwarded
+to the SSH server; server settings override them. In a shared project, the host's
+settings control auto-fetch for all collaborators. Configure `git.auto_fetch` in
+user or server settings; Git settings are not read from project `.zed/settings.json`
+files.
+
 ## Go to Definition Fallback
 
 - Description: What to do when the {#action editor::GoToDefinition} action fails to find a definition
