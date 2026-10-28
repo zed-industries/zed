@@ -8743,7 +8743,7 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section() -> [SettingsPageItem; 8] {
+    fn general_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8805,6 +8805,31 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .agent
                             .get_or_insert_default()
                             .set_threads_sidebar_default_width(value);
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Threads Sidebar Group By",
+                description: "How to group threads in the Threads Sidebar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.threads_sidebar.group_by"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .threads_sidebar
+                            .as_ref()?
+                            .group_by
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .set_threads_sidebar_group_by(value);
                     },
                 }),
                 metadata: None,
