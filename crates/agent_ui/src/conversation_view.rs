@@ -11107,173 +11107,206 @@ pub(crate) mod tests {
     #[gpui::test]
     async fn test_regenerate_keeps_pending_subagent_edits(cx: &mut TestAppContext) {
         init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/project",
-            json!({
-                "file.txt": "original content"
-            }),
-        )
-        .await;
-        let project = Project::test(fs, [Path::new("/project")], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-
-        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let connection_store =
-            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
-
-        let connection = Rc::new(StubAgentConnection::new());
-        let conversation_view = cx.update(|window, cx| {
-            cx.new(|cx| {
-                ConversationView::new(
-                    Rc::new(StubAgentServer::new(connection.as_ref().clone())),
-                    connection_store,
-                    Agent::Custom { id: "Test".into() },
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    workspace.downgrade(),
-                    project.clone(),
-                    Some(thread_store.clone()),
-                    AgentThreadSource::AgentPanel,
-                    window,
-                    cx,
-                )
-            })
-        });
-
-        cx.run_until_parked();
-
-        let thread = conversation_view
-            .read_with(cx, |view, cx| {
-                view.active_thread().map(|r| r.read(cx).thread.clone())
-            })
-            .unwrap();
-
-        // First turn: a subagent tool call. Subagent edits never appear as
-        // diffs in the parent thread's entries; they are only forwarded to the
-        // parent's action log through the linked-log mechanism.
-        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
-            acp_v1::ToolCall::new("spawn1", "Subagent task")
-                .name("spawn_agent")
-                .kind(acp_v1::ToolKind::Other)
-                .status(acp_v1::ToolCallStatus::Completed),
-        )]);
-
-        thread
-            .update(cx, |thread, cx| thread.send_raw("Use a subagent", cx))
-            .await
-            .unwrap();
-        cx.run_until_parked();
-
-        // Simulate the subagent editing a file: edits performed through a
-        // child action log are forwarded to the parent thread's action log,
-        // just like `Thread::new_subagent` wires it up.
-        let parent_action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
-        let subagent_action_log = cx.update(|_, cx| {
-            cx.new(|_| {
-                ActionLog::new(project.clone()).with_linked_action_log(parent_action_log.clone())
-            })
-        });
-
-        let buffer = project
-            .update(cx, |project, cx| {
-                let path = project.find_project_path("file.txt", cx).unwrap();
-                project.open_buffer(path, cx)
-            })
-            .await
-            .unwrap();
-        cx.update(|_, cx| {
-            subagent_action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_text("edited by subagent", cx);
+        for delegate_with_message in [false, true] {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                "/project",
+                json!({
+                    "file.txt": "original content"
+                }),
+            )
+            .await;
+            let project = Project::test(fs, [Path::new("/project")], cx).await;
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
             });
-            subagent_action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
-        cx.run_until_parked();
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
-        parent_action_log.read_with(cx, |log, cx| {
-            assert_eq!(
-                log.changed_buffers(cx).count(),
-                1,
-                "the subagent edit should be pending review in the parent's action log"
-            );
-        });
+            let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+            let connection_store = cx
+                .update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
-        // Second turn: a plain follow-up.
-        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
-            acp_v1::ContentChunk::new("Response".into()),
-        )]);
-        thread
-            .update(cx, |thread, cx| thread.send_raw("Follow-up", cx))
-            .await
-            .unwrap();
-        cx.run_until_parked();
+            let connection = Rc::new(StubAgentConnection::new());
+            let conversation_view = cx.update(|window, cx| {
+                cx.new(|cx| {
+                    ConversationView::new(
+                        Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                        connection_store,
+                        Agent::Custom { id: "Test".into() },
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        workspace.downgrade(),
+                        project.clone(),
+                        Some(thread_store.clone()),
+                        AgentThreadSource::AgentPanel,
+                        window,
+                        cx,
+                    )
+                })
+            });
 
-        let follow_up_ix = thread.read_with(cx, |thread, cx| {
+            cx.run_until_parked();
+
+            let thread = conversation_view
+                .read_with(cx, |view, cx| {
+                    view.active_thread().map(|r| r.read(cx).thread.clone())
+                })
+                .unwrap();
+
+            // First turn: a subagent tool call, or a message to a subagent. Subagent
+            // edits never appear as diffs in the parent thread's entries; they are only
+            // forwarded to the parent's action log through the linked-log mechanism.
+            if delegate_with_message {
+                connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+                    acp_v1::ContentChunk::new("Delegating".into()),
+                )]);
+            } else {
+                connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
+                    acp_v1::ToolCall::new("spawn1", "Subagent task")
+                        .name("spawn_agent")
+                        .kind(acp_v1::ToolKind::Other)
+                        .status(acp_v1::ToolCallStatus::Completed),
+                )]);
+            }
+
             thread
-                .entries()
-                .iter()
-                .position(|entry| entry.to_markdown(cx) == "## User\n\nFollow-up\n\n")
-                .unwrap()
-        });
+                .update(cx, |thread, cx| thread.send_raw("Use a subagent", cx))
+                .await
+                .unwrap();
+            if delegate_with_message {
+                let root_session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+                let subagent = cx.update(|_, cx| {
+                    create_test_acp_subagent(
+                        root_session_id.clone(),
+                        "child",
+                        connection.clone(),
+                        project.clone(),
+                        cx,
+                    )
+                });
+                thread.update(cx, |thread, cx| {
+                    thread.register_subagent(subagent, cx);
+                    thread
+                        .upsert_session_message(
+                            acp_v2::SessionMessage::new("delegation")
+                                .sender_session_id(root_session_id)
+                                .recipient_session_id(acp_v2::SessionId::new("child"))
+                                .content(vec!["Do the task".into()]),
+                            cx,
+                        )
+                        .expect("outgoing message")
+                });
+            }
+            cx.run_until_parked();
 
-        // Edit and regenerate the follow-up message.
-        let user_message_editor = conversation_view.read_with(cx, |view, cx| {
-            view.active_thread()
-                .unwrap()
-                .read(cx)
-                .entry_view_state
-                .read(cx)
-                .entry(follow_up_ix)
-                .unwrap()
-                .message_editor()
-                .unwrap()
-                .clone()
-        });
-        user_message_editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("Edited follow-up", window, cx);
-        });
+            // Simulate the subagent editing a file: edits performed through a
+            // child action log are forwarded to the parent thread's action log,
+            // just like `Thread::new_subagent` wires it up.
+            let parent_action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+            let subagent_action_log = cx.update(|_, cx| {
+                cx.new(|_| {
+                    ActionLog::new(project.clone())
+                        .with_linked_action_log(parent_action_log.clone())
+                })
+            });
 
-        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
-            acp_v1::ContentChunk::new("New response".into()),
-        )]);
-        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
-            view.regenerate(follow_up_ix, user_message_editor.clone(), window, cx);
-        });
-        cx.run_until_parked();
+            let buffer = project
+                .update(cx, |project, cx| {
+                    let path = project.find_project_path("file.txt", cx).unwrap();
+                    project.open_buffer(path, cx)
+                })
+                .await
+                .unwrap();
+            cx.update(|_, cx| {
+                subagent_action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_text("edited by subagent", cx);
+                });
+                subagent_action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+            });
+            cx.run_until_parked();
 
-        // The thread should have been rewound and the edited message resent.
-        thread.read_with(cx, |thread, cx| {
-            let entries = thread.entries();
-            assert_eq!(entries.len(), 4);
-            assert_eq!(
-                entries[2].to_markdown(cx),
-                "## User\n\nEdited follow-up\n\n"
-            );
-        });
+            parent_action_log.read_with(cx, |log, cx| {
+                assert_eq!(
+                    log.changed_buffers(cx).count(),
+                    1,
+                    "the subagent edit should be pending review in the parent's action log"
+                );
+            });
 
-        // The subagent's edits predate the regenerated prompt, so they must be
-        // auto-kept rather than rejected by the rewind.
-        buffer.read_with(cx, |buffer, _| {
-            assert_eq!(
-                buffer.text(),
-                "edited by subagent",
-                "pending subagent edits should be kept when regenerating a later prompt"
-            );
-        });
-        parent_action_log.read_with(cx, |log, cx| {
-            assert_eq!(
-                log.changed_buffers(cx).count(),
-                0,
-                "the subagent edit should have been auto-kept"
-            );
-        });
+            // Second turn: a plain follow-up.
+            connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+                acp_v1::ContentChunk::new("Response".into()),
+            )]);
+            thread
+                .update(cx, |thread, cx| thread.send_raw("Follow-up", cx))
+                .await
+                .unwrap();
+            cx.run_until_parked();
+
+            let follow_up_ix = thread.read_with(cx, |thread, cx| {
+                thread
+                    .entries()
+                    .iter()
+                    .position(|entry| entry.to_markdown(cx) == "## User\n\nFollow-up\n\n")
+                    .unwrap()
+            });
+
+            // Edit and regenerate the follow-up message.
+            let user_message_editor = conversation_view.read_with(cx, |view, cx| {
+                view.active_thread()
+                    .unwrap()
+                    .read(cx)
+                    .entry_view_state
+                    .read(cx)
+                    .entry(follow_up_ix)
+                    .unwrap()
+                    .message_editor()
+                    .unwrap()
+                    .clone()
+            });
+            user_message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text("Edited follow-up", window, cx);
+            });
+
+            connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::AgentMessageChunk(
+                acp_v1::ContentChunk::new("New response".into()),
+            )]);
+            active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+                view.regenerate(follow_up_ix, user_message_editor.clone(), window, cx);
+            });
+            cx.run_until_parked();
+
+            // The thread should have been rewound and the edited message resent.
+            thread.read_with(cx, |thread, cx| {
+                let entries = thread.entries();
+                assert_eq!(entries.len(), follow_up_ix + 2);
+                assert_eq!(
+                    entries[follow_up_ix].to_markdown(cx),
+                    "## User\n\nEdited follow-up\n\n"
+                );
+            });
+
+            // The subagent's edits predate the regenerated prompt, so they must be
+            // auto-kept rather than rejected by the rewind.
+            buffer.read_with(cx, |buffer, _| {
+                assert_eq!(
+                    buffer.text(),
+                    "edited by subagent",
+                    "pending subagent edits should be kept when regenerating a later prompt"
+                );
+            });
+            parent_action_log.read_with(cx, |log, cx| {
+                assert_eq!(
+                    log.changed_buffers(cx).count(),
+                    0,
+                    "the subagent edit should have been auto-kept"
+                );
+            });
+        }
     }
 
     #[gpui::test]

@@ -6049,6 +6049,64 @@ async fn test_spawn_agent_tool_rejects_model_when_resuming(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_spawn_agent_replays_only_delivered_calls_as_messages(cx: &mut TestAppContext) {
+    init_test(cx);
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(SpawnAgentTool::new(Rc::new(
+        FakeThreadEnvironment::default(),
+    )));
+    let input = SpawnAgentToolInput {
+        label: "task".to_string(),
+        message: "prompt".to_string(),
+        session_id: None,
+        model: None,
+    };
+    for delivered in [false, true] {
+        let (event_stream, mut events) = ToolCallEventStream::test();
+        let tool_call_id = event_stream.tool_call_id().clone();
+        let output = SpawnAgentToolOutput::Success {
+            session_id: acp_v2::SessionId::new("child"),
+            output: "done".to_string(),
+            session_info: acp_thread::SubagentSessionInfo {
+                session_id: acp_v2::SessionId::new("child"),
+                message_start_index: 0,
+                message_end_index: Some(1),
+            },
+            delivered,
+        };
+        cx.update(|cx| tool.replay(input.clone(), output, event_stream, cx))
+            .unwrap();
+
+        let mut messages = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            if let Ok(ThreadEvent::SessionMessage {
+                tool_call_id: message_tool_call_id,
+                message,
+            }) = event
+            {
+                assert_eq!(message_tool_call_id, tool_call_id);
+                messages.push(message);
+            }
+        }
+        if delivered {
+            assert_eq!(
+                messages,
+                vec![
+                    acp_v2::SessionMessage::new(tool_call_id.0.clone())
+                        .recipient_session_id(acp_v2::SessionId::new("child"))
+                        .content(vec!["prompt".into()])
+                ]
+            );
+        } else {
+            assert!(
+                messages.is_empty(),
+                "a call saved before delivery stays a tool call"
+            );
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     let fake = init_test(cx);
     cx.update(|cx| {
@@ -6178,7 +6236,7 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
 
     assert_eq!(
         acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx)),
-        indoc! {r#"
+        indoc::formatdoc! {r#"
             ## User
 
             Prompt
@@ -6187,16 +6245,56 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
 
             spawning subagent
 
-            **Tool Call: label**
-            Status: Completed
+            ## Message from `{parent}` to `{child}`
 
-            subagent task response
+            subagent task prompt
 
             ## Assistant
 
             Response
 
-        "#},
+        "#,
+            parent = session_id.0,
+            child = subagent_session_id.0,
+        },
+    );
+
+    // The parent's message is the other view of the subagent's first message.
+    let linked_message = |parent: &Entity<AcpThread>, cx: &mut TestAppContext| {
+        cx.read(|cx| {
+            let parent = parent.read(cx);
+            let Some(AgentThreadEntry::SessionMessage(message)) = parent.entries().get(2) else {
+                panic!("expected the parent's message to its subagent");
+            };
+            parent
+                .subagent(&subagent_session_id)
+                .expect("the parent owns its subagent")
+                .read(cx)
+                .linked_session_message(message, parent.session_id())
+        })
+    };
+    assert_eq!(linked_message(&acp_thread, cx), Some(0));
+    let markdown = acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
+
+    drop((thread, acp_thread, subagent_thread));
+    cx.run_until_parked();
+    release_dropped_entities(cx);
+    agent.read_with(cx, |agent, _| assert!(agent.sessions.is_empty()));
+
+    let reloaded = agent
+        .update(cx, |agent, cx| {
+            agent.open_thread(session_id.clone(), project.clone(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        reloaded.read_with(cx, |thread, cx| thread.to_markdown(cx)),
+        markdown
+    );
+    assert_eq!(
+        linked_message(&reloaded, cx),
+        Some(0),
+        "a reloaded parent owns its subagents again"
     );
 }
 
@@ -6331,6 +6429,20 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
     );
 
     let request = fake.pending_completions_for(&model).pop().unwrap();
+    let tool_result = request
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .find_map(|content| match content {
+            language_model::MessageContent::ToolResult(result) => {
+                Some(format!("{:?}", result.content))
+            }
+            _ => None,
+        })
+        .expect("the spawn_agent result is sent to the model");
+    assert!(tool_result.contains("subagent task response 1"));
+    assert!(tool_result.contains("subagent task response 2"));
+    assert!(!tool_result.contains("thinking"), "{tool_result}");
     fake.send_text(&model, &request, "Response");
     fake.end_stream(&model, &request);
 
@@ -6338,7 +6450,7 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
 
     assert_eq!(
         acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx)),
-        indoc! {r#"
+        indoc::formatdoc! {r#"
             ## User
 
             Prompt
@@ -6347,18 +6459,18 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
 
             spawning subagent
 
-            **Tool Call: label**
-            Status: Completed
+            ## Message from `{parent}` to `{child}`
 
-            subagent task response 1
-
-            subagent task response 2
+            subagent task prompt
 
             ## Assistant
 
             Response
 
-        "#},
+        "#,
+            parent = session_id.0,
+            child = subagent_session_id.0,
+        },
     );
 }
 
@@ -6471,7 +6583,7 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
         assert_eq!(thread.status(), ThreadStatus::Idle);
         assert_eq!(
             thread.to_markdown(cx),
-            indoc! {"
+            indoc::formatdoc! {"
                 ## User
 
                 Prompt
@@ -6480,10 +6592,14 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
 
                 spawning subagent
 
-                **Tool Call: label**
-                Status: Canceled
+                ## Message from `{parent}` to `{child}`
 
-            "}
+                subagent task prompt
+
+            ",
+                parent = session_id.0,
+                child = subagent_session_id.0,
+            }
         );
     });
     subagent_acp_thread.read_with(cx, |thread, cx| {

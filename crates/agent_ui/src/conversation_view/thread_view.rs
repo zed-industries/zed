@@ -2703,15 +2703,21 @@ impl ThreadView {
             //
             // Subagent edits never show up as diffs in the parent thread's entries (they
             // are only forwarded to the parent's action log), so treat any earlier
-            // subagent tool call as potentially having edits. Keeping all edits is a
-            // no-op when the subagent didn't make any.
+            // subagent tool call, or message to one of this thread's subagents, as
+            // potentially having edits. Keeping all edits is a no-op when the subagent
+            // didn't make any.
             let has_earlier_edits = thread.read_with(cx, |thread, _| {
                 thread.entries().iter().take(entry_ix).any(|entry| {
                     entry.diffs().next().is_some()
-                        || matches!(
-                            entry,
-                            AgentThreadEntry::ToolCall(tool_call) if tool_call.is_subagent()
-                        )
+                        || match entry {
+                            AgentThreadEntry::ToolCall(tool_call) => tool_call.is_subagent(),
+                            AgentThreadEntry::SessionMessage(message) => matches!(
+                                message.side(thread.session_id()),
+                                SessionMessageSide::Outgoing { recipient: Some(recipient) }
+                                    if thread.subagent(recipient).is_some()
+                            ),
+                            _ => false,
+                        }
                 })
             });
 

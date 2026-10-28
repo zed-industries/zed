@@ -1894,6 +1894,46 @@ impl NativeAgent {
                             })
                             .map_err(Arc::new)?;
                     }
+                    // A spawn_agent call that delivered its prompt replays as a message to
+                    // the subagent rather than a tool call that references it, so the
+                    // subagents are opened here instead of by whoever shows the thread.
+                    let subagent_ids = acp_thread.read_with(cx, |acp_thread, _| {
+                        let session_id = acp_thread.session_id();
+                        acp_thread
+                            .entries()
+                            .iter()
+                            .filter_map(|entry| match entry {
+                                acp_thread::AgentThreadEntry::SessionMessage(message) => {
+                                    match message.side(session_id) {
+                                        acp_thread::SessionMessageSide::Outgoing {
+                                            recipient: Some(recipient),
+                                        } => Some(recipient.clone()),
+                                        _ => None,
+                                    }
+                                }
+                                _ => None,
+                            })
+                            .unique()
+                            .collect::<Vec<_>>()
+                    });
+                    for subagent_id in subagent_ids {
+                        let subagent = this.update(cx, |this, cx| {
+                            this.open_thread(subagent_id.clone(), project.clone(), cx)
+                        });
+                        match subagent {
+                            Ok(subagent) => match subagent.await {
+                                Ok(subagent) => acp_thread.update(cx, |acp_thread, cx| {
+                                    acp_thread.register_subagent(subagent, cx)
+                                }),
+                                Err(error) => {
+                                    log::error!("Failed to open subagent {subagent_id}: {error:#}")
+                                }
+                            },
+                            Err(error) => {
+                                log::error!("Failed to open subagent {subagent_id}: {error:#}")
+                            }
+                        }
+                    }
                     Ok(acp_thread)
                 }
             })
@@ -2840,6 +2880,7 @@ impl NativeAgentConnection {
         cx: &App,
     ) -> Task<Result<acp_v2::StopReason>> {
         cx.spawn(async move |cx| {
+            let mut delegations = HeldDelegations::default();
             // Handle response stream and forward to session.acp_thread
             while let Some(result) = events.next().await {
                 match result {
@@ -2881,6 +2922,12 @@ impl NativeAgentConnection {
                                 context: _,
                                 kind,
                             }) => {
+                                let shown = delegations.show(&tool_call.tool_call_id);
+                                acp_thread.update(cx, |thread, cx| {
+                                    shown
+                                        .into_iter()
+                                        .try_for_each(|update| thread.update_tool_call(update, cx))
+                                })??;
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
                                     thread.request_tool_call_update_authorization(
                                         tool_call, options, kind, cx,
@@ -2958,8 +3005,19 @@ impl NativeAgentConnection {
                                 }
                             }
                             ThreadEvent::ToolCallUpdate(update) => {
+                                let updates = delegations.tool_call_update(update);
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.update_tool_call(update, cx)
+                                    updates
+                                        .into_iter()
+                                        .try_for_each(|update| thread.update_tool_call(update, cx))
+                                })??;
+                            }
+                            ThreadEvent::SessionMessage { tool_call_id, message } => {
+                                delegations.delivered(tool_call_id);
+                                acp_thread.update(cx, |thread, cx| {
+                                    let message =
+                                        message.sender_session_id(thread.session_id().clone());
+                                    thread.upsert_session_message(message, cx)
                                 })??;
                             }
                             ThreadEvent::Retry(status) => {
@@ -3704,6 +3762,74 @@ impl acp_thread::AgentSessionSetTitle for NativeAgentSessionSetTitle {
         self.thread
             .update(cx, |thread, cx| thread.set_title(title, cx));
         Task::ready(Ok(()))
+    }
+}
+
+/// Holds back `spawn_agent` tool calls. One that delivers its prompt to a subagent is
+/// shown as the outgoing session message instead. One that ends, or asks for permission,
+/// without delivering is shown after all, with every update it had.
+#[derive(Default)]
+struct HeldDelegations {
+    held: HashMap<acp_v2::ToolCallId, Vec<acp_thread::ToolCallUpdate>>,
+    delivered: HashSet<acp_v2::ToolCallId>,
+}
+
+impl HeldDelegations {
+    /// Returns the updates to apply now.
+    fn tool_call_update(
+        &mut self,
+        update: acp_thread::ToolCallUpdate,
+    ) -> Vec<acp_thread::ToolCallUpdate> {
+        let id = match &update {
+            acp_thread::ToolCallUpdate::V2(update) => update.tool_call_id.clone(),
+            acp_thread::ToolCallUpdate::V1(update) => {
+                acp_v2::ToolCallId::new(update.tool_call_id.0.clone())
+            }
+            acp_thread::ToolCallUpdate::UpdateDiff(update) => update.id.clone(),
+            acp_thread::ToolCallUpdate::UpdateTerminal(update) => update.id.clone(),
+        };
+        if self.delivered.contains(&id) {
+            return Vec::new();
+        }
+        let is_finished = matches!(
+            &update,
+            acp_thread::ToolCallUpdate::V2(update) if matches!(
+                update.status.as_opt_ref().flatten(),
+                Some(
+                    acp_v2::ToolCallStatus::Completed
+                        | acp_v2::ToolCallStatus::Failed
+                        | acp_v2::ToolCallStatus::Cancelled
+                )
+            )
+        );
+        if let Some(held) = self.held.get_mut(&id) {
+            held.push(update);
+            return if is_finished {
+                self.show(&id)
+            } else {
+                Vec::new()
+            };
+        }
+        let is_delegation = matches!(
+            &update,
+            acp_thread::ToolCallUpdate::V2(update)
+                if update.name.as_opt_ref().flatten().map(String::as_str) == Some(SpawnAgentTool::NAME)
+        );
+        if is_delegation {
+            self.held.insert(id, vec![update]);
+            return Vec::new();
+        }
+        vec![update]
+    }
+
+    /// Stops holding back a tool call, returning the updates it had.
+    fn show(&mut self, id: &acp_v2::ToolCallId) -> Vec<acp_thread::ToolCallUpdate> {
+        self.held.remove(id).unwrap_or_default()
+    }
+
+    fn delivered(&mut self, id: acp_v2::ToolCallId) {
+        self.held.remove(&id);
+        self.delivered.insert(id);
     }
 }
 
@@ -4518,6 +4644,49 @@ mod internal_tests {
     use serde_json::json;
     use settings::{LanguageModelProviderSetting, SettingsStore};
     use util::{path, rel_path::rel_path};
+
+    #[test]
+    fn held_delegations_show_only_calls_that_deliver_nothing() {
+        let id = |id: &str| acp_v2::ToolCallId::new(id);
+        let update = |id: &str| -> acp_thread::ToolCallUpdate {
+            acp_v2::ToolCallUpdate::new(id).title("Explore").into()
+        };
+        let spawn = |id: &str| -> acp_thread::ToolCallUpdate {
+            acp_v2::ToolCallUpdate::new(id)
+                .name(SpawnAgentTool::NAME)
+                .status(acp_v2::ToolCallStatus::Pending)
+                .into()
+        };
+        let finished = |id: &str| -> acp_thread::ToolCallUpdate {
+            acp_v2::ToolCallUpdate::new(id)
+                .status(acp_v2::ToolCallStatus::Failed)
+                .into()
+        };
+        let mut delegations = HeldDelegations::default();
+
+        assert_eq!(delegations.tool_call_update(update("other")).len(), 1);
+
+        // A call that delivers its prompt is never shown.
+        assert!(delegations.tool_call_update(spawn("delivered")).is_empty());
+        assert!(delegations.tool_call_update(update("delivered")).is_empty());
+        delegations.delivered(id("delivered"));
+        assert!(
+            delegations
+                .tool_call_update(finished("delivered"))
+                .is_empty()
+        );
+
+        // One that ends without delivering is shown with every update it had.
+        assert!(delegations.tool_call_update(spawn("failed")).is_empty());
+        assert!(delegations.tool_call_update(update("failed")).is_empty());
+        assert_eq!(delegations.tool_call_update(finished("failed")).len(), 3);
+        assert_eq!(delegations.tool_call_update(update("failed")).len(), 1);
+
+        // So is one that asks for permission first.
+        assert!(delegations.tool_call_update(spawn("asks")).is_empty());
+        assert_eq!(delegations.show(&id("asks")).len(), 1);
+        assert_eq!(delegations.tool_call_update(update("asks")).len(), 1);
+    }
 
     #[gpui::test]
     fn test_available_native_agent_hides_hidden_providers(cx: &mut TestAppContext) {

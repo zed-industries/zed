@@ -941,6 +941,12 @@ pub enum ThreadEvent {
     Retry(acp_thread::RetryStatus),
     ContextCompaction(acp_thread::ContextCompaction),
     ContextCompactionUpdate(acp_thread::ContextCompactionUpdate),
+    /// A tool call delivered a message to another session. The tool call is shown as this
+    /// outgoing message rather than as a tool call.
+    SessionMessage {
+        tool_call_id: acp_v2::ToolCallId,
+        message: acp_v2::SessionMessage,
+    },
     Stop(acp_v2::StopReason),
 }
 
@@ -5922,6 +5928,18 @@ pub struct ToolCallEventStream {
 }
 
 impl ToolCallEventStream {
+    /// Reports that this tool call delivered `message` to another session, so it is shown
+    /// as that message. Its sender is set to this session.
+    pub fn send_session_message(&self, message: acp_v2::SessionMessage) {
+        self.stream
+            .sender
+            .unbounded_send(Ok(ThreadEvent::SessionMessage {
+                tool_call_id: self.tool_call_id.clone(),
+                message,
+            }))
+            .ok();
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> (Self, ToolCallEventStreamReceiver) {
         let (stream, receiver, _cancellation_tx) = Self::test_with_cancellation();

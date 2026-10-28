@@ -87,6 +87,10 @@ pub enum SpawnAgentToolOutput {
         session_id: acp_v2::SessionId,
         output: String,
         session_info: SubagentSessionInfo,
+        /// Whether the prompt was shown as a session message to the subagent. Calls saved
+        /// before that keep showing as tool calls.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        delivered: bool,
     },
     Error {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,6 +98,8 @@ pub enum SpawnAgentToolOutput {
         session_id: Option<acp_v2::SessionId>,
         error: String,
         session_info: Option<SubagentSessionInfo>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        delivered: bool,
     },
 }
 
@@ -104,6 +110,7 @@ impl From<SpawnAgentToolOutput> for LanguageModelToolResultContent {
                 session_id,
                 output,
                 session_info: _, // Don't show this to the model
+                delivered: _,
             } => serde_json::to_string(
                 &serde_json::json!({ "session_id": session_id, "output": output }),
             )
@@ -113,6 +120,7 @@ impl From<SpawnAgentToolOutput> for LanguageModelToolResultContent {
                 session_id,
                 error,
                 session_info: _, // Don't show this to the model
+                delivered: _,
             } => serde_json::to_string(
                 &serde_json::json!({ "session_id": session_id, "error": error }),
             )
@@ -172,6 +180,7 @@ impl AgentTool for SpawnAgentTool {
                     session_id: None,
                     error: e.to_string(),
                     session_info: None,
+                    delivered: false,
                 })?;
 
             let SpawnAgentToolInput {
@@ -195,6 +204,7 @@ impl AgentTool for SpawnAgentTool {
                     session_id: None,
                     error: err.to_string(),
                     session_info: None,
+                    delivered: false,
                 })?;
                 let session_info = SubagentSessionInfo {
                     session_id: subagent.id(),
@@ -212,8 +222,13 @@ impl AgentTool for SpawnAgentTool {
                 Ok((subagent, session_info))
             })?;
 
-            // The parent's view of the message is this tool call.
-            let message_id = acp_v2::MessageId::new(event_stream.tool_call_id().0.clone());
+            // The parent's view of the message takes this tool call's place.
+            let message_id = delegation_message_id(&event_stream);
+            event_stream.send_session_message(delegation_message(
+                message_id.clone(),
+                session_info.session_id.clone(),
+                &message,
+            ));
             let send_result = subagent.send(message, message_id, cx).await;
 
             let status = if send_result.is_ok() {
@@ -242,6 +257,7 @@ impl AgentTool for SpawnAgentTool {
                         session_id: session_info.session_id.clone(),
                         session_info,
                         output,
+                        delivered: true,
                     }),
                 ),
                 Err(e) => {
@@ -252,6 +268,7 @@ impl AgentTool for SpawnAgentTool {
                             session_id: Some(session_info.session_id.clone()),
                             error,
                             session_info: Some(session_info),
+                            delivered: true,
                         }),
                     )
                 }
@@ -269,23 +286,32 @@ impl AgentTool for SpawnAgentTool {
 
     fn replay(
         &self,
-        _input: Self::Input,
+        input: Self::Input,
         output: Self::Output,
         event_stream: ToolCallEventStream,
         _cx: &mut App,
     ) -> Result<()> {
-        let (content, session_info) = match output {
+        let (content, session_info, delivered) = match output {
             SpawnAgentToolOutput::Success {
                 output,
                 session_info,
+                delivered,
                 ..
-            } => (output.into(), Some(session_info)),
+            } => (output.into(), Some(session_info), delivered),
             SpawnAgentToolOutput::Error {
                 error,
                 session_info,
+                delivered,
                 ..
-            } => (error.into(), session_info),
+            } => (error.into(), session_info, delivered),
         };
+        if delivered && let Some(session_info) = &session_info {
+            event_stream.send_session_message(delegation_message(
+                delegation_message_id(&event_stream),
+                session_info.session_id.clone(),
+                &input.message,
+            ));
+        }
 
         let meta = session_info.map(|session_info| {
             acp_v2::Meta::from_iter([(
@@ -303,6 +329,23 @@ impl AgentTool for SpawnAgentTool {
 
         Ok(())
     }
+}
+
+/// The parent's id for the message a call delivers to its subagent. The subagent's view
+/// of the message refers to it, so it must stay the same when the parent is replayed.
+fn delegation_message_id(event_stream: &ToolCallEventStream) -> acp_v2::MessageId {
+    acp_v2::MessageId::new(event_stream.tool_call_id().0.clone())
+}
+
+/// The parent's view of a prompt delivered to a subagent. The event handler sets the sender.
+fn delegation_message(
+    message_id: acp_v2::MessageId,
+    recipient_session_id: acp_v2::SessionId,
+    message: &str,
+) -> acp_v2::SessionMessage {
+    acp_v2::SessionMessage::new(message_id)
+        .recipient_session_id(recipient_session_id)
+        .content(vec![message.into()])
 }
 
 #[cfg(test)]
