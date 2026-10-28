@@ -2093,51 +2093,60 @@ mod test {
         );
     }
 
+    fn numbered(chunks: &[&str], start_line: u32) -> String {
+        let mut output = String::new();
+        write_lines_numbered(&mut output, chunks.iter().copied(), start_line);
+        output
+    }
+
     #[test]
-    fn test_write_lines_numbered_truncation() {
-        let short = "short line\n";
-        let mut out = String::new();
-        write_lines_numbered(&mut out, std::iter::once(short), 1);
-        assert_eq!(out, "     1\tshort line\n");
+    fn test_write_lines_numbered_keeps_short_lines() {
+        assert_eq!(numbered(&["short line\n"], 1), "     1\tshort line\n");
+    }
 
-        // Single line exceeding MAX_LINE_LEN
+    #[test]
+    fn test_write_lines_numbered_truncates_long_line() {
         let long_line = format!("{}\n", "a".repeat(2500));
-        let mut out = String::new();
-        write_lines_numbered(&mut out, std::iter::once(long_line.as_str()), 1);
-        let expected = format!(
-            "     1\t{}{}\n",
-            "a".repeat(MAX_LINE_LEN),
-            LINE_TRUNCATION_MARKER
+        assert_eq!(
+            numbered(&[&long_line], 1),
+            format!(
+                "     1\t{}{}\n",
+                "a".repeat(MAX_LINE_LEN),
+                LINE_TRUNCATION_MARKER
+            )
         );
-        assert_eq!(out, expected);
+    }
 
-        // Long line across multiple chunks
-        let chunks = vec!["b".repeat(1200), "b".repeat(1200), "\n".to_string()];
-        let chunk_refs: Vec<&str> = chunks.iter().map(|s| s.as_str()).collect();
-        let mut out = String::new();
-        write_lines_numbered(&mut out, chunk_refs, 5);
-        let expected = format!(
-            "     5\t{}{}\n",
-            "b".repeat(MAX_LINE_LEN),
-            LINE_TRUNCATION_MARKER
+    #[test]
+    fn test_write_lines_numbered_truncates_line_across_chunks() {
+        let chunk = "b".repeat(1200);
+        assert_eq!(
+            numbered(&[&chunk, &chunk, "\n"], 5),
+            format!(
+                "     5\t{}{}\n",
+                "b".repeat(MAX_LINE_LEN),
+                LINE_TRUNCATION_MARKER
+            )
         );
-        assert_eq!(out, expected);
+    }
 
-        // Multi-byte UTF-8 (CJK) counts characters, not bytes
-        let cjk_exact = format!("{}\n", "あ".repeat(MAX_LINE_LEN));
-        let mut out = String::new();
-        write_lines_numbered(&mut out, std::iter::once(cjk_exact.as_str()), 1);
-        assert_eq!(out, format!("     1\t{}", cjk_exact));
-
-        let cjk_long = format!("{}\n", "あ".repeat(MAX_LINE_LEN + 10));
-        let mut out = String::new();
-        write_lines_numbered(&mut out, std::iter::once(cjk_long.as_str()), 1);
-        let expected = format!(
-            "     1\t{}{}\n",
-            "あ".repeat(MAX_LINE_LEN),
-            LINE_TRUNCATION_MARKER
+    #[test]
+    fn test_write_lines_numbered_counts_chars_not_bytes() {
+        let exact_line = format!("{}\n", "あ".repeat(MAX_LINE_LEN));
+        assert_eq!(
+            numbered(&[&exact_line], 1),
+            format!("     1\t{}", exact_line)
         );
-        assert_eq!(out, expected);
+
+        let long_line = format!("{}\n", "あ".repeat(MAX_LINE_LEN + 10));
+        assert_eq!(
+            numbered(&[&long_line], 1),
+            format!(
+                "     1\t{}{}\n",
+                "あ".repeat(MAX_LINE_LEN),
+                LINE_TRUNCATION_MARKER
+            )
+        );
     }
 
     #[gpui::test]
