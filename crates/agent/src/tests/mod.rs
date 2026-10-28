@@ -182,7 +182,12 @@ impl SubagentHandle for FakeSubagentHandle {
         0
     }
 
-    fn send(&self, _message: String, cx: &AsyncApp) -> Task<Result<String>> {
+    fn send(
+        &self,
+        _message: String,
+        _message_id: acp_v2::MessageId,
+        cx: &AsyncApp,
+    ) -> Task<Result<String>> {
         let task = self.send_task.clone();
         cx.background_spawn(async move { Ok(task.await) })
     }
@@ -6150,8 +6155,8 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
 
     assert_eq!(
         subagent_thread.read_with(cx, |thread, cx| thread.to_markdown(cx)),
-        indoc! {"
-            ## User
+        indoc::formatdoc! {"
+            ## Message from `{parent}` to `{child}`
 
             subagent task prompt
 
@@ -6159,7 +6164,10 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
 
             subagent task response
 
-        "}
+        ",
+            parent = session_id.0,
+            child = subagent_session_id.0,
+        }
     );
 
     let request = fake.pending_completions_for(&model).pop().unwrap();
@@ -6301,8 +6309,8 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
 
     assert_eq!(
         subagent_thread.read_with(cx, |thread, cx| thread.to_markdown(cx)),
-        indoc! {"
-            ## User
+        indoc::formatdoc! {"
+            ## Message from `{parent}` to `{child}`
 
             subagent task prompt
 
@@ -6316,7 +6324,10 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
 
             subagent task response 2
 
-        "}
+        ",
+            parent = session_id.0,
+            child = subagent_session_id.0,
+        }
     );
 
     let request = fake.pending_completions_for(&model).pop().unwrap();
@@ -6479,12 +6490,15 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
         assert_eq!(thread.status(), ThreadStatus::Idle);
         assert_eq!(
             thread.to_markdown(cx),
-            indoc! {"
-                ## User
+            indoc::formatdoc! {"
+                ## Message from `{parent}` to `{child}`
 
                 subagent task prompt
 
-            "}
+            ",
+                parent = session_id.0,
+                child = subagent_session_id.0,
+            }
         );
     });
 }
@@ -6674,8 +6688,8 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     // Verify the subagent's acp thread has both conversation turns
     assert_eq!(
         subagent_acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx)),
-        indoc! {"
-            ## User
+        indoc::formatdoc! {"
+            ## Message from `{parent}` to `{child}`
 
             do the first task
 
@@ -6683,7 +6697,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
 
             first task response
 
-            ## User
+            ## Message from `{parent}` to `{child}`
 
             do the follow-up task
 
@@ -6691,7 +6705,10 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
 
             follow-up task response
 
-        "}
+        ",
+            parent = session_id.0,
+            child = subagent_session_id.0,
+        }
     );
 }
 
@@ -7252,7 +7269,13 @@ async fn test_subagent_auto_compaction(cx: &mut TestAppContext) {
         })
         .unwrap();
     assert_eq!(handle.id(), test.handle.id());
-    let send = cx.update(|cx| handle.send("follow-up task".to_string(), &cx.to_async()));
+    let send = cx.update(|cx| {
+        handle.send(
+            "follow-up task".to_string(),
+            acp_v2::MessageId::new("parent-follow-up"),
+            &cx.to_async(),
+        )
+    });
     cx.run_until_parked();
     let request = test.fake.pending_completions().pop().unwrap();
     assert_eq!(request.intent, Some(CompletionIntent::Subagent));
@@ -7364,7 +7387,7 @@ async fn test_subagent_context_limit_exceeded_without_partial_output(cx: &mut Te
 }
 
 #[gpui::test]
-async fn test_native_subagent_reports_and_restores_each_runs_outcome(cx: &mut TestAppContext) {
+async fn test_native_subagent_shows_and_restores_its_runs(cx: &mut TestAppContext) {
     let test = SubagentCompactionTest::new(cx).await;
     test.configure_compaction(false, 1_000_000, None, cx);
     let session_id = test.handle.id();
@@ -7410,8 +7433,26 @@ async fn test_native_subagent_reports_and_restores_each_runs_outcome(cx: &mut Te
             stop_reason: acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new().error(failure)),
         },
     ];
+    let parent_session_id = test.parent.read_with(cx, |parent, _| parent.id().clone());
     let assert_reported = |subagent: &Entity<AcpThread>, cx: &mut TestAppContext| {
         subagent.read_with(cx, |subagent, _| {
+            // Each prompt is the subagent's view of a message from its parent.
+            for (entry_ix, parent_message_id) in [
+                (0, "parent-first task"),
+                (first_run_end, "parent-second task"),
+            ] {
+                let Some(AgentThreadEntry::SessionMessage(message)) =
+                    subagent.entries().get(entry_ix)
+                else {
+                    panic!("expected a session message at {entry_ix}");
+                };
+                assert_eq!(message.sender_session_id.as_ref(), Some(&parent_session_id));
+                assert_eq!(message.recipient_session_id.as_ref(), Some(&session_id));
+                assert_eq!(
+                    message.sender_message_id,
+                    Some(acp_v2::MessageId::new(parent_message_id))
+                );
+            }
             for (entry_ix, outcome) in [(0, &expected[0]), (first_run_end, &expected[1])] {
                 assert_eq!(
                     subagent.subagent_outcome_after(entry_ix),
@@ -7448,7 +7489,9 @@ async fn test_native_subagent_reports_and_restores_each_runs_outcome(cx: &mut Te
     agent.read_with(cx, |agent, _| assert!(agent.sessions.is_empty()));
 
     let reloaded = agent
-        .update(cx, |agent, cx| agent.open_thread(session_id, project, cx))
+        .update(cx, |agent, cx| {
+            agent.open_thread(session_id.clone(), project, cx)
+        })
         .await
         .unwrap();
     reloaded.read_with(cx, |subagent, _| {
@@ -7549,8 +7592,11 @@ async fn test_subagent_compaction_exhausts_transient_retries(cx: &mut TestAppCon
 async fn test_subagent_parent_cancellation_before_acceptance(cx: &mut TestAppContext) {
     let test = SubagentCompactionTest::new(cx).await;
     let send = cx.update(|cx| {
-        test.handle
-            .send("subagent task prompt".into(), &cx.to_async())
+        test.handle.send(
+            "subagent task prompt".into(),
+            acp_v2::MessageId::new("parent-task"),
+            &cx.to_async(),
+        )
     });
     while test
         .parent
@@ -9747,7 +9793,11 @@ impl SubagentCompactionTest {
     }
 
     fn send(&self, message: &str, cx: &mut TestAppContext) -> Task<Result<String>> {
-        let send = cx.update(|cx| self.handle.send(message.to_string(), &cx.to_async()));
+        let message_id = acp_v2::MessageId::new(format!("parent-{message}"));
+        let send = cx.update(|cx| {
+            self.handle
+                .send(message.to_string(), message_id, &cx.to_async())
+        });
         cx.run_until_parked();
         send
     }

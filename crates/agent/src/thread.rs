@@ -300,6 +300,17 @@ impl Message {
 pub struct UserMessage {
     pub id: ClientUserMessageId,
     pub content: Arc<[UserMessageContent]>,
+    /// Set when the message is a prompt another session delivered to this subagent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<SessionMessageOrigin>,
+}
+
+/// The session that delivered a subagent's prompt, and that session's id for the message.
+/// The subagent shows the prompt as a session message from that session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionMessageOrigin {
+    pub sender_session_id: acp_v2::SessionId,
+    pub sender_message_id: acp_v2::MessageId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -784,8 +795,14 @@ pub trait SubagentHandle {
     /// The current number of entries in the thread.
     /// Useful for knowing where the next turn will begin
     fn num_entries(&self, cx: &App) -> usize;
-    /// Runs a turn for a given message and returns both the response and the index of that output message.
-    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>>;
+    /// Delivers `message` and runs a turn for it, returning the response. `message_id` is
+    /// the delivering session's id for the message.
+    fn send(
+        &self,
+        message: String,
+        message_id: acp_v2::MessageId,
+        cx: &AsyncApp,
+    ) -> Task<Result<String>>;
 }
 
 pub trait ThreadEnvironment {
@@ -2637,7 +2654,7 @@ impl Thread {
         let content = content.into_iter().map(Into::into).collect::<Arc<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
-        self.upsert_user_message(id, content, cx);
+        self.upsert_user_message(id, content, None, cx);
 
         self.send_existing(cx)
     }
@@ -2646,17 +2663,24 @@ impl Thread {
         &mut self,
         id: ClientUserMessageId,
         content: Arc<[UserMessageContent]>,
+        origin: Option<SessionMessageOrigin>,
         cx: &mut Context<Self>,
     ) {
+        let existing = self
+            .messages
+            .iter_mut()
+            .find(|message| matches!(message.as_ref(), Message::User(user) if user.id == id));
+        // Preparing a prompt's content again keeps where it came from.
+        let origin = origin.or_else(|| match existing.as_deref().map(Arc::as_ref) {
+            Some(Message::User(user)) => user.origin.clone(),
+            _ => None,
+        });
         let message = Arc::new(Message::User(UserMessage {
             id: id.clone(),
             content,
+            origin,
         }));
-        if let Some(existing) = self
-            .messages
-            .iter_mut()
-            .find(|message| matches!(message.as_ref(), Message::User(user) if user.id == id))
-        {
+        if let Some(existing) = existing {
             *existing = message;
             self.retained_history_revision += 1;
         } else {
@@ -2822,7 +2846,24 @@ impl Thread {
             .into_iter()
             .map(|block| UserMessageContent::from_content_block(block, path_style))
             .collect::<Result<Arc<_>>>()?;
-        self.upsert_user_message(id, content, cx);
+        self.upsert_user_message(id, content, None, cx);
+        Ok(())
+    }
+
+    /// Adds a prompt that `origin` delivered to this subagent.
+    pub fn push_delivered_user_block(
+        &mut self,
+        id: ClientUserMessageId,
+        blocks: impl IntoIterator<Item = acp_v2::ContentBlock>,
+        origin: SessionMessageOrigin,
+        path_style: PathStyle,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let content = blocks
+            .into_iter()
+            .map(|block| UserMessageContent::from_content_block(block, path_style))
+            .collect::<Result<Arc<_>>>()?;
+        self.upsert_user_message(id, content, Some(origin), cx);
         Ok(())
     }
 
@@ -3499,7 +3540,7 @@ impl Thread {
                         }
                     }
                     CompactionInsertion::Manual { marker_id } => {
-                        this.upsert_user_message(marker_id, Arc::from([]), cx);
+                        this.upsert_user_message(marker_id, Arc::from([]), None, cx);
                         this.messages.push(compaction);
                     }
                 }
@@ -7584,6 +7625,7 @@ mod tests {
         Arc::new(Message::User(UserMessage {
             id,
             content: vec![UserMessageContent::Text(text.to_string())].into(),
+            origin: None,
         }))
     }
 
@@ -8236,7 +8278,7 @@ mod tests {
                 assert!(matches!(&*thread.messages[1], Message::Agent(_)));
                 assert!(matches!(
                     &*thread.messages[2],
-                    Message::User(UserMessage { id, content }) if id == &compact_message_id && content.is_empty()
+                    Message::User(UserMessage { id, content, .. }) if id == &compact_message_id && content.is_empty()
                 ));
                 assert!(matches!(
                     &*thread.messages[3],
@@ -8386,6 +8428,7 @@ mod tests {
                 thread.messages.push(Arc::new(Message::User(UserMessage {
                     id: marker_id.clone(),
                     content: Arc::from([]),
+                    origin: None,
                 })));
                 thread.messages.push(summary_compaction("summary"));
                 thread.replay(cx)

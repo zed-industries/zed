@@ -2459,6 +2459,30 @@ impl NativeAgentConnection {
             .update(cx, |this, cx| this.load_thread(id, project, cx))
     }
 
+    /// Delivers a prompt from another session to a subagent and waits for the run it starts.
+    /// Unlike a prompt Zed submits, the subagent shows it as a session message from `origin`.
+    pub fn deliver_and_wait_for_completion(
+        &self,
+        thread: Entity<AcpThread>,
+        content: Vec<acp_v2::ContentBlock>,
+        origin: SessionMessageOrigin,
+        cx: &mut App,
+    ) -> Task<Result<acp_v2::StopReason>> {
+        let session_id = thread.read(cx).session_id().clone();
+        let (receipt, completion) =
+            self.submit_native_with_origin(session_id, Some(content), Some(origin), cx);
+        cx.spawn(async move |_cx| {
+            match receipt.await {
+                Ok(_) => {}
+                Err(error) if error.is::<acp_thread::SubmissionCancelled>() => {
+                    return Ok(acp_v2::StopReason::Cancelled);
+                }
+                Err(error) => return Err(error),
+            }
+            completion.await?.map_err(|error| anyhow!("{error:#}"))
+        })
+    }
+
     pub fn send_and_wait_for_completion(
         &self,
         thread: Entity<AcpThread>,
@@ -2481,6 +2505,18 @@ impl NativeAgentConnection {
         &self,
         session_id: acp_v2::SessionId,
         content: Option<Vec<acp_v2::ContentBlock>>,
+        cx: &mut App,
+    ) -> (Task<Result<acp_v2::PromptResponse>>, NativeCompletion) {
+        self.submit_native_with_origin(session_id, content, None, cx)
+    }
+
+    /// Submits `content` to a session, as a prompt another session delivered when `origin`
+    /// is set.
+    fn submit_native_with_origin(
+        &self,
+        session_id: acp_v2::SessionId,
+        content: Option<Vec<acp_v2::ContentBlock>>,
+        origin: Option<SessionMessageOrigin>,
         cx: &mut App,
     ) -> (Task<Result<acp_v2::PromptResponse>>, NativeCompletion) {
         let (completion_sender, completion_receiver) = oneshot::channel();
@@ -2584,15 +2620,35 @@ impl NativeAgentConnection {
                                 NativeRetryAction::Prompt(content) => content.clone(),
                                 _ => Vec::new(),
                             };
-                            thread.push_acp_user_block(
-                                message_id.clone(),
-                                history_content,
-                                path_style,
-                                cx,
-                            )
+                            match origin.clone() {
+                                Some(origin) => thread.push_delivered_user_block(
+                                    message_id.clone(),
+                                    history_content,
+                                    origin,
+                                    path_style,
+                                    cx,
+                                ),
+                                None => thread.push_acp_user_block(
+                                    message_id.clone(),
+                                    history_content,
+                                    path_style,
+                                    cx,
+                                ),
+                            }
                         })?;
-                        acp_thread.update(cx, |thread, cx| {
-                            thread.upsert_local_user_message(message_id.clone(), source, cx)
+                        acp_thread.update(cx, |thread, cx| match origin {
+                            Some(origin) => thread.upsert_session_message(
+                                delivered_session_message(
+                                    thread.session_id().clone(),
+                                    &message_id,
+                                    origin,
+                                    source,
+                                ),
+                                cx,
+                            ),
+                            None => {
+                                thread.upsert_local_user_message(message_id.clone(), source, cx)
+                            }
                         })?;
                         (message_id, Some(retry_action))
                     } else {
@@ -2795,8 +2851,17 @@ impl NativeAgentConnection {
                                 let content = message.content.iter().cloned()
                                     .map(acp_v2::ContentBlock::from)
                                     .collect::<Vec<_>>();
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.upsert_local_user_message(message.id, content, cx)
+                                acp_thread.update(cx, |thread, cx| match message.origin {
+                                    Some(origin) => thread.upsert_session_message(
+                                        delivered_session_message(
+                                            thread.session_id().clone(),
+                                            &message.id,
+                                            origin,
+                                            content,
+                                        ),
+                                        cx,
+                                    ),
+                                    None => thread.upsert_local_user_message(message.id, content, cx),
                                 })??;
                             }
                             ThreadEvent::AgentText(text) => {
@@ -3494,7 +3559,7 @@ impl NativeAgentConnection {
             log::debug!("Message content: {:?}", content);
 
             thread.update(cx, |thread, cx| {
-                thread.upsert_user_message(client_user_message_id, content.into(), cx)
+                thread.upsert_user_message(client_user_message_id, content.into(), None, cx)
             });
             agent.update(cx, |agent, _cx| {
                 agent.mark_execution_history_prepared(&prepared_session_id)
@@ -3640,6 +3705,20 @@ impl acp_thread::AgentSessionSetTitle for NativeAgentSessionSetTitle {
             .update(cx, |thread, cx| thread.set_title(title, cx));
         Task::ready(Ok(()))
     }
+}
+
+/// A subagent's view of a prompt that `origin` delivered to it.
+fn delivered_session_message(
+    recipient_session_id: acp_v2::SessionId,
+    message_id: &ClientUserMessageId,
+    origin: SessionMessageOrigin,
+    content: Vec<acp_v2::ContentBlock>,
+) -> acp_v2::SessionMessage {
+    acp_v2::SessionMessage::new(message_id.message_id())
+        .sender_session_id(origin.sender_session_id)
+        .recipient_session_id(recipient_session_id)
+        .sender_message_id(origin.sender_message_id)
+        .content(content)
 }
 
 pub struct NativeThreadEnvironment {
@@ -3958,7 +4037,12 @@ impl SubagentHandle for NativeSubagentHandle {
         self.acp_thread.read(cx).entries().len()
     }
 
-    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>> {
+    fn send(
+        &self,
+        message: String,
+        message_id: acp_v2::MessageId,
+        cx: &AsyncApp,
+    ) -> Task<Result<String>> {
         let thread = self.subagent_thread.clone();
         let acp_thread = self.acp_thread.clone();
         let subagent_session_id = self.session_id.clone();
@@ -3989,13 +4073,20 @@ impl SubagentHandle for NativeSubagentHandle {
                         }
                     },
                 );
-                let task = match acp_thread.read(cx).connection().clone().into_any()
-                    .downcast::<NativeAgentConnection>()
-                {
-                    Ok(connection) => connection.send_and_wait_for_completion(
-                        acp_thread.clone(), vec![message.into()], cx,
+                let origin = parent_thread.upgrade().map(|parent_thread| SessionMessageOrigin {
+                    sender_session_id: parent_thread.read(cx).id().clone(),
+                    sender_message_id: message_id,
+                });
+                let task = match (
+                    acp_thread.read(cx).connection().clone().into_any()
+                        .downcast::<NativeAgentConnection>(),
+                    origin,
+                ) {
+                    (Ok(connection), Some(origin)) => connection.deliver_and_wait_for_completion(
+                        acp_thread.clone(), vec![message.into()], origin, cx,
                     ),
-                    Err(_) => Task::ready(Err(anyhow!("Subagent connection is not native"))),
+                    (Ok(_), None) => Task::ready(Err(anyhow!("Parent thread no longer exists"))),
+                    (Err(_), _) => Task::ready(Err(anyhow!("Subagent connection is not native"))),
                 };
                 (task, token_limit_rx, subscription)
             });

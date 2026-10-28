@@ -212,7 +212,9 @@ impl AgentTool for SpawnAgentTool {
                 Ok((subagent, session_info))
             })?;
 
-            let send_result = subagent.send(message, cx).await;
+            // The parent's view of the message is this tool call.
+            let message_id = acp_v2::MessageId::new(event_stream.tool_call_id().0.clone());
+            let send_result = subagent.send(message, message_id, cx).await;
 
             let status = if send_result.is_ok() {
                 "completed"
