@@ -3375,6 +3375,18 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 
 - `enabled`: Whether to enable automatic JSX tag closing
 
+## Keep Projects in Window
+
+- Description: Whether to keep the previous project open in the window when switching to another one, even when AI features are disabled. With AI features enabled, projects are always kept.
+- Setting: `keep_projects_in_window`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+See [Windows and Projects](../windows-and-projects.md#switching-projects-with-ai-disabled).
+
 ## Language Detection
 
 - Description: Whether to automatically detect the language of an untitled buffer from its contents. Languages explicitly selected from the language selector are not changed.

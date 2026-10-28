@@ -28,7 +28,7 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 use crate::open_remote_project_with_existing_connection;
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
-    Panel, Workspace, WorkspaceId, client_side_decorations,
+    Panel, Workspace, WorkspaceId, WorkspaceSettings, client_side_decorations,
     persistence::model::MultiWorkspaceState,
 };
 
@@ -348,15 +348,23 @@ impl MultiWorkspace {
             }
         });
         let settings_subscription = cx.observe_global_in::<settings::SettingsStore>(window, {
-            let mut previous_multi_workspace_enabled = !DisableAiSettings::get_global(cx)
-                .disable_ai
-                && AgentSettings::get_global(cx).enabled;
+            let mut previous_multi_workspace_enabled = Self::ai_features_enabled(cx);
+            let mut previous_retains_workspaces = Self::workspace_retention_enabled(cx);
             move |this, window, cx| {
                 let multi_workspace_enabled = this.multi_workspace_enabled(cx);
-                if previous_multi_workspace_enabled && !multi_workspace_enabled {
-                    this.collapse_to_single_workspace(window, cx);
+                if previous_multi_workspace_enabled
+                    && !multi_workspace_enabled
+                    && this.sidebar_open()
+                {
+                    this.close_sidebar(window, cx);
                 }
                 previous_multi_workspace_enabled = multi_workspace_enabled;
+
+                let retains_workspaces = Self::workspace_retention_enabled(cx);
+                if previous_retains_workspaces && !retains_workspaces {
+                    this.collapse_to_single_workspace(window, cx);
+                }
+                previous_retains_workspaces = retains_workspaces;
             }
         });
         Self::subscribe_to_workspace(&workspace, window, cx);
@@ -424,7 +432,15 @@ impl MultiWorkspace {
     }
 
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
+        Self::ai_features_enabled(cx)
+    }
+
+    fn ai_features_enabled(cx: &App) -> bool {
         !DisableAiSettings::get_global(cx).disable_ai && AgentSettings::get_global(cx).enabled
+    }
+
+    fn workspace_retention_enabled(cx: &App) -> bool {
+        Self::ai_features_enabled(cx) || WorkspaceSettings::get_global(cx).keep_projects_in_window
     }
 
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1327,7 +1343,7 @@ impl MultiWorkspace {
 
         let old_active_workspace = self.workspace().clone();
         let old_active_was_retained = self.active_workspace_is_retained();
-        let should_retain_workspaces = self.multi_workspace_enabled(cx);
+        let should_retain_workspaces = Self::workspace_retention_enabled(cx);
 
         if should_retain_workspaces && !old_active_was_retained {
             let key = old_active_workspace.read(cx).project_group_key(cx);
@@ -1386,7 +1402,7 @@ impl MultiWorkspace {
     }
 
     /// Collapses to a single workspace, discarding all groups.
-    /// Used when multi-workspace is disabled by settings.
+    /// Used when workspace retention is disabled by settings.
     fn collapse_to_single_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.sidebar_open {
             self.close_sidebar(window, cx);
@@ -1937,7 +1953,7 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        if self.multi_workspace_enabled(cx) {
+        if Self::workspace_retention_enabled(cx) {
             let empty_workspace = if self
                 .workspace()
                 .read(cx)

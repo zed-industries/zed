@@ -320,6 +320,22 @@ fn general_page(cx: &App) -> SettingsPage {
                 })),
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Keep Projects in Window",
+                description: "Keep projects open in the window when switching between them, even with AI disabled.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("keep_projects_in_window"),
+                    pick: |settings_content| {
+                        settings_content.workspace.keep_projects_in_window.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.keep_projects_in_window = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
         ]
     }
     fn security_section() -> [SettingsPageItem; 2] {
@@ -11466,6 +11482,56 @@ fn write_helix_mode_inner(settings: &mut SettingsContent, value: Option<bool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SettingField;
+
+    fn setting_item_json_path(item: &SettingsPageItem) -> Option<&'static str> {
+        match item {
+            SettingsPageItem::SettingItem(setting_item) => setting_item.field.json_path(),
+            _ => None,
+        }
+    }
+
+    #[gpui::test]
+    fn test_keep_projects_in_window_settings_item(cx: &mut gpui::TestAppContext) {
+        let page = cx.update(|cx| general_page(cx));
+
+        let matching_indices: Vec<usize> = page
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| setting_item_json_path(item) == Some("keep_projects_in_window"))
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(
+            matching_indices.len(),
+            1,
+            "the general page should contain exactly one keep_projects_in_window item"
+        );
+        let index = matching_indices[0];
+        assert!(
+            index > 0,
+            "the item should not be the first one on the page"
+        );
+        assert_eq!(
+            setting_item_json_path(&page.items[index - 1]),
+            Some("default_open_behavior"),
+            "the item should directly follow default_open_behavior"
+        );
+
+        let SettingsPageItem::SettingItem(setting_item) = &page.items[index] else {
+            panic!("keep_projects_in_window should be a setting item");
+        };
+        let field = setting_item
+            .field
+            .as_any()
+            .downcast_ref::<SettingField<bool>>()
+            .expect("keep_projects_in_window should be a bool field");
+
+        let mut content = SettingsContent::default();
+        cx.update(|cx| (field.write)(&mut content, Some(true), cx));
+        assert_eq!(content.workspace.keep_projects_in_window, Some(true));
+        assert_eq!((field.pick)(&content), Some(&true));
+    }
 
     #[test]
     fn test_write_vim_helix_mode() {
