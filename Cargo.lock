@@ -262,6 +262,7 @@ dependencies = [
  "cloud_api_types",
  "cloud_llm_client",
  "collections",
+ "const_format",
  "context_server",
  "ctor",
  "db",
