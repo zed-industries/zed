@@ -351,24 +351,24 @@ impl Worktree {
             .unwrap_or(&self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)])
     }
 
-    pub fn directory_name(&self, name_anchor_path: Option<&Path>) -> String {
+    pub fn directory_name(&self, name_anchor_path: Option<&Path>, path_style: PathStyle) -> String {
         if self.is_main {
             return "main worktree".to_string();
         }
 
-        let dir_name = self
-            .path
-            .file_name()
+        let dir_name = path_style
+            .file_name(&self.path)
             .and_then(|name| name.to_str())
             .unwrap_or(self.display_name());
 
         if let Some(name_anchor_path) = name_anchor_path {
-            let name_anchor_dir = name_anchor_path.file_name().and_then(|name| name.to_str());
+            let name_anchor_dir = path_style
+                .file_name(name_anchor_path)
+                .and_then(|name| name.to_str());
             if name_anchor_dir == Some(dir_name) {
-                if let Some(parent_name) = self
-                    .path
-                    .parent()
-                    .and_then(|parent| parent.file_name())
+                if let Some(parent_name) = path_style
+                    .parent(&self.path)
+                    .and_then(|parent| path_style.file_name(parent))
                     .and_then(|name| name.to_str())
                 {
                     return parent_name.to_string();
@@ -5974,6 +5974,65 @@ mod tests {
             }),
         };
         assert_eq!(upstream.branch_name(), Some("feature/git-pull-request"));
+    }
+
+    #[test]
+    fn test_directory_name_uses_path_style() {
+        let cases = [
+            (
+                "/worktrees/zed/plum-warbler/zed",
+                Some("/repos/zed"),
+                PathStyle::Unix,
+                "plum-warbler",
+            ),
+            (
+                "/worktrees/feature-1",
+                Some("/repos/zed"),
+                PathStyle::Unix,
+                "feature-1",
+            ),
+            ("/worktrees/feature-1", None, PathStyle::Unix, "feature-1"),
+            (
+                r"C:\worktrees\zed\plum-warbler\zed",
+                Some(r"C:\repos\zed"),
+                PathStyle::Windows,
+                "plum-warbler",
+            ),
+            (
+                r"C:\worktrees\feature-1",
+                Some(r"C:\repos\zed"),
+                PathStyle::Windows,
+                "feature-1",
+            ),
+            (
+                r"C:\worktrees\feature-1",
+                None,
+                PathStyle::Windows,
+                "feature-1",
+            ),
+            (
+                "C:/worktrees/zed/plum-warbler/zed",
+                Some("C:/repos/zed"),
+                PathStyle::Windows,
+                "plum-warbler",
+            ),
+        ];
+
+        for (worktree_path, name_anchor, path_style, expected) in cases {
+            let worktree = Worktree {
+                path: PathBuf::from(worktree_path),
+                ref_name: None,
+                sha: "8166e3d".into(),
+                is_main: false,
+                is_bare: false,
+            };
+
+            assert_eq!(
+                worktree.directory_name(name_anchor.map(Path::new), path_style),
+                expected,
+                "directory name for {worktree_path:?} anchored at {name_anchor:?} with {path_style:?}",
+            );
+        }
     }
 
     #[test]
