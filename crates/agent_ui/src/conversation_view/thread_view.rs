@@ -12245,9 +12245,12 @@ impl ThreadView {
                     .pending_tool_call(tv_session_id, cx);
 
                 let nav_session_id = tv_session_id.clone();
+                let fullscreen_entry = state.fullscreen_entry();
+                let subagent_view = thread_view.clone();
 
                 let fullscreen_toggle = h_flex()
                     .id(entry_ix)
+                    .debug_selector(move || format!("subagent-fullscreen-{entry_ix}"))
                     .py_1()
                     .w_full()
                     .justify_center()
@@ -12269,6 +12272,9 @@ impl ThreadView {
                                 this.navigate_to_thread(nav_session_id.clone(), window, cx);
                             })
                             .ok();
+                        if let Some(entry_ix) = fullscreen_entry {
+                            subagent_view.update(cx, |view, cx| view.scroll_to_entry(entry_ix, cx));
+                        }
                     }));
 
                 if is_running && let Some((_, subagent_tool_call_id, _)) = pending_tool_call {

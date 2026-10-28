@@ -259,6 +259,14 @@ impl SubagentCardState {
         })
     }
 
+    /// The subagent entry that full screen should open at: the start of this card's part
+    /// once its work has stopped, or `None` while it runs, so the subagent's view keeps
+    /// following its latest entries.
+    pub(crate) fn fullscreen_entry(&self) -> Option<usize> {
+        (self.status != SubagentStatus::Running)
+            .then(|| self.entries.map_or(0, |entries| entries.start))
+    }
+
     /// The last `max_entries` of the entries this card covers.
     pub(crate) fn preview_range(&self, total_entries: usize, max_entries: usize) -> Range<usize> {
         let mut range = match self.entries {
@@ -421,6 +429,27 @@ mod tests {
             let (status, error) = SubagentStatus::from_reported_state(state.as_ref());
             assert_eq!(status, expected_status, "{state:?}");
             assert_eq!(error.as_deref(), expected_error, "{state:?}");
+        }
+    }
+
+    #[test]
+    fn fullscreen_opens_a_stopped_card_at_the_start_of_its_part() {
+        let part = Some(SubagentEntries {
+            start: 4,
+            end: Some(6),
+        });
+        assert_eq!(
+            card(None, SubagentStatus::Running, part).fullscreen_entry(),
+            None
+        );
+        for status in [
+            SubagentStatus::Completed,
+            SubagentStatus::Canceled,
+            SubagentStatus::Failed,
+            SubagentStatus::Unknown,
+        ] {
+            assert_eq!(card(None, status, part).fullscreen_entry(), Some(4));
+            assert_eq!(card(None, status, None).fullscreen_entry(), Some(0));
         }
     }
 
