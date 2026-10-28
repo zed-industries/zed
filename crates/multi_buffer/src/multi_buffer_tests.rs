@@ -3977,6 +3977,31 @@ async fn test_enclosing_indent(cx: &mut TestAppContext) {
                 fn b() {
                     if c {
                         let d = 2;
+                    }
+                }
+                "
+            ),
+            3,
+            cx,
+        )
+        .await,
+        Some((
+            1..2,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
+    );
+
+    assert_eq!(
+        enclosing_indent(
+            indoc!(
+                "
+                fn b() {
+                    if c {
+                        let d = 2;
 
                         let e = 5;
                     }
