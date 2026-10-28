@@ -1719,6 +1719,20 @@ impl ToolCall {
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
+        // Agents may stream tool text one chunk at a time, like message text, so adjacent
+        // plain text continues the previous block instead of starting a new one.
+        if let PreparedToolCallContent::ContentBlock(acp_v2::Content {
+            content: acp_v2::ContentBlock::Text(text),
+            meta: None,
+            ..
+        }) = &content
+            && let Some(ToolCallContent::ContentBlock { block, meta: None }) =
+                self.structured_content.last_mut()
+            && block.append_plain_text(text, cx)
+        {
+            self.update_raw_output_content(language_registry, cx);
+            return;
+        }
         self.structured_content.push(ToolCallContent::from_prepared(
             content,
             language_registry,
@@ -2708,6 +2722,23 @@ impl ContentBlock {
     ///
     /// Recreating the entity on every streamed snapshot causes the rendered
     /// element to tear down and rebuild, which flickers badly.
+    /// Appends text without annotations or metadata to a block holding the same kind of text.
+    fn append_plain_text(&mut self, text: &acp_v2::TextContent, cx: &mut App) -> bool {
+        let is_plain =
+            |text: &acp_v2::TextContent| text.annotations.is_none() && text.meta.is_none();
+        let (RenderBlock::Markdown { markdown }, Some(acp_v2::ContentBlock::Text(source))) =
+            (&self.render, &mut self.source)
+        else {
+            return false;
+        };
+        if !is_plain(text) || !is_plain(source) {
+            return false;
+        }
+        source.text.push_str(&text.text);
+        markdown.update(cx, |markdown, cx| markdown.append(&text.text, cx));
+        true
+    }
+
     pub fn update_text_in_place(&mut self, block: &acp_v2::ContentBlock, cx: &mut App) -> bool {
         let RenderBlock::Markdown { markdown } = &self.render else {
             return false;
@@ -16655,6 +16686,48 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_tool_text_chunks_merge_only_plain_adjacent_text(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let chunk =
+                |content: acp_v2::ContentBlock| acp_v2::ToolCallContentChunk::new("tool", content);
+            for chunk in [
+                chunk("Str".into()),
+                chunk("eam".into()),
+                chunk(acp_v2::ContentBlock::ResourceLink(
+                    acp_v2::ResourceLink::new("notes", "file:///notes.md"),
+                )),
+                chunk(" after link".into()),
+                chunk(acp_v2::ContentBlock::Text(
+                    acp_v2::TextContent::new(" annotated")
+                        .annotations(acp_v2::Annotations::new().priority(0.5)),
+                )),
+                chunk(" plain".into()),
+                acp_v2::ToolCallContentChunk::new(
+                    "tool",
+                    acp_v2::ToolCallContent::Content(Box::new(
+                        acp_v2::Content::new(" with meta")
+                            .meta(acp_v2::Meta::from_iter([("item".into(), json!(true))])),
+                    )),
+                ),
+            ] {
+                thread
+                    .append_tool_call_content_chunk(chunk, cx)
+                    .expect("tool chunk");
+            }
+            let (_, call) = thread.tool_call(&"tool".into()).expect("tool");
+            // Plain text merges; a link, annotations or item metadata start a new block.
+            let content = call.content();
+            assert_eq!(content.len(), 6);
+            assert_eq!(content[0].to_markdown(cx), "Stream");
+            assert_eq!(content[2].to_markdown(cx), " after link");
+            assert_eq!(content[3].to_markdown(cx), " annotated");
+            assert_eq!(content[4].to_markdown(cx), " plain");
+        });
+    }
+
+    #[gpui::test]
     async fn test_tool_content_chunk_ordering_and_targeting(cx: &mut TestAppContext) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
@@ -16700,14 +16773,15 @@ mod tests {
             let (index, first) = thread.tool_call(&first_id).expect("historical tool");
             assert_eq!(index, 0);
             assert_eq!(first.content()[0].markdown(), Some(&original));
-            assert_eq!(original.read(cx).source(), "original");
+            // Adjacent text chunks continue the same text block.
+            assert_eq!(original.read(cx).source(), "originalhistorical");
             assert_eq!(
                 first
                     .content()
                     .iter()
                     .map(|item| item.to_markdown(cx))
                     .collect::<Vec<_>>(),
-                ["original", "historical"]
+                ["originalhistorical"]
             );
             let (index, second) = thread.tool_call(&second_id).expect("second tool");
             assert_eq!(index, 1);
@@ -16736,7 +16810,7 @@ mod tests {
                     .iter()
                     .map(|item| item.to_markdown(cx))
                     .collect::<Vec<_>>(),
-                ["replacement", "after replacement"]
+                ["replacementafter replacement"]
             );
             thread
                 .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("first").content(Vec::new()), cx)

@@ -4266,7 +4266,10 @@ done
             assert_eq!(thread.session_info().title.as_deref(), Some("Early title"));
             assert!(thread.to_markdown(cx).contains("Early content"));
             let (_, tool) = thread.tool_call(&"early-tool".into()).expect("early tool");
-            assert_eq!(tool.content().len(), 2);
+            let [content] = tool.content() else {
+                panic!("the chunk continues the text block");
+            };
+            assert_eq!(content.to_markdown(cx), "tool prefixtool suffix");
             let terminal = thread
                 .terminal("early-terminal".into())
                 .expect("early terminal");
