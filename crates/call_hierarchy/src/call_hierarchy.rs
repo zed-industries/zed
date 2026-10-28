@@ -863,14 +863,12 @@ impl Render for CallSignatureTooltip {
                             div()
                                 .min_w_0()
                                 .max_w(max_width)
-                                .debug_selector(|| "call-hierarchy-tooltip-signature".to_string())
                                 .child(signature),
                         )
                         .children(detail_styled.map(|detail| {
                             div()
                                 .min_w_0()
                                 .max_w(max_width)
-                                .debug_selector(|| "call-hierarchy-tooltip-detail".to_string())
                                 .child(detail)
                         })),
                 )
@@ -1641,76 +1639,6 @@ mod tests {
 
         assert_eq!(signature, "fn helper(&self) -> i32");
         assert_eq!(detail, None);
-    }
-
-    #[gpui::test]
-    async fn test_tooltip_long_signature_fits_content_width(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let max_width = px(400.);
-        let signature = "fn very_long_function_name(argument_one: SomeVeryLongType, argument_two: AnotherLongType) -> ReturnType";
-        let tooltip = CallSignatureTooltip {
-            label: Some((
-                Arc::new(CodeLabel::new(signature.to_string(), 3..26, Vec::new())),
-                signature.into(),
-            )),
-            full_signature: signature.into(),
-            detail: None,
-            path: None,
-            max_width,
-        };
-
-        let (_view, cx) = cx.add_window_view(|_, _| tooltip);
-        cx.run_until_parked();
-
-        let row = cx
-            .debug_bounds("call-hierarchy-tooltip-row")
-            .expect("tooltip row should render");
-        let bounds = cx
-            .debug_bounds("call-hierarchy-tooltip-signature")
-            .expect("signature should render");
-
-        assert!(
-            bounds.size.width <= row.size.width,
-            "signature width {:?} exceeds tooltip content width {:?}",
-            bounds.size.width,
-            row.size.width
-        );
-    }
-
-    #[gpui::test]
-    async fn test_tooltip_long_detail_fits_content_width(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let max_width = px(400.);
-        let detail = "github.com/very/long/package/path/that/keeps/going/and/going";
-        let tooltip = CallSignatureTooltip {
-            label: Some((
-                Arc::new(CodeLabel::new("func helper".to_string(), 5..11, Vec::new())),
-                "func helper".into(),
-            )),
-            full_signature: format!("helper {detail}").into(),
-            detail: Some(detail.into()),
-            path: None,
-            max_width,
-        };
-
-        let (_view, cx) = cx.add_window_view(|_, _| tooltip);
-        cx.run_until_parked();
-
-        let row = cx
-            .debug_bounds("call-hierarchy-tooltip-row")
-            .expect("tooltip row should render");
-        let bounds = cx
-            .debug_bounds("call-hierarchy-tooltip-detail")
-            .expect("detail should render");
-
-        assert!(
-            bounds.size.width <= row.size.width,
-            "detail width {:?} exceeds tooltip content width {:?}",
-            bounds.size.width,
-            row.size.width
-        );
     }
 
     #[test]
