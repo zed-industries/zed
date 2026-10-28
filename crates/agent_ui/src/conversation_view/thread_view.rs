@@ -1047,6 +1047,7 @@ impl ThreadView {
                 cx.notify();
             }
         }));
+        subscriptions.push(cx.observe(&entry_view_state, |_, _, cx| cx.notify()));
 
         let has_slash_completions = session_capabilities.read().has_slash_completions();
         let placeholder = placeholder_text(agent_display_name.as_ref(), has_slash_completions);
@@ -9633,6 +9634,13 @@ impl ThreadView {
                 .content()
                 .iter()
                 .any(|content| matches!(content, ToolCallContent::DiffPatch { .. }));
+        let edit_diff_stats = if is_edit {
+            tool_call
+                .diff_line_counts(cx)
+                .filter(|&(added, removed)| added > 0 || removed > 0)
+        } else {
+            None
+        };
 
         let is_cancelled_edit = is_edit && matches!(tool_call.status(), ToolCallStatus::Canceled);
         let has_diff_changes = is_cancelled_edit
@@ -9943,20 +9951,49 @@ impl ThreadView {
                             ))
                             .child(
                                 h_flex()
-                                    .when(is_collapsible || failed_or_canceled, |this| {
-                                        let diff_for_discard = if has_diff_changes
-                                            && is_cancelled_edit
-                                        {
-                                            tool_call.diffs().next().cloned()
-                                        } else {
-                                            None
-                                        };
+                                    .flex_none()
+                                    .when(
+                                        is_collapsible
+                                            || failed_or_canceled
+                                            || edit_diff_stats.is_some(),
+                                        |this| {
+                                            let diff_for_discard = if has_diff_changes
+                                                && is_cancelled_edit
+                                            {
+                                                tool_call.diffs().next().cloned()
+                                            } else {
+                                                None
+                                            };
 
-                                        this.child(
-                                            h_flex()
-                                                .pr_0p5()
-                                                .gap_1()
-                                                .when(is_collapsible, |this| {
+                                            this.child(
+                                                h_flex()
+                                                    .pr_0p5()
+                                                    .gap_1()
+                                                    .when_some(
+                                                        edit_diff_stats,
+                                                        |this, (added, removed)| {
+                                                            this.child(
+                                                                div()
+                                                                    .pl_1p5()
+                                                                    .pr_1()
+                                                                    .flex_none()
+                                                                    .child(
+                                                                        DiffStat::new(
+                                                                            (
+                                                                                "tool-call-diff-stat",
+                                                                                entry_ix,
+                                                                            ),
+                                                                            added as usize,
+                                                                            removed as usize,
+                                                                        )
+                                                                        .label_size(
+                                                                            LabelSize::XSmall,
+                                                                        ),
+                                                                    ),
+                                                            )
+                                                        },
+                                                    )
+                                                    .when(is_collapsible, |this| {
                                                     this.child(
                                                         Disclosure::new(
                                                             ("expand-output", entry_ix),
@@ -11563,6 +11600,7 @@ impl ThreadView {
         h_flex()
             .relative()
             .w_full()
+            .min_w_0()
             .h(window.line_height() - px(2.))
             .text_size(self.tool_name_font_size())
             .gap_1p5()
