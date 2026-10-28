@@ -698,6 +698,7 @@ impl KeymapEditor {
         let action_query = self.current_action_query(cx);
         let keystroke_query = self.current_keystroke_query(cx);
         let exact_match = self.search_mode.exact_match();
+        let os = cx.platform_info().os;
 
         let timer = cx.background_executor().timer(Duration::from_secs(1));
         self.search_query_debounce = Some(cx.background_spawn({
@@ -708,7 +709,7 @@ impl KeymapEditor {
 
                 let keystroke_query = keystroke_query
                     .into_iter()
-                    .map(|keystroke| keystroke.inner().unparse())
+                    .map(|keystroke| keystroke.inner().unparse(os))
                     .collect::<Vec<String>>()
                     .join(" ");
 
@@ -1019,8 +1020,8 @@ impl KeymapEditor {
         .detach_and_log_err(cx);
     }
 
-    fn key_context(&self) -> KeyContext {
-        let mut dispatch_context = KeyContext::new_with_defaults();
+    fn key_context(&self, cx: &App) -> KeyContext {
+        let mut dispatch_context = KeyContext::new_with_defaults(cx.platform_info().os);
         dispatch_context.add("KeymapEditor");
         dispatch_context.add("menu");
 
@@ -1459,12 +1460,14 @@ impl KeymapEditor {
         ));
         let keyboard_mapper = cx.keyboard_mapper().clone();
         let deprecated_aliases = cx.deprecated_actions_to_preferred_actions().clone();
+        let os = cx.platform_info().os;
         cx.spawn(async move |_, _| {
             remove_keybinding(
                 to_remove,
                 &fs,
                 keyboard_mapper.as_ref(),
                 &deprecated_aliases,
+                os,
             )
             .await
         })
@@ -2010,7 +2013,7 @@ impl Render for KeymapEditor {
         v_flex()
             .id("keymap-editor")
             .track_focus(focus_handle)
-            .key_context(self.key_context())
+            .key_context(self.key_context(cx))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
@@ -2043,7 +2046,7 @@ impl Render for KeymapEditor {
                             .child(
                                 h_flex()
                                     .key_context({
-                                        let mut context = KeyContext::new_with_defaults();
+                                        let mut context = KeyContext::new_with_defaults(cx.platform_info().os);
                                         context.add("BufferSearchBar");
                                         context
                                     })
@@ -2866,6 +2869,7 @@ impl KeybindingEditorModal {
         let create = self.creating;
         let keyboard_mapper = cx.keyboard_mapper().clone();
         let deprecated_aliases = cx.deprecated_actions_to_preferred_actions().clone();
+        let os = cx.platform_info().os;
 
         let action_name = self
             .get_selected_action_name(cx)
@@ -2897,6 +2901,7 @@ impl KeybindingEditorModal {
                 &fs,
                 keyboard_mapper.as_ref(),
                 &deprecated_aliases,
+                os,
             )
             .await
             {
@@ -2984,14 +2989,14 @@ impl KeybindingEditorModal {
             })
     }
 
-    fn key_context(&self) -> KeyContext {
-        let mut key_context = KeyContext::new_with_defaults();
+    fn key_context(&self, cx: &App) -> KeyContext {
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("KeybindEditorModal");
         key_context
     }
 
     fn key_context_internal(&self, window: &Window, cx: &App) -> KeyContext {
-        let mut key_context = self.key_context();
+        let mut key_context = self.key_context(cx);
 
         if self.is_any_editor_showing_completions(window, cx) {
             key_context.add("showing_completions");
@@ -3636,6 +3641,7 @@ async fn save_keybinding_update(
     fs: &Arc<dyn Fs>,
     keyboard_mapper: &dyn PlatformKeyboardMapper,
     deprecated_aliases: &HashMap<&'static str, &'static str>,
+    os: gpui::OperatingSystem,
 ) -> anyhow::Result<()> {
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
@@ -3678,7 +3684,7 @@ async fn save_keybinding_update(
         }
     };
 
-    let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry();
+    let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry(os);
 
     let updated_keymap_contents = settings::KeymapFile::update_keybinding(
         operation,
@@ -3686,6 +3692,7 @@ async fn save_keybinding_update(
         tab_size,
         keyboard_mapper,
         deprecated_aliases,
+        os,
     )
     .map_err(|err| err.context("Could not save updated keybinding"))?;
     fs.write(
@@ -3709,6 +3716,7 @@ async fn remove_keybinding(
     fs: &Arc<dyn Fs>,
     keyboard_mapper: &dyn PlatformKeyboardMapper,
     deprecated_aliases: &HashMap<&'static str, &'static str>,
+    os: gpui::OperatingSystem,
 ) -> anyhow::Result<()> {
     let Some(keystrokes) = existing.keystrokes() else {
         anyhow::bail!("Cannot remove a keybinding that does not exist");
@@ -3732,13 +3740,14 @@ async fn remove_keybinding(
         target_keybind_source: existing.keybind_source().unwrap_or(KeybindSource::User),
     };
 
-    let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry();
+    let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry(os);
     let updated_keymap_contents = settings::KeymapFile::update_keybinding(
         operation,
         keymap_contents,
         tab_size,
         keyboard_mapper,
         deprecated_aliases,
+        os,
     )
     .context("Failed to update keybinding")?;
     fs.write(

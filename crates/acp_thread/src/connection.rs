@@ -101,6 +101,11 @@ pub trait AgentConnection {
         None
     }
 
+    /// Initiate shutdown of connection-owned resources when their shared UI owner ends.
+    /// This is independent of session close and may leave retained models alive.
+    /// It does not wait for process exit or a complete protocol drain.
+    fn shutdown(&self) {}
+
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -127,6 +132,12 @@ pub trait AgentConnection {
 
     /// Whether this agent supports explicitly closing existing sessions.
     fn supports_close_session(&self) -> bool {
+        false
+    }
+
+    /// Whether subagents follow the ACP subagents RFD on this connection: they are discovered
+    /// only through their parent's announcements, and must never be loaded or resumed.
+    fn announces_subagents(&self) -> bool {
         false
     }
 
@@ -380,6 +391,11 @@ pub trait AgentSessionModes {
 pub trait AgentSessionConfigOptions {
     /// Get all current config options with their state
     fn config_options(&self) -> Vec<acp_v2::SessionConfigOption>;
+
+    /// Agent-owned sessions may report configuration without allowing the client to change it.
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
     /// Set a config option value
     /// Returns the full updated list of config options
@@ -905,7 +921,7 @@ mod test_support {
     use action_log::ActionLog;
     use collections::{HashMap, VecDeque};
     use futures::{channel::oneshot, future::try_join_all};
-    use gpui::{AppContext as _, WeakEntity};
+    use gpui::{AppContext as _, Entity, WeakEntity};
     use parking_lot::Mutex;
 
     use crate::AuthorizationKind;
@@ -961,6 +977,8 @@ mod test_support {
         permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<StubPromptUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
+        auth_methods: Vec<acp_v2::AuthMethod>,
+        next_authenticate_response: Arc<Mutex<Option<oneshot::Receiver<Result<()>>>>>,
         next_load_error: Arc<Mutex<Option<anyhow::Error>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
@@ -970,14 +988,17 @@ mod test_support {
         next_close_responses: Arc<Mutex<VecDeque<oneshot::Receiver<Result<()>>>>>,
         set_title_calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
         cancel_calls: Arc<Mutex<Vec<acp_v2::SessionId>>>,
+        shutdown_calls: Arc<AtomicUsize>,
         next_cancel_error: Arc<Mutex<Option<anyhow::Error>>>,
         supports_receipt_submissions: bool,
         supports_retry: bool,
         supports_load_session: bool,
         supports_close_session: bool,
+        announces_subagents: bool,
         close_sessions_on_release: bool,
         supports_session_additional_directories: bool,
         supports_set_title: bool,
+        supports_truncate: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
         prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
@@ -1006,6 +1027,8 @@ mod test_support {
             Self {
                 next_prompt_updates: Default::default(),
                 next_prompt_response: Default::default(),
+                auth_methods: Vec::new(),
+                next_authenticate_response: Default::default(),
                 next_load_error: Default::default(),
                 next_receipt_response: Default::default(),
                 receipt_prompt: Default::default(),
@@ -1014,6 +1037,7 @@ mod test_support {
                 next_close_responses: Default::default(),
                 set_title_calls: Default::default(),
                 cancel_calls: Default::default(),
+                shutdown_calls: Default::default(),
                 next_cancel_error: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
@@ -1021,9 +1045,11 @@ mod test_support {
                 supports_retry: false,
                 supports_load_session: false,
                 supports_close_session: false,
+                announces_subagents: false,
                 close_sessions_on_release: true,
                 supports_session_additional_directories: false,
                 supports_set_title: true,
+                supports_truncate: true,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
                 prompt_capabilities_rx: watch::Receiver::constant(
@@ -1037,6 +1063,10 @@ mod test_support {
 
         pub fn set_next_load_error(&self, error: anyhow::Error) {
             *self.next_load_error.lock() = Some(error);
+        }
+
+        pub fn shutdown_calls(&self) -> usize {
+            self.shutdown_calls.load(Ordering::SeqCst)
         }
 
         pub fn set_next_prompt_updates(&self, updates: Vec<acp_v1::SessionUpdate>) {
@@ -1061,6 +1091,22 @@ mod test_support {
         ) -> oneshot::Sender<Result<acp_v1::PromptResponse>> {
             let (sender, receiver) = oneshot::channel();
             assert!(self.next_prompt_response.lock().replace(receiver).is_none());
+            sender
+        }
+
+        pub fn with_auth_methods(mut self, methods: Vec<acp_v2::AuthMethod>) -> Self {
+            self.auth_methods = methods;
+            self
+        }
+
+        pub fn defer_next_authenticate_response(&self) -> oneshot::Sender<Result<()>> {
+            let (sender, receiver) = oneshot::channel();
+            assert!(
+                self.next_authenticate_response
+                    .lock()
+                    .replace(receiver)
+                    .is_none()
+            );
             sender
         }
 
@@ -1095,6 +1141,18 @@ mod test_support {
             sender
         }
 
+        /// Makes a session this connection did not create, such as an ACP subagent, known to
+        /// it, as a real connection knows the subagents it announced.
+        pub fn track_session(&self, thread: &Entity<AcpThread>, cx: &App) {
+            self.sessions.lock().insert(
+                thread.read(cx).session_id().clone(),
+                Session {
+                    thread: thread.downgrade(),
+                    response_tx: None,
+                },
+            );
+        }
+
         pub fn take_cancel_calls(&self) -> Vec<acp_v2::SessionId> {
             std::mem::take(&mut *self.cancel_calls.lock())
         }
@@ -1124,6 +1182,11 @@ mod test_support {
 
         pub fn with_supports_close_session(mut self, supports_close_session: bool) -> Self {
             self.supports_close_session = supports_close_session;
+            self
+        }
+
+        pub fn with_announced_subagents(mut self, announces_subagents: bool) -> Self {
+            self.announces_subagents = announces_subagents;
             self
         }
 
@@ -1160,6 +1223,11 @@ mod test_support {
 
         pub fn with_supports_set_title(mut self, supports_set_title: bool) -> Self {
             self.supports_set_title = supports_set_title;
+            self
+        }
+
+        pub fn with_supports_truncate(mut self, supports_truncate: bool) -> Self {
+            self.supports_truncate = supports_truncate;
             self
         }
 
@@ -1241,6 +1309,10 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
+        fn shutdown(&self) {
+            self.shutdown_calls.fetch_add(1, Ordering::SeqCst);
+        }
+
         fn agent_id(&self) -> AgentId {
             self.agent_id.clone()
         }
@@ -1250,7 +1322,7 @@ mod test_support {
         }
 
         fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
-            &[]
+            &self.auth_methods
         }
 
         fn model_selector(
@@ -1277,6 +1349,10 @@ mod test_support {
 
         fn supports_close_session(&self) -> bool {
             self.supports_close_session
+        }
+
+        fn announces_subagents(&self) -> bool {
+            self.announces_subagents
         }
 
         fn should_close_sessions_on_release(&self) -> bool {
@@ -1324,9 +1400,14 @@ mod test_support {
         fn authenticate(
             &self,
             _method_id: acp_v2::AuthMethodId,
-            _cx: &mut App,
+            cx: &mut App,
         ) -> Task<gpui::Result<()>> {
-            unimplemented!()
+            match self.next_authenticate_response.lock().take() {
+                Some(response) => cx.spawn(async move |_| response.await?),
+                None => Task::ready(Err(anyhow::Error::msg(
+                    "No deferred authentication response",
+                ))),
+            }
         }
 
         fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
@@ -1473,9 +1554,11 @@ mod test_support {
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             // Capability checks also call this; only run may consume the gate.
-            Some(Rc::new(StubAgentSessionEditor {
-                next_truncate: self.next_truncate.clone(),
-            }))
+            self.supports_truncate.then(|| {
+                Rc::new(StubAgentSessionEditor {
+                    next_truncate: self.next_truncate.clone(),
+                }) as Rc<dyn AgentSessionTruncate>
+            })
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

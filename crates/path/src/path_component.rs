@@ -132,6 +132,18 @@ pub(crate) enum Component<'a> {
     Normal(&'a OsStr),
 }
 
+impl<'a> Component<'a> {
+    pub fn as_os_str(&self, path_style: PathStyle) -> &'a OsStr {
+        match self {
+            Component::Prefix(p) => p.raw,
+            Component::RootDir => OsStr::new(path_style.primary_separator()),
+            Component::CurDir => OsStr::new("."),
+            Component::ParentDir => OsStr::new(".."),
+            Component::Normal(path) => path,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Components<'a> {
     path_style: PathStyle,
@@ -449,5 +461,30 @@ impl<'a> DoubleEndedIterator for Components<'a> {
             }
         }
         None
+    }
+}
+
+// basic workhorse for splitting stem and extension
+pub(crate) fn rsplit_file_at_dot(file: &OsStr) -> (Option<&OsStr>, Option<&OsStr>) {
+    if file.as_encoded_bytes() == b".." {
+        return (Some(file), None);
+    }
+
+    // The unsafety here stems from converting between &OsStr and &[u8]
+    // and back. This is safe to do because (1) we only look at ASCII
+    // contents of the encoding and (2) new &OsStr values are produced
+    // only from ASCII-bounded slices of existing &OsStr values.
+    let mut iter = file.as_encoded_bytes().rsplitn(2, |b| *b == b'.');
+    let after = iter.next();
+    let before = iter.next();
+    if before == Some(b"") {
+        (Some(file), None)
+    } else {
+        unsafe {
+            (
+                before.map(|s| OsStr::from_encoded_bytes_unchecked(s)),
+                after.map(|s| OsStr::from_encoded_bytes_unchecked(s)),
+            )
+        }
     }
 }

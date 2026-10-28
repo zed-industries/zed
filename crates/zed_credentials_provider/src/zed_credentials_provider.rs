@@ -91,6 +91,21 @@ impl CredentialsProvider for KeychainCredentialsProvider {
         .boxed_local()
     }
 
+    #[cfg(target_os = "macos")]
+    fn write_credentials_if_not_exists<'a>(
+        &'a self,
+        url: &'a str,
+        username: &'a str,
+        password: &'a [u8],
+        cx: &'a AsyncApp,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + 'a>> {
+        async move {
+            cx.update(move |cx| cx.write_credentials_if_not_exists(url, username, password))
+                .await
+        }
+        .boxed_local()
+    }
+
     fn delete_credentials<'a>(
         &'a self,
         url: &'a str,
