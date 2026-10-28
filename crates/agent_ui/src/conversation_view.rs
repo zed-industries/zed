@@ -4655,8 +4655,8 @@ pub(crate) mod tests {
             response: response.clone(),
         };
         let (conversation_view, cx) = setup_conversation_view(server, cx).await;
-        let first_request_id = acp_v1::RequestId::Number(1);
-        let second_request_id = acp_v1::RequestId::Number(2);
+        let first_request_id = acp_v2::RequestId::Number(1);
+        let second_request_id = acp_v2::RequestId::Number(2);
         let first_elicitation_id = store.read_with(cx, |store, _cx| {
             assert_eq!(
                 store.elicitations().len(),
@@ -7472,8 +7472,8 @@ pub(crate) mod tests {
                 .available_commands()
                 .to_vec();
             assert_eq!(available_commands.len(), 1);
-            assert_eq!(available_commands[0].name.as_str(), "help");
-            assert_eq!(available_commands[0].description.as_str(), "Get help");
+            assert_eq!(available_commands[0].name(), "help");
+            assert_eq!(available_commands[0].description(), "Get help");
         });
 
         assert_eq!(
@@ -7494,6 +7494,7 @@ pub(crate) mod tests {
         let thread_view = active_thread(&conversation_view, cx);
         let thread = thread_view.read_with(cx, |view, _cx| view.thread.clone());
         let command_payload = json!({
+            "type": "command",
             "name": "deploy",
             "description": "Updated command",
             "input": {
@@ -10149,7 +10150,7 @@ pub(crate) mod tests {
                     .request_elicitation(
                         acp_v2::CreateElicitationRequest::new(
                             acp_v2::ElicitationFormMode::new(
-                                acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                                acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                                 acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
@@ -10165,7 +10166,7 @@ pub(crate) mod tests {
                             acp_v2::CreateElicitationRequest::new(
                                 acp_v2::ElicitationFormMode::new(
                                     acp_v2::ElicitationRequestScope::new(
-                                        acp_v1::RequestId::Number(2),
+                                        acp_v2::RequestId::Number(2),
                                     ),
                                     acp_v2::ElicitationSchema::new().string("account", true),
                                 ),
@@ -10281,7 +10282,7 @@ pub(crate) mod tests {
                     .request_elicitation(
                         acp_v2::CreateElicitationRequest::new(
                             acp_v2::ElicitationFormMode::new(
-                                acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                                acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                                 acp_v2::ElicitationSchema::new().string("name", true),
                             ),
                             "Provide a name",
@@ -10435,22 +10436,25 @@ pub(crate) mod tests {
                 authenticated: Arc::new(Mutex::new(false)),
                 error_source: AuthErrorSource::Marker,
                 auth_methods: vec![
-                    acp_v2::AuthMethod::Other(
-                        acp_v2::OtherAuthMethod::new(
-                            "_future_login",
-                            Self::OTHER_AUTH_METHOD_ID,
-                            "Future Login",
-                            std::collections::BTreeMap::from([
-                                ("args".into(), json!(["must-not-run"])),
-                                ("details".into(), json!({"nested": [1, {"preserve": true}]})),
-                            ]),
-                        )
-                        .description("Not supported by this client")
-                        .meta(serde_json::Map::from_iter([(
-                            "terminal-auth".into(),
-                            json!({"command": "must-not-run", "args": ["login"]}),
-                        )])),
-                    ),
+                    acp_v2::AuthMethod::Other(acp_v2::OtherAuthMethod::new(
+                        "_future_login",
+                        Self::OTHER_AUTH_METHOD_ID,
+                        "Future Login",
+                        std::collections::BTreeMap::from([
+                            ("args".into(), json!(["must-not-run"])),
+                            ("details".into(), json!({"nested": [1, {"preserve": true}]})),
+                            ("description".into(), json!("Not supported by this client")),
+                            (
+                                "_meta".into(),
+                                json!({
+                                    "terminal-auth": {
+                                        "command": "must-not-run",
+                                        "args": ["login"],
+                                    },
+                                }),
+                            ),
+                        ]),
+                    )),
                     acp_v2::AuthMethod::Agent(
                         acp_v2::AuthMethodAgent::new(Self::AUTH_METHOD_ID, "Test Login")
                             .description("Sign in with the test provider")
@@ -13204,7 +13208,7 @@ pub(crate) mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.append_tool_call_content_chunk(
-                    acp_v2::ToolCallContentChunk::new("historical-chunks", "New mango chunk"),
+                    acp_v2::ToolCallContentChunk::new("historical-chunks", " New mango chunk"),
                     cx,
                 )
             })
@@ -13215,21 +13219,23 @@ pub(crate) mod tests {
         cx.run_until_parked();
         assert_eq!(
             search_bar.read_with(cx, |bar, _| bar.match_source_ranges()),
-            vec![9..14, 4..9],
+            vec![9..14, 26..31],
             "the active query must refresh without an explicit update_matches",
         );
         thread.read_with(cx, |thread, cx| {
             assert_eq!(thread.entries().len(), entry_count);
             let (index, call) = thread.tool_call(&tool_call_id).expect("historical tool");
             assert_eq!(index, original_index);
-            let [original, appended] = call.content() else {
-                panic!("expected original output and one appended chunk");
+            let [original] = call.content() else {
+                panic!("expected the chunk to continue the original output");
             };
             assert_eq!(original.markdown(), Some(&original_markdown));
-            assert_eq!(original_markdown.read(cx).source(), "Original mango output");
-            let appended = appended.markdown().expect("appended Markdown").read(cx);
-            assert_eq!(appended.source(), "New mango chunk");
-            assert_eq!(appended.search_highlights(), &[4..9]);
+            let original_markdown = original_markdown.read(cx);
+            assert_eq!(
+                original_markdown.source(),
+                "Original mango output New mango chunk"
+            );
+            assert_eq!(original_markdown.search_highlights(), &[9..14, 26..31]);
             let (index, later_call) = thread.tool_call(&later_tool_call_id).expect("later tool");
             assert_eq!(index, later_index);
             let [later_content] = later_call.content() else {
@@ -18639,7 +18645,7 @@ pub(crate) mod tests {
         click_generic_permission(first_id, None, cx);
         assert_eq!(
             first_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         thread.read_with(cx, |thread, _| {
             let (_, tool) = thread.tool_call(&"permission-tool".into()).expect("tool");
@@ -18648,7 +18654,9 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_generic_tool_permission_moves_when_its_tool_arrives(cx: &mut TestAppContext) {
+    async fn test_generic_tool_permission_attaches_to_the_tool_its_subject_creates(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::default_response(), cx).await;
@@ -18664,10 +18672,7 @@ pub(crate) mod tests {
         );
         let (request_id, response) = request_test_generic_permission(&thread, request, cx);
         cx.run_until_parked();
-        assert!(cx.debug_bounds("standalone-generic-permissions").is_some());
-        thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
-        upsert_permission_test_tool(&thread, "late-permission-tool", cx);
-        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| assert_eq!(thread.entries().len(), 1));
         assert!(cx.debug_bounds("standalone-generic-permissions").is_none());
         assert!(
             cx.debug_bounds("tool-call-late-permission-tool-standalone")
@@ -18814,12 +18819,6 @@ pub(crate) mod tests {
                 })),
                 Some("generic-permission-unknown-_future_subject"),
             ),
-            (
-                Some(serde_json::json!({
-                    "type": "tool_call", "toolCall": {"toolCallId": "unseen-tool"}
-                })),
-                None,
-            ),
         ] {
             let request = generic_permission_prompt(&thread, subject, cx);
             let (request_id, response) =
@@ -18869,7 +18868,10 @@ pub(crate) mod tests {
                 );
             });
             click_generic_permission(request_id, None, cx);
-            assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+            assert_eq!(
+                response.await,
+                acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+            );
             assert!(
                 cx.debug_bounds("generic-permission-title-**Permission title**")
                     .is_none()
@@ -19034,7 +19036,7 @@ pub(crate) mod tests {
         click_generic_permission(third_id, None, cx);
         assert_eq!(
             third_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         drop(original_root);
     }
@@ -19099,7 +19101,7 @@ pub(crate) mod tests {
         click_generic_permission(generic_id, None, cx);
         assert_eq!(
             generic_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         cx.focus(&thread_view);
         cx.dispatch_action(crate::AllowOnce);
@@ -19221,7 +19223,7 @@ pub(crate) mod tests {
         click_generic_permission(child_id, None, cx);
         assert_eq!(
             child_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         assert!(root.read_with(cx, |thread, _| thread.permission_request(root_id).is_some()));
         conversation_view.update_in(cx, |view, window, cx| {
@@ -19231,7 +19233,7 @@ pub(crate) mod tests {
         click_generic_permission(root_id, None, cx);
         assert_eq!(
             root_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
     }
 
@@ -19325,7 +19327,7 @@ pub(crate) mod tests {
             click_generic_permission(later_id, None, cx);
             assert_eq!(
                 later_response.await,
-                acp_v2::RequestPermissionOutcome::Cancelled
+                acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
             );
         }
         root.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));

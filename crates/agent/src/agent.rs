@@ -1710,13 +1710,15 @@ impl NativeAgent {
         let Some(state) = project_state else {
             return Vec::new();
         };
-        let compact_command = acp_v2::AvailableCommand::new(
-            COMPACT_COMMAND_NAME,
-            "Summarize the conversation so far to free up context",
-        )
-        .meta(acp_thread::meta_with_command_category(
-            acp_thread::CommandCategory::Native,
-        ));
+        let compact_command = acp_v2::AvailableCommand::Command(
+            acp_v2::Command::new(
+                COMPACT_COMMAND_NAME,
+                "Summarize the conversation so far to free up context",
+            )
+            .meta(acp_thread::meta_with_command_category(
+                acp_thread::CommandCategory::Native,
+            )),
+        );
 
         let registry = state.context_server_registry.read(cx);
 
@@ -1740,10 +1742,9 @@ impl NativeAgent {
             };
 
             let mut command =
-                acp_v2::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default())
-                    .meta(acp_thread::meta_with_command_category(
-                        acp_thread::CommandCategory::Mcp,
-                    ));
+                acp_v2::Command::new(name, prompt.description.clone().unwrap_or_default()).meta(
+                    acp_thread::meta_with_command_category(acp_thread::CommandCategory::Mcp),
+                );
 
             match prompt.arguments.as_deref() {
                 Some([arg]) => {
@@ -1760,7 +1761,7 @@ impl NativeAgent {
                 }
             }
 
-            Some(command)
+            Some(acp_v2::AvailableCommand::Command(command))
         });
 
         std::iter::once(compact_command)
@@ -6005,13 +6006,15 @@ mod internal_tests {
 
             assert_eq!(
                 commands,
-                &[acp_v2::AvailableCommand::new(
-                    COMPACT_COMMAND_NAME,
-                    "Summarize the conversation so far to free up context",
-                )
-                .meta(acp_thread::meta_with_command_category(
-                    acp_thread::CommandCategory::Native,
-                ))],
+                &[acp_v2::AvailableCommand::Command(
+                    acp_v2::Command::new(
+                        COMPACT_COMMAND_NAME,
+                        "Summarize the conversation so far to free up context",
+                    )
+                    .meta(acp_thread::meta_with_command_category(
+                        acp_thread::CommandCategory::Native,
+                    ))
+                )],
             );
         });
     }
@@ -7880,7 +7883,7 @@ mod internal_tests {
 
         acp_thread.read_with(cx, |thread, _cx| {
             let commands = thread.available_commands();
-            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+            let names: Vec<&str> = commands.iter().map(|c| c.name()).collect();
             assert!(
                 !names.contains(&"visible-skill"),
                 "skills should not be exposed as ACP slash commands: {names:?}"
@@ -7997,7 +8000,7 @@ mod internal_tests {
                     .collect::<Vec<_>>()
             );
             let commands = acp_thread.read(cx).available_commands();
-            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+            let names: Vec<&str> = commands.iter().map(|c| c.name()).collect();
             assert!(
                 !names.contains(&"my-skill"),
                 "untrusted skill leaked into slash commands: {names:?}"
