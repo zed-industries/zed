@@ -163,6 +163,7 @@ members = [
     "crates/outline_panel",
     "crates/path",
     "crates/paths",
+    "crates/pdf_viewer",
     "crates/picker",
     "crates/picker_preview",
     "crates/platform_title_bar",
@@ -436,6 +437,7 @@ outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 path = { path = "crates/path" }
 paths = { path = "crates/paths" }
+pdf_viewer = { path = "crates/pdf_viewer" }
 perf = { path = "tooling/perf", default-features = false }
 picker = { path = "crates/picker" }
 picker_preview = { path = "crates/picker_preview" }
@@ -638,6 +640,7 @@ futures-lite = "2"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
 globset = "0.4"
 handlebars = "4.3"
+hayro = "0.8"
 hdrhistogram = { version = "7", default-features = false }
 heapless = "0.9.2"
 heck = "0.5"
@@ -966,6 +969,7 @@ unicase = "2.6"
 unicode-bidi = { version = "0.3.18", default-features = false, features = [
     "hardcoded-data",
 ] }
+unicode-normalization = "0.1"
 unicode-script = "0.5.7"
 unicode-segmentation = "1.10"
 unicode-width = "0.2"
@@ -1101,6 +1105,12 @@ proc-macro2 = { opt-level = 3 }
 tree-sitter = { opt-level = 3 }
 taffy = { opt-level = 3 }
 resvg = { opt-level = 3 }
+# PDF pages render on the CPU; unoptimized, a page takes seconds instead of milliseconds.
+hayro = { opt-level = 3 }
+hayro-interpret = { opt-level = 3 }
+hayro-syntax = { opt-level = 3 }
+vello_common = { opt-level = 3 }
+vello_cpu = { opt-level = 3 }
 wasmtime = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
 wasmtime-environ = { opt-level = 3 }
