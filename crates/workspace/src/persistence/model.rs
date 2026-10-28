@@ -1,7 +1,9 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
-    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
-    multi_workspace::SerializedProjectGroupState, path_list::PathList,
+    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
+    item::ItemHandle,
+    multi_workspace::{ProjectFolder, ProjectFolderId, SerializedProjectGroupState},
+    path_list::PathList,
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
@@ -68,6 +70,8 @@ pub struct SerializedProjectGroup {
     pub(crate) location: SerializedWorkspaceLocation,
     #[serde(default = "default_expanded")]
     pub expanded: bool,
+    #[serde(default)]
+    pub folder: Option<ProjectFolderId>,
 }
 
 fn default_expanded() -> bool {
@@ -75,7 +79,11 @@ fn default_expanded() -> bool {
 }
 
 impl SerializedProjectGroup {
-    pub fn from_group(key: &ProjectGroupKey, expanded: bool) -> Self {
+    pub fn from_group(
+        key: &ProjectGroupKey,
+        expanded: bool,
+        folder: Option<ProjectFolderId>,
+    ) -> Self {
         Self {
             path_list: key.path_list().serialize(),
             location: match key.host() {
@@ -83,6 +91,7 @@ impl SerializedProjectGroup {
                 None => SerializedWorkspaceLocation::Local,
             },
             expanded,
+            folder,
         }
     }
 
@@ -95,6 +104,7 @@ impl SerializedProjectGroup {
         SerializedProjectGroupState {
             key: ProjectGroupKey::new(host, path_list),
             expanded: self.expanded,
+            folder: self.folder,
         }
     }
 }
@@ -114,6 +124,8 @@ pub struct MultiWorkspaceState {
     pub project_groups: Vec<SerializedProjectGroup>,
     #[serde(default)]
     pub sidebar_state: Option<String>,
+    #[serde(default)]
+    pub project_folders: Vec<ProjectFolder>,
 }
 
 /// The serialized state of a single MultiWorkspace window from a previous session:

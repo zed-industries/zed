@@ -36,6 +36,32 @@ pub enum SidebarDockPosition {
     Right,
 }
 
+/// How projects are ordered in the threads sidebar.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarProjectOrder {
+    /// Keep the order set by dragging or by Move Up / Move Down.
+    #[default]
+    Manual,
+    /// Sort projects by name.
+    Alphabetical,
+    /// Show projects with the most recent thread activity first.
+    Recent,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct ThreadsSidebarSettingsContent {
@@ -57,6 +83,10 @@ pub struct ThreadsSidebarSettingsContent {
     /// Default: 300
     #[schemars(range(min = 200, max = 800))]
     pub default_width: Option<crate::PixelSetting>,
+    /// How projects are ordered in the threads sidebar.
+    ///
+    /// Default: manual
+    pub project_order: Option<SidebarProjectOrder>,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -433,6 +463,10 @@ impl AgentSettingsContent {
     pub fn set_threads_sidebar_auto_open(&mut self, auto_open: Option<bool>) {
         self.threads_sidebar_auto_open = None;
         self.threads_sidebar.get_or_insert_default().auto_open = auto_open;
+    }
+
+    pub fn set_threads_sidebar_project_order(&mut self, order: SidebarProjectOrder) {
+        self.threads_sidebar.get_or_insert_default().project_order = Some(order);
     }
 
     pub fn set_flexible_size(&mut self, flexible: bool) {

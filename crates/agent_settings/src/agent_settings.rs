@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use settings::{
     DockPosition, DockSide, IntoGpui, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
-    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file, update_settings_file_with_completion,
+    SettingsStore, SidebarDockPosition, SidebarProjectOrder, SidebarSide, ThinkingBlockDisplay,
+    ToolPermissionMode, update_settings_file, update_settings_file_with_completion,
 };
 use util::ResultExt as _;
 
@@ -257,6 +257,7 @@ pub struct ThreadsSidebarSettings {
     pub auto_open: bool,
     pub position: SidebarDockPosition,
     pub default_width: Pixels,
+    pub project_order: SidebarProjectOrder,
 }
 
 impl AgentSettings {
@@ -778,6 +779,7 @@ impl Settings for AgentSettings {
             threads_sidebar: ThreadsSidebarSettings {
                 auto_open: threads_sidebar.auto_open.unwrap(),
                 position: threads_sidebar.position.unwrap(),
+                project_order: threads_sidebar.project_order.unwrap(),
                 // Clamped once here so that every reader gets a width the sidebar can
                 // actually hold, rather than each call site having to remember to.
                 default_width: threads_sidebar

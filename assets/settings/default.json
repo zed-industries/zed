@@ -1195,6 +1195,9 @@
       "default_width": 300,
       // Automatically open the Threads Sidebar when opening a folder in an existing window.
       "auto_open": true,
+      // How projects are ordered in the Threads Sidebar.
+      // Can be 'manual', 'alphabetical', or 'recent'.
+      "project_order": "manual",
     },
     // Default fixed width when the agent panel is docked to the left or right and
     // `flexible` is false.

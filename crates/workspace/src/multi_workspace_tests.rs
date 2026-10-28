@@ -1127,10 +1127,12 @@ async fn test_remove_project_group_replaces_unretained_active_workspace(cx: &mut
                 SerializedProjectGroupState {
                     key: key_a.clone(),
                     expanded: true,
+                    folder: None,
                 },
                 SerializedProjectGroupState {
                     key: remote_key.clone(),
                     expanded: true,
+                    folder: None,
                 },
             ],
             cx,
@@ -1762,4 +1764,104 @@ async fn test_nearest_retained_workspace_skips_disconnected_workspace(cx: &mut T
             "a disconnected workspace should not be selected as a fallback"
         );
     });
+}
+
+#[gpui::test]
+async fn test_project_folders_reorder_and_drop(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    let project_a = Project::test(fs, ["/root_a".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    let key = |name: &str| ProjectGroupKey::new(None, PathList::new(&[PathBuf::from(name)]));
+    multi_workspace.update(cx, |mw, _cx| {
+        for name in ["/a", "/b", "/c", "/d"] {
+            mw.test_add_project_group(ProjectGroup {
+                key: key(name),
+                workspaces: Vec::new(),
+                expanded: true,
+            });
+        }
+    });
+
+    let names = |mw: &MultiWorkspace| {
+        mw.project_group_keys()
+            .iter()
+            .map(|key| key.path_list().paths()[0].to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+    };
+
+    multi_workspace.update(cx, |mw, cx| {
+        assert_eq!(names(mw), ["/a", "/b", "/c", "/d"]);
+
+        // Dragging down lands after the target; dragging up lands before it.
+        assert!(mw.drop_project_group_on(&key("/a"), &key("/c"), cx));
+        assert_eq!(names(mw), ["/b", "/c", "/a", "/d"]);
+        assert!(mw.drop_project_group_on(&key("/d"), &key("/b"), cx));
+        assert_eq!(names(mw), ["/d", "/b", "/c", "/a"]);
+
+        let work = mw.create_project_folder("Work".into(), cx);
+        let personal = mw.create_project_folder("Personal".into(), cx);
+        assert_ne!(work, personal);
+        assert!(mw.move_project_group(&key("/b"), Some(work), None, cx));
+        assert!(mw.move_project_group(&key("/a"), Some(work), None, cx));
+        assert_eq!(names(mw), ["/d", "/c", "/b", "/a"]);
+        assert_eq!(mw.project_group_folder(&key("/b")), Some(work));
+
+        // Move Up / Move Down only swap with neighbours in the same folder.
+        assert!(mw.move_project_group_down(&key("/b"), cx));
+        assert_eq!(names(mw), ["/d", "/c", "/a", "/b"]);
+        assert!(!mw.move_project_group_down(&key("/b"), cx));
+        assert!(!mw.move_project_group_up(&key("/d"), cx));
+
+        // Dropping onto a project in another folder joins that folder.
+        assert!(mw.drop_project_group_on(&key("/c"), &key("/a"), cx));
+        assert_eq!(names(mw), ["/d", "/a", "/c", "/b"]);
+        assert_eq!(mw.project_group_folder(&key("/c")), Some(work));
+
+        // Moving into an unknown folder is rejected.
+        assert!(!mw.move_project_group(&key("/d"), Some(999), None, cx));
+
+        assert!(mw.drop_project_folder_on(work, personal, cx));
+        let folder_ids: Vec<_> = mw.project_folders().iter().map(|f| f.id).collect();
+        assert_eq!(folder_ids, [personal, work]);
+
+        mw.rename_project_folder(work, "Office".into(), cx);
+        assert_eq!(
+            mw.project_folder(work).map(|f| f.name.as_str()),
+            Some("Office")
+        );
+
+        // Deleting a folder moves its projects back to the top level.
+        mw.remove_project_folder(work, cx);
+        assert!(mw.project_folder(work).is_none());
+        assert_eq!(mw.project_group_folder(&key("/b")), None);
+        assert_eq!(mw.project_group_folder(&key("/c")), None);
+    });
+}
+
+#[test]
+fn test_multi_workspace_state_without_folders_deserializes() {
+    let state: crate::persistence::model::MultiWorkspaceState = serde_json::from_str(
+        r#"{"active_workspace_id":null,"sidebar_open":true,"project_groups":[]}"#,
+    )
+    .expect("state saved before folders existed should still load");
+    assert!(state.project_folders.is_empty());
+
+    let folder = ProjectFolder {
+        id: 3,
+        name: "Work".into(),
+        expanded: false,
+    };
+    let state = crate::persistence::model::MultiWorkspaceState {
+        project_folders: vec![folder.clone()],
+        ..state
+    };
+    let round_trip: crate::persistence::model::MultiWorkspaceState =
+        serde_json::from_str(&serde_json::to_string(&state).expect("serialize"))
+            .expect("deserialize");
+    assert_eq!(round_trip.project_folders, [folder]);
 }
