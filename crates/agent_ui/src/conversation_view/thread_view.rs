@@ -9009,9 +9009,10 @@ impl ThreadView {
         session_id: &acp_v2::SessionId,
         cx: &App,
     ) -> Option<SharedString> {
-        let server_view = self.server_view.upgrade()?;
-        let thread_view = server_view.read(cx).thread_view(session_id)?;
-        let thread = thread_view.read(cx).thread.read(cx);
+        // Read the thread through the conversation rather than its view: an expanded subagent
+        // card renders the subagent's entries while the parent's view is being updated.
+        let conversation = self.conversation.read(cx);
+        let thread = conversation.thread(session_id)?.read(cx);
         Some(if thread.parent_session_id().is_none() {
             "Main Agent".into()
         } else {

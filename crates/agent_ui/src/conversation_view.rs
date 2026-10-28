@@ -501,6 +501,10 @@ impl Conversation {
         ))
     }
 
+    pub(crate) fn thread(&self, session_id: &acp_v2::SessionId) -> Option<&Entity<AcpThread>> {
+        self.threads.get(session_id)
+    }
+
     pub fn subagents_awaiting_permission(&self, cx: &App) -> Vec<(acp_v2::SessionId, usize)> {
         self.permission_requests
             .iter()
@@ -20595,6 +20599,28 @@ pub(crate) mod tests {
                 "Investigator"
             );
         });
+
+        // The expanded card renders the subagent's own view of the message, a row that
+        // names the parent.
+        child
+            .update(cx, |child, cx| {
+                child.upsert_session_message(
+                    acp_v2::SessionMessage::new("task")
+                        .sender_session_id(root_session_id.clone())
+                        .recipient_session_id(acp_v2::SessionId::new("child"))
+                        .content(vec!["Check the failure".into()]),
+                    cx,
+                )
+            })
+            .expect("incoming message");
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |state, _| {
+                state.toggle_session_message_card_expansion(&acp_v2::MessageId::new("launch"))
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("subagent-card-0").is_some());
     }
 
     #[gpui::test]
