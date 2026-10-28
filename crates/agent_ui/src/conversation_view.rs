@@ -20647,11 +20647,14 @@ pub(crate) mod tests {
                 .expect("reported state");
         };
         let running = || acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new());
+        // Long enough that the subagent's view overflows, so its scroll position shows.
+        let long_text = vec!["Working"; 40].join("\n\n");
         let work = |message_id: &str, cx: &mut VisualTestContext| {
             child
                 .update(cx, |child, cx| {
                     child.upsert_assistant_message(
-                        acp_v2::AgentMessage::new(message_id).content(vec!["Working".into()]),
+                        acp_v2::AgentMessage::new(message_id)
+                            .content(vec![long_text.as_str().into()]),
                         cx,
                     )
                 })
@@ -20727,6 +20730,53 @@ pub(crate) mod tests {
             cx.debug_bounds("subagent-card-3").is_none()
                 && cx.debug_bounds("session-message-participant-3").is_some(),
             "the unlinked message is drawn as a row"
+        );
+
+        let parent_view = active_thread(&conversation_view, cx);
+        let child_view = conversation_view
+            .read_with(cx, |view, _| view.thread_view(&child_session_id))
+            .expect("subagent view");
+        let child_scroll_top = |cx: &mut VisualTestContext| {
+            child_view.read_with(cx, |view, _| view.list_state.logical_scroll_top())
+        };
+        let open_fullscreen = |message_id: &str,
+                               selector: &'static str,
+                               cx: &mut VisualTestContext| {
+            conversation_view.update_in(cx, |view, window, cx| {
+                view.navigate_to_thread(root_session_id.clone(), window, cx)
+            });
+            parent_view.update(cx, |view, cx| {
+                view.entry_view_state.update(cx, |state, _| {
+                    if !state.is_session_message_card_expanded(&acp_v2::MessageId::new(message_id))
+                    {
+                        state.toggle_session_message_card_expansion(&acp_v2::MessageId::new(
+                            message_id,
+                        ));
+                    }
+                });
+                cx.notify();
+            });
+            cx.run_until_parked();
+            let toggle = cx.debug_bounds(selector).expect("full screen button");
+            cx.simulate_click(toggle.center(), gpui::Modifiers::default());
+            cx.run_until_parked();
+            assert_eq!(active_thread(&conversation_view, cx), child_view);
+        };
+
+        child_view.update(cx, |view, cx| view.scroll_to_entry(4, cx));
+        open_fullscreen("follow-up", "subagent-fullscreen-1", cx);
+        assert_eq!(
+            child_scroll_top(cx).item_ix,
+            2,
+            "a stopped card opens at the start of its part"
+        );
+
+        child_view.update(cx, |view, cx| view.scroll_to_entry(3, cx));
+        open_fullscreen("retry", "subagent-fullscreen-2", cx);
+        assert_eq!(
+            child_scroll_top(cx).item_ix,
+            3,
+            "a running card leaves the subagent where it was"
         );
     }
 
