@@ -6437,6 +6437,11 @@ impl AcpThread {
                 .all(|option| option_ids.insert(&option.option_id)),
             "Permission request has duplicate option IDs"
         );
+        // The protocol applies a tool call subject exactly like a `tool_call_update`, before
+        // the prompt is shown, so the request can anchor to the tool call it describes.
+        if let Some(acp_v2::RequestPermissionSubject::ToolCall(subject)) = &request.subject {
+            self.upsert_wire_tool_call(subject.tool_call.clone(), cx)?;
+        }
 
         let (respond_tx, receiver) = oneshot::channel();
         let id = PermissionRequestId(Uuid::new_v4());
@@ -24318,17 +24323,6 @@ mod tests {
                     .collect(),
                 ),
             )),
-            Some(
-                acp_v2::ToolCallUpdate::new("not-a-transcript-tool")
-                    .title("Context, not a tool update")
-                    .status(acp_v2::ToolCallStatus::Completed)
-                    .content(vec!["Context, not transcript content".into()])
-                    .meta(acp_v2::Meta::from_iter([(
-                        "tool-data".into(),
-                        json!({"opaque": ["retained"]}),
-                    )]))
-                    .into(),
-            ),
         ];
         let mut pending = Vec::new();
         for subject in subjects {
@@ -24348,13 +24342,12 @@ mod tests {
                 assert!(record.legacy_kind().is_none());
                 assert!(thread.entries().is_empty());
                 assert!(thread.tool_call(&"context-only".into()).is_none());
-                assert!(thread.tool_call(&"not-a-transcript-tool".into()).is_none());
                 assert!(!thread.is_idle_for_retention());
             });
             pending.push((id, response));
         }
         thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.pending_permission_requests().count(), 4);
+            assert_eq!(thread.pending_permission_requests().count(), 3);
         });
         assert_eq!(
             *events.borrow(),
@@ -24397,6 +24390,68 @@ mod tests {
                 assert_eq!(error.data, Some(json!({"terminalId": "missing"})));
             }
         });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_permission_subject_upserts_tool_call(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let subject = |update: acp_v2::ToolCallUpdate| {
+            Some(acp_v2::RequestPermissionSubject::from(
+                acp_v2::ToolCallPermissionSubject::new(update),
+            ))
+        };
+
+        let request = thread.read_with(cx, |thread, _| {
+            test_generic_permission_request(thread, "allow").subject(subject(
+                acp_v2::ToolCallUpdate::new("unseen")
+                    .title("Run tests")
+                    .content(vec!["cargo test".into()]),
+            ))
+        });
+        let (first_id, first_response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(request, cx)
+                .expect("permission for an unseen tool call")
+        });
+        thread.read_with(cx, |thread, cx| {
+            let (_, call) = thread
+                .tool_call(&"unseen".into())
+                .expect("the subject creates the tool call");
+            assert_eq!(call.label.read(cx).source(), "Run tests");
+            assert_eq!(call.content().len(), 1);
+        });
+
+        let request = thread.read_with(cx, |thread, _| {
+            test_generic_permission_request(thread, "allow").subject(subject(
+                acp_v2::ToolCallUpdate::new("unseen").title("Run all tests"),
+            ))
+        });
+        let (second_id, second_response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(request, cx)
+                .expect("permission for a known tool call")
+        });
+        thread.read_with(cx, |thread, cx| {
+            let [AgentThreadEntry::ToolCall(call)] = thread.entries() else {
+                panic!("expected the subject to patch the existing tool call");
+            };
+            assert_eq!(call.label.read(cx).source(), "Run all tests");
+            assert_eq!(call.content().len(), 1, "omitted fields keep their value");
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.cancel_permission_request(first_id, cx);
+            thread.cancel_permission_request(second_id, cx);
+        });
+        assert_eq!(
+            first_response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+        );
+        assert_eq!(
+            second_response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+        );
     }
 
     #[gpui::test]
@@ -24479,7 +24534,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_generic_tool_permissions_do_not_replace_or_mutate_legacy_authorization(
+    async fn test_generic_tool_permissions_patch_tool_but_keep_legacy_authorization(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -24508,9 +24563,8 @@ mod tests {
             test_generic_permission_request(thread, "future-choice").subject(
                 acp_v2::RequestPermissionSubject::from(
                     acp_v2::ToolCallUpdate::new("shared-tool")
-                        .title("Must not replace the label")
-                        .status(acp_v2::ToolCallStatus::Completed)
-                        .content(vec!["Must not replace tool output".into()]),
+                        .title("Patched label")
+                        .content(vec!["Patched tool output".into()]),
                 ),
             )
         });
@@ -24530,8 +24584,9 @@ mod tests {
             let (_, call) = thread.tool_call(&tool_id).expect("legacy tool");
             assert_eq!(call.authorization_id(), Some(legacy_id));
             assert_eq!(call.status(), ToolCallStatus::WaitingForConfirmation);
-            assert_eq!(call.label.read(cx).source(), "Needs permission");
-            assert!(call.content().is_empty());
+            // The subject applies like a `tool_call_update`.
+            assert_eq!(call.label.read(cx).source(), "Patched label");
+            assert_eq!(call.content().len(), 1);
             assert_eq!(thread.entries().len(), 1);
             assert_eq!(
                 thread
@@ -24548,7 +24603,7 @@ mod tests {
                     .is_none()
             );
         });
-        assert_eq!(*transcript_events.borrow(), 0);
+        assert!(*transcript_events.borrow() > 0);
         assert_eq!(
             selected_response.await,
             acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(

@@ -18654,7 +18654,9 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_generic_tool_permission_moves_when_its_tool_arrives(cx: &mut TestAppContext) {
+    async fn test_generic_tool_permission_attaches_to_the_tool_its_subject_creates(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::default_response(), cx).await;
@@ -18670,10 +18672,7 @@ pub(crate) mod tests {
         );
         let (request_id, response) = request_test_generic_permission(&thread, request, cx);
         cx.run_until_parked();
-        assert!(cx.debug_bounds("standalone-generic-permissions").is_some());
-        thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
-        upsert_permission_test_tool(&thread, "late-permission-tool", cx);
-        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| assert_eq!(thread.entries().len(), 1));
         assert!(cx.debug_bounds("standalone-generic-permissions").is_none());
         assert!(
             cx.debug_bounds("tool-call-late-permission-tool-standalone")
@@ -18819,12 +18818,6 @@ pub(crate) mod tests {
                     "nested": {"approval": true}
                 })),
                 Some("generic-permission-unknown-_future_subject"),
-            ),
-            (
-                Some(serde_json::json!({
-                    "type": "tool_call", "toolCall": {"toolCallId": "unseen-tool"}
-                })),
-                None,
             ),
         ] {
             let request = generic_permission_prompt(&thread, subject, cx);

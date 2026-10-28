@@ -3044,7 +3044,7 @@ mod tests {
         use serde_json::json;
 
         let harness = V2SessionHarness::new(cx).await;
-        for subject in [
+        for (index, subject) in [
             json!(null),
             json!({"type": "tool_call", "toolCall": {"toolCallId": "unseen",
                 "title": "Subject title", "kind": "_future", "rawInput": {"retain": [null, 7]},
@@ -3053,7 +3053,10 @@ mod tests {
                 "toolCallId": "unseen", "terminalId": "unseen", "_meta": {"scope": "subject"}}),
             json!({"type": "_future", "payload": {"retain": [false, null]},
                 "_meta": {"scope": "subject"}}),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let source = json!({"sessionId": "v2-terminal-session", "title": "Permission title",
                 "description": "Separate explanation", "subject": subject,
                 "options": [
@@ -3066,17 +3069,24 @@ mod tests {
                 serde_json::from_value(source.clone()).expect("permission request");
             let (mut response, _cancellation) = harness.request(request.clone(), cx);
             harness.drain(cx).await;
-            let id = harness.thread.read_with(cx, |thread, _| {
+            let id = harness.thread.read_with(cx, |thread, cx| {
                 let requests = thread.pending_permission_requests().collect::<Vec<_>>();
                 let [permission] = requests.as_slice() else {
                     panic!("one generic permission");
                 };
                 assert_eq!(permission.generic_request(), Some(&request));
                 assert!(permission.legacy_tool_call_id().is_none());
-                assert!(
-                    thread.entries().is_empty(),
-                    "permission subjects do not create tools"
-                );
+                // Only the `tool_call` subject (the second) creates a tool call, which
+                // remains for the later subjects.
+                if index == 0 {
+                    assert!(thread.entries().is_empty());
+                } else {
+                    let (_, tool_call) = thread
+                        .tool_call(&acp_v2::ToolCallId::new("unseen"))
+                        .expect("the tool call subject creates the tool call");
+                    assert_eq!(tool_call.label.read(cx).source(), "Subject title");
+                    assert_eq!(thread.entries().len(), 1);
+                }
                 permission.id
             });
             assert!(
@@ -3135,7 +3145,11 @@ mod tests {
         }
         harness.thread.read_with(cx, |thread, _| {
             assert_eq!(thread.pending_permission_requests().count(), 0);
-            assert!(thread.entries().is_empty());
+            assert_eq!(
+                thread.entries().len(),
+                1,
+                "rejected requests add no entries beyond the earlier tool call subject"
+            );
         });
     }
 
