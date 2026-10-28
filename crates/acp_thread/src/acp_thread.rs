@@ -154,9 +154,8 @@ pub fn meta_with_command_category(category: CommandCategory) -> acp_v2::Meta {
     acp_v2::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), category.as_str().into())])
 }
 
-pub fn command_category_from_meta(meta: &Option<acp_v2::Meta>) -> Option<CommandCategory> {
-    meta.as_ref()
-        .and_then(|m| m.get(COMMAND_CATEGORY_META_KEY))
+pub fn command_category_from_meta(meta: Option<&acp_v2::Meta>) -> Option<CommandCategory> {
+    meta.and_then(|m| m.get(COMMAND_CATEGORY_META_KEY))
         .and_then(|v| v.as_str())
         .and_then(CommandCategory::from_str)
 }
@@ -586,7 +585,7 @@ impl ElicitationStore {
 
     fn validate_request(request: &acp_v2::CreateElicitationRequest) -> Result<(), acp_v2::Error> {
         match &request.mode {
-            acp_v2::ElicitationMode::Form(_) => {}
+            acp_v2::ElicitationMode::Form(mode) => validate_form_schema(&mode.requested_schema)?,
             acp_v2::ElicitationMode::Url(mode) => {
                 let url = url::Url::parse(&mode.url)
                     .map_err(|_| acp_v2::Error::invalid_params().data("invalid elicitation URL"))?;
@@ -1138,7 +1137,7 @@ impl From<acp_v2::ToolCallLocation> for ToolCallLocation {
     fn from(location: acp_v2::ToolCallLocation) -> Self {
         Self {
             path: location.path.0,
-            line: location.line,
+            line: location.line.map(std::num::NonZeroU32::get),
             meta: location.meta,
         }
     }
@@ -1720,6 +1719,20 @@ impl ToolCall {
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
+        // Agents may stream tool text one chunk at a time, like message text, so adjacent
+        // plain text continues the previous block instead of starting a new one.
+        if let PreparedToolCallContent::ContentBlock(acp_v2::Content {
+            content: acp_v2::ContentBlock::Text(text),
+            meta: None,
+            ..
+        }) = &content
+            && let Some(ToolCallContent::ContentBlock { block, meta: None }) =
+                self.structured_content.last_mut()
+            && block.append_plain_text(text, cx)
+        {
+            self.update_raw_output_content(language_registry, cx);
+            return;
+        }
         self.structured_content.push(ToolCallContent::from_prepared(
             content,
             language_registry,
@@ -1976,6 +1989,59 @@ impl From<acp_v1::ToolCallStatus> for ToolCallStatus {
     }
 }
 
+/// Whether Zed can render a form property. Unknown property types and multi-select items
+/// can't be rendered.
+pub fn is_renderable_elicitation_property(property: &acp_v2::ElicitationPropertySchema) -> bool {
+    match property {
+        acp_v2::ElicitationPropertySchema::String(_)
+        | acp_v2::ElicitationPropertySchema::Number(_)
+        | acp_v2::ElicitationPropertySchema::Integer(_)
+        | acp_v2::ElicitationPropertySchema::Boolean(_) => true,
+        acp_v2::ElicitationPropertySchema::Array(schema) => matches!(
+            schema.items,
+            acp_v2::MultiSelectItems::String(_) | acp_v2::MultiSelectItems::Titled(_)
+        ),
+        _ => false,
+    }
+}
+
+/// A form Zed can't render is rejected with `-32602` rather than answered with `decline` or
+/// `cancel`, which would report a choice the user never made. Optional properties Zed can't
+/// render are left out of the form instead.
+fn validate_form_schema(schema: &acp_v2::ElicitationSchema) -> Result<(), acp_v2::Error> {
+    let unrenderable = |reason: String| Err(acp_v2::Error::invalid_params().data(reason));
+    for name in schema.required.iter().flatten() {
+        match schema.properties.get(name) {
+            None => return unrenderable(format!("required form property `{name}` is not defined")),
+            Some(property) if !is_renderable_elicitation_property(property) => {
+                return unrenderable(format!(
+                    "required form property `{name}` has an unsupported type"
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    for (name, property) in &schema.properties {
+        if let acp_v2::ElicitationPropertySchema::String(property) = property
+            && property.enum_values.is_some()
+            && property.one_of.is_some()
+        {
+            return unrenderable(format!(
+                "form property `{name}` sets both `enum` and `oneOf`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Lets v1 handlers answer an unknown terminal with `-32002`, as the protocol's error page asks.
+/// The data mirrors the `sessionId` that the error page specifies for unknown sessions.
+fn terminal_not_found(terminal_id: &acp_v2::TerminalId) -> anyhow::Error {
+    acp_v1::Error::from(acp_v1::ErrorCode::ResourceNotFound)
+        .data(serde_json::json!({ "terminalId": terminal_id.0.as_ref() }))
+        .into()
+}
+
 impl ToolCallStatus {
     fn from_reported(status: Option<&acp_v2::ToolCallStatus>) -> Option<Self> {
         match status? {
@@ -1984,7 +2050,8 @@ impl ToolCallStatus {
             acp_v2::ToolCallStatus::Completed => Some(Self::Completed),
             acp_v2::ToolCallStatus::Failed => Some(Self::Failed),
             acp_v2::ToolCallStatus::Cancelled => Some(Self::Canceled),
-            _ => None,
+            // The protocol says to treat an unrecognized status as still in progress.
+            _ => Some(Self::InProgress),
         }
     }
 
@@ -2655,6 +2722,23 @@ impl ContentBlock {
     ///
     /// Recreating the entity on every streamed snapshot causes the rendered
     /// element to tear down and rebuild, which flickers badly.
+    /// Appends text without annotations or metadata to a block holding the same kind of text.
+    fn append_plain_text(&mut self, text: &acp_v2::TextContent, cx: &mut App) -> bool {
+        let is_plain =
+            |text: &acp_v2::TextContent| text.annotations.is_none() && text.meta.is_none();
+        let (RenderBlock::Markdown { markdown }, Some(acp_v2::ContentBlock::Text(source))) =
+            (&self.render, &mut self.source)
+        else {
+            return false;
+        };
+        if !is_plain(text) || !is_plain(source) {
+            return false;
+        }
+        source.text.push_str(&text.text);
+        markdown.update(cx, |markdown, cx| markdown.append(&text.text, cx));
+        true
+    }
+
     pub fn update_text_in_place(&mut self, block: &acp_v2::ContentBlock, cx: &mut App) -> bool {
         let RenderBlock::Markdown { markdown } = &self.render else {
             return false;
@@ -4836,12 +4920,12 @@ impl AcpThread {
                         .sender_session_id(
                             message
                                 .sender_session_id
-                                .map(|id| acp_v2::SessionId::new(id.0)),
+                                .map_value(|id| acp_v2::SessionId::new(id.0)),
                         )
                         .recipient_session_id(
                             message
                                 .recipient_session_id
-                                .map(|id| acp_v2::SessionId::new(id.0)),
+                                .map_value(|id| acp_v2::SessionId::new(id.0)),
                         )
                         .content(content)
                         .meta(message.meta),
@@ -4943,9 +5027,7 @@ impl AcpThread {
         chunk: acp_v2::SessionMessageChunk,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        // A chunk carries only content: its metadata does not patch the message's, and the
-        // RFD keeps a message's participants on `session_message`, so the participant fields
-        // that this schema version still has on chunks are ignored.
+        // A chunk carries only content: its metadata does not patch the message's.
         let previous_entry_count = self.entries.len();
         let location = self.keyed_message_location(MessageKind::Session, chunk.message_id, cx)?;
         self.append_message_content(
@@ -4957,13 +5039,11 @@ impl AcpThread {
         )
     }
 
-    /// Participants that an update omits keep their earlier value, and a known participant
-    /// cannot change.
     fn session_message_location(
         &mut self,
         id: acp_v2::MessageId,
-        sender: Option<acp_v2::SessionId>,
-        recipient: Option<acp_v2::SessionId>,
+        sender: MaybeUndefined<acp_v2::SessionId>,
+        recipient: MaybeUndefined<acp_v2::SessionId>,
         cx: &mut Context<Self>,
     ) -> Result<MessageLocation> {
         let location = self.keyed_message_location(MessageKind::Session, id, cx)?;
@@ -4976,14 +5056,11 @@ impl AcpThread {
             (&mut message.sender_session_id, sender),
             (&mut message.recipient_session_id, recipient),
         ] {
-            let Some(reported) = reported else {
-                continue;
-            };
-            anyhow::ensure!(
-                stored.as_ref().is_none_or(|stored| stored == &reported),
-                "Session message participants cannot change"
-            );
-            *stored = Some(reported);
+            match reported {
+                MaybeUndefined::Undefined => {}
+                MaybeUndefined::Null => *stored = None,
+                MaybeUndefined::Value(reported) => *stored = Some(reported),
+            }
         }
         Ok(location)
     }
@@ -6360,6 +6437,11 @@ impl AcpThread {
                 .all(|option| option_ids.insert(&option.option_id)),
             "Permission request has duplicate option IDs"
         );
+        // The protocol applies a tool call subject exactly like a `tool_call_update`, before
+        // the prompt is shown, so the request can anchor to the tool call it describes.
+        if let Some(acp_v2::RequestPermissionSubject::ToolCall(subject)) = &request.subject {
+            self.upsert_wire_tool_call(subject.tool_call.clone(), cx)?;
+        }
 
         let (respond_tx, receiver) = oneshot::channel();
         let id = PermissionRequestId(Uuid::new_v4());
@@ -6379,7 +6461,9 @@ impl AcpThread {
             cx.spawn(async move |_, _| {
                 receiver
                     .await
-                    .unwrap_or(acp_v2::RequestPermissionOutcome::Cancelled)
+                    .unwrap_or(acp_v2::RequestPermissionOutcome::Cancelled(
+                        Default::default(),
+                    ))
             }),
         ))
     }
@@ -6649,7 +6733,9 @@ impl AcpThread {
                 respond_tx.send(outcome).is_ok()
             }
             PermissionRequestData::Generic { respond_tx, .. } => respond_tx
-                .send(acp_v2::RequestPermissionOutcome::Cancelled)
+                .send(acp_v2::RequestPermissionOutcome::Cancelled(
+                    Default::default(),
+                ))
                 .is_ok(),
         };
         if !delivered {
@@ -7883,7 +7969,7 @@ impl AcpThread {
     ) -> Result<()> {
         self.terminals
             .get(&terminal_id)
-            .context("Terminal not found")?
+            .ok_or_else(|| terminal_not_found(&terminal_id))?
             .update(cx, |terminal, cx| {
                 terminal.kill(cx);
             });
@@ -7898,7 +7984,7 @@ impl AcpThread {
     ) -> Result<()> {
         self.terminals
             .remove(&terminal_id)
-            .context("Terminal not found")?
+            .ok_or_else(|| terminal_not_found(&terminal_id))?
             .update(cx, |terminal, cx| {
                 terminal.kill(cx);
             });
@@ -7909,8 +7995,8 @@ impl AcpThread {
     pub fn terminal(&self, terminal_id: acp_v2::TerminalId) -> Result<Entity<Terminal>> {
         self.terminals
             .get(&terminal_id)
-            .context("Terminal not found")
             .cloned()
+            .ok_or_else(|| terminal_not_found(&terminal_id))
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
@@ -8313,14 +8399,14 @@ mod tests {
                 CommandCategory::Native | CommandCategory::Mcp => {}
             }
             let meta = meta_with_command_category(category);
-            assert_eq!(command_category_from_meta(&Some(meta)), Some(category));
+            assert_eq!(command_category_from_meta(Some(&meta)), Some(category));
         }
 
         // Absent meta and unknown categories both decode to `None`.
-        assert_eq!(command_category_from_meta(&None), None);
+        assert_eq!(command_category_from_meta(None), None);
         let unknown =
             acp_v1::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), "future-category".into())]);
-        assert_eq!(command_category_from_meta(&Some(unknown)), None);
+        assert_eq!(command_category_from_meta(Some(&unknown)), None);
     }
 
     #[test]
@@ -11596,7 +11682,10 @@ mod tests {
             let (_, elicitation) = thread.elicitation(&elicitation_id).expect("elicitation");
             assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
         });
-        assert_eq!(generic.await, acp_v2::RequestPermissionOutcome::Cancelled);
+        assert_eq!(
+            generic.await,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+        );
         assert!(matches!(legacy.await, RequestPermissionOutcome::Cancelled));
         assert!(matches!(
             elicitation.await.action,
@@ -12092,7 +12181,7 @@ mod tests {
         assert_eq!(elicitation.await.action, acp_v2::ElicitationAction::Cancel);
         assert_eq!(
             generic_permission.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
@@ -12184,7 +12273,7 @@ mod tests {
         });
         assert_eq!(
             generic_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         assert!(matches!(
             local_response.await,
@@ -12980,7 +13069,7 @@ mod tests {
         });
         assert_eq!(
             permission.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         cx.run_until_parked();
         assert_eq!(
@@ -13573,7 +13662,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_session_messages_keep_participants_and_convert_from_v1(cx: &mut TestAppContext) {
+    async fn test_session_messages_patch_participants_and_convert_from_v1(cx: &mut TestAppContext) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
         thread.update(cx, |thread, cx| {
@@ -13593,19 +13682,23 @@ mod tests {
                 .expect("participants can arrive later");
             thread
                 .append_session_message_chunk(
-                    acp_v2::SessionMessageChunk::new("task", "reproducing".into())
-                        .sender_session_id(acp_v2::SessionId::new("other")),
+                    acp_v2::SessionMessageChunk::new("task", "reproducing".into()),
                     cx,
                 )
-                .expect("a chunk's participant fields are ignored");
-            let error = thread
+                .expect("a chunk appends content");
+            thread
                 .upsert_session_message(
                     acp_v2::SessionMessage::new("task")
                         .sender_session_id(acp_v2::SessionId::new("other")),
                     cx,
                 )
-                .expect_err("a known participant cannot change");
-            assert!(error.to_string().contains("cannot change"), "{error}");
+                .expect("a reported participant replaces the known one");
+            thread
+                .upsert_session_message(
+                    acp_v2::SessionMessage::new("task").recipient_session_id(MaybeUndefined::Null),
+                    cx,
+                )
+                .expect("null clears a participant");
             thread
                 .upsert_assistant_message(
                     acp_v2::AgentMessage::new("task").content(vec!["answer".into()]),
@@ -13621,8 +13714,8 @@ mod tests {
                 panic!("expected a session message, then an assistant message");
             };
             assert_eq!(message.identity, MessageIdentity::Keyed("task".into()));
-            assert_eq!(message.sender_session_id, Some("parent".into()));
-            assert_eq!(message.recipient_session_id, Some("child".into()));
+            assert_eq!(message.sender_session_id, Some("other".into()));
+            assert_eq!(message.recipient_session_id, None);
             assert_eq!(
                 message.content.source_blocks(),
                 &["Start by ".into(), "reproducing".into()]
@@ -16499,7 +16592,7 @@ mod tests {
                 call.reported_status,
                 Some(acp_v2::ToolCallStatus::Other("_future_status".into()))
             );
-            assert_eq!(call.status(), ToolCallStatus::Pending);
+            assert_eq!(call.status(), ToolCallStatus::InProgress);
             assert_eq!(call.name.as_deref(), Some("named"));
             assert_eq!(
                 serde_json::to_value(&call.meta).expect("metadata"),
@@ -16598,6 +16691,48 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_tool_text_chunks_merge_only_plain_adjacent_text(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let chunk =
+                |content: acp_v2::ContentBlock| acp_v2::ToolCallContentChunk::new("tool", content);
+            for chunk in [
+                chunk("Str".into()),
+                chunk("eam".into()),
+                chunk(acp_v2::ContentBlock::ResourceLink(
+                    acp_v2::ResourceLink::new("notes", "file:///notes.md"),
+                )),
+                chunk(" after link".into()),
+                chunk(acp_v2::ContentBlock::Text(
+                    acp_v2::TextContent::new(" annotated")
+                        .annotations(acp_v2::Annotations::new().priority(0.5)),
+                )),
+                chunk(" plain".into()),
+                acp_v2::ToolCallContentChunk::new(
+                    "tool",
+                    acp_v2::ToolCallContent::Content(Box::new(
+                        acp_v2::Content::new(" with meta")
+                            .meta(acp_v2::Meta::from_iter([("item".into(), json!(true))])),
+                    )),
+                ),
+            ] {
+                thread
+                    .append_tool_call_content_chunk(chunk, cx)
+                    .expect("tool chunk");
+            }
+            let (_, call) = thread.tool_call(&"tool".into()).expect("tool");
+            // Plain text merges; a link, annotations or item metadata start a new block.
+            let content = call.content();
+            assert_eq!(content.len(), 6);
+            assert_eq!(content[0].to_markdown(cx), "Stream");
+            assert_eq!(content[2].to_markdown(cx), " after link");
+            assert_eq!(content[3].to_markdown(cx), " annotated");
+            assert_eq!(content[4].to_markdown(cx), " plain");
+        });
+    }
+
+    #[gpui::test]
     async fn test_tool_content_chunk_ordering_and_targeting(cx: &mut TestAppContext) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
@@ -16643,14 +16778,15 @@ mod tests {
             let (index, first) = thread.tool_call(&first_id).expect("historical tool");
             assert_eq!(index, 0);
             assert_eq!(first.content()[0].markdown(), Some(&original));
-            assert_eq!(original.read(cx).source(), "original");
+            // Adjacent text chunks continue the same text block.
+            assert_eq!(original.read(cx).source(), "originalhistorical");
             assert_eq!(
                 first
                     .content()
                     .iter()
                     .map(|item| item.to_markdown(cx))
                     .collect::<Vec<_>>(),
-                ["original", "historical"]
+                ["originalhistorical"]
             );
             let (index, second) = thread.tool_call(&second_id).expect("second tool");
             assert_eq!(index, 1);
@@ -16679,7 +16815,7 @@ mod tests {
                     .iter()
                     .map(|item| item.to_markdown(cx))
                     .collect::<Vec<_>>(),
-                ["replacement", "after replacement"]
+                ["replacementafter replacement"]
             );
             thread
                 .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("first").content(Vec::new()), cx)
@@ -19512,7 +19648,6 @@ mod tests {
             "_meta": {"request": {"opaque": [1, null]}},
             "requestedSchema": {
                 "type": "object",
-                "required": ["future"],
                 "_meta": {"schema": {}},
                 "properties": {
                     "future": {"type": "_location", "nested": {"precision": "city"},
@@ -19595,7 +19730,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
@@ -19864,7 +19999,7 @@ mod tests {
                 .request_elicitation_with_id(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
@@ -19906,7 +20041,7 @@ mod tests {
             })
         });
 
-        let request_id = acp_v1::RequestId::Number(1);
+        let request_id = acp_v2::RequestId::Number(1);
         let (elicitation_id, response_task) = store.update(cx, |store, cx| {
             store
                 .request_elicitation_with_id(
@@ -19947,7 +20082,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
@@ -19979,7 +20114,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
@@ -19993,7 +20128,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(2)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(2)),
                             acp_v2::ElicitationSchema::new().string("account", true),
                         ),
                         "Provide an account",
@@ -20043,7 +20178,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
@@ -20057,7 +20192,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationFormMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(2)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(2)),
                             acp_v2::ElicitationSchema::new().string("account", true),
                         ),
                         "Provide an account",
@@ -20071,7 +20206,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationUrlMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(3)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(3)),
                             url_elicitation_id,
                             "https://example.com/complete",
                         ),
@@ -20154,7 +20289,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationUrlMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -20233,7 +20368,7 @@ mod tests {
                 .request_elicitation(
                     acp_v2::CreateElicitationRequest::new(
                         acp_v2::ElicitationUrlMode::new(
-                            acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                            acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                             url_elicitation_id.clone(),
                             "https://example.com/complete",
                         ),
@@ -20470,7 +20605,7 @@ mod tests {
                 acp_v2::CreateElicitationRequest::new(
                     acp_v2::OtherElicitationMode::new(
                         "future",
-                        acp_v2::ElicitationRequestScope::new(acp_v1::RequestId::Number(1)),
+                        acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
                         std::collections::BTreeMap::new(),
                     ),
                     "Use a future input mode",
@@ -20484,6 +20619,79 @@ mod tests {
         };
         assert_eq!(error.code, acp_v2::ErrorCode::InvalidParams);
         store.read_with(cx, |store, _| assert!(store.elicitations().is_empty()));
+    }
+
+    #[gpui::test]
+    async fn test_request_elicitation_store_rejects_unrenderable_forms(cx: &mut TestAppContext) {
+        init_test(cx);
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+        let request = |requested_schema: serde_json::Value| {
+            serde_json::from_value::<acp_v2::CreateElicitationRequest>(json!({
+                "mode": "form",
+                "requestId": 1,
+                "message": "Fill in the form",
+                "requestedSchema": requested_schema,
+            }))
+            .expect("form request")
+        };
+
+        for requested_schema in [
+            json!({
+                "type": "object",
+                "properties": {"when": {"type": "_future"}},
+                "required": ["when"],
+            }),
+            json!({
+                "type": "object",
+                "properties": {
+                    "tags": {"type": "array", "items": {"type": "_future"}},
+                },
+                "required": ["tags"],
+            }),
+            json!({
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name", "missing"],
+            }),
+            json!({
+                "type": "object",
+                "properties": {
+                    "environment": {
+                        "type": "string",
+                        "enum": ["staging"],
+                        "oneOf": [{"const": "production", "title": "Production"}],
+                    },
+                },
+            }),
+        ] {
+            let result = store.update(cx, |store, cx| {
+                store.request_elicitation(request(requested_schema.clone()), cx)
+            });
+            let Err(error) = result else {
+                panic!("unrenderable form should be rejected: {requested_schema}");
+            };
+            assert_eq!(error.code, acp_v2::ErrorCode::InvalidParams);
+        }
+        store.read_with(cx, |store, _| assert!(store.elicitations().is_empty()));
+
+        let accepted = store.update(cx, |store, cx| {
+            store.request_elicitation(
+                request(json!({
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "when": {"type": "_future"},
+                        },
+                    "required": ["name"],
+                })),
+                cx,
+            )
+        });
+        assert!(
+            accepted.is_ok(),
+            "optional properties of unknown types can be left out"
+        );
+        store.read_with(cx, |store, _| assert_eq!(store.elicitations().len(), 1));
     }
 
     async fn run_until_first_tool_call(
@@ -24115,17 +24323,6 @@ mod tests {
                     .collect(),
                 ),
             )),
-            Some(
-                acp_v2::ToolCallUpdate::new("not-a-transcript-tool")
-                    .title("Context, not a tool update")
-                    .status(acp_v2::ToolCallStatus::Completed)
-                    .content(vec!["Context, not transcript content".into()])
-                    .meta(acp_v2::Meta::from_iter([(
-                        "tool-data".into(),
-                        json!({"opaque": ["retained"]}),
-                    )]))
-                    .into(),
-            ),
         ];
         let mut pending = Vec::new();
         for subject in subjects {
@@ -24145,13 +24342,12 @@ mod tests {
                 assert!(record.legacy_kind().is_none());
                 assert!(thread.entries().is_empty());
                 assert!(thread.tool_call(&"context-only".into()).is_none());
-                assert!(thread.tool_call(&"not-a-transcript-tool".into()).is_none());
                 assert!(!thread.is_idle_for_retention());
             });
             pending.push((id, response));
         }
         thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.pending_permission_requests().count(), 4);
+            assert_eq!(thread.pending_permission_requests().count(), 3);
         });
         assert_eq!(
             *events.borrow(),
@@ -24162,13 +24358,100 @@ mod tests {
         );
         for (id, response) in pending {
             thread.update(cx, |thread, cx| thread.cancel_permission_request(id, cx));
-            assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+            assert_eq!(
+                response.await,
+                acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+            );
         }
         thread.read_with(cx, |thread, _| {
             assert_eq!(thread.pending_permission_requests().count(), 0);
             assert!(thread.entries().is_empty());
             assert!(thread.is_idle_for_retention());
         });
+    }
+
+    #[gpui::test]
+    async fn test_unknown_terminal_is_resource_not_found(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let errors = [
+                thread.terminal(acp_v2::TerminalId::new("missing")).err(),
+                thread
+                    .kill_terminal(acp_v2::TerminalId::new("missing"), cx)
+                    .err(),
+                thread
+                    .release_terminal(acp_v2::TerminalId::new("missing"), cx)
+                    .err(),
+            ];
+            for error in errors {
+                let error = acp_v1::Error::from(error.expect("unknown terminal fails"));
+                assert_eq!(error.code, acp_v1::ErrorCode::ResourceNotFound);
+                assert_eq!(error.data, Some(json!({"terminalId": "missing"})));
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_permission_subject_upserts_tool_call(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let subject = |update: acp_v2::ToolCallUpdate| {
+            Some(acp_v2::RequestPermissionSubject::from(
+                acp_v2::ToolCallPermissionSubject::new(update),
+            ))
+        };
+
+        let request = thread.read_with(cx, |thread, _| {
+            test_generic_permission_request(thread, "allow").subject(subject(
+                acp_v2::ToolCallUpdate::new("unseen")
+                    .title("Run tests")
+                    .content(vec!["cargo test".into()]),
+            ))
+        });
+        let (first_id, first_response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(request, cx)
+                .expect("permission for an unseen tool call")
+        });
+        thread.read_with(cx, |thread, cx| {
+            let (_, call) = thread
+                .tool_call(&"unseen".into())
+                .expect("the subject creates the tool call");
+            assert_eq!(call.label.read(cx).source(), "Run tests");
+            assert_eq!(call.content().len(), 1);
+        });
+
+        let request = thread.read_with(cx, |thread, _| {
+            test_generic_permission_request(thread, "allow").subject(subject(
+                acp_v2::ToolCallUpdate::new("unseen").title("Run all tests"),
+            ))
+        });
+        let (second_id, second_response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(request, cx)
+                .expect("permission for a known tool call")
+        });
+        thread.read_with(cx, |thread, cx| {
+            let [AgentThreadEntry::ToolCall(call)] = thread.entries() else {
+                panic!("expected the subject to patch the existing tool call");
+            };
+            assert_eq!(call.label.read(cx).source(), "Run all tests");
+            assert_eq!(call.content().len(), 1, "omitted fields keep their value");
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.cancel_permission_request(first_id, cx);
+            thread.cancel_permission_request(second_id, cx);
+        });
+        assert_eq!(
+            first_response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+        );
+        assert_eq!(
+            second_response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+        );
     }
 
     #[gpui::test]
@@ -24246,12 +24529,12 @@ mod tests {
         );
         assert_eq!(
             second_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
     }
 
     #[gpui::test]
-    async fn test_generic_tool_permissions_do_not_replace_or_mutate_legacy_authorization(
+    async fn test_generic_tool_permissions_patch_tool_but_keep_legacy_authorization(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -24280,9 +24563,8 @@ mod tests {
             test_generic_permission_request(thread, "future-choice").subject(
                 acp_v2::RequestPermissionSubject::from(
                     acp_v2::ToolCallUpdate::new("shared-tool")
-                        .title("Must not replace the label")
-                        .status(acp_v2::ToolCallStatus::Completed)
-                        .content(vec!["Must not replace tool output".into()]),
+                        .title("Patched label")
+                        .content(vec!["Patched tool output".into()]),
                 ),
             )
         });
@@ -24302,8 +24584,9 @@ mod tests {
             let (_, call) = thread.tool_call(&tool_id).expect("legacy tool");
             assert_eq!(call.authorization_id(), Some(legacy_id));
             assert_eq!(call.status(), ToolCallStatus::WaitingForConfirmation);
-            assert_eq!(call.label.read(cx).source(), "Needs permission");
-            assert!(call.content().is_empty());
+            // The subject applies like a `tool_call_update`.
+            assert_eq!(call.label.read(cx).source(), "Patched label");
+            assert_eq!(call.content().len(), 1);
             assert_eq!(thread.entries().len(), 1);
             assert_eq!(
                 thread
@@ -24320,7 +24603,7 @@ mod tests {
                     .is_none()
             );
         });
-        assert_eq!(*transcript_events.borrow(), 0);
+        assert!(*transcript_events.borrow() > 0);
         assert_eq!(
             selected_response.await,
             acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
@@ -24329,7 +24612,7 @@ mod tests {
         );
         assert_eq!(
             cancelled_response.await,
-            acp_v2::RequestPermissionOutcome::Cancelled
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
         );
         thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(
@@ -24440,7 +24723,10 @@ mod tests {
         drop(released_thread);
         cx.run_until_parked();
         assert!(released.upgrade().is_none());
-        assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+        );
     }
 
     #[gpui::test]
@@ -24497,7 +24783,10 @@ mod tests {
             );
         });
         thread.update(cx, |thread, cx| thread.cancel_permission_request(id, cx));
-        assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+        );
         assert_eq!(*events.borrow(), [(true, id), (false, id)]);
     }
 
@@ -24684,11 +24973,11 @@ mod tests {
             );
             assert_eq!(
                 first_response.await,
-                acp_v2::RequestPermissionOutcome::Cancelled
+                acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
             );
             assert_eq!(
                 second_response.await,
-                acp_v2::RequestPermissionOutcome::Cancelled
+                acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
             );
         }
 
@@ -24744,7 +25033,10 @@ mod tests {
                 thread.update(cx, |thread, cx| thread.cancel_permission_request(id, cx));
             }
             assert_eq!(*events.borrow(), [(true, id), (false, id)]);
-            assert_eq!(response.await, acp_v2::RequestPermissionOutcome::Cancelled);
+            assert_eq!(
+                response.await,
+                acp_v2::RequestPermissionOutcome::Cancelled(Default::default())
+            );
         }
     }
 

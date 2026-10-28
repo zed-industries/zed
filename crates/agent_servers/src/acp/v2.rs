@@ -15,7 +15,7 @@ use action_log::ActionLog;
 use agent_client_protocol::{
     Agent, Client, ConnectTo, InitializeOutcome, JsonRpcRequest, JsonRpcResponse, Lines,
     PreparedRequest, RequestCancellationHandle, V2ConnectionTo,
-    schema::{ProtocolVersion, v2 as acp},
+    schema::{ProtocolVersion, v1 as acp_v1, v2 as acp},
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
@@ -37,6 +37,16 @@ use util::path_list::PathList;
 
 fn is_connection_closed(connection: &V2ConnectionTo<Agent>) -> bool {
     connection.is_incoming_closed() || connection.termination().is_some()
+}
+
+/// The SDK reports JSON-RPC IDs with the v1 type, which allows `null`. It never assigns
+/// `null` to a request it sends and rejects incoming v2 requests that use it.
+fn v2_request_id(request_id: &acp_v1::RequestId) -> Result<acp::RequestId> {
+    match request_id {
+        acp_v1::RequestId::Number(id) => Ok(acp::RequestId::Number(*id)),
+        acp_v1::RequestId::Str(id) => Ok(acp::RequestId::Str(id.clone())),
+        acp_v1::RequestId::Null => Err(anyhow!("v2 requests cannot have a null ID")),
+    }
 }
 
 fn cancel_request_elicitations(
@@ -409,8 +419,9 @@ impl AcpV2Connection {
                 .url(acp::ElicitationUrlCapabilities::new()),
         );
         if supports_terminal_auth {
-            capabilities = capabilities
-                .auth(acp::AuthCapabilities::new().terminal(acp::TerminalAuthCapabilities::new()));
+            capabilities = capabilities.auth(
+                acp::ClientAuthCapabilities::new().terminal(acp::TerminalAuthCapabilities::new()),
+            );
         }
         let initialize_request =
             acp::InitializeRequest::new(ProtocolVersion::V2, info).capabilities(capabilities);
@@ -583,7 +594,7 @@ impl AcpV2Connection {
         // An eagerly spawned child can publish before cancellation drops an unpolled caller.
         async move {
             let request = connection.prepare_request(request);
-            let request_id = request.id().clone();
+            let request_id = v2_request_id(request.id())?;
             let cancellation = request.cancellation_handle();
             enqueue_notification(&dispatch_tx, request_id.clone(), register_request);
             let response = request.block_task();
@@ -1019,7 +1030,10 @@ impl AcpV2Connection {
             };
         thread.update(cx, |thread, cx| thread.mark_activity_unconfirmed(cx));
         let request = self.connection.prepare_request(request);
-        let request_id = request.id().clone();
+        let request_id = match v2_request_id(request.id()) {
+            Ok(request_id) => request_id,
+            Err(error) => return Task::ready(Err(error)),
+        };
         let cancellation = request.cancellation_handle();
         let (response, applied) = Self::ordered_prepared_response(
             &self.connection,
@@ -1153,7 +1167,7 @@ impl AcpV2Connection {
         let response = async move {
             preflight()?;
             let (sender, received) = futures::channel::oneshot::channel();
-            let request_id = request.id().clone();
+            let request_id = v2_request_id(request.id())?;
             let cancellation = request.cancellation_handle();
             enqueue_notification(&dispatch_tx, request_id.clone(), register_request);
             let published = request.on_receiving_result({
@@ -1292,7 +1306,10 @@ impl AgentConnection for AcpV2Connection {
             .additional_directories(context.additional_directories.clone())
             .mcp_servers(context.mcp_servers.clone());
         let request = self.connection.prepare_request(request);
-        let request_id = request.id().clone();
+        let request_id = match v2_request_id(request.id()) {
+            Ok(request_id) => request_id,
+            Err(error) => return Task::ready(Err(error)),
+        };
         let (response, applied) = Self::ordered_prepared_response(
             &self.connection,
             &self.dispatch_tx,
@@ -2090,7 +2107,10 @@ mod tests {
                                     responder: Responder<acp::NewSessionResponse>,
                                     agent: V2ConnectionTo<Client>| {
                             new_sender
-                                .try_send((request.clone(), responder.id().clone()))
+                                .try_send((
+                                    request.clone(),
+                                    v2_request_id(responder.id()).expect("v2 request ID"),
+                                ))
                                 .expect("record creation");
                             if *deferred_new.lock().expect("new response mode") {
                                 new_reply_sender
@@ -2381,10 +2401,9 @@ mod tests {
                 acp::SessionConfigOption::boolean("enabled", "Enabled", false)
                     .meta(meta("initial-config")),
             ])
-            .available_commands(vec![
-                acp::AvailableCommand::new("initial", "Initial command")
-                    .meta(meta("initial-command")),
-            ])
+            .available_commands(vec![acp::AvailableCommand::Command(
+                acp::Command::new("initial", "Initial command").meta(meta("initial-command")),
+            )])
             .meta(meta("delivery-not-session"))
     }
 
@@ -3929,7 +3948,7 @@ done
         harness.send_update(
             "second",
             acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
-                acp::AvailableCommand::new("prefix", "Prefix"),
+                acp::AvailableCommand::Command(acp::Command::new("prefix", "Prefix")),
             ])),
         );
         cx.run_until_parked();
@@ -3945,7 +3964,9 @@ done
         let config = vec![acp::SessionConfigOption::boolean(
             "response", "Response", true,
         )];
-        let commands = vec![acp::AvailableCommand::new("response", "Response")];
+        let commands = vec![acp::AvailableCommand::Command(acp::Command::new(
+            "response", "Response",
+        ))];
         second_response
             .respond(
                 acp::NewSessionResponse::new("second")
@@ -4245,7 +4266,10 @@ done
             assert_eq!(thread.session_info().title.as_deref(), Some("Early title"));
             assert!(thread.to_markdown(cx).contains("Early content"));
             let (_, tool) = thread.tool_call(&"early-tool".into()).expect("early tool");
-            assert_eq!(tool.content().len(), 2);
+            let [content] = tool.content() else {
+                panic!("the chunk continues the text block");
+            };
+            assert_eq!(content.to_markdown(cx), "tool prefixtool suffix");
             let terminal = thread
                 .terminal("early-terminal".into())
                 .expect("early terminal");
@@ -5608,7 +5632,7 @@ while IFS= read -r request; do
             printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"info":{"name":"session-stdio","version":"1"},"capabilities":{"session":{}}}}\n' "$id"
             ;;
         *'"method":"session/new"'*)
-            printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"stdio-session","configOptions":[{"configId":"enabled","name":"Enabled","type":"boolean","currentValue":false}],"availableCommands":[{"name":"initial","description":"Initial"}]}}\n' "$id"
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"stdio-session","configOptions":[{"configId":"enabled","name":"Enabled","type":"boolean","currentValue":false}],"availableCommands":[{"type":"command","name":"initial","description":"Initial"}]}}\n' "$id"
             printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"stdio-session","update":{"sessionUpdate":"session_info_update","title":"Immediate stdio title"}}}\n'
             ;;
         *'"method":"session/set_config_option"'*)
@@ -5999,7 +6023,9 @@ done
                     .agent
                     .send_request(acp::CreateElicitationRequest::new(
                         acp::ElicitationFormMode::new(
-                            acp::ElicitationRequestScope::new(responder.id().clone()),
+                            acp::ElicitationRequestScope::new(
+                                v2_request_id(responder.id()).expect("v2 request ID"),
+                            ),
                             acp::ElicitationSchema::new(),
                         ),
                         "Resume setup input",
@@ -6337,7 +6363,9 @@ done
                 .agent
                 .send_request(acp::CreateElicitationRequest::new(
                     acp::ElicitationFormMode::new(
-                        acp::ElicitationRequestScope::new(responder.id().clone()),
+                        acp::ElicitationRequestScope::new(
+                            v2_request_id(responder.id()).expect("v2 request ID"),
+                        ),
                         acp::ElicitationSchema::new(),
                     ),
                     "Resume setup",
@@ -6685,7 +6713,8 @@ done
                             async move |request: acp::LoginAuthRequest,
                                         responder: Responder<acp::LoginAuthResponse>,
                                         agent: V2ConnectionTo<Client>| {
-                                let request_id = responder.id().clone();
+                                let request_id =
+                                    v2_request_id(responder.id()).expect("v2 request ID");
                                 let method_id = request.method_id.clone();
                                 logins
                                     .lock()
@@ -6869,7 +6898,8 @@ done
             .expect("published prompt");
         assert_eq!(received, request);
         let cancellation = responder.cancellation();
-        let input = harness.request_input(responder.id().clone(), cx);
+        let input =
+            harness.request_input(v2_request_id(responder.id()).expect("v2 request ID"), cx);
         harness.registered(cx).await;
         let expected = acp::PromptResponse::new("accepted-message").meta(meta("receipt"));
         responder
@@ -6972,7 +7002,7 @@ done
             .await
             .expect("first prompt");
         let first_cancellation = first_responder.cancellation();
-        let first_id = first_responder.id().clone();
+        let first_id = v2_request_id(first_responder.id()).expect("v2 request ID");
         let first_input = harness.request_input(first_id.clone(), cx);
         harness.registered(cx).await;
         let second = cx.update(|cx| {
@@ -6985,7 +7015,10 @@ done
             .await
             .expect("second prompt");
         let second_cancellation = second_responder.cancellation();
-        let second_input = harness.request_input(second_responder.id().clone(), cx);
+        let second_input = harness.request_input(
+            v2_request_id(second_responder.id()).expect("v2 request ID"),
+            cx,
+        );
         harness.registered(cx).await;
         drop(first);
         bounded(first_cancellation.cancelled(), cx).await;
