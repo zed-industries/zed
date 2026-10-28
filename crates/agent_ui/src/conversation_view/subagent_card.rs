@@ -220,6 +220,38 @@ impl SubagentCardState {
         }
     }
 
+    /// Builds the card for a subagent tool call. Once the call has finished, a subagent that
+    /// recorded an outcome for the call's run (as native subagents do) shows that outcome.
+    /// Calls saved before outcomes were recorded, and subagents of agents that don't report
+    /// state, show the tool call's status.
+    pub(crate) fn for_subagent_tool_call(
+        tool_call: &ToolCall,
+        subagent: Option<&AcpThread>,
+        cx: &App,
+    ) -> Self {
+        let card = Self::from_tool_call(tool_call, cx);
+        let Some(SubagentEntries {
+            start,
+            end: Some(_),
+        }) = card.entries
+        else {
+            return card;
+        };
+        let Some(outcome) = subagent
+            .filter(|subagent| subagent.subagent_association().is_some())
+            .and_then(|subagent| subagent.subagent_outcome_after(start))
+        else {
+            return card;
+        };
+        let (status, error) = SubagentStatus::from_reported_state(Some(outcome));
+        Self {
+            status,
+            error,
+            can_stop: false,
+            ..card
+        }
+    }
+
     /// Builds the card for an ACP subagent, covering `entries` of its transcript or all of
     /// it. The subagent reports one state for all its work, so a card for an earlier message
     /// shows the first outcome the subagent reported after receiving it. Until then, that
