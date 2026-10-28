@@ -210,6 +210,28 @@ impl Scene {
     }
 }
 
+/// The depth step between consecutive quads in a frame with `quad_count`
+/// quads, for use with [`quad_depth`].
+///
+/// Spreading the frame's depths across the whole range lets the GPU's
+/// low-precision hierarchical depth tell them apart. The step is a power of
+/// two so that multiplying by it is exact, and it never drops below `2^-24`,
+/// the spacing of `f32` values just under 1.
+pub fn quad_depth_scale(quad_count: usize) -> f32 {
+    let denominator = (quad_count.min((1 << 24) - 1) + 1).next_power_of_two();
+    1.0 / denominator as f32
+}
+
+/// Maps a quad's index in [`Scene::quads`] to depth, with greater values closer.
+///
+/// Zero is reserved for the cleared depth buffer. Batches of other primitives
+/// drawn after the first `n` quads use `quad_depth(n, scale)`: with a strict
+/// greater-than test, they are above the quads before them and tie with the
+/// next one. Shaders must compute the same value.
+pub fn quad_depth(quad_id: u32, scale: f32) -> f32 {
+    ((quad_id + 1) as f32 * scale).min(1.0)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
 #[cfg_attr(
     all(

@@ -4763,19 +4763,38 @@ impl Window {
             border_style: quad.border_style,
         };
 
-        if !quad.background.is_transparent() {
+        let has_background = !quad.background.is_transparent();
+        let is_rectangle =
+            quad.border_widths == Edges::default() && quad.corner_radii == Corners::default();
+        if has_background && is_rectangle {
             self.next_frame.scene.insert_primitive(quad);
             return;
         }
 
-        // Splitting a border-only quad around its empty interior avoids shading
-        // every transparent pixel inside large outlines.
+        // Splitting a quad into its interior and the strips around it means
+        // only the strips need the border and corner shading. The interior is
+        // left out when transparent, or drawn as a plain rectangle.
         let outer_bounds = quad.bounds;
         let inner_bounds = Self::largest_border_interior(&quad);
 
         if inner_bounds.is_empty() {
             self.next_frame.scene.insert_primitive(quad);
             return;
+        }
+
+        if has_background {
+            let content_mask_bounds = quad.content_mask.bounds.intersect(&inner_bounds);
+            if !content_mask_bounds.is_empty() {
+                // The interior keeps the quad's bounds so gradients line up.
+                self.next_frame.scene.insert_primitive(Quad {
+                    content_mask: ContentMask {
+                        bounds: content_mask_bounds,
+                    },
+                    border_widths: Edges::default(),
+                    corner_radii: Corners::default(),
+                    ..quad
+                });
+            }
         }
 
         let strips = [
