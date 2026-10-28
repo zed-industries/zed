@@ -42,7 +42,8 @@ fn resolve_line_range(start_line: Option<u32>, end_line: Option<u32>) -> (u32, u
 const MAX_LINE_LEN: usize = 2000;
 
 /// Marker appended to lines that exceed [`MAX_LINE_LEN`].
-const LINE_TRUNCATION_MARKER: &str = "... (line truncated to 2000 chars)";
+const LINE_TRUNCATION_MARKER: &str =
+    const_format::formatcp!("... (line truncated to {MAX_LINE_LEN} chars)");
 
 /// Prefixes each line of `text` with its line number in `cat -n` format:
 /// the line number is right-aligned in a 6-character field, followed by a
