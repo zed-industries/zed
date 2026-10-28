@@ -17,7 +17,9 @@ use std::{
 #[cfg(windows)]
 use tendril::fmt::{Format, WTF8};
 
-use crate::path_component::{Component, Components, Prefix, PrefixExt, iter_after};
+use crate::path_component::{
+    Component, Components, Prefix, PrefixExt, iter_after, rsplit_file_at_dot,
+};
 use crate::rel_path::{RelPath, StripPrefixError};
 
 pub mod abs_path;
@@ -249,6 +251,18 @@ impl PathStyle {
         )
         .map(|c| c.as_path())
         .ok_or(StripPrefixError)
+    }
+
+    pub fn file_stem<'a>(&self, path: &'a Path) -> Option<&'a OsStr> {
+        self.file_name(path)
+            .map(rsplit_file_at_dot)
+            .and_then(|(before, after)| before.or(after))
+    }
+
+    pub fn extension<'a>(&self, path: &'a Path) -> Option<&'a OsStr> {
+        self.file_name(path)
+            .map(rsplit_file_at_dot)
+            .and_then(|(before, after)| before.and(after))
     }
 }
 
@@ -647,6 +661,83 @@ mod tests {
 
         for (path, filename) in windows_paths_and_filenames {
             assert_eq!(PathStyle::Windows.file_name(path), filename.map(OsStr::new));
+        }
+    }
+
+    #[test]
+    fn test_path_style_file_stem_and_extension() {
+        let unix_paths_and_stems_and_extensions = [
+            ("foo", Some("foo"), None),
+            ("foo.", Some("foo"), Some("")),
+            (".foo", Some(".foo"), None),
+            ("foo.txt", Some("foo"), Some("txt")),
+            ("/tmp/archive.tar.gz", Some("archive.tar"), Some("gz")),
+            ("foo.bar.", Some("foo.bar"), Some("")),
+            (".x.y.z", Some(".x.y"), Some("z")),
+            ("a/.rustfmt.toml", Some(".rustfmt"), Some("toml")),
+            ("a.b/c.md", Some("c"), Some("md")),
+            ("", None, None),
+            ("/", None, None),
+            (".", None, None),
+            ("..", None, None),
+            ("foo/.", Some("foo"), None),
+            ("foo/..", None, None),
+            ("/foo/bar/", Some("bar"), None),
+            ("/etc/passwd", Some("passwd"), None),
+        ];
+
+        for (path, expected_stem, expected_extension) in unix_paths_and_stems_and_extensions {
+            let path = Path::new(path);
+            assert_eq!(
+                PathStyle::Unix.file_stem(path),
+                expected_stem.map(OsStr::new),
+                "file_stem({path:?})"
+            );
+            assert_eq!(
+                PathStyle::Unix.extension(path),
+                expected_extension.map(OsStr::new),
+                "extension({path:?})"
+            );
+        }
+
+        let windows_paths_and_stems_and_extensions = [
+            (
+                r"C:\Users\user\Documents\report.docx",
+                Some("report"),
+                Some("docx"),
+            ),
+            (
+                r"C:\Users\user\Downloads\archive.tar.gz",
+                Some("archive.tar"),
+                Some("gz"),
+            ),
+            (r"C:\Users\user\.gitignore", Some(".gitignore"), None),
+            (r"C:\Users\user\config.", Some("config"), Some("")),
+            (r"C:\Users\user\README", Some("README"), None),
+            (r"D:\projects\my.app\src\main.rs", Some("main"), Some("rs")),
+            ("C:/Users/user/report.txt", Some("report"), Some("txt")),
+            (
+                r"\\server\share\reports\2024.summary.xlsx",
+                Some("2024.summary"),
+                Some("xlsx"),
+            ),
+            (r"\\?\C:\Users\user\report.txt", Some("report"), Some("txt")),
+            (r"C:\Users\user\.", Some("user"), None),
+            (r"C:\Users\user\..", None, None),
+        ];
+
+        for (path, expected_stem, expected_extension) in windows_paths_and_stems_and_extensions {
+            let path = Path::new(path);
+            assert_eq!(
+                PathStyle::Windows.file_stem(path),
+                expected_stem.map(OsStr::new),
+                "file_stem({path:?})"
+            );
+            assert_eq!(
+                PathStyle::Windows.extension(path),
+                expected_extension.map(OsStr::new),
+                "extension({path:?})"
+            );
         }
     }
 

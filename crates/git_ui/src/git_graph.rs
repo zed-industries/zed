@@ -3031,7 +3031,6 @@ impl GitGraph {
 
         let head_branch_name: Option<SharedString> = repository
             .read(cx)
-            .snapshot()
             .branch
             .as_ref()
             .map(|branch| SharedString::from(branch.name().to_string()));
@@ -3146,6 +3145,17 @@ impl GitGraph {
                     .child(
                         div().absolute().top_2().right_2().child(
                             IconButton::new("close-detail", IconName::Close)
+                                .tooltip({
+                                    let focus_handle = self.focus_handle.clone();
+                                    move |_window, cx: &mut App| {
+                                        Tooltip::for_action_in(
+                                            "Close Details Panel",
+                                            &Cancel,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
                                 .icon_size(IconSize::Small)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.selected_entry_idx = None;
@@ -3357,6 +3367,11 @@ impl GitGraph {
                                             "view-on-provider",
                                             format!("View on {}", provider_name),
                                         )
+                                        .tooltip({
+                                            move |_window, cx: &mut App| {
+                                                Tooltip::simple("Open In Browser", cx)
+                                            }
+                                        })
                                         .start_icon(
                                             Icon::new(icon)
                                                 .size(IconSize::Small)
@@ -3867,7 +3882,6 @@ impl GitGraph {
 
         let head_branch_name: Option<SharedString> = self.get_repository(cx).and_then(|repo| {
             repo.read(cx)
-                .snapshot()
                 .branch
                 .as_ref()
                 .map(|branch| SharedString::from(branch.name().to_string()))
@@ -4246,13 +4260,21 @@ impl GitGraph {
                     .w_full()
                     .gap_1()
                     .child(
-                        Disclosure::new("toggle-commit-message", !collapsed).on_click(cx.listener(
-                            |this, _, _, cx| {
+                        Disclosure::new("toggle-commit-message", !collapsed)
+                            .on_click(cx.listener(|this, _, _, cx| {
                                 this.commit_details_message_collapsed =
                                     !this.commit_details_message_collapsed;
                                 cx.notify();
-                            },
-                        )),
+                            }))
+                            .tooltip({
+                                let label = if !collapsed {
+                                    "Hide Commit Message"
+                                } else {
+                                    "Show Commit Message"
+                                };
+
+                                move |_window, cx: &mut App| Tooltip::simple(label, cx)
+                            }),
                     )
                     .child(
                         Label::new("Message")

@@ -42,12 +42,13 @@ image.workspace = true
 itertools.workspace = true
 log.workspace = true
 objc2.workspace = true
-objc2-app-kit.workspace = true
+objc2-app-kit = { workspace = true, features = ["objc2-uniform-type-identifiers"] }
 objc2-core-graphics = { workspace = true, features = ["CGColor", "objc2"] }
 objc2-core-media = { workspace = true, optional = true }
 objc2-core-video = { workspace = true, features = ["CVHostTime"] }
 objc2-foundation.workspace = true
 objc2-screen-capture-kit = { workspace = true, optional = true }
+objc2-uniform-type-identifiers.workspace = true
 objc2-user-notifications.workspace = true
 parking_lot.workspace = true
 raw-window-handle.workspace = true
