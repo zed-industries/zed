@@ -156,20 +156,20 @@ pub struct RemoteHostLocation {
     pub host_identifier: SharedString,
 }
 
-impl From<RemoteConnectionOptions> for RemoteHostLocation {
-    fn from(options: RemoteConnectionOptions) -> Self {
+impl From<&RemoteConnectionOptions> for RemoteHostLocation {
+    fn from(options: &RemoteConnectionOptions) -> Self {
         let (user_name, host_name) = match options {
             RemoteConnectionOptions::Ssh(ssh) => (
-                ssh.username.map(SharedString::new),
+                ssh.username.as_ref().map(SharedString::new),
                 SharedString::new(ssh.host.to_string()),
             ),
             RemoteConnectionOptions::Wsl(wsl) => (
-                wsl.user.map(SharedString::new),
-                SharedString::new(wsl.distro_name),
+                wsl.user.as_ref().map(SharedString::new),
+                SharedString::new(&wsl.distro_name),
             ),
             RemoteConnectionOptions::Docker(docker_connection_options) => (
-                Some(SharedString::new(docker_connection_options.name)),
-                SharedString::new(docker_connection_options.container_id),
+                Some(SharedString::new(&docker_connection_options.name)),
+                SharedString::new(&docker_connection_options.container_id),
             ),
             #[cfg(feature = "test-support")]
             RemoteConnectionOptions::Mock(mock) => {

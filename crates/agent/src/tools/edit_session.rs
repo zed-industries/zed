@@ -248,13 +248,12 @@ impl EditSessionContext {
                 new_text,
                 ..
             } => {
-                event_stream.update_diff(cx.new(|cx| {
+                event_stream.update_diff(cx.new(|_| {
                     Diff::finalized(
                         input_path.to_string_lossy().into_owned(),
                         Some(old_text.to_string()),
                         new_text,
                         self.language_registry.clone(),
-                        cx,
                     )
                 }));
                 Ok(())
@@ -528,8 +527,11 @@ impl EditPipeline {
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
                 let line = snapshot.offset_to_point(range.start).row;
+                // ACP numbers lines from 1.
                 event_stream.update_fields(|update| {
-                    update.locations(vec![acp::ToolCallLocation::new(abs_path).line(Some(line))])
+                    update.locations(vec![
+                        acp::ToolCallLocation::new(abs_path).line(Some(line + 1)),
+                    ])
                 });
 
                 let buffer_indent = snapshot.line_indent_for_row(line);

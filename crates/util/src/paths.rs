@@ -210,6 +210,36 @@ pub fn strip_path_suffix<'a>(base: &'a Path, suffix: &Path) -> Option<&'a Path> 
     None
 }
 
+/// Normalizes a path by resolving `.` and `..` components without
+/// requiring the path to exist on disk (unlike `canonicalize`).
+pub fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut components = path.components().peekable();
+    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
+        components.next();
+        PathBuf::from(c.as_os_str())
+    } else {
+        PathBuf::new()
+    };
+
+    for component in components {
+        match component {
+            Component::Prefix(..) => unreachable!(),
+            Component::RootDir => {
+                ret.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                ret.pop();
+            }
+            Component::Normal(c) => {
+                ret.push(c);
+            }
+        }
+    }
+    ret
+}
+
 /// In memory, this is identical to `Path`. On non-Windows conversions to this type are no-ops. On
 /// windows, these conversions sanitize UNC paths by removing the `\\\\?\\` prefix.
 #[derive(Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -617,6 +647,14 @@ impl PathWithPosition {
         // in the future seems unlikely.
         static SUFFIX_RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(ROW_COL_CAPTURE_REGEX).unwrap());
+        // `Path::with_file_name` inserts the host's separator, which can
+        // corrupt Unix paths when the editor runs on Windows.
+        let replace_file_name = |input: &str, file_name: &str, replacement: &str| {
+            input.rsplit_once(file_name).map_or_else(
+                || PathBuf::from(input),
+                |(prefix, _)| PathBuf::from(format!("{prefix}{replacement}")),
+            )
+        };
         match SUFFIX_RE
             .captures(maybe_file_name_with_row_col)
             .and_then(|captures| {
@@ -629,7 +667,11 @@ impl PathWithPosition {
                 let column = maybe_column.parse::<u32>().ok();
 
                 Self {
-                    path: path.with_file_name(&maybe_file_name_with_row_col[..file_name_end]),
+                    path: replace_file_name(
+                        trimmed,
+                        maybe_file_name_with_row_col,
+                        &maybe_file_name_with_row_col[..file_name_end],
+                    ),
                     row,
                     column,
                 }
@@ -673,7 +715,7 @@ impl PathWithPosition {
 
                 Self {
                     path: if row.is_some() {
-                        path.with_file_name(path_string)
+                        replace_file_name(s, file_name, &path_string)
                     } else {
                         path.to_path_buf()
                     },
@@ -1048,6 +1090,11 @@ pub enum SortOrder {
     /// Pure Unicode codepoint comparison. No case folding, no natural number sorting.
     /// Uppercase ASCII sorts before lowercase. Accented characters sort after ASCII.
     Unicode,
+    /// Files are grouped by their last extension (case-insensitive) in ascending order,
+    /// with extensionless files, including dotfiles such as `.gitignore`, first.
+    /// Dotfiles with a further suffix, such as `.config.json`, keep that extension.
+    /// Within a group, names use the same natural sort as `Default`.
+    Extension,
 }
 
 /// Controls how files and directories are ordered relative to each other.
@@ -1146,6 +1193,17 @@ pub fn compare_rel_paths_by(
                 let (b_stem, b_ext) = b_leaf_file
                     .then(|| stem_and_extension(component_b))
                     .unwrap_or_default();
+                if order == SortOrder::Extension {
+                    // Directories have no extension and must take part in this comparison too,
+                    // otherwise mixed mode would produce an inconsistent (non-transitive) ordering.
+                    let extension_ordering = a_ext
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .cmp(&b_ext.unwrap_or_default().to_lowercase());
+                    if !extension_ordering.is_eq() {
+                        return extension_ordering;
+                    }
+                }
                 let a_key = if a_leaf_file {
                     a_stem
                 } else {
@@ -1945,6 +2003,86 @@ mod tests {
     }
 
     #[perf]
+    fn compare_rel_paths_extension_groups_files() {
+        let mut paths = vec![
+            (RelPath::from_unix_str("b.rs").unwrap(), true),
+            (RelPath::from_unix_str("a.py").unwrap(), true),
+            (RelPath::from_unix_str("a.RS").unwrap(), true),
+            (RelPath::from_unix_str("file10.rs").unwrap(), true),
+            (RelPath::from_unix_str("file2.rs").unwrap(), true),
+            (RelPath::from_unix_str("Makefile").unwrap(), true),
+            (RelPath::from_unix_str(".gitignore").unwrap(), true),
+            (RelPath::from_unix_str(".config.json").unwrap(), true),
+            (RelPath::from_unix_str(".env.local").unwrap(), true),
+            (RelPath::from_unix_str("a.css").unwrap(), true),
+            (RelPath::from_unix_str("archive.tar.gz").unwrap(), true),
+            (RelPath::from_unix_str("src").unwrap(), false),
+        ];
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::DirectoriesFirst, SortOrder::Extension)
+        });
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::from_unix_str("src").unwrap(), false),
+                (RelPath::from_unix_str(".gitignore").unwrap(), true),
+                (RelPath::from_unix_str("Makefile").unwrap(), true),
+                (RelPath::from_unix_str("a.css").unwrap(), true),
+                (RelPath::from_unix_str("archive.tar.gz").unwrap(), true),
+                (RelPath::from_unix_str(".config.json").unwrap(), true),
+                (RelPath::from_unix_str(".env.local").unwrap(), true),
+                (RelPath::from_unix_str("a.py").unwrap(), true),
+                (RelPath::from_unix_str("a.RS").unwrap(), true),
+                (RelPath::from_unix_str("b.rs").unwrap(), true),
+                (RelPath::from_unix_str("file2.rs").unwrap(), true),
+                (RelPath::from_unix_str("file10.rs").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_extension_with_files_first() {
+        let mut paths = vec![
+            (RelPath::from_unix_str("z.rs").unwrap(), true),
+            (RelPath::from_unix_str("a.txt").unwrap(), true),
+            (RelPath::from_unix_str("m").unwrap(), false),
+            (RelPath::from_unix_str("b.py").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Extension)
+        });
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::from_unix_str("b.py").unwrap(), true),
+                (RelPath::from_unix_str("z.rs").unwrap(), true),
+                (RelPath::from_unix_str("a.txt").unwrap(), true),
+                (RelPath::from_unix_str("m").unwrap(), false),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_extension_mixed_is_consistent() {
+        let mut paths = vec![
+            (RelPath::from_unix_str("z.rs").unwrap(), true),
+            (RelPath::from_unix_str("a.txt").unwrap(), true),
+            (RelPath::from_unix_str("m").unwrap(), false),
+            (RelPath::from_unix_str("b").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Extension));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::from_unix_str("b").unwrap(), true),
+                (RelPath::from_unix_str("m").unwrap(), false),
+                (RelPath::from_unix_str("z.rs").unwrap(), true),
+                (RelPath::from_unix_str("a.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
     fn compare_rel_paths_mixed_same_stem_different_extension() {
         // Files with same stem but different extensions should sort by extension
         let mut paths = vec![
@@ -2353,6 +2491,54 @@ mod tests {
             assert_eq!(parsed.path.as_os_str(), Path::new(input).as_os_str());
             assert_eq!(parsed.row, None, "{input}");
             assert_eq!(parsed.column, None, "{input}");
+        }
+    }
+
+    #[test]
+    fn path_with_position_preserves_path_separators() {
+        for (input, expected_path, expected_column) in [
+            (
+                "/home/user/project/src/main.rs:49",
+                "/home/user/project/src/main.rs",
+                None,
+            ),
+            (
+                "/home/user/project/src/main.rs:49:7",
+                "/home/user/project/src/main.rs",
+                Some(7),
+            ),
+            (
+                "/home/user/project/src/main.rs:49:in",
+                "/home/user/project/src/main.rs",
+                None,
+            ),
+            ("src/main.rs(49,7)", "src/main.rs", Some(7)),
+            ("src/main.rs:49/", "src/main.rs", None),
+            ("src/main.rs:49/.", "src/main.rs", None),
+            ("parent//file.rs:49", "parent//file.rs", None),
+            ("parent/./file.rs:49", "parent/./file.rs", None),
+            ("parent/😀.rs:49", "parent/😀.rs", None),
+            ("C:/project/src/main.rs:49", "C:/project/src/main.rs", None),
+            (
+                r"C:\project\src\main.rs:49",
+                r"C:\project\src\main.rs",
+                None,
+            ),
+            (r"src\mixed/main.rs:49", r"src\mixed/main.rs", None),
+            (
+                r"\\server\share/main.rs:49",
+                r"\\server\share/main.rs",
+                None,
+            ),
+        ] {
+            let parsed = PathWithPosition::parse_str(input);
+            assert_eq!(
+                parsed.path.as_os_str(),
+                OsStr::new(expected_path),
+                "{input}"
+            );
+            assert_eq!(parsed.row, Some(49), "{input}");
+            assert_eq!(parsed.column, expected_column, "{input}");
         }
     }
 

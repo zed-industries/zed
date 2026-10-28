@@ -1392,21 +1392,27 @@ fn resolve_cd_in_worktrees(
     path_style: util::paths::PathStyle,
     worktree_roots: &[(&str, PathBuf)],
 ) -> Option<PathBuf> {
-    let cd = path_style.normalize(cd);
-    let cd_path = Path::new(&cd);
-    let is_absolute = path_style.is_absolute(cd_path);
+    let cd_path = path_style.normalize_lexically(cd);
+    let is_absolute = path_style.is_absolute(&cd_path);
 
     worktree_roots.iter().find_map(|(root_name, abs_path)| {
-        let prefix = if is_absolute {
-            path_style.normalize(abs_path.to_str()?)
+        let abs_path = path_style.normalize_lexically(abs_path);
+        let prefix: &Path = if is_absolute {
+            &abs_path
         } else {
-            (*root_name).to_string()
+            Path::new(*root_name)
         };
-        let subpath = path_style.strip_prefix(cd_path, Path::new(&prefix)).ok()?;
-        if subpath.is_empty() {
-            Some(abs_path.clone())
+        let subpath = path_style.strip_prefix(&cd_path, prefix).ok()?;
+        let resolved_path = if subpath.is_empty() {
+            abs_path.clone()
         } else {
-            path_style.join_path(abs_path, subpath).ok()
+            path_style.normalize_lexically(path_style.join(&abs_path, subpath))
+        };
+
+        if path_style.starts_with(&resolved_path, &abs_path) {
+            Some(resolved_path)
+        } else {
+            None
         }
     })
 }
@@ -1414,11 +1420,10 @@ fn resolve_cd_in_worktrees(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use util::paths::PathStyle::{Unix, Windows};
 
     #[test]
     fn test_resolve_cd_uses_project_path_style() {
-        use util::paths::PathStyle::{Unix, Windows};
-
         // Deliberately ambiguous root names to stress test path resolution.
         let unix_roots: Vec<(&str, PathBuf)> = vec![
             ("worktree", PathBuf::from("/a/worktree")),
@@ -1427,6 +1432,8 @@ mod tests {
         // Worktree roots are stored with backslash separators on Windows, but
         // models frequently write paths with forward slashes; both must match.
         let windows_roots = vec![("worktree", PathBuf::from("C:\\work\\worktree"))];
+
+        let windows_verbatim_roots = vec![("worktree", PathBuf::from(r"\\?\C:\work\worktree"))];
 
         // absolute paths
         assert_eq!(
@@ -1532,6 +1539,44 @@ mod tests {
             resolve_cd_in_worktrees("C:\\work\\worktree\\..\\escape", Windows, &windows_roots),
             None,
             "a Windows-absolute path that escapes its worktree via `..` is rejected"
+        );
+
+        // Windows verbatim path
+        assert_eq!(
+            resolve_cd_in_worktrees(
+                r"\\?\C:\work\worktree\../another",
+                Windows,
+                &windows_verbatim_roots
+            ),
+            None,
+            "The Windows verbatim path should not return a path that escapes its worktree"
+        );
+    }
+
+    #[test]
+    fn test_resolve_cd_rejects_traversal_with_empty_root_name() {
+        let unix_roots = vec![("", PathBuf::from("/tmp/example/root"))];
+        let windows_roots = vec![("", PathBuf::from("C:\\work\\worktree"))];
+
+        assert_eq!(
+            resolve_cd_in_worktrees("../outside", Unix, &unix_roots),
+            None,
+            "a relative `cd` that escapes the worktree is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("..", Unix, &unix_roots),
+            None,
+            "a relative `cd` to the parent of the worktree is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("..", Windows, &windows_roots),
+            None,
+            "a relative `cd` to the parent of the worktree is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("..\\escape", Windows, &windows_roots),
+            None,
+            "a relative `cd` that escapes the worktree is rejected"
         );
     }
 

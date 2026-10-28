@@ -10,11 +10,12 @@ use crate::plan_chip::PlanChip;
 use agent_settings::{AgentSettings, WindowLayout};
 use arrayvec::ArrayVec;
 use git_ui_core::worktree_picker::WorktreePicker;
+use path::PathStyle;
 pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
 };
-use project::{linked_worktree_short_name, repo_identity_path, repo_identity_path_if_local};
+use project::{linked_worktree_short_name, repo_identity_path};
 
 #[cfg(not(target_os = "macos"))]
 use crate::application_menu::{
@@ -41,7 +42,6 @@ use remote::RemoteConnectionOptions;
 use settings::{Settings as _, SettingsStore};
 
 use std::any::TypeId;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ActiveTheme;
@@ -64,18 +64,6 @@ pub use onboarding_banner::restore_banner;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 const MAX_SHORT_SHA_LENGTH: usize = 8;
-
-fn linked_worktree_name_anchor<'a>(
-    main_worktree_path: Option<&'a Path>,
-    repository_identity_path: Option<&'a Path>,
-    is_linked_worktree: bool,
-) -> Option<&'a Path> {
-    main_worktree_path.or_else(|| {
-        is_linked_worktree
-            .then_some(repository_identity_path)
-            .flatten()
-    })
-}
 
 actions!(
     collab,
@@ -249,7 +237,8 @@ impl Render for TitleBar {
         let mut repository = None;
         let mut linked_worktree_name = None;
         if let Some(worktree) = self.effective_active_worktree(cx) {
-            repository = self.get_repository_for_worktree(&worktree, cx);
+            let path_style = worktree.read(cx).path_style();
+            repository = self.get_repository_for_worktree(&worktree, path_style, cx);
             let worktree_abs_path = worktree.read(cx).abs_path();
             project_name = worktree
                 .read(cx)
@@ -258,43 +247,41 @@ impl Render for TitleBar {
                 .map(|name| SharedString::from(name.to_string()));
             if let Some(repo) = &repository {
                 let repo = repo.read(cx);
-                let identity = repo_identity_path(&repo.common_dir_abs_path, repo.path_style);
-                let identity_fallback =
-                    repo_identity_path_if_local(&repo.common_dir_abs_path, repo.path_style);
-                linked_worktree_name = linked_worktree_name_anchor(
-                    repo.main_worktree_abs_path(),
-                    identity_fallback,
-                    repo.is_linked_worktree(),
+                let identity = repo_identity_path(&repo.common_dir_abs_path, path_style);
+                linked_worktree_name = linked_worktree_short_name(
+                    repo.linked_worktree_anchor_path(),
+                    repo.work_directory_abs_path.as_ref(),
+                    path_style,
                 )
-                .and_then(|name_anchor_path| {
-                    linked_worktree_short_name(
-                        name_anchor_path,
-                        repo.work_directory_abs_path.as_ref(),
-                        repo.path_style,
-                    )
-                })
                 .or_else(|| {
                     repo.is_linked_worktree()
                         .then_some(project_name.clone())
                         .flatten()
                 });
 
-                let display_name = if identity.extension() == Some(std::ffi::OsStr::new("git")) {
-                    identity.file_stem()
-                } else {
-                    repo.path_style.file_name(identity)
-                };
+                let display_name =
+                    if path_style.extension(identity) == Some(std::ffi::OsStr::new("git")) {
+                        path_style.file_stem(identity)
+                    } else {
+                        path_style.file_name(identity)
+                    };
 
                 if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
-                    let visible_worktrees_in_repo = self.visible_worktrees_in_repository(repo, cx);
+                    let visible_worktrees_in_repo =
+                        self.visible_worktrees_in_repository(repo, path_style, cx);
                     let name = if visible_worktrees_in_repo == 1 {
-                        if let Ok(relative) =
-                            worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
+                        if let Ok(relative) = path_style
+                            .strip_prefix(&worktree_abs_path, &*repo.work_directory_abs_path)
                         {
                             if relative.as_os_str().is_empty() {
                                 repo_name.to_string()
                             } else {
-                                format!("{}/{}", repo_name, relative.display())
+                                format!(
+                                    "{}{}{}",
+                                    repo_name,
+                                    path_style.primary_separator(),
+                                    relative.display()
+                                )
                             }
                         } else {
                             repo_name.to_string()
@@ -576,6 +563,7 @@ impl TitleBar {
     fn get_repository_for_worktree(
         &self,
         worktree: &Entity<project::Worktree>,
+        path_style: PathStyle,
         cx: &App,
     ) -> Option<Entity<project::git_store::Repository>> {
         let project = self.project.read(cx);
@@ -587,7 +575,8 @@ impl TitleBar {
             .values()
             .filter(|repo| {
                 let repo_path = &repo.read(cx).work_directory_abs_path;
-                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+                worktree_path == *repo_path
+                    || path_style.starts_with(&worktree_path, repo_path.as_ref())
             })
             .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
             .cloned()
@@ -596,6 +585,7 @@ impl TitleBar {
     fn visible_worktrees_in_repository(
         &self,
         repository: &project::git_store::Repository,
+        path_style: PathStyle,
         cx: &App,
     ) -> usize {
         let repo_path = &repository.work_directory_abs_path;
@@ -604,7 +594,8 @@ impl TitleBar {
             .visible_worktrees(cx)
             .filter(|worktree| {
                 let worktree_path = worktree.read(cx).abs_path();
-                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+                worktree_path == *repo_path
+                    || path_style.starts_with(&worktree_path, repo_path.as_ref())
             })
             .count()
     }
@@ -615,21 +606,15 @@ impl TitleBar {
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
 
-        let (nickname, tooltip_title, icon) = match options {
-            RemoteConnectionOptions::Ssh(options) => (
-                options.nickname.map(|nick| nick.into()),
-                "Remote Project",
-                IconName::Server,
-            ),
-            RemoteConnectionOptions::Wsl(_) => (None, "Remote Project", IconName::Linux),
+        let (tooltip_title, icon) = match options {
+            RemoteConnectionOptions::Ssh(_) => ("Remote Project", IconName::Server),
+            RemoteConnectionOptions::Wsl(_) => ("Remote Project", IconName::Linux),
             RemoteConnectionOptions::Docker(_dev_container_connection) => {
-                (None, "Dev Container", IconName::Box)
+                ("Dev Container", IconName::Box)
             }
             #[cfg(any(test, feature = "test-support"))]
-            RemoteConnectionOptions::Mock(_) => (None, "Mock Remote Project", IconName::Server),
+            RemoteConnectionOptions::Mock(_) => ("Mock Remote Project", IconName::Server),
         };
-
-        let nickname = nickname.unwrap_or_else(|| host.clone());
 
         let (indicator_color, meta) = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
@@ -687,7 +672,7 @@ impl TitleBar {
                                     ))
                                     .into_any_element(),
                                 )
-                                .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+                                .child(Label::new(host).size(LabelSize::Small).truncate()),
                         ),
                     move |_window, cx| {
                         Tooltip::with_meta(
@@ -1438,54 +1423,5 @@ impl TitleBar {
                 .into()
             })
             .anchor(Anchor::TopRight)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use util::paths::PathStyle;
-
-    #[test]
-    fn test_foreign_path_style_does_not_use_repository_identity_as_name_anchor() {
-        let (common_dir, foreign_path_style) = match PathStyle::local() {
-            PathStyle::Unix => (Path::new(r"C:\repos\zed"), PathStyle::Windows),
-            PathStyle::Windows => (Path::new("/repos/zed"), PathStyle::Unix),
-        };
-        let repository_identity_path = repo_identity_path_if_local(common_dir, foreign_path_style);
-
-        assert_eq!(
-            linked_worktree_name_anchor(None, repository_identity_path, true),
-            None
-        );
-    }
-
-    #[test]
-    fn test_local_path_style_uses_bare_repository_worktree_name() {
-        let (repository_identity_path, work_directory_path) = match PathStyle::local() {
-            PathStyle::Unix => (
-                Path::new("/repos/zed"),
-                Path::new("/worktrees/zed/plum-warbler/zed"),
-            ),
-            PathStyle::Windows => (
-                Path::new(r"C:\repos\zed"),
-                Path::new(r"C:\worktrees\zed\plum-warbler\zed"),
-            ),
-        };
-
-        let repository_identity_path =
-            repo_identity_path_if_local(repository_identity_path, PathStyle::local());
-        let name_anchor_path = linked_worktree_name_anchor(None, repository_identity_path, true);
-
-        assert_eq!(
-            name_anchor_path.and_then(|name_anchor_path| {
-                linked_worktree_short_name(
-                    name_anchor_path,
-                    work_directory_path,
-                    PathStyle::local(),
-                )
-            }),
-            Some("plum-warbler".into())
-        );
     }
 }

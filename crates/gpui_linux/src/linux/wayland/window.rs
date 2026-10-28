@@ -32,7 +32,7 @@ use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
-use crate::linux::{Globals, Output, WaylandClientStatePtr, get_window};
+use crate::linux::{Globals, Output, PendingActivation, WaylandClientStatePtr, get_window};
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, ExternalDragPayload,
     FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
@@ -1857,18 +1857,23 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn activate(&self) {
-        // Try to request an activation token. Even though the activation is likely going to be rejected,
-        // KWin and Mutter can use the app_id to visually indicate we're requesting attention.
         let state = self.borrow();
         if let (Some(activation), Some(app_id)) = (&state.globals.activation, state.app_id.clone())
         {
-            state.client.set_pending_activation(state.surface.id());
-            let token = activation.get_activation_token(&state.globals.qh, ());
-            // The serial isn't exactly important here, since the activation is probably going to be rejected anyway.
-            let serial = state.client.get_serial(SerialKind::MousePress);
+            let token = activation.get_activation_token(
+                &state.globals.qh,
+                PendingActivation::Window(state.surface.id()),
+            );
             token.set_app_id(app_id);
-            token.set_serial(serial.as_raw(), &state.globals.seat);
-            token.set_surface(&state.surface);
+            // Without a recent press the compositor won't grant focus, but still request a
+            // token: KWin and Mutter mark the window as demanding attention and end their
+            // launch feedback once the token is passed to `activate`.
+            if let Some(context) = state.client.activation_context() {
+                token.set_serial(context.serial.as_raw(), &state.globals.seat);
+                token.set_surface(&context.requesting_surface);
+            } else {
+                token.set_surface(&state.surface);
+            }
             token.commit();
         }
     }

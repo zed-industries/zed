@@ -40,10 +40,9 @@ use git::{
     repository::{
         Branch, BranchesScanResult, CommitData, CommitDetails, CommitFileStatus, CommitOptions,
         CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions, FileHistoryChangedFileSets,
-        GitCommitTemplate, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData,
-        LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
-        SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
-        is_binary_content,
+        GitCommitTemplate, GitRepository, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
+        Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
+        Worktree as GitWorktree, delete_branch_flag, is_binary_content,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -492,11 +491,6 @@ struct LocalDownstreamState {
     project_id: ProjectId,
     updates_tx: mpsc::UnboundedSender<DownstreamUpdate>,
     _task: Task<Result<()>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct GitStoreCheckpoint {
-    checkpoints_by_work_dir_abs_path: HashMap<Arc<Path>, GitRepositoryCheckpoint>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1065,12 +1059,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_run_hook);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
-        client.add_entity_request_handler(Self::handle_create_checkpoint);
         client.add_entity_request_handler(Self::handle_create_archive_checkpoint);
-        client.add_entity_request_handler(Self::handle_restore_checkpoint);
         client.add_entity_request_handler(Self::handle_restore_archive_checkpoint);
-        client.add_entity_request_handler(Self::handle_compare_checkpoints);
-        client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_add_path_to_gitignore);
@@ -2150,92 +2140,6 @@ impl GitStore {
     ) -> Option<FileStatus> {
         let (repo, repo_path) = self.repository_and_path_for_project_path(project_path, cx)?;
         Some(repo.read(cx).status_for_path(&repo_path)?.status)
-    }
-
-    pub fn checkpoint(&self, cx: &mut App) -> Task<Result<GitStoreCheckpoint>> {
-        let mut work_directory_abs_paths = Vec::new();
-        let mut checkpoints = Vec::new();
-        for repository in self.repositories.values() {
-            repository.update(cx, |repository, _| {
-                work_directory_abs_paths.push(repository.snapshot.work_directory_abs_path.clone());
-                checkpoints.push(repository.checkpoint().map(|checkpoint| checkpoint?));
-            });
-        }
-
-        cx.background_executor().spawn(async move {
-            let checkpoints = future::try_join_all(checkpoints).await?;
-            Ok(GitStoreCheckpoint {
-                checkpoints_by_work_dir_abs_path: work_directory_abs_paths
-                    .into_iter()
-                    .zip(checkpoints)
-                    .collect(),
-            })
-        })
-    }
-
-    pub fn restore_checkpoint(
-        &self,
-        checkpoint: GitStoreCheckpoint,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        let repositories_by_work_dir_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
-            .collect::<HashMap<_, _>>();
-
-        let mut tasks = Vec::new();
-        for (work_dir_abs_path, checkpoint) in checkpoint.checkpoints_by_work_dir_abs_path {
-            if let Some(repository) = repositories_by_work_dir_abs_path.get(&work_dir_abs_path) {
-                let restore = repository.update(cx, |repository, _| {
-                    repository.restore_checkpoint(checkpoint)
-                });
-                tasks.push(async move { restore.await? });
-            }
-        }
-        cx.background_spawn(async move {
-            future::try_join_all(tasks).await?;
-            Ok(())
-        })
-    }
-
-    /// Compares two checkpoints, returning true if they are equal.
-    pub fn compare_checkpoints(
-        &self,
-        left: GitStoreCheckpoint,
-        mut right: GitStoreCheckpoint,
-        cx: &mut App,
-    ) -> Task<Result<bool>> {
-        let repositories_by_work_dir_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
-            .collect::<HashMap<_, _>>();
-
-        let mut tasks = Vec::new();
-        for (work_dir_abs_path, left_checkpoint) in left.checkpoints_by_work_dir_abs_path {
-            if let Some(right_checkpoint) = right
-                .checkpoints_by_work_dir_abs_path
-                .remove(&work_dir_abs_path)
-            {
-                if let Some(repository) = repositories_by_work_dir_abs_path.get(&work_dir_abs_path)
-                {
-                    let compare = repository.update(cx, |repository, _| {
-                        repository.compare_checkpoints(left_checkpoint, right_checkpoint)
-                    });
-
-                    tasks.push(async move { compare.await? });
-                }
-            } else {
-                return Task::ready(Ok(false));
-            }
-        }
-        cx.background_spawn(async move {
-            Ok(future::try_join_all(tasks)
-                .await?
-                .into_iter()
-                .all(|result| result))
-        })
     }
 
     /// Blames a buffer.
@@ -4453,23 +4357,6 @@ impl GitStore {
         })
     }
 
-    async fn handle_create_checkpoint(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GitCreateCheckpoint>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::GitCreateCheckpointResponse> {
-        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
-        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-
-        let checkpoint = repository_handle
-            .update(&mut cx, |repository, _| repository.checkpoint())
-            .await??;
-
-        Ok(proto::GitCreateCheckpointResponse {
-            commit_sha: checkpoint.commit_sha.as_bytes().to_vec(),
-        })
-    }
-
     async fn handle_create_archive_checkpoint(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitCreateArchiveCheckpoint>,
@@ -4490,27 +4377,6 @@ impl GitStore {
         })
     }
 
-    async fn handle_restore_checkpoint(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GitRestoreCheckpoint>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
-        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-
-        let checkpoint = GitRepositoryCheckpoint {
-            commit_sha: Oid::from_bytes(&envelope.payload.commit_sha)?,
-        };
-
-        repository_handle
-            .update(&mut cx, |repository, _| {
-                repository.restore_checkpoint(checkpoint)
-            })
-            .await??;
-
-        Ok(proto::Ack {})
-    }
-
     async fn handle_restore_archive_checkpoint(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitRestoreArchiveCheckpoint>,
@@ -4528,54 +4394,6 @@ impl GitStore {
             .await??;
 
         Ok(proto::Ack {})
-    }
-
-    async fn handle_compare_checkpoints(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GitCompareCheckpoints>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::GitCompareCheckpointsResponse> {
-        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
-        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-
-        let left = GitRepositoryCheckpoint {
-            commit_sha: Oid::from_bytes(&envelope.payload.left_commit_sha)?,
-        };
-        let right = GitRepositoryCheckpoint {
-            commit_sha: Oid::from_bytes(&envelope.payload.right_commit_sha)?,
-        };
-
-        let equal = repository_handle
-            .update(&mut cx, |repository, _| {
-                repository.compare_checkpoints(left, right)
-            })
-            .await??;
-
-        Ok(proto::GitCompareCheckpointsResponse { equal })
-    }
-
-    async fn handle_diff_checkpoints(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GitDiffCheckpoints>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::GitDiffCheckpointsResponse> {
-        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
-        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-
-        let base = GitRepositoryCheckpoint {
-            commit_sha: Oid::from_bytes(&envelope.payload.base_commit_sha)?,
-        };
-        let target = GitRepositoryCheckpoint {
-            commit_sha: Oid::from_bytes(&envelope.payload.target_commit_sha)?,
-        };
-
-        let diff = repository_handle
-            .update(&mut cx, |repository, _| {
-                repository.diff_checkpoints(base, target)
-            })
-            .await??;
-
-        Ok(proto::GitDiffCheckpointsResponse { diff })
     }
 
     async fn handle_load_commit_diff(
@@ -4644,10 +4462,11 @@ impl GitStore {
             .iter()
             .map(|s| RepoPath::from_proto(s))
             .collect::<Result<Vec<_>>>()?;
+        let commit = Some(envelope.payload.commit.as_str()).filter(|commit| !commit.is_empty());
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.checkout_files(&envelope.payload.commit, paths, cx)
+                repository_handle.checkout_files(commit, paths, cx)
             })
             .await?;
         Ok(proto::Ack {})
@@ -6320,11 +6139,10 @@ impl RepositorySnapshot {
 
     /// The path that anchors a linked worktree's location: the main worktree
     /// when one exists, otherwise the repository's identity path (relevant for
-    /// bare repositories), falling back to the common Git directory.
-    fn linked_worktree_anchor_path(&self) -> &Path {
+    /// bare repositories).
+    pub fn linked_worktree_anchor_path(&self) -> &Path {
         self.main_worktree_abs_path()
-            .or_else(|| repo_identity_path_if_local(&self.common_dir_abs_path, self.path_style))
-            .unwrap_or(self.common_dir_abs_path.as_ref())
+            .unwrap_or_else(|| repo_identity_path(&self.common_dir_abs_path, self.path_style))
     }
 
     /// Computes the path where a new linked worktree for this repository
@@ -6334,6 +6152,11 @@ impl RepositorySnapshot {
         worktree_name: &str,
         worktree_directory_setting: &str,
     ) -> Result<PathBuf> {
+        anyhow::ensure!(
+            !self.path_style.has_root(Path::new(worktree_name)),
+            "worktree name must not contain a root directory component"
+        );
+
         let repository_anchor = self.linked_worktree_anchor_path();
         let project_name = self
             .path_style
@@ -6344,8 +6167,17 @@ impl RepositorySnapshot {
             worktree_directory_setting,
             self.path_style,
         )?;
-        let directory = self.path_style.join_path(&directory, worktree_name)?;
-        self.path_style.join_path(&directory, project_name)
+        let worktree_directory = self
+            .path_style
+            .normalize_lexically(self.path_style.join(&directory, worktree_name));
+
+        anyhow::ensure!(
+            self.path_style.starts_with(&worktree_directory, &directory),
+            "Worktree name {worktree_name:?} resolves to {worktree_directory:?}, \
+             which is outside the configured worktree directory {directory:?}"
+        );
+
+        Ok(self.path_style.join(&worktree_directory, project_name))
     }
 
     /// The main worktree is the original checkout that other worktrees were
@@ -6397,11 +6229,8 @@ impl RepositorySnapshot {
 
     pub fn repo_path_to_abs_path(&self, repo_path: &RepoPath) -> PathBuf {
         let repo_path = repo_path.display(self.path_style);
-        PathBuf::from(
-            self.path_style
-                .join(&self.work_directory_abs_path, repo_path.as_ref())
-                .unwrap(),
-        )
+        self.path_style
+            .join(&self.work_directory_abs_path, repo_path.as_ref())
     }
 
     #[inline]
@@ -7132,60 +6961,70 @@ impl Repository {
         })
     }
 
+    /// Restores `paths` in the working tree.
+    ///
+    /// With `Some(commit)`, the index and working tree are reset to that commit,
+    /// discarding staged and unstaged changes. With `None`, only the working tree
+    /// is restored from the index, so staged changes are kept.
     pub fn checkout_files(
         &mut self,
-        commit: &str,
+        commit: Option<&str>,
         paths: Vec<RepoPath>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let commit = commit.to_string();
+        let commit = commit.map(str::to_string);
         let id = self.id;
+        let (git_status, description) = match &commit {
+            Some(commit) => (
+                pending_op::GitStatus::Reverted,
+                format!("git checkout {commit}"),
+            ),
+            None => (
+                pending_op::GitStatus::RevertedUnstaged,
+                "git checkout".to_string(),
+            ),
+        };
 
-        self.spawn_job_with_tracking(
-            paths.clone(),
-            pending_op::GitStatus::Reverted,
-            cx,
-            async move |this, cx| {
-                this.update(cx, |this, _cx| {
-                    this.send_job(
-                        "checkout_files",
-                        Some(format!("git checkout {}", commit).into()),
-                        move |git_repo, _| async move {
-                            match git_repo {
-                                RepositoryState::Local(LocalRepositoryState {
-                                    backend,
-                                    environment,
-                                    ..
-                                }) => {
-                                    backend
-                                        .checkout_files(commit, paths, environment.clone())
-                                        .await
-                                }
-                                RepositoryState::Remote(RemoteRepositoryState {
-                                    project_id,
-                                    client,
-                                }) => {
-                                    client
-                                        .request(proto::GitCheckoutFiles {
-                                            project_id: project_id.0,
-                                            repository_id: id.to_proto(),
-                                            commit,
-                                            paths: paths
-                                                .into_iter()
-                                                .map(|p| p.as_unix_str().to_owned())
-                                                .collect(),
-                                        })
-                                        .await?;
-
-                                    Ok(())
-                                }
+        self.spawn_job_with_tracking(paths.clone(), git_status, cx, async move |this, cx| {
+            this.update(cx, |this, _cx| {
+                this.send_job(
+                    "checkout_files",
+                    Some(description.into()),
+                    move |git_repo, _| async move {
+                        match git_repo {
+                            RepositoryState::Local(LocalRepositoryState {
+                                backend,
+                                environment,
+                                ..
+                            }) => {
+                                backend
+                                    .checkout_files(commit, paths, environment.clone())
+                                    .await
                             }
-                        },
-                    )
-                })?
-                .await?
-            },
-        )
+                            RepositoryState::Remote(RemoteRepositoryState {
+                                project_id,
+                                client,
+                            }) => {
+                                client
+                                    .request(proto::GitCheckoutFiles {
+                                        project_id: project_id.0,
+                                        repository_id: id.to_proto(),
+                                        commit: commit.unwrap_or_default(),
+                                        paths: paths
+                                            .into_iter()
+                                            .map(|p| p.as_unix_str().to_owned())
+                                            .collect(),
+                                    })
+                                    .await?;
+
+                                Ok(())
+                            }
+                        }
+                    },
+                )
+            })?
+            .await?
+        })
     }
 
     pub fn reset(
@@ -9975,53 +9814,6 @@ impl Repository {
         )
     }
 
-    pub fn checkpoint(&mut self) -> oneshot::Receiver<Result<GitRepositoryCheckpoint>> {
-        let id = self.id;
-        self.send_job("checkpoint", None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.checkpoint().await
-                }
-                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    let response = client
-                        .request(proto::GitCreateCheckpoint {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                        })
-                        .await?;
-
-                    Ok(GitRepositoryCheckpoint {
-                        commit_sha: Oid::from_bytes(&response.commit_sha)?,
-                    })
-                }
-            }
-        })
-    }
-
-    pub fn restore_checkpoint(
-        &mut self,
-        checkpoint: GitRepositoryCheckpoint,
-    ) -> oneshot::Receiver<Result<()>> {
-        let id = self.id;
-        self.send_job("restore_checkpoint", None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.restore_checkpoint(checkpoint).await
-                }
-                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    client
-                        .request(proto::GitRestoreCheckpoint {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            commit_sha: checkpoint.commit_sha.as_bytes().to_vec(),
-                        })
-                        .await?;
-                    Ok(())
-                }
-            }
-        })
-    }
-
     pub(crate) fn apply_remote_update(
         &mut self,
         update: proto::UpdateRepository,
@@ -10121,60 +9913,6 @@ impl Repository {
         }
         self.clear_pending_ops(cx);
         Ok(())
-    }
-
-    pub fn compare_checkpoints(
-        &mut self,
-        left: GitRepositoryCheckpoint,
-        right: GitRepositoryCheckpoint,
-    ) -> oneshot::Receiver<Result<bool>> {
-        let id = self.id;
-        self.send_job("compare_checkpoints", None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.compare_checkpoints(left, right).await
-                }
-                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    let response = client
-                        .request(proto::GitCompareCheckpoints {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            left_commit_sha: left.commit_sha.as_bytes().to_vec(),
-                            right_commit_sha: right.commit_sha.as_bytes().to_vec(),
-                        })
-                        .await?;
-                    Ok(response.equal)
-                }
-            }
-        })
-    }
-
-    pub fn diff_checkpoints(
-        &mut self,
-        base_checkpoint: GitRepositoryCheckpoint,
-        target_checkpoint: GitRepositoryCheckpoint,
-    ) -> oneshot::Receiver<Result<String>> {
-        let id = self.id;
-        self.send_job("diff_checkpoints", None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend
-                        .diff_checkpoints(base_checkpoint, target_checkpoint)
-                        .await
-                }
-                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    let response = client
-                        .request(proto::GitDiffCheckpoints {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            base_commit_sha: base_checkpoint.commit_sha.as_bytes().to_vec(),
-                            target_commit_sha: target_checkpoint.commit_sha.as_bytes().to_vec(),
-                        })
-                        .await?;
-                    Ok(response.diff)
-                }
-            }
-        })
     }
 
     fn clear_pending_ops(&mut self, cx: &mut Context<Self>) {
@@ -10865,19 +10603,11 @@ pub fn worktrees_directory_for_repo(
         anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
     }
 
-    let joined = path_style.join_path(repository_anchor_path, trimmed)?;
-    let resolved = if path_style.is_posix() {
-        joined
-    } else {
-        path::normalize_path(&joined)
-    };
+    let resolved = path_style.normalize_lexically(path_style.join(repository_anchor_path, trimmed));
     let resolved = if path_style.starts_with(resolved.as_path(), repository_anchor_path) {
         resolved
-    } else if let Some(repo_dir_name) = path_style
-        .file_name(repository_anchor_path)
-        .and_then(|name| name.to_str())
-    {
-        path_style.join_path(&resolved, repo_dir_name)?
+    } else if let Some(repo_dir_name) = path_style.file_name(repository_anchor_path) {
+        path_style.normalize_lexically(path_style.join(&resolved, repo_dir_name))
     } else {
         resolved
     };
@@ -10958,14 +10688,6 @@ pub fn repo_identity_path(common_dir: &Path, path_style: PathStyle) -> &Path {
     } else {
         common_dir
     }
-}
-
-/// Returns the repository identity only when `std::path` can interpret the path correctly.
-///
-/// Callers whose downstream path operations are not yet `PathStyle`-aware use this to preserve
-/// their existing behavior for foreign path styles.
-pub fn repo_identity_path_if_local(common_dir: &Path, path_style: PathStyle) -> Option<&Path> {
-    (path_style == PathStyle::local()).then(|| repo_identity_path(common_dir, path_style))
 }
 
 /// Returns true if `git_dir` is a Git submodule's git directory.
@@ -11488,7 +11210,7 @@ mod tests {
     use git::repository::{RepoPath, repo_path};
     use gpui::proptest::prelude::*;
     use gpui::{TestAppContext, UpdateGlobal};
-    use rand::{SeedableRng, rngs::StdRng};
+    use rand::{Rng as _, SeedableRng, rngs::StdRng};
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
@@ -12342,8 +12064,8 @@ mod tests {
         let work_dir = Path::new("/home/user/dev/lsp-tests");
         let directory =
             worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap();
-        let directory = PathStyle::Unix.join_path(&directory, "nimble-sky").unwrap();
-        let path = PathStyle::Unix.join_path(&directory, "lsp-tests").unwrap();
+        let directory = PathStyle::Unix.join(&directory, "nimble-sky");
+        let path = PathStyle::Unix.join(&directory, "lsp-tests");
 
         assert_eq!(
             path,
@@ -12396,6 +12118,147 @@ mod tests {
                 .unwrap(),
             PathBuf::from(r"C:\Users\user\dev\worktrees\lsp-tests\nimble-sky\lsp-tests")
         );
+    }
+
+    #[test]
+    fn test_new_worktree_path_rejects_names_outside_worktree_directory() {
+        let unix_snapshot = RepositorySnapshot::empty(
+            RepositoryId(0),
+            Path::new("/home/user/dev/lsp-tests").into(),
+            None,
+            None,
+            None,
+            PathStyle::Unix,
+        );
+
+        let windows_snapshot = RepositorySnapshot::empty(
+            RepositoryId(0),
+            Path::new(r"C:\Users\user\dev\lsp-tests").into(),
+            None,
+            None,
+            None,
+            PathStyle::Windows,
+        );
+
+        for (snapshot, worktree_name) in [
+            (&unix_snapshot, ".."),
+            (&unix_snapshot, "../.."),
+            (&unix_snapshot, "../../test_worktree"),
+            (&unix_snapshot, "feature/../../escaped"),
+            (&windows_snapshot, "D:trial"),
+            (&windows_snapshot, "C:trial"),
+        ] {
+            assert!(
+                snapshot
+                    .path_for_new_linked_worktree(worktree_name, "../worktrees")
+                    .is_err(),
+                "{worktree_name:?} should be rejected"
+            );
+        }
+
+        // Nested names remain valid as long as they resolve inside the directory.
+        assert_eq!(
+            unix_snapshot
+                .path_for_new_linked_worktree("feature/nested", "../worktrees")
+                .unwrap(),
+            PathBuf::from("/home/user/dev/worktrees/lsp-tests/feature/nested/lsp-tests")
+        );
+    }
+
+    #[test]
+    fn test_linked_worktree_anchor_path() {
+        let cases = [
+            // Normal clone (`.git`): the main worktree's checkout is the anchor.
+            (
+                "/worktrees/zed/feature/zed",
+                "/repos/zed/.git/worktrees/feature",
+                "/worktrees/zed/feature/zed/.git",
+                "/repos/zed/.git",
+                PathStyle::Unix,
+                Some("/repos/zed"),
+                "/repos/zed",
+            ),
+            (
+                r"C:\worktrees\zed\feature\zed",
+                r"C:\repos\zed\.git\worktrees\feature",
+                r"C:\worktrees\zed\feature\zed\.git",
+                r"C:\repos\zed\.git",
+                PathStyle::Windows,
+                Some(r"C:\repos\zed"),
+                r"C:\repos\zed",
+            ),
+            // Bare clone stored in `.bare`: there is no main worktree, so the parent
+            // of `.bare` is the anchor.
+            (
+                "/worktrees/zed/plum-warbler/zed",
+                "/repos/zed/.bare/worktrees/plum-warbler",
+                "/worktrees/zed/plum-warbler/zed/.git",
+                "/repos/zed/.bare",
+                PathStyle::Unix,
+                None,
+                "/repos/zed",
+            ),
+            (
+                r"C:\worktrees\zed\plum-warbler\zed",
+                r"C:\repos\zed\.bare\worktrees\plum-warbler",
+                r"C:\worktrees\zed\plum-warbler\zed\.git",
+                r"C:\repos\zed\.bare",
+                PathStyle::Windows,
+                None,
+                r"C:\repos\zed",
+            ),
+            // Bare clone named `repo.git`: there is no main worktree and no parent to
+            // strip, so the common directory itself is the anchor.
+            (
+                "/worktrees/zed.git/plum-warbler/zed.git",
+                "/repos/zed.git/worktrees/plum-warbler",
+                "/worktrees/zed.git/plum-warbler/zed.git/.git",
+                "/repos/zed.git",
+                PathStyle::Unix,
+                None,
+                "/repos/zed.git",
+            ),
+            (
+                r"C:\worktrees\zed.git\plum-warbler\zed.git",
+                r"C:\repos\zed.git\worktrees\plum-warbler",
+                r"C:\worktrees\zed.git\plum-warbler\zed.git\.git",
+                r"C:\repos\zed.git",
+                PathStyle::Windows,
+                None,
+                r"C:\repos\zed.git",
+            ),
+        ];
+
+        for (
+            work_directory,
+            repository_dir,
+            dot_git,
+            common_dir,
+            path_style,
+            expected_main_worktree,
+            expected_anchor,
+        ) in cases
+        {
+            let snapshot = RepositorySnapshot::empty(
+                RepositoryId(0),
+                Path::new(work_directory).into(),
+                Some(Path::new(repository_dir).into()),
+                Some(Path::new(dot_git).into()),
+                Some(Path::new(common_dir).into()),
+                path_style,
+            );
+
+            assert_eq!(
+                snapshot.main_worktree_abs_path(),
+                expected_main_worktree.map(Path::new),
+                "main worktree for {work_directory:?} with {path_style:?}",
+            );
+            assert_eq!(
+                snapshot.linked_worktree_anchor_path(),
+                Path::new(expected_anchor),
+                "anchor for {work_directory:?} with {path_style:?}",
+            );
+        }
     }
 
     fn verify_invariants(repository: &Repository) -> anyhow::Result<()> {

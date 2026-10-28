@@ -30,7 +30,12 @@ use std::{
     },
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
+use util::{
+    ResultExt,
+    fs::remove_matching,
+    maybe, merge_json_value_into,
+    paths::{PathStyle, UrlExt as _},
+};
 
 pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
     let content = grammars::get_file("go/semantic_token_rules.json")
@@ -452,9 +457,10 @@ impl LspAdapter for GoLspAdapter {
         &self,
         command_name: &str,
         arguments: &[serde_json::Value],
+        path_style: PathStyle,
     ) -> Option<ClientCommand> {
         if let "gopls.run_tests" = command_name {
-            let template = go_test_task_template(arguments.first()?)?;
+            let template = go_test_task_template(arguments.first()?, path_style)?;
             Some(ClientCommand::ScheduleTask(template))
         } else {
             None
@@ -480,7 +486,10 @@ fn json_string_array(value: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn go_test_task_template(arg: &serde_json::Value) -> Option<task::TaskTemplate> {
+fn go_test_task_template(
+    arg: &serde_json::Value,
+    path_style: PathStyle,
+) -> Option<task::TaskTemplate> {
     let tests = json_string_array(arg, "Tests");
     let benchmarks = json_string_array(arg, "Benchmarks");
     if tests.is_empty() && benchmarks.is_empty() {
@@ -523,9 +532,10 @@ fn go_test_task_template(arg: &serde_json::Value) -> Option<task::TaskTemplate> 
     let cwd = arg
         .get("URI")
         .and_then(|v| v.as_str())
-        .and_then(|uri| uri.strip_prefix("file://"))
-        .and_then(|path| std::path::Path::new(path).parent())
-        .map(|p| p.to_string_lossy().into_owned());
+        .and_then(|uri| uri.parse::<lsp::Uri>().ok())
+        .and_then(|uri| uri.to_file_path_ext(path_style).ok())
+        .and_then(|path| path_style.parent(&path).map(|parent| parent.to_owned()))
+        .map(|path| path.to_string_lossy().into_owned());
 
     Some(task::TaskTemplate {
         label,
@@ -961,6 +971,38 @@ mod tests {
                 .unwrap()
                 .with_context_provider(Some(Arc::new(GoContextProvider))),
         )
+    }
+
+    #[test]
+    fn test_go_test_task_template_cwd() {
+        for (path_style, uri, expected_cwd) in [
+            (
+                PathStyle::Windows,
+                "file:///C:/my%20repo/main_test.go",
+                r"C:\my repo",
+            ),
+            (
+                PathStyle::Windows,
+                "file://server/share/pkg/main_test.go",
+                r"\\server\share\pkg",
+            ),
+            (PathStyle::Windows, "file:///C:/main_test.go", r"C:\"),
+            (PathStyle::Unix, "file:///C:/repo/main_test.go", "/C:/repo"),
+            (
+                PathStyle::Unix,
+                "file:///my%20repo/main_test.go",
+                "/my repo",
+            ),
+        ] {
+            let template =
+                go_test_task_template(&json!({ "URI": uri, "Tests": ["TestExample"] }), path_style)
+                    .expect("test task should be generated");
+            assert_eq!(
+                template.cwd.as_deref(),
+                Some(expected_cwd),
+                "{path_style:?}: {uri}"
+            );
+        }
     }
 
     #[gpui::test]
@@ -2106,6 +2148,36 @@ mod tests {
                 expected_symbol
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_go_method_type_parameters_highlighted_as_type() {
+        let language = go_language();
+
+        let theme =
+            SyntaxTheme::new_test([("type", Hsla::default()), ("variable", Hsla::default())]);
+        language.set_theme(&theme);
+
+        let grammar = language.grammar().unwrap();
+        let highlight_type = grammar.highlight_id_for_name("type").unwrap();
+
+        // The `T` inside `[T any]` is a method type parameter declaration. It is
+        // only parsed as such by the regenerated tree-sitter-go fork; upstream
+        // 0.25 has no `type_parameters` field on `method_declaration`.
+        let source = "package main\n\ntype Recv struct{}\n\nfunc (r Recv) Do[T any](value T) {}\n";
+        let type_parameter_offset = source.find("[T any]").expect("type parameter present") + 1;
+
+        let runs = language.highlight_text(&Rope::from(source), 0..source.len());
+        let type_parameter_highlight = runs
+            .into_iter()
+            .find(|(range, _)| range.contains(&type_parameter_offset))
+            .map(|(_, highlight_id)| highlight_id);
+
+        assert_eq!(
+            type_parameter_highlight,
+            Some(highlight_type),
+            "method type parameter should be highlighted as a type, not a variable"
+        );
     }
 
     #[test]

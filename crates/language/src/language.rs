@@ -62,7 +62,8 @@ pub use language_core::{
     serialize_regex,
 };
 pub use language_registry::{
-    LanguageLoader, LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
+    ExtensionLanguagesUpdateOutcome, LanguageLoader, LanguageName, LanguageRegistration,
+    LanguageRegistrationStatus, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
 };
 use lsp::{
     CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions, Uri,
@@ -100,6 +101,7 @@ pub use toolchain::{
     ToolchainMetadata, ToolchainScope,
 };
 use tree_sitter::{self, QueryCursor, WasmStore, wasmtime};
+use util::paths::PathStyle;
 use util::rel_path::RelPath;
 
 pub use available_languages::AvailableLanguage;
@@ -687,6 +689,7 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         &self,
         _command_name: &str,
         _arguments: &[serde_json::Value],
+        _path_style: PathStyle,
     ) -> Option<ClientCommand> {
         None
     }
@@ -1195,7 +1198,7 @@ impl Language {
             let mut captures = cursor.captures(query, tree.root_node(), text.text_provider());
             let capture_refs = iter::from_fn(move || {
                 let (query_match, capture_index) = captures.next()?;
-                let capture = query_match.captures[*capture_index];
+                let capture = query_match.captures()[*capture_index];
                 Some((
                     capture.node.byte_range(),
                     HighlightCaptureRef {
