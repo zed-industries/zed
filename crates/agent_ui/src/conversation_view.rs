@@ -501,6 +501,10 @@ impl Conversation {
         ))
     }
 
+    pub(crate) fn thread(&self, session_id: &acp_v2::SessionId) -> Option<&Entity<AcpThread>> {
+        self.threads.get(session_id)
+    }
+
     pub fn subagents_awaiting_permission(&self, cx: &App) -> Vec<(acp_v2::SessionId, usize)> {
         self.permission_requests
             .iter()
