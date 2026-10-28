@@ -124,6 +124,11 @@ const MIN_PARKED_REPOSITORY_DEPTH: usize = 2;
 
 pub const MAX_CONCURRENT_OBJECT_READS: usize = 16;
 
+/// Git matches every pathspec against every index entry, so the cost of a
+/// scoped `git status`/`git diff` grows with the number of paths. On large
+/// repositories a scan of the whole repository is cheaper than this many paths.
+const MAX_SCOPED_STATUS_PATHS: usize = 64;
+
 #[derive(Clone, Debug)]
 pub struct ParkedRepository {
     worktree_id: WorktreeId,
@@ -5093,6 +5098,14 @@ impl GitStore {
         }
 
         coalesced
+    }
+
+    fn limit_repo_paths(paths: Vec<RepoPath>) -> Vec<RepoPath> {
+        if paths.len() > MAX_SCOPED_STATUS_PATHS {
+            vec![RepoPath::from_rel_path(RelPath::empty())]
+        } else {
+            paths
+        }
     }
 
     fn process_updated_entries(
@@ -10294,13 +10307,15 @@ impl Repository {
 
                 let changed_path_statuses = cx
                     .background_spawn(async move {
-                        let changed_paths = GitStore::coalesce_repo_paths(
-                            changed_paths
-                                .into_iter()
-                                .flatten()
-                                .collect::<BTreeSet<_>>()
-                                .into_iter()
-                                .collect(),
+                        let changed_paths = GitStore::limit_repo_paths(
+                            GitStore::coalesce_repo_paths(
+                                changed_paths
+                                    .into_iter()
+                                    .flatten()
+                                    .collect::<BTreeSet<_>>()
+                                    .into_iter()
+                                    .collect(),
+                            ),
                         );
                         let changed_paths_vec = changed_paths.iter().cloned().collect::<Vec<_>>();
 
@@ -12450,6 +12465,19 @@ mod tests {
         let coalesced = GitStore::coalesce_repo_paths(repo_paths(&["", "src", "src/lib.rs"]));
 
         assert_eq!(coalesced, repo_paths(&[""]));
+    }
+
+    #[test]
+    fn limit_repo_paths_falls_back_to_root_above_threshold() {
+        let at_limit = (0..MAX_SCOPED_STATUS_PATHS)
+            .map(|index| repo_path(&format!("dir{index}/file.rs")))
+            .collect::<Vec<_>>();
+        assert_eq!(GitStore::limit_repo_paths(at_limit.clone()), at_limit);
+
+        let over_limit = (0..=MAX_SCOPED_STATUS_PATHS)
+            .map(|index| repo_path(&format!("dir{index}/file.rs")))
+            .collect::<Vec<_>>();
+        assert_eq!(GitStore::limit_repo_paths(over_limit), repo_paths(&[""]));
     }
 
     #[test]
