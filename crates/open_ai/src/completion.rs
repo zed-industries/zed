@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, stream::BoxStream};
 use http_client::StatusCode;
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -11,7 +11,6 @@ use language_model_core::{
     ProviderErrorCategory, Role, StopReason, TokenUsage, provider_name_for_id,
     util::{fix_streamed_json, parse_tool_arguments},
 };
-use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
@@ -790,15 +789,15 @@ impl OpenAiResponseEventMapper {
         }
     }
 
-    pub fn map_stream(
+    pub fn map_stream<E: Into<LanguageModelCompletionError> + 'static>(
         mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponsesStreamEvent>>>>,
+        events: BoxStream<'static, Result<ResponsesStreamEvent, E>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
+                Err(error) => vec![Err(error.into())],
             })
         })
     }
@@ -881,7 +880,8 @@ impl OpenAiResponseEventMapper {
                     events
                 }
             }
-            ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
+            ResponsesStreamEvent::ReasoningDelta { delta, .. }
+            | ResponsesStreamEvent::ReasoningTextDelta { delta, .. } => {
                 if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -1085,6 +1085,7 @@ impl OpenAiResponseEventMapper {
             | ResponsesStreamEvent::ContentPartAdded { .. }
             | ResponsesStreamEvent::ContentPartDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryTextDone { .. }
+            | ResponsesStreamEvent::ReasoningTextDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryPartDone { .. }
             | ResponsesStreamEvent::ReasoningDone { .. }
             | ResponsesStreamEvent::Created { .. }
@@ -1510,7 +1511,12 @@ fn response_reasoning_input_item_from_output(
     ResponseReasoningInputItem {
         id: reasoning.id.clone(),
         summary,
-        content: reasoning.content.clone(),
+        content: reasoning
+            .content
+            .iter()
+            .filter(|part| !matches!(part, crate::responses::ReasoningContentPart::Other))
+            .cloned()
+            .collect(),
         encrypted_content,
         status: reasoning.status.clone(),
     }
@@ -1585,7 +1591,9 @@ mod tests {
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
             OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID)
-                .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+                .map_stream(Box::pin(futures::stream::iter(
+                    events.into_iter().map(Ok::<_, crate::RequestError>),
+                )))
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
@@ -3928,10 +3936,9 @@ mod tests {
             Some("ENC"),
             Some("completed".into()),
         );
-        reasoning_item.content = vec![json!({
-            "type": "reasoning_text",
-            "text": "Internal reasoning text."
-        })];
+        reasoning_item.content = vec![crate::responses::ReasoningContentPart::ReasoningText {
+            text: "Internal reasoning text.".into(),
+        }];
 
         let events = vec![
             ResponsesStreamEvent::OutputItemDone {

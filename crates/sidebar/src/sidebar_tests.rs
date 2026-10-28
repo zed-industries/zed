@@ -4146,8 +4146,33 @@ async fn test_archive_selected_thread_archives_closed_linked_worktree(cx: &mut T
     });
 
     focus_sidebar(&sidebar, cx);
-    sidebar.update_in(cx, |sidebar, _window, _cx| {
+    let previous_status = sidebar.update_in(cx, |sidebar, _window, _cx| {
         sidebar.selection = Some(thread_index);
+        let Some(ListEntry::Thread(thread)) = sidebar.contents.entries.get_mut(thread_index) else {
+            panic!("expected selected thread");
+        };
+        std::mem::replace(
+            &mut Arc::make_mut(thread).status,
+            AgentThreadStatus::Unconfirmed,
+        )
+    });
+    cx.dispatch_action(ArchiveSelectedThread);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| {
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry_by_session(&worktree_session_id)
+                .map(|thread| thread.archived)
+        }),
+        Some(false),
+        "unconfirmed activity must not permit archival"
+    );
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        let Some(ListEntry::Thread(thread)) = sidebar.contents.entries.get_mut(thread_index) else {
+            panic!("expected selected thread");
+        };
+        Arc::make_mut(thread).status = previous_status;
     });
     cx.dispatch_action(ArchiveSelectedThread);
     for _ in 0..8 {
@@ -4194,6 +4219,82 @@ async fn test_archive_selected_thread_archives_closed_linked_worktree(cx: &mut T
         !fs.is_dir(Path::new("/worktrees/project/feature-a/project"))
             .await,
         "linked worktree directory should be removed from disk after archiving its thread"
+    );
+}
+
+#[gpui::test]
+async fn test_archive_thread_with_deleted_closed_linked_worktree(cx: &mut TestAppContext) {
+    let (main_project, _fs) = init_test_project_with_git("/project", cx).await;
+    main_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let main_workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+    // A thread on a linked worktree that no longer exists on disk.
+    let worktree_session_id = acp::SessionId::new(Arc::from("worktree-thread"));
+    let worktree_folder_paths =
+        PathList::new(&[PathBuf::from("/worktrees/project/feature-a/project")]);
+    save_thread_metadata_with_main_paths(
+        "worktree-thread",
+        "Worktree Thread",
+        worktree_folder_paths,
+        PathList::new(&[PathBuf::from("/project")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        let thread = sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::Thread(thread)
+                    if thread.metadata.session_id.as_ref() == Some(&worktree_session_id) =>
+                {
+                    Some(thread)
+                }
+                _ => None,
+            })
+            .expect("worktree thread should be visible in sidebar");
+        assert!(
+            matches!(thread.workspace, ThreadEntryWorkspace::Closed { .. }),
+            "thread should start closed so archiving has to open its workspace"
+        );
+    });
+
+    // Opening the missing worktree falls back to the main workspace, so the
+    // thread's entry is still closed after archiving opens it.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(&worktree_session_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    let thread_archived = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&worktree_session_id)
+            .map(|thread| thread.archived)
+    });
+    assert_eq!(
+        thread_archived,
+        Some(true),
+        "thread should be archived even though its worktree no longer exists"
+    );
+    assert_eq!(
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace
+            .workspaces()
+            .cloned()
+            .collect::<Vec<_>>()),
+        vec![main_workspace],
+        "archiving should leave only the main workspace open"
     );
 }
 
@@ -4492,11 +4593,22 @@ async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
     save_test_thread_metadata(&parent_session_id, &project, cx).await;
 
     let subagent_session_id = acp::SessionId::new("subagent-session");
-    cx.update(|_, cx| {
-        let parent_thread = panel.read(cx).active_agent_thread(cx).unwrap();
-        parent_thread.update(cx, |thread: &mut AcpThread, cx| {
-            thread.subagent_spawned(subagent_session_id.clone(), cx);
-        });
+    let parent_thread = cx.update(|_, cx| panel.read(cx).active_agent_thread(cx).unwrap());
+    let subagent = cx
+        .update(|_, cx| {
+            let parent = parent_thread.read(cx);
+            parent.connection().clone().load_session(
+                subagent_session_id.clone(),
+                parent.project().clone(),
+                PathList::default(),
+                None,
+                cx,
+            )
+        })
+        .await
+        .expect("subagent session");
+    parent_thread.update(cx, |thread: &mut AcpThread, cx| {
+        thread.register_subagent(subagent, cx);
     });
     cx.run_until_parked();
 
@@ -13332,8 +13444,7 @@ mod property_test {
                     let thread_id = active_thread_id(&panel, cx);
                     let session_id = active_session_id(&panel, cx);
                     // Make the thread non-draft without exercising the prompt
-                    // send path; these invariants are about sidebar state, not
-                    // git checkpointing during user prompts.
+                    // send path; these invariants are about sidebar state.
                     cx.update(|_, cx| {
                         connection.send_update(
                             session_id.clone(),
