@@ -9,11 +9,12 @@ use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
 use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
+use github_releases::AssetKind;
 use gpui::{
     AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     TaskExt,
 };
-use http_client::{HttpClient, github::AssetKind};
+use http_client::HttpClient;
 use node_runtime::NodeRuntime;
 use percent_encoding::percent_decode_str;
 use remote::RemoteClient;
@@ -1228,7 +1229,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
                     Some(provided_sha.clone())
                 } else if let Some(github_archive) = github_release_archive_from_url(archive_url) {
-                    if let Ok(release) = ::http_client::github::get_release_by_tag_name(
+                    if let Ok(release) = github_releases::get_release_by_tag_name(
                         &github_archive.repo_name_with_owner,
                         &github_archive.tag,
                         http_client.clone(),
@@ -1255,10 +1256,12 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     None
                 };
 
+                let executor = cx.background_executor();
                 match registry_archive_kind_for_url(archive_url)? {
                     RegistryArchiveKind::Archive(asset_kind) => {
-                        ::http_client::github_download::download_server_binary(
-                            &*http_client,
+                        github_releases::download_server_binary(
+                            executor,
+                            http_client.clone(),
                             archive_url,
                             sha256.as_deref(),
                             &version_dir,
@@ -1267,8 +1270,9 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                         .await?;
                     }
                     RegistryArchiveKind::RawBinary { file_name } => {
-                        ::http_client::github_download::download_server_raw_binary(
-                            &*http_client,
+                        github_releases::download_server_raw_binary(
+                            executor,
+                            http_client.clone(),
                             archive_url,
                             sha256.as_deref(),
                             &version_dir,
