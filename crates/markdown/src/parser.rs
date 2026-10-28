@@ -241,6 +241,19 @@ fn normalize_math_for_parsing(text: &str) -> Option<String> {
         return None;
     }
     let bytes = text.as_bytes();
+    // Code can be nested in lists and block quotes or span multiple lines, so
+    // its boundaries must come from Markdown parsing rather than indentation.
+    let code_ranges: Vec<_> = Parser::new_ext(text, PARSE_OPTIONS)
+        .into_offset_iter()
+        .filter_map(|(event, range)| {
+            matches!(
+                event,
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::CodeBlock(_))
+                    | pulldown_cmark::Event::Code(_)
+            )
+            .then_some(range)
+        })
+        .collect();
     let mut flattened: Option<Vec<u8>> = None;
     let mut open_fence: Option<(u8, usize)> = None;
     let mut padding_swaps = Vec::new();
@@ -258,7 +271,12 @@ fn normalize_math_for_parsing(text: &str) -> Option<String> {
             }
         } else if is_block_start && let Some(fence) = opening_fence(line) {
             open_fence = Some(fence);
-        } else if is_block_start && line.starts_with(b"$$") {
+        } else if is_block_start
+            && line.starts_with(b"$$")
+            && !code_ranges
+                .iter()
+                .any(|range| range.contains(&(line_start + indent)))
+        {
             if let Some(close_end) = find_display_math_close(bytes, line_start + indent + 2) {
                 let span = line_start + indent..close_end;
                 if bytes[span.clone()].contains(&b'\n')
@@ -274,9 +292,19 @@ fn normalize_math_for_parsing(text: &str) -> Option<String> {
                 line_start = line_end_at(bytes, close_end) + 1;
                 continue;
             }
-            inline_math_padding_swaps(bytes, line_start..line_end, &mut padding_swaps);
+            inline_math_padding_swaps(
+                bytes,
+                line_start..line_end,
+                &code_ranges,
+                &mut padding_swaps,
+            );
         } else {
-            inline_math_padding_swaps(bytes, line_start..line_end, &mut padding_swaps);
+            inline_math_padding_swaps(
+                bytes,
+                line_start..line_end,
+                &code_ranges,
+                &mut padding_swaps,
+            );
         }
         line_start = line_end + 1;
     }
@@ -378,9 +406,22 @@ fn is_escaped(bytes: &[u8], index: usize) -> bool {
 
 /// pulldown-cmark rejects padded inline math, so `$ \geq 0$` rendered as text.
 /// Moving the padding outside the delimiters is byte-for-byte.
-fn inline_math_padding_swaps(bytes: &[u8], line: Range<usize>, swaps: &mut Vec<usize>) {
+fn inline_math_padding_swaps(
+    bytes: &[u8],
+    line: Range<usize>,
+    code_ranges: &[Range<usize>],
+    swaps: &mut Vec<usize>,
+) {
     let mut index = line.start;
     while index < line.end {
+        let code_index = code_ranges.partition_point(|range| range.end <= index);
+        if let Some(range) = code_ranges
+            .get(code_index)
+            .filter(|range| range.contains(&index))
+        {
+            index = range.end;
+            continue;
+        }
         match bytes[index] {
             b'`' => index = skip_code_span(bytes, index, line.end),
             b'$' if !is_escaped(bytes, index) => {
@@ -2416,6 +2457,15 @@ $$";
     }
 
     #[test]
+    fn display_math_preserves_packet_verification_path() {
+        let formula = r"\text{Channel} \longrightarrow \text{Connection} \longrightarrow \text{ClientID}\ \ (`07\text{-tendermint-}14`) \longrightarrow \text{AppHash} \longrightarrow \text{Verify Merkle Proof}";
+        let source = format!(
+            "When a packet arrives via `MsgRecvPacket`, the path resolution is deterministic:\n$${formula}$$"
+        );
+        assert_eq!(display_math_contents(&source), vec![formula.to_string()]);
+    }
+
+    #[test]
     fn escaped_dollars_do_not_close_a_display_span() {
         // `\$` escapes, but `\\` is a row separator and does not.
         let source = "$$\na \\$\\$ b\n=\nc\n$$\n";
@@ -2466,6 +2516,31 @@ $$";
     fn inline_math_padding_leaves_code_spans_alone() {
         // Code spans are verbatim.
         assert!(normalize_math_for_parsing("use `$ 5` here\n").is_none());
+    }
+
+    #[test]
+    fn math_normalization_preserves_code_blocks_and_multiline_code_spans() {
+        for source in [
+            "    $ x^2 $\n",
+            "\t$ x^2 $\n",
+            "> ```text\n> $ x^2 $\n> ```\n",
+            "- example:\n\n  ```text\n  $ x^2 $\n  ```\n",
+            "`first line\n$ x^2 $\nlast line`\n",
+            "`first line\n$$\nx + y\n$$\nlast line`\n",
+        ] {
+            assert!(
+                normalize_math_for_parsing(source).is_none(),
+                "changed code: {source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn math_normalization_continues_after_code() {
+        let source = "`first line\n$ x^2 $\nlast line` followed by $ y^2 $\n";
+        let normalized = normalize_math_for_parsing(source).expect("math is normalized");
+        assert!(normalized.starts_with("`first line\n$ x^2 $\nlast line`"));
+        assert_eq!(inline_math_contents(source), vec!["y^2".to_string()]);
     }
 
     #[test]
