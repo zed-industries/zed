@@ -441,8 +441,21 @@ pub fn task_contexts(
         task_contexts.latest_selection = latest_selection;
 
         if let Some(editor_context_task) = editor_context_task
-            && let Some(editor_context) = editor_context_task.await
+            && let Some(mut editor_context) = editor_context_task.await
         {
+            if active_item_worktree.is_none()
+                && let Some(project_root) =
+                    active_worktree.and_then(|worktree_id| worktree_abs_paths.get(&worktree_id))
+            {
+                // Items outside of visible directory worktrees (e.g. the global `tasks.json`
+                // opened via `zed: open tasks`) keep their file variables, but use the visible
+                // project's root and cwd.
+                editor_context.task_variables.insert(
+                    VariableName::WorktreeRoot,
+                    project_root.to_string_lossy().into_owned(),
+                );
+                editor_context.cwd = Some(project_root.to_path_buf());
+            }
             task_contexts.active_item_context =
                 Some((active_item_worktree, location, editor_context));
         }
@@ -497,7 +510,10 @@ mod tests {
     use editor::{Editor, MultiBufferOffset, SelectionEffects};
     use gpui::{Entity, TestAppContext, VisualTestContext};
     use language::{Language, LanguageConfig};
-    use project::{BasicContextProvider, FakeFs, Project, task_store::TaskStore};
+    use project::{
+        BasicContextProvider, FakeFs, Inventory, Project,
+        task_store::{TaskSettingsLocation, TaskStore},
+    };
     use serde_json::json;
     use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
@@ -505,6 +521,14 @@ mod tests {
     use workspace::{AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace};
 
     use crate::{Rerun, Spawn, task_contexts};
+
+    const GLOBAL_TASKS_JSON: &str = r#"[
+        {
+            "label": "print global task context",
+            "command": "echo",
+            "args": ["$ZED_WORKTREE_ROOT", "$ZED_FILENAME", "${ZED_RELATIVE_FILE:no file}"]
+        }
+    ]"#;
 
     #[gpui::test]
     async fn test_non_project_active_editor_uses_visible_worktree_context(cx: &mut TestAppContext) {
@@ -616,7 +640,8 @@ mod tests {
     ) {
         let (project, workspace, cx) = init_project_with_worktree_task(cx).await;
 
-        open_external_file_in_invisible_worktree(&project, &workspace, cx).await;
+        open_file_in_invisible_worktree(&project, &workspace, path!("/external"), "notes.txt", cx)
+            .await;
 
         assert_task_spawned_by_name_in_project_root(&workspace, cx);
     }
@@ -638,9 +663,54 @@ mod tests {
     ) {
         let (project, workspace, cx) = init_project_with_worktree_task(cx).await;
         spawn_task_with_project_file_active(&workspace, cx).await;
-        open_external_file_in_invisible_worktree(&project, &workspace, cx).await;
+        open_file_in_invisible_worktree(&project, &workspace, path!("/external"), "notes.txt", cx)
+            .await;
 
         assert_reevaluated_rerun_in_project_root(&workspace, cx);
+    }
+
+    #[gpui::test]
+    async fn test_spawn_by_name_resolves_global_task_with_global_tasks_file_editor_active(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace, cx) = init_project_with_worktree_task(cx).await;
+        task_inventory(&workspace, cx)
+            .update(cx, |inventory, _| {
+                inventory.update_file_based_tasks(
+                    TaskSettingsLocation::Global(Path::new(path!("/zed-config/tasks.json"))),
+                    Some(GLOBAL_TASKS_JSON),
+                )
+            })
+            .unwrap();
+
+        open_file_in_invisible_worktree(
+            &project,
+            &workspace,
+            path!("/zed-config"),
+            "tasks.json",
+            cx,
+        )
+        .await;
+
+        cx.dispatch_action(Spawn::ByName {
+            task_name: "print global task context".to_string(),
+            reveal_target: None,
+        });
+        cx.run_until_parked();
+
+        let scheduled_task = last_scheduled_task(&workspace, cx);
+        assert_eq!(
+            scheduled_task.resolved.args,
+            vec![
+                path!("/project").to_string(),
+                "tasks.json".to_string(),
+                "no file".to_string(),
+            ]
+        );
+        assert_eq!(
+            scheduled_task.resolved.cwd.as_deref(),
+            Some(Path::new(path!("/project")))
+        );
     }
 
     async fn open_external_file_in_single_file_worktree(
@@ -663,29 +733,25 @@ mod tests {
             .unwrap();
     }
 
-    async fn open_external_file_in_invisible_worktree(
+    async fn open_file_in_invisible_worktree(
         project: &Entity<Project>,
         workspace: &Entity<Workspace>,
+        worktree_path: &str,
+        file_name: &str,
         cx: &mut VisualTestContext,
     ) {
-        let (external_worktree, _) = project
+        let (worktree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_worktree(path!("/external"), false, cx)
+                project.find_or_create_worktree(worktree_path, false, cx)
             })
             .await
             .unwrap();
-        let external_worktree_id = external_worktree.read_with(cx, |worktree, _| worktree.id());
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
         cx.run_until_parked();
 
         workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_path(
-                    (external_worktree_id, rel_path("notes.txt")),
-                    None,
-                    true,
-                    window,
-                    cx,
-                )
+                workspace.open_path((worktree_id, rel_path(file_name)), None, true, window, cx)
             })
             .await
             .unwrap();
@@ -748,6 +814,12 @@ mod tests {
         fs.insert_tree(path!("/external"), json!({"notes.txt": ""}))
             .await;
 
+        fs.insert_tree(
+            path!("/zed-config"),
+            json!({ "tasks.json": GLOBAL_TASKS_JSON }),
+        )
+        .await;
+
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -799,11 +871,11 @@ mod tests {
         );
     }
 
-    fn last_scheduled_task(
+    fn task_inventory(
         workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
-    ) -> ResolvedTask {
-        let task_inventory = workspace
+    ) -> Entity<Inventory> {
+        workspace
             .read_with(cx, |workspace, cx| {
                 workspace
                     .project()
@@ -813,8 +885,14 @@ mod tests {
                     .task_inventory()
                     .cloned()
             })
-            .expect("project should have a task inventory");
-        let (_, scheduled_task) = task_inventory
+            .expect("project should have a task inventory")
+    }
+
+    fn last_scheduled_task(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> ResolvedTask {
+        let (_, scheduled_task) = task_inventory(workspace, cx)
             .read_with(cx, |inventory, _| inventory.last_scheduled_task(None))
             .expect("a task should be scheduled");
         scheduled_task

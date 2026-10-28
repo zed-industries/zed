@@ -1071,7 +1071,8 @@ impl ContextProvider for BasicContextProvider {
                 self.worktree_store
                     .read(cx)
                     .worktree_for_id(worktree_id, cx)
-            });
+            })
+            .filter(|worktree| worktree.read(cx).is_visible());
 
         if let Some(worktree) = worktree
             && let Some(worktree_root) = worktree.read(cx).root_dir()
