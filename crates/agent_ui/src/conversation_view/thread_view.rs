@@ -4607,9 +4607,13 @@ impl ThreadView {
             })
             .count();
 
+        // The permission buttons sit at the bottom of the card, so a tall tool
+        // call can be partly visible while its buttons are off screen.
         let scroll_icon = if self.list_state.item_is_above_viewport(entry_ix)? {
             IconName::ArrowUp
-        } else if self.list_state.item_is_below_viewport(entry_ix)? {
+        } else if self.list_state.bounds_for_item(entry_ix)?.bottom()
+            > self.list_state.viewport_bounds().bottom()
+        {
             IconName::ArrowDown
         } else {
             return None;

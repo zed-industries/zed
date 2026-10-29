@@ -19470,11 +19470,17 @@ pub(crate) mod tests {
                     acp_v2::PermissionOptionKind::AllowOnce,
                 )]),
             )]));
-        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(tool_call)]);
+        // Precede the tool call with enough output to scroll it out of view.
+        connection.set_next_prompt_updates(vec![
+            acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                "Earlier output\n\n".repeat(100).into(),
+            )),
+            acp_v1::SessionUpdate::ToolCall(tool_call),
+        ]);
 
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(connection), cx).await;
-        add_to_workspace(conversation_view.clone(), cx);
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
 
         cx.update(|_window, cx| {
             AgentSettings::override_global(
@@ -19730,6 +19736,57 @@ pub(crate) mod tests {
             vec![true; 4],
             "Floating row visibility must be stable across frames (false entries mean flicker)"
         );
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_shown_when_tall_inline_prompt_buttons_are_below_viewport(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (_view, thread_view, entry_ix, cx) =
+            setup_pending_permission_thread("perm-tall", cx).await;
+
+        let thread = thread_view.read_with(cx, |view, _cx| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp_v1::SessionUpdate::ToolCallUpdate(acp_v1::ToolCallUpdate::new(
+                        acp_v1::ToolCallId::new("perm-tall"),
+                        acp_v1::ToolCallUpdateFields::new().content(vec![
+                            acp_v1::ToolCallContent::Content(acp_v1::Content::new(
+                                acp_v1::ContentBlock::Text(acp_v1::TextContent::new(
+                                    "Plan step\n\n".repeat(100),
+                                )),
+                            )),
+                        ]),
+                    )),
+                    cx,
+                )
+                .expect("tool call content update should be accepted");
+        });
+        cx.run_until_parked();
+
+        // Show the top of the tool call: the entry intersects the viewport, but
+        // its permission buttons are far below the bottom edge.
+        thread_view.read_with(cx, |view, _cx| {
+            view.list_state.scroll_to(ListOffset {
+                item_ix: entry_ix,
+                offset_in_item: px(0.0),
+            });
+        });
+        thread_view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+
+        thread_view.update_in(cx, |view, window, cx| {
+            assert_eq!(view.list_state.item_is_above_viewport(entry_ix), Some(false));
+            assert_eq!(view.list_state.item_is_below_viewport(entry_ix), Some(false));
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_some(),
+                "Floating row should be visible when the inline prompt's buttons are below the viewport"
+            );
+        });
     }
 
     #[gpui::test]
