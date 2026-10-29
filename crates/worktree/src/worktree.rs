@@ -1291,8 +1291,9 @@ impl Worktree {
                 && let Ok(stripped) = full_path.strip_prefix(home_dir())
             {
                 self.path_style
-                    .join("~", &*stripped.to_string_lossy())
-                    .unwrap()
+                    .join(Path::new("~"), stripped)
+                    .to_string_lossy()
+                    .into_owned()
             } else {
                 full_path.to_string_lossy().into_owned()
             };
