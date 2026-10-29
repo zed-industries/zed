@@ -9,6 +9,7 @@ mod channel_tests;
 mod collab_panel_tests;
 mod db_tests;
 mod editor_tests;
+mod extension_cors_tests;
 mod following_tests;
 mod git_tests;
 mod integration_tests;

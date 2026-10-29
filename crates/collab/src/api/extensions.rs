@@ -5,7 +5,7 @@ use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
     Extension, Json, Router,
     extract::{Path, Query},
-    http::StatusCode,
+    http::{HeaderValue, Method, StatusCode},
     response::Redirect,
     routing::get,
 };
@@ -15,6 +15,7 @@ use semver::Version as SemanticVersion;
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use time::PrimitiveDateTime;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use util::{ResultExt, maybe};
 
 pub fn router() -> Router {
@@ -28,6 +29,13 @@ pub fn router() -> Router {
         .route(
             "/extensions/:extension_id/:version/download",
             get(download_extension),
+        )
+        .layer(
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::list([HeaderValue::from_static(
+                    "https://delta.dev",
+                )]))
+                .allow_methods([Method::GET]),
         )
 }
 
