@@ -490,6 +490,8 @@ fn main() {
         zed_actions::init();
 
         release_channel::init(app_version, cx);
+        let release_channel = ReleaseChannel::global(cx);
+        cx.set_app_identity(release_channel.app_id(), release_channel.display_name());
         gpui_tokio::init(cx);
         if let Some(app_commit_sha) = app_commit_sha {
             AppCommitSha::set_global(app_commit_sha, cx);

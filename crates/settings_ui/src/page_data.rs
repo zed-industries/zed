@@ -9075,7 +9075,7 @@ fn ai_page(cx: &App) -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Notify When Agent Waiting",
-                description: "Where to show notifications when the agent has completed its response or needs confirmation before running a tool action.",
+                description: "Show operating system notifications when a hidden agent has completed its response or needs confirmation before running a tool action.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("agent.notify_when_agent_waiting"),
