@@ -1140,8 +1140,8 @@ impl ContextServerStore {
         let mut merged = HashMap::default();
         let mut visible_worktrees = worktree_store.read(cx).visible_worktrees(cx).peekable();
         if visible_worktrees.peek().is_none() {
-            // A project whose worktrees have not loaded yet still has the user's
-            // servers; an ACP session created now must not start without them.
+            // Without this, user servers are missing until the first worktree is added,
+            // and never appear in a window that has no folder.
             for (id, settings) in &ProjectSettings::get(None, cx).context_servers {
                 merged.insert(
                     id.clone(),
