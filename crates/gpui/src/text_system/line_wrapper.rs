@@ -837,6 +837,74 @@ mod tests {
         assert_emergency_wrap_preserves_graphemes(&mut build_wrapper());
     }
 
+    #[test]
+    fn test_emergency_wrap_exact_boundaries() {
+        let mut wrapper = build_wrapper();
+        wrapper.char_widths.ascii.fill(Some(px(1.)));
+        wrapper.char_widths.other.insert('\u{301}', px(1.));
+
+        for (text, width, adjustment, expected) in [
+            (
+                "xe\u{301}y",
+                1.,
+                IndentAdjustment::NoIndent,
+                vec![Boundary::new(1, 0), Boundary::new(4, 0)],
+            ),
+            (
+                "  xe\u{301}yze\u{301}q",
+                5.,
+                IndentAdjustment::SameIndent,
+                vec![Boundary::new(6, 2), Boundary::new(8, 2)],
+            ),
+            (
+                "  xe\u{301}yze\u{301}q",
+                5.,
+                IndentAdjustment::ExtraColumns(1),
+                vec![
+                    Boundary::new(6, 3),
+                    Boundary::new(8, 3),
+                    Boundary::new(11, 3),
+                ],
+            ),
+        ] {
+            let fragments = [LineFragment::text(text)];
+            assert_eq!(
+                wrapper
+                    .wrap_line(&fragments, px(width), adjustment)
+                    .collect::<Vec<_>>(),
+                expected,
+                "{text:?}, {adjustment:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_emergency_wrap_elements_and_graphemes() {
+        let mut wrapper = build_wrapper();
+        wrapper.char_widths.ascii.fill(Some(px(1.)));
+        wrapper.char_widths.other.insert('\u{301}', px(1.));
+
+        for element_length in [1, 3, 32] {
+            let fragments = [
+                LineFragment::text("xe\u{301}"),
+                LineFragment::element(px(4.), element_length),
+                LineFragment::text("e\u{301}yz"),
+            ];
+            assert_eq!(
+                wrapper
+                    .wrap_line(&fragments, px(2.), IndentAdjustment::NoIndent)
+                    .collect::<Vec<_>>(),
+                vec![
+                    Boundary::new(1, 0),
+                    Boundary::new(4, 0),
+                    Boundary::new(4 + element_length, 0),
+                    Boundary::new(7 + element_length, 0),
+                ],
+                "element_length={element_length}",
+            );
+        }
+    }
+
     fn generate_test_runs(input_run_len: &[usize]) -> Vec<TextRun> {
         input_run_len
             .iter()
