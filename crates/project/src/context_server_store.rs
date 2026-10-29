@@ -1131,7 +1131,8 @@ impl ContextServerStore {
     }
 
     /// Merges context server settings from all visible worktrees so that servers defined
-    /// in any project folder in a multi-root workspace are picked up.
+    /// in any project folder in a multi-root workspace are picked up. With no visible
+    /// worktrees, falls back to user settings.
     fn resolve_all_context_server_settings(
         worktree_store: &Entity<WorktreeStore>,
         cx: &App,
