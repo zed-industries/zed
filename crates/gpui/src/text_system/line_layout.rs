@@ -228,11 +228,9 @@ impl LineLayout {
             .enumerate()
             .flat_map(move |(run_ix, run)| {
                 run.glyphs.iter().enumerate().map(move |(glyph_ix, glyph)| {
-                    let character = text[glyph.index..].chars().next().unwrap();
                     (
                         WrapBoundary { run_ix, glyph_ix },
                         glyph.index,
-                        character,
                         glyph.position.x,
                     )
                 })
@@ -240,12 +238,13 @@ impl LineLayout {
             .dedup_by(|(_, previous_index, ..), (_, index, ..)| previous_index == index)
             .peekable();
 
-        while let Some((boundary, index, ch, x)) = glyphs.next() {
-            if ch == '\n' {
+        while let Some((boundary, index, x)) = glyphs.next() {
+            let byte = text.as_bytes()[index];
+            if byte == b'\n' {
                 continue;
             }
 
-            if ch != ' '
+            if byte != b' '
                 && current_segment
                     .as_ref()
                     .is_none_or(|segment| !segment.contains(&index))
@@ -267,7 +266,7 @@ impl LineLayout {
                 current_segment = Some(start..end);
             }
 
-            let next_x = glyphs.peek().map_or(self.width, |(_, _, _, x)| *x);
+            let next_x = glyphs.peek().map_or(self.width, |(_, _, x)| *x);
             let width = next_x - last_boundary_x;
 
             if width > wrap_width && boundary > last_boundary {
