@@ -813,14 +813,11 @@ fn run_example() {
                     })
                 })
                 .detach();
-                cx.on_keyboard_layout_change({
-                    let window = window.clone();
-                    move |cx| {
-                        if let Err(error) = window.update(cx, |_, _, cx| cx.notify()) {
-                            log::error!(
-                                "Failed to notify window after keyboard layout change: {error:#}"
-                            );
-                        }
+                cx.on_keyboard_layout_change(move |cx| {
+                    if let Err(error) = window.update(cx, |_, _, cx| cx.notify()) {
+                        log::error!(
+                            "Failed to notify window after keyboard layout change: {error:#}"
+                        );
                     }
                 })
                 .detach();
