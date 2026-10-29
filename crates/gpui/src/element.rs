@@ -946,7 +946,7 @@ mod global_element_id_tests {
         for (items, depth) in [(500, 4), (500, 12), (2000, 12)] {
             let window = cx.add_window(move |_, _| DeepStatefulTree { items, depth });
             let window = crate::AnyWindowHandle::from(window);
-            let mut frame = |cx: &mut crate::TestAppContext| {
+            let frame = |cx: &mut crate::TestAppContext| {
                 cx.update_window(window, |_, window, cx| {
                     window.refresh();
                     let started = std::time::Instant::now();

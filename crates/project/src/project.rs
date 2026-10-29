@@ -50,7 +50,7 @@ pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
     is_submodule_git_dir, linked_worktree_short_name, repo_identity_path,
-    repo_identity_path_if_local, worktrees_directory_for_repo,
+    worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
@@ -113,7 +113,7 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 #[cfg(target_os = "windows")]
 use remote::wsl_path_to_windows_path;
-use remote::{RemoteClient, RemoteConnectionOptions, same_remote_connection_identity};
+use remote::{RemoteClient, RemoteConnectionIdentity, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID},
@@ -210,6 +210,12 @@ pub enum OpenedBufferEvent {
     Disconnected,
     Ok(BufferId),
     Err(BufferId, Arc<anyhow::Error>),
+}
+
+#[derive(Debug, Clone)]
+pub enum ProjectHost<'a> {
+    Local,
+    Remote(&'a RemoteConnectionOptions),
 }
 
 /// Semantics-aware entity that is relevant to one or more [`Worktree`] with the files.
@@ -1505,14 +1511,13 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
-            let (remote_proto, path_style, connection_options) =
-                remote.read_with(cx, |remote, _| {
-                    (
-                        remote.proto_client(),
-                        remote.path_style(),
-                        remote.connection_options(),
-                    )
-                });
+            let (remote_proto, path_style, remote_host) = remote.read_with(cx, |remote, _| {
+                (
+                    remote.proto_client(),
+                    remote.path_style(),
+                    RemoteHostLocation::from(remote.connection_options()),
+                )
+            });
             let worktree_store = cx.new(|cx| {
                 WorktreeStore::remote(
                     false,
@@ -1528,7 +1533,7 @@ impl Project {
             if init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
-                    Some(RemoteHostLocation::from(connection_options)),
+                    Some(remote_host),
                     None,
                     Some((remote_proto.clone(), ProjectId(REMOTE_SERVER_PROJECT_ID))),
                     cx,
@@ -2414,10 +2419,20 @@ impl Project {
     }
 
     #[inline]
-    pub fn remote_connection_options(&self, cx: &App) -> Option<RemoteConnectionOptions> {
+    pub fn remote_connection_options<'a>(
+        &self,
+        cx: &'a App,
+    ) -> Option<&'a RemoteConnectionOptions> {
         self.remote_client
             .as_ref()
             .map(|remote| remote.read(cx).connection_options())
+    }
+
+    pub fn remote_connection_identity<'a>(
+        &self,
+        cx: &'a App,
+    ) -> Option<RemoteConnectionIdentity<'a>> {
+        self.remote_connection_options(cx).map(|o| o.identity())
     }
 
     /// Reveals the given path in the system file manager.
@@ -2428,11 +2443,11 @@ impl Project {
         #[cfg(target_os = "windows")]
         if let Some(RemoteConnectionOptions::Wsl(wsl_options)) = self.remote_connection_options(cx)
         {
-            let path = path.to_path_buf();
+            let windows_path = wsl_path_to_windows_path(wsl_options, path);
             cx.spawn(async move |_, cx| {
-                wsl_path_to_windows_path(&wsl_options, &path)
+                windows_path
                     .await
-                    .map(|windows_path| cx.update(|cx| cx.reveal_path(&windows_path)))
+                    .map(|path| cx.update(|cx| cx.reveal_path(&path)))
             })
             .detach_and_log_err(cx);
             return;
@@ -2620,9 +2635,8 @@ impl Project {
     ) -> Option<bool> {
         paths
             .iter()
-            .map(|path| self.visibility_for_path(path, exclude_sub_dirs, cx))
+            .filter_map(|path| self.visibility_for_path(path, exclude_sub_dirs, cx))
             .max()
-            .flatten()
     }
 
     pub fn visibility_for_path(
@@ -2637,10 +2651,8 @@ impl Project {
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.abs_path();
-                let relative_path = path_style
-                    .strip_prefix(path, abs_path.as_ref())
-                    .ok()
-                    .and_then(|path| RelPath::new(path, path_style).ok())?;
+                let relative_path = path_style.strip_prefix(path, abs_path.as_ref()).ok()?;
+                let relative_path = RelPath::new(relative_path, path_style).ok()?;
                 // Don't exclude the worktree root itself, only actual subdirectories
                 let is_subpath = !relative_path.is_empty();
                 // Gitignored subtrees aren't scanned, so their contents don't
@@ -2662,9 +2674,8 @@ impl Project {
     pub fn visibility_for_subpaths(&self, paths: &[PathBuf], cx: &App) -> Option<bool> {
         paths
             .iter()
-            .map(|path| self.visibility_for_subpath(path, cx))
+            .filter_map(|path| self.visibility_for_subpath(path, cx))
             .max()
-            .flatten()
     }
 
     fn visibility_for_subpath(&self, path: &Path, cx: &App) -> Option<bool> {
@@ -2674,10 +2685,8 @@ impl Project {
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.abs_path();
-                let relative_path = path_style
-                    .strip_prefix(path, abs_path.as_ref())
-                    .ok()
-                    .and_then(|path| RelPath::new(path, path_style).ok())?;
+                let relative_path = path_style.strip_prefix(path, abs_path.as_ref()).ok()?;
+                let relative_path = RelPath::new(relative_path, path_style).ok()?;
                 let is_subpath =
                     !relative_path.is_empty() && !worktree.is_path_ignored(&relative_path);
                 is_subpath.then(|| worktree.is_visible())
@@ -5281,9 +5290,8 @@ impl Project {
         if let Some(file) = buffer.read(cx).file()
             && let Some(dir) = file.path().parent()
         {
-            if let Some(joined) = path_style.join(&*dir.display(path_style), path)
-                && let Some(joined) = RelPath::new(joined.as_ref(), path_style).ok()
-            {
+            let joined = path_style.join(&*dir.display(path_style), path);
+            if let Some(joined) = RelPath::new(joined.as_ref(), path_style).ok() {
                 candidates.push(joined.into_arc());
             }
         }
@@ -6858,7 +6866,7 @@ impl ProjectGroupKey {
 
     pub fn from_project(project: &Project, cx: &App) -> Self {
         let paths = project.worktree_paths(cx);
-        let host = project.remote_connection_options(cx);
+        let host = project.remote_connection_options(cx).cloned();
         Self {
             paths: paths.main_worktree_path_list().clone(),
             host,
@@ -6905,13 +6913,13 @@ impl ProjectGroupKey {
         }
     }
 
-    pub fn host(&self) -> Option<RemoteConnectionOptions> {
-        self.host.clone()
+    pub fn host(&self) -> Option<&RemoteConnectionOptions> {
+        self.host.as_ref()
     }
 
-    pub fn matches(&self, other: &ProjectGroupKey) -> bool {
+    pub fn matches_identity(&self, other: &Self) -> bool {
         self.paths == other.paths
-            && same_remote_connection_identity(self.host.as_ref(), other.host.as_ref())
+            && self.host.as_ref().map(|o| o.identity()) == other.host.as_ref().map(|o| o.identity())
     }
 }
 

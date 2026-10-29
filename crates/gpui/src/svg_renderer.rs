@@ -480,7 +480,7 @@ mod tests {
 
     #[test]
     fn test_select_emoji_font_skips_family_without_glyph() {
-        let mut db = db_with_bundled_fonts();
+        let db = db_with_bundled_fonts();
 
         let ibm_plex_sans = db
             .query(&usvg::fontdb::Query {

@@ -1,9 +1,11 @@
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
+use github_releases::{
+    AssetKind, GitHubLspBinaryVersion, GithubBinaryMetadata, download_server_binary,
+    latest_github_release,
+};
 use gpui::{App, AsyncApp};
-use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
-use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
@@ -129,7 +131,8 @@ impl LspInstaller for CLspAdapter {
                 }
             }
             download_server_binary(
-                &*delegate.http_client(),
+                &delegate.background_executor(),
+                delegate.http_client(),
                 &url,
                 expected_digest.as_deref(),
                 &container_dir,

@@ -43,7 +43,8 @@ pub fn from_v1(block: acp_v1::ContentBlock) -> Result<acp_v2::ContentBlock> {
                 .title(content.title)
                 .description(content.description)
                 .mime_type(content.mime_type.map(acp_v2::MediaType::new))
-                .size(content.size)
+                // v2 sizes are byte counts, so a negative v1 size is unknown.
+                .size(content.size.and_then(|size| u64::try_from(size).ok()))
                 .annotations(annotations_from_v1(content.annotations)?)
                 .meta(content.meta),
         ),
@@ -107,7 +108,7 @@ pub fn to_v1(block: acp_v2::ContentBlock) -> Result<acp_v1::ContentBlock> {
                     .title(content.title)
                     .description(content.description)
                     .mime_type(content.mime_type.map(|mime_type| mime_type.0.to_string()))
-                    .size(content.size)
+                    .size(content.size.and_then(|size| i64::try_from(size).ok()))
                     .annotations(annotations_to_v1(content.annotations)?)
                     .meta(content.meta),
             )
@@ -447,6 +448,18 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn negative_v1_resource_link_size_is_unknown_in_v2() {
+        let converted = from_v1(acp_v1::ContentBlock::ResourceLink(
+            acp_v1::ResourceLink::new("negative size", "file:///negative").size(-1),
+        ))
+        .expect("v1 resource link converts to v2");
+        let acp_v2::ContentBlock::ResourceLink(link) = converted else {
+            panic!("expected a resource link");
+        };
+        assert_eq!(link.size, None);
+    }
+
     fn round_trip_from_v2(block: acp_v2::ContentBlock) {
         assert!(can_convert_to_v1(&block), "{block:?}");
         let original_wire = serde_json::to_value(&block).expect("serialize original v2 block");
@@ -559,11 +572,8 @@ mod tests {
             acp_v2::ContentBlock::Audio(acp_v2::AudioContent::new("", "")),
             acp_v2::ContentBlock::ResourceLink(
                 acp_v2::ResourceLink::new("", "")
-                    .size(i64::MAX)
+                    .size(i64::MAX.unsigned_abs())
                     .annotations(acp_v2::Annotations::new().priority(0.125)),
-            ),
-            acp_v2::ContentBlock::ResourceLink(
-                acp_v2::ResourceLink::new("negative size", "file:///negative").size(-1),
             ),
             acp_v2::ContentBlock::Resource(acp_v2::EmbeddedResource::new(
                 acp_v2::EmbeddedResourceResource::TextResourceContents(
