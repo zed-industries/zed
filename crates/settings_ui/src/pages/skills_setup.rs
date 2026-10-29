@@ -51,7 +51,7 @@ pub(crate) fn copy_skill_share_link(
                     project.project_path_for_absolute_path(&skill_file_path, cx)
                 }) else {
                     log::error!(
-                        "failed to read skill file {} for sharing: not in project",
+                        "failed to read skill file {} for sharing: outside the project's worktrees",
                         skill_file_path.display()
                     );
                     return;
@@ -106,7 +106,7 @@ pub(crate) fn trash_skill(
                 let trash_task = project.update(cx, |project, cx| {
                     let project_path = project
                         .project_path_for_absolute_path(&directory_path, cx)
-                        .context("not in project")?;
+                        .context("skill directory is outside the project's worktrees")?;
                     // Already deleted outside Zed.
                     let Some(entry_id) = project
                         .entry_for_path(&project_path, cx)
