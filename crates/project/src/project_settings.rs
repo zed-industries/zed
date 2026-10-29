@@ -503,17 +503,17 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: String,
-    /// Settings for automatically fetching from all remotes in the background.
+    /// Settings for automatically fetching the default branch's remote and the current branch's upstream remote.
     pub auto_fetch: AutoFetchSettings,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AutoFetchSettings {
-    /// Whether to automatically fetch from all remotes in the background.
+    /// Whether to automatically fetch in the background.
     ///
     /// Default: false
     pub enabled: bool,
-    /// How often to automatically fetch from all remotes, in seconds.
+    /// How long to wait between automatic fetches, in seconds.
     /// Only applies when `enabled` is true. (min: 15)
     ///
     /// Default: 60

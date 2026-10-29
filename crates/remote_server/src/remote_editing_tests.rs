@@ -111,9 +111,10 @@ async fn test_remote_auto_fetch(cx: &mut TestAppContext, server_cx: &mut TestApp
         json!({".git": {}, "README.md": "project"}),
     )
     .await;
-    fs.insert_branches(dot_git, &["main"]);
+    fs.insert_branches(dot_git, &["main", "origin/main"]);
+    fs.set_remote_for_repo(dot_git, "origin", "https://example.com/repo.git");
     let fetches = fs
-        .with_git_state(dot_git, false, |state| state.fetch_count.clone())
+        .with_git_state(dot_git, false, |state| state.fetches.clone())
         .expect("repository exists");
     let (project, headless) = init_test(&fs, cx, server_cx).await;
     server_cx.update(|cx| {
@@ -141,7 +142,7 @@ async fn test_remote_auto_fetch(cx: &mut TestAppContext, server_cx: &mut TestApp
     server_cx.executor().advance_clock(Duration::from_secs(45));
     cx.run_until_parked();
     assert_eq!(
-        fetches.load(Ordering::SeqCst),
+        fetches.lock().len(),
         0,
         "untrusted repositories must not fetch"
     );
@@ -185,13 +186,13 @@ async fn test_remote_auto_fetch(cx: &mut TestAppContext, server_cx: &mut TestApp
     server_cx.executor().advance_clock(Duration::from_secs(15));
     cx.run_until_parked();
     assert_eq!(
-        fetches.load(Ordering::SeqCst),
+        fetches.lock().len(),
         0,
         "server interval overrides client interval"
     );
     server_cx.executor().advance_clock(Duration::from_secs(30));
     cx.run_until_parked();
-    assert_eq!(fetches.load(Ordering::SeqCst), 1);
+    assert_eq!(fetches.lock().len(), 1);
     assert!(repository.read_with(cx, |repository, _| {
         repository
             .branch_list
@@ -212,7 +213,7 @@ async fn test_remote_auto_fetch(cx: &mut TestAppContext, server_cx: &mut TestApp
     cx.run_until_parked();
     server_cx.executor().advance_clock(Duration::from_secs(60));
     cx.run_until_parked();
-    assert_eq!(fetches.load(Ordering::SeqCst), 1);
+    assert_eq!(fetches.lock().len(), 1);
 
     server_cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
@@ -227,7 +228,7 @@ async fn test_remote_auto_fetch(cx: &mut TestAppContext, server_cx: &mut TestApp
     cx.run_until_parked();
     server_cx.executor().advance_clock(Duration::from_secs(30));
     cx.run_until_parked();
-    assert_eq!(fetches.load(Ordering::SeqCst), 2);
+    assert_eq!(fetches.lock().len(), 2);
 
     server_cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
@@ -240,7 +241,7 @@ async fn test_remote_auto_fetch(cx: &mut TestAppContext, server_cx: &mut TestApp
     server_cx.executor().advance_clock(Duration::from_secs(60));
     cx.run_until_parked();
     assert_eq!(
-        fetches.load(Ordering::SeqCst),
+        fetches.lock().len(),
         2,
         "fall back to disabled client setting"
     );
@@ -257,7 +258,7 @@ async fn test_remote_auto_fetch(cx: &mut TestAppContext, server_cx: &mut TestApp
     cx.run_until_parked();
     server_cx.executor().advance_clock(Duration::from_secs(15));
     cx.run_until_parked();
-    assert_eq!(fetches.load(Ordering::SeqCst), 3);
+    assert_eq!(fetches.lock().len(), 3);
 
     trusted.update(server_cx, |trusted, cx| {
         trusted.restrict(
@@ -270,7 +271,7 @@ async fn test_remote_auto_fetch(cx: &mut TestAppContext, server_cx: &mut TestApp
     server_cx.executor().advance_clock(Duration::from_secs(45));
     cx.run_until_parked();
     assert_eq!(
-        fetches.load(Ordering::SeqCst),
+        fetches.lock().len(),
         3,
         "revoking trust stops subsequent fetches"
     );

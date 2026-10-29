@@ -1906,11 +1906,11 @@
     //
     // Trailing slashes are ignored.
     "worktree_directory": "../worktrees",
-    // Settings for automatically fetching from all remotes in the background.
+    // Settings for automatically fetching the default branch's remote and the current branch's upstream remote.
     "auto_fetch": {
-      // Whether to automatically fetch from all remotes in the background.
+      // Whether to automatically fetch in the background.
       "enabled": false,
-      // How often to automatically fetch from all remotes, in seconds.
+      // How long to wait between automatic fetches, in seconds.
       // Only applies when auto fetch is enabled. (min: 15)
       "interval_secs": 60,
     },

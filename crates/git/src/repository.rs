@@ -28,7 +28,7 @@ use std::sync::atomic::AtomicBool;
 
 use std::process::{ExitStatus, Output};
 use std::str::FromStr;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use std::{
     cmp::Ordering,
     path::{Path, PathBuf},
@@ -45,12 +45,6 @@ use uuid::Uuid;
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
-
-/// Error reported when a background git operation was stopped by its caller.
-pub const GIT_OPERATION_CANCELLED: &str = "Git operation cancelled";
-
-/// How long git is given to clean up after being asked to terminate.
-const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 
 /// Who a git operation is running on behalf of.
 ///
@@ -72,20 +66,7 @@ pub enum GitCaller {
     /// gpg's own pinentry can still open a dialog when signing. No background
     /// caller signs today, so that channel is left alone rather than given a
     /// policy nothing exercises.
-    Background(Option<oneshot::Receiver<()>>),
-}
-
-impl GitCaller {
-    /// Background work that runs to completion.
-    pub fn background() -> Self {
-        Self::Background(None)
-    }
-
-    /// Background work that stops when `cancel` resolves or its sender is
-    /// dropped, whichever comes first.
-    pub fn background_cancelled_by(cancel: oneshot::Receiver<()>) -> Self {
-        Self::Background(Some(cancel))
-    }
+    Background,
 }
 
 /// Format string used in graph log to get initial data for the git graph
@@ -3901,7 +3882,7 @@ impl GitBinary {
         S: AsRef<OsStr>,
     {
         let mut config = Vec::new();
-        if matches!(caller, GitCaller::Background(_)) {
+        if matches!(caller, GitCaller::Background) {
             // Narrower than clearing `credential.helper`, which would also disable
             // helpers that answer from a keychain without prompting — exactly what
             // makes an unattended fetch useful. Only prompting is forbidden, and
@@ -3920,7 +3901,7 @@ impl GitBinary {
 
         match caller {
             GitCaller::User(delegate) => self.run_with_askpass(delegate, env, command).await,
-            GitCaller::Background(cancel) => {
+            GitCaller::Background => {
                 // These are set after the project environment has been applied
                 // above, so that environment cannot override them.
                 command.env("GIT_TERMINAL_PROMPT", "0");
@@ -3936,10 +3917,7 @@ impl GitBinary {
                 // value inherited from the environment Zed was launched with.
                 command.env_remove("GIT_ASKPASS");
                 command.env_remove("SSH_ASKPASS");
-                // Backstop only: cancellation asks git to terminate so it can
-                // clean up, and only falls through to this if it does not.
-                command.kill_on_drop(true);
-                run_cancellable_command(command, cancel, &self.executor).await
+                remote_command_output(command.output().await?)
             }
         }
     }
@@ -4044,72 +4022,6 @@ fn remote_command_output(output: Output) -> Result<RemoteCommandOutput> {
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
     })
-}
-
-/// Runs a command with no user attached, stopping early when `cancel` resolves or
-/// its sender is dropped.
-async fn run_cancellable_command(
-    mut command: util::command::Command,
-    mut cancel: Option<oneshot::Receiver<()>>,
-    executor: &BackgroundExecutor,
-) -> Result<RemoteCommandOutput> {
-    // Cancellation can arrive before the work starts, since the caller may have
-    // been waiting on something else first. Nothing is gained by starting git only
-    // to immediately stop it again.
-    if let Some(cancel) = cancel.as_mut()
-        && !matches!(cancel.try_recv(), Ok(None))
-    {
-        anyhow::bail!(GIT_OPERATION_CANCELLED);
-    }
-
-    let child = command.spawn()?;
-    let process_id = child.id();
-    let output = child.output().fuse();
-    futures::pin_mut!(output);
-
-    let cancel = async move {
-        match cancel {
-            // A resolved receiver and a dropped sender both mean the same thing,
-            // so a caller that simply goes away still stops the work.
-            Some(cancel) => {
-                cancel.await.ok();
-            }
-            None => std::future::pending().await,
-        }
-    }
-    .fuse();
-    futures::pin_mut!(cancel);
-
-    let output = select_biased! {
-        // Biased toward the command so one that has already finished is reported
-        // as such rather than as cancelled.
-        output = output.as_mut() => output?,
-        _ = cancel => {
-            // Asking git to terminate lets it remove the lockfiles it is holding.
-            // Killing it outright can leave a stale `refs/remotes/<remote>/<branch>.lock`
-            // behind, after which every later fetch reports "unable to update
-            // local ref" until it is removed by hand.
-            //
-            // Where termination cannot be requested at all there is nothing to wait
-            // for, so the grace period is skipped rather than spent stalling the
-            // caller before the kill it is going to need anyway.
-            if util::process::request_termination(process_id) {
-                let grace = executor.timer(TERMINATION_GRACE).fuse();
-                futures::pin_mut!(grace);
-                select_biased! {
-                    _ = output.as_mut() => {}
-                    _ = grace => log::warn!(
-                        "git did not exit within {TERMINATION_GRACE:?} of being asked to; killing it"
-                    ),
-                }
-            }
-            // Dropping `output` kills the child via `kill_on_drop` if it is still
-            // running.
-            anyhow::bail!(GIT_OPERATION_CANCELLED);
-        }
-    };
-
-    remote_command_output(output)
 }
 
 #[derive(Error, Debug)]
@@ -6962,72 +6874,6 @@ mod tests {
             compose_batch_mode_ssh_command(None, None, Some("plink")),
             None,
             "setting GIT_SSH_COMMAND would silently replace the GIT_SSH program"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_cancelled_background_command_never_starts(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-        let dir = tempfile::tempdir().unwrap();
-        let would_be_created = dir.path().join("repo");
-        let git = GitBinary::new(
-            PathBuf::from("git"),
-            dir.path().to_path_buf(),
-            dir.path().join(".git"),
-            cx.executor(),
-            true,
-        );
-        let mut command = git.build_command(&["init"]);
-        command.arg(&would_be_created);
-
-        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
-        drop(cancel_tx);
-        let error = run_cancellable_command(command, Some(cancel_rx), &cx.executor())
-            .await
-            .expect_err("a cancelled command should not succeed");
-
-        assert_eq!(error.to_string(), GIT_OPERATION_CANCELLED);
-        assert!(!would_be_created.exists());
-    }
-
-    #[cfg(unix)]
-    #[gpui::test]
-    async fn test_cancelling_background_command_requests_termination(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-        let dir = tempfile::tempdir().unwrap();
-        let ready = dir.path().join("ready");
-        let terminated = dir.path().join("terminated");
-        #[allow(clippy::disallowed_methods)]
-        let mut command = new_command("sh");
-        command
-            .arg("-c")
-            .arg(r#"trap ': > "$0"; exit 143' TERM; : > "$1"; while :; do sleep 0.05; done"#)
-            .arg(&terminated)
-            .arg(&ready)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-
-        // Cancelled only once the handler is installed, since a signal that
-        // arrived first would kill the shell before it could run it.
-        let (cancel_tx, cancel_rx) = oneshot::channel();
-        let watcher = std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(10);
-            while !ready.exists() && std::time::Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            cancel_tx.send(()).ok();
-        });
-
-        let error = run_cancellable_command(command, Some(cancel_rx), &cx.executor())
-            .await
-            .expect_err("a cancelled command should not succeed");
-        watcher.join().unwrap();
-
-        assert_eq!(error.to_string(), GIT_OPERATION_CANCELLED);
-        assert!(
-            terminated.exists(),
-            "the command should have been asked to terminate rather than killed"
         );
     }
 }

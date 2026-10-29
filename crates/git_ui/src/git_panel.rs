@@ -14414,6 +14414,12 @@ mod tests {
             Path::new(path!("/root/repo/.git")),
             &[("file.rs", StatusCode::Modified.worktree())],
         );
+        fs.insert_branches(Path::new(path!("/root/repo/.git")), &["origin/main"]);
+        fs.set_remote_for_repo(
+            Path::new(path!("/root/repo/.git")),
+            "origin",
+            "https://example.com/repo.git",
+        );
 
         // Use 20s interval (above the 15s minimum clamp)
         cx.update(|cx| {
@@ -14442,7 +14448,7 @@ mod tests {
 
         let fetch_count = |fs: &FakeFs| {
             fs.with_git_state(Path::new(path!("/root/repo/.git")), false, |state| {
-                state.fetch_count.load(std::sync::atomic::Ordering::SeqCst)
+                state.fetches.lock().len()
             })
             .unwrap()
         };

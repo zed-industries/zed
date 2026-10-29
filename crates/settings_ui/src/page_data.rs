@@ -8233,7 +8233,7 @@ fn version_control_page() -> SettingsPage {
                 discriminant: SettingItem {
                     files: USER,
                     title: "Auto Fetch",
-                    description: "Automatically fetch from all remotes in the background.",
+                    description: "Automatically fetch the default branch's remote and the current branch's upstream remote.",
                     field: Box::new(SettingField::<bool> {
                         organization_override: None,
                         json_path: Some("git.auto_fetch.enabled"),
@@ -8273,7 +8273,7 @@ fn version_control_page() -> SettingsPage {
                     vec![SettingItem {
                         files: USER,
                         title: "Auto Fetch Interval",
-                        description: "How often to fetch from all remotes, in seconds. (min: 15)",
+                        description: "How long to wait between automatic fetches, in seconds. (min: 15)",
                         field: Box::new(SettingField::<u64> {
                             organization_override: None,
                             json_path: Some("git.auto_fetch.interval_secs"),

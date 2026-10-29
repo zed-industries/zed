@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
-use async_lock::{Semaphore, SemaphoreGuardArc};
+use async_lock::Semaphore;
 use buffer_diff::{
     BufferDiff, DiffHunk, DiffHunkSecondaryStatus, DiffOperations, PendingHunk, PendingSense,
 };
@@ -704,26 +704,12 @@ pub struct Repository {
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
     auto_fetch: AutoFetchState,
-    /// Held for the duration of a fetch so that at most one runs per repository.
-    /// Auto-fetch acquires it without blocking and skips its tick when a fetch is
-    /// already in flight; the manual fetch waits, so an explicit user action is
-    /// never dropped. Concurrent fetches would otherwise contend for the same
-    /// remote-tracking ref locks, and the loser fails with `cannot lock ref`.
-    fetch_lock: Arc<Semaphore>,
 }
 
 struct AutoFetchState {
     enabled: bool,
     interval_secs: u64,
     task: Option<Task<()>>,
-    /// Cancels the fetch that is currently in flight, if any. The fetch task
-    /// itself is detached, so this is the only thing bounding its lifetime:
-    /// dropping it, including by dropping the repository, asks git to stop and
-    /// lets it remove its lockfiles first, whereas dropping the task would kill
-    /// git outright. User-initiated remote operations drop it to preempt
-    /// background work, so they wait only for that fetch to tear down rather than
-    /// for it to finish.
-    cancel: Option<oneshot::Sender<()>>,
 }
 
 impl Default for AutoFetchState {
@@ -732,7 +718,6 @@ impl Default for AutoFetchState {
             enabled: false,
             interval_secs: 60,
             task: None,
-            cancel: None,
         }
     }
 }
@@ -6521,7 +6506,6 @@ impl Repository {
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
             auto_fetch: AutoFetchState::default(),
-            fetch_lock: Arc::new(Semaphore::new(1)),
         };
         repo.respawn_local_worker(project_environment, fs, is_trusted, cx);
         cx.subscribe_self(Self::handle_subscribe_self).detach();
@@ -6575,7 +6559,6 @@ impl Repository {
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
             auto_fetch: AutoFetchState::default(),
-            fetch_lock: Arc::new(Semaphore::new(1)),
         }
     }
 
@@ -8650,11 +8633,6 @@ impl Repository {
         self.auto_fetch.enabled = enabled;
         self.auto_fetch.interval_secs = interval_secs;
 
-        // The in-flight fetch is detached from the timer, so replacing the timer
-        // below would leave it running. Stopping it here makes disabling
-        // auto-fetch take effect immediately.
-        self.auto_fetch.cancel = None;
-
         if !enabled {
             self.auto_fetch.task = None;
             return;
@@ -8668,89 +8646,72 @@ impl Repository {
                 // Re-checked every tick rather than once up front, because a
                 // repository can be trusted (or restricted) at any point in the
                 // session.
-                let updated = this.update(cx, |this, cx| {
-                    if !this.is_trusted() {
-                        return;
-                    }
-                    // Skipped rather than queued: a fetch, pull, or push is already
-                    // in flight, so waiting would only contend for the same ref locks
-                    // to learn what that operation is about to report anyway.
-                    let Some(permit) = this.fetch_lock.clone().try_acquire_arc() else {
-                        return;
-                    };
-                    this.auto_fetch(permit, cx);
+                let fetch = this.update(cx, |this, cx| {
+                    this.is_trusted().then(|| this.auto_fetch(cx))
                 });
-                if updated.is_err() {
-                    break;
+                match fetch {
+                    Ok(Some(fetch)) => {
+                        if let Err(error) = fetch.await {
+                            log::debug!("auto-fetch failed: {error:#}");
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) => break,
                 }
             }
         }));
     }
 
-    /// Runs outside the repository's serial job queue, unlike every other git
-    /// operation. A fetch is bounded by the network, not by local work, so
-    /// occupying the queue for its duration would stall status refreshes and
-    /// index writes (staging) behind it once per interval. Doing so is safe
-    /// specifically because auto-fetch mutates no `Repository` state: it only
-    /// downloads objects and updates remote-tracking refs, which git guards with
-    /// its own lockfiles, and the results reach the UI when the resulting git
-    /// directory change triggers a rescan.
-    ///
-    /// The manual `fetch` deliberately stays on the queue, since it also writes
-    /// snapshot state via `refresh_branch_list`.
-    fn auto_fetch(&mut self, permit: SemaphoreGuardArc, cx: &mut Context<Self>) {
-        let repository_state = self.repository_state.clone();
-        let (cancel_tx, cancel_rx) = oneshot::channel();
-        self.auto_fetch.cancel = Some(cancel_tx);
-        cx.spawn(async move |_, cx| {
-            // Moved into the task so the permit is released once the fetch settles.
-            let _permit = permit;
-            // Reported here because the task is detached, with `cancel` rather
-            // than the task handle controlling when it stops.
-            let fetch = async {
-                let state = repository_state.await.map_err(|error| anyhow!(error))?;
-                // The checkout is local to the host even when clients access it
-                // remotely. Only that host schedules auto-fetch and checks trust.
-                let RepositoryState::Local(LocalRepositoryState {
-                    backend,
-                    environment,
-                    ..
-                }) = state
-                else {
-                    anyhow::bail!("auto-fetch must run on the repository host");
-                };
-                backend
-                    .fetch(
-                        FetchOptions::All,
-                        GitCaller::background_cancelled_by(cancel_rx),
-                        environment,
-                        cx.clone(),
-                    )
-                    .await
-            };
-            if let Err(error) = fetch.await {
-                log::debug!("auto-fetch failed: {error:#}");
+    fn auto_fetch(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let default_branch = self.default_branch(true);
+        let remotes = self.get_remotes(None, false);
+        cx.spawn(async move |this, cx| {
+            let default_branch = default_branch.await??;
+            let remotes = remotes.await??;
+            let (default_remote, branch_remote) = this.read_with(cx, |this, _| {
+                let default_remote = default_branch
+                    .and_then(|name| {
+                        this.branch_list
+                            .iter()
+                            .find(|branch| branch.is_remote() && branch.name() == name.as_ref())
+                            .or_else(|| {
+                                this.branch_list.iter().find(|branch| {
+                                    !branch.is_remote() && branch.name() == name.as_ref()
+                                })
+                            })
+                    })
+                    .and_then(|branch| {
+                        branch.remote_name().or_else(|| {
+                            branch
+                                .upstream
+                                .as_ref()
+                                .and_then(|upstream| upstream.remote_name())
+                        })
+                    })
+                    .map(str::to_owned);
+                let branch_remote = this
+                    .branch
+                    .as_ref()
+                    .and_then(|branch| branch.upstream.as_ref())
+                    .and_then(|upstream| upstream.remote_name())
+                    .map(str::to_owned);
+                (default_remote, branch_remote)
+            })?;
+            for remote in remotes {
+                if Some(remote.name.as_ref()) != default_remote.as_deref()
+                    && Some(remote.name.as_ref()) != branch_remote.as_deref()
+                {
+                    continue;
+                }
+                let fetch = this.update(cx, |this, cx| {
+                    this.fetch_with_caller(FetchOptions::Remote(remote), GitCaller::Background, cx)
+                })?;
+                if let Err(error) = fetch.await? {
+                    log::debug!("auto-fetch failed: {error:#}");
+                }
             }
+            Ok(())
         })
-        .detach();
-    }
-
-    /// Cancels any in-flight auto-fetch and returns the lock that a
-    /// user-initiated remote operation must hold while it runs.
-    ///
-    /// Remote operations update the same remote-tracking refs as a fetch, so
-    /// running alongside one fails with "cannot lock ref". The background fetch
-    /// is preempted rather than waited on: the user asked for this operation, and
-    /// a background fetch has nothing to report that it will not. Dropping the
-    /// sender asks git to terminate, so it releases the ref locks it holds instead
-    /// of leaving them behind.
-    ///
-    /// Waiting on the lock occupies the repository's serial job queue, which is
-    /// only acceptable because of that preemption: the wait is bounded by a
-    /// cancelled fetch shutting down rather than by the network.
-    fn preempt_auto_fetch(&mut self) -> Arc<Semaphore> {
-        self.auto_fetch.cancel = None;
-        self.fetch_lock.clone()
     }
 
     pub fn unshallow_state(&self) -> UnshallowState {
@@ -8792,6 +8753,15 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+        self.fetch_with_caller(fetch_options, GitCaller::User(askpass), cx)
+    }
+
+    fn fetch_with_caller(
+        &mut self,
+        fetch_options: FetchOptions,
+        caller: GitCaller,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let id = self.id;
@@ -8806,53 +8776,49 @@ impl Repository {
             });
 
         let this = cx.weak_entity();
-        let fetch_lock = self.preempt_auto_fetch();
-        self.send_job(
-            "fetch",
-            Some("git fetch".into()),
-            move |git_repo, mut cx| async move {
-                let _permit = fetch_lock.acquire_arc().await;
-                match git_repo {
-                    RepositoryState::Local(LocalRepositoryState {
-                        backend,
-                        environment,
-                        ..
-                    }) => {
-                        let result = backend
-                            .fetch(
-                                fetch_options,
-                                GitCaller::User(askpass),
-                                environment,
-                                cx.clone(),
-                            )
-                            .await;
-                        if result.is_ok() {
-                            Self::refresh_branch_list(&this, backend, updates_tx, &mut cx).await?;
-                        }
-                        result
+        let status = matches!(caller, GitCaller::User(_)).then(|| "git fetch".into());
+        self.send_job("fetch", status, move |git_repo, mut cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState {
+                    backend,
+                    environment,
+                    ..
+                }) => {
+                    if matches!(caller, GitCaller::Background) && !backend.is_trusted() {
+                        bail!("auto-fetch requires a trusted repository");
                     }
-                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        let _askpass_operation =
-                            RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
-
-                        let response = client
-                            .request(proto::Fetch {
-                                project_id: project_id.0,
-                                repository_id: id.to_proto(),
-                                askpass_id,
-                                remote: fetch_options.to_proto(),
-                                unshallow: fetch_options == FetchOptions::Unshallow,
-                            })
-                            .await?;
-
-                        Ok(RemoteCommandOutput {
-                            stdout: response.stdout,
-                            stderr: response.stderr,
-                        })
+                    let result = backend
+                        .fetch(fetch_options, caller, environment, cx.clone())
+                        .await;
+                    if result.is_ok() {
+                        Self::refresh_branch_list(&this, backend, updates_tx, &mut cx).await?;
                     }
+                    result
                 }
-            },
-        )
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let GitCaller::User(askpass) = caller else {
+                        bail!("auto-fetch must run on the repository host");
+                    };
+                    let _askpass_operation =
+                        RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
+
+                    let response = client
+                        .request(proto::Fetch {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            askpass_id,
+                            remote: fetch_options.to_proto(),
+                            unshallow: fetch_options == FetchOptions::Unshallow,
+                        })
+                        .await?;
+
+                    Ok(RemoteCommandOutput {
+                        stdout: response.stdout,
+                        stderr: response.stderr,
+                    })
+                }
+            }
+        })
     }
 
     pub fn push(
@@ -8885,12 +8851,10 @@ impl Repository {
             });
 
         let this = cx.weak_entity();
-        let fetch_lock = self.preempt_auto_fetch();
         self.send_job(
             "push",
             Some(format!("git push {} {} {}:{}", args, remote, branch, remote_branch).into()),
             move |git_repo, mut cx| async move {
-                let _permit = fetch_lock.acquire_arc().await;
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
                         backend,
@@ -8966,12 +8930,10 @@ impl Repository {
             status.push_str(&format!(" {}", b));
         }
 
-        let fetch_lock = self.preempt_auto_fetch();
         self.send_job(
             "pull",
             Some(status.into()),
             move |git_repo, cx| async move {
-                let _permit = fetch_lock.acquire_arc().await;
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
                         backend,
@@ -11416,6 +11378,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_auto_fetch_without_manual_git_operation(cx: &mut TestAppContext) {
+        use git::repository::{Upstream, UpstreamTracking};
         use util::path;
 
         init_test(cx);
@@ -11441,13 +11404,144 @@ mod tests {
         cx.run_until_parked();
         let fetches = fs
             .with_git_state(Path::new(path!("/project/.git")), false, |state| {
-                state.fetch_count.clone()
+                state.fetches.clone()
             })
             .expect("repository exists");
-        assert_eq!(fetches.load(atomic::Ordering::SeqCst), 0);
+        assert!(fetches.lock().is_empty());
         cx.executor().advance_clock(Duration::from_secs(15));
         cx.run_until_parked();
-        assert_eq!(fetches.load(atomic::Ordering::SeqCst), 1);
+        assert!(fetches.lock().is_empty(), "no remotes to fetch");
+
+        for (default_branch, branch, upstream, expected) in [
+            (
+                Some("refs/remotes/upstream/main"),
+                Some("refs/heads/feature"),
+                Some("refs/remotes/fork/topic"),
+                vec!["fork", "upstream"],
+            ),
+            (
+                Some("refs/remotes/upstream/main"),
+                Some("refs/heads/feature"),
+                Some("refs/remotes/upstream/topic"),
+                vec!["upstream"],
+            ),
+            (
+                Some("refs/remotes/origin/main"),
+                Some("refs/heads/feature"),
+                Some("refs/remotes/fork/topic"),
+                vec!["fork", "origin"],
+            ),
+            (
+                Some("refs/heads/main"),
+                Some("refs/heads/feature"),
+                Some("refs/remotes/fork/topic"),
+                vec!["central", "fork"],
+            ),
+            (
+                Some("refs/heads/release/stable"),
+                Some("refs/heads/feature"),
+                Some("refs/remotes/central/topic"),
+                vec!["central"],
+            ),
+            (
+                Some("refs/heads/untracked"),
+                Some("refs/heads/feature"),
+                Some("refs/remotes/fork/topic"),
+                vec!["fork"],
+            ),
+            (
+                Some("refs/remotes/upstream/main"),
+                Some("refs/heads/feature"),
+                None,
+                vec!["upstream"],
+            ),
+            (
+                Some("refs/remotes/upstream/main"),
+                None,
+                None,
+                vec!["upstream"],
+            ),
+            (
+                None,
+                Some("refs/heads/feature"),
+                Some("refs/remotes/fork/topic"),
+                vec!["fork"],
+            ),
+            (
+                None,
+                Some("refs/heads/feature"),
+                Some("refs/heads/other"),
+                vec![],
+            ),
+            (None, None, None, vec![]),
+        ] {
+            fs.with_git_state(Path::new(path!("/project/.git")), true, |state| {
+                state.branches = [
+                    "refs/heads/main",
+                    "refs/heads/release/stable",
+                    "refs/heads/untracked",
+                    "refs/heads/feature",
+                    "refs/remotes/origin/main",
+                    "refs/remotes/upstream/main",
+                ]
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+                state.default_branch_ref = default_branch.map(str::to_owned);
+                state.current_branch_name = branch.map(str::to_owned);
+                state.branch_upstreams.clear();
+                for (branch, upstream) in [
+                    ("refs/heads/main", Some("refs/remotes/central/main")),
+                    (
+                        "refs/heads/release/stable",
+                        Some("refs/remotes/central/stable"),
+                    ),
+                    ("refs/heads/feature", upstream),
+                ] {
+                    let Some(upstream) = upstream else {
+                        continue;
+                    };
+                    state.branch_upstreams.insert(
+                        branch.into(),
+                        Upstream {
+                            ref_name: upstream.into(),
+                            tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
+                                ahead: 0,
+                                behind: 0,
+                            }),
+                        },
+                    );
+                }
+                state.remotes = ["origin", "upstream", "central", "fork", "unrelated"]
+                    .into_iter()
+                    .map(|remote| {
+                        (
+                            remote.to_owned(),
+                            format!("https://example.com/{remote}.git"),
+                        )
+                    })
+                    .collect();
+                state.fetches.lock().clear();
+            })
+            .expect("repository exists");
+            project
+                .update(cx, |project, cx| project.git_scans_complete(cx))
+                .await;
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(15));
+            cx.run_until_parked();
+
+            let mut fetched_remotes = fetches
+                .lock()
+                .iter()
+                .map(|options| options.name().to_string())
+                .collect::<Vec<_>>();
+            fetched_remotes.sort();
+            assert_eq!(
+                fetched_remotes, expected,
+                "default_branch={default_branch:?}, branch={branch:?}, upstream={upstream:?}"
+            );
+        }
     }
 
     type TestPasswordPrompt = (

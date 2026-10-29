@@ -2900,7 +2900,7 @@ Example:
 
 ### Auto Fetch
 
-- Description: Whether and how often to automatically fetch from all remotes in the background. Auto-fetch never prompts for credentials, so it relies on credentials that can be supplied without interaction, such as an SSH agent or a credential helper answering from a keychain. It is also disabled for repositories in worktrees you have not trusted.
+- Description: Whether and how often to automatically fetch the default branch's remote and the current branch's upstream remote in the background. If the default branch is local, its upstream remote is used. If both refer to the same remote, it is fetched only once. Other remotes are not fetched. Auto-fetch never prompts for credentials, so it relies on credentials that can be supplied without interaction, such as an SSH agent or a credential helper answering from a keychain. It is also disabled for repositories in worktrees you have not trusted.
 - Setting: `auto_fetch`
 - Default:
 
@@ -2917,8 +2917,8 @@ Example:
 
 **Options**
 
-- `enabled`: Whether to automatically fetch from all remotes in the background.
-- `interval_secs`: How often to automatically fetch from all remotes, in seconds. Only applies when `enabled` is `true`. Values below 15 are clamped to 15.
+- `enabled`: Whether to automatically fetch in the background. Disabling it stops future fetches without interrupting a fetch already queued or running.
+- `interval_secs`: How long to wait between automatic fetches, in seconds, starting after the previous fetch completes. Only applies when `enabled` is `true`. Values below 15 are clamped to 15.
 
 In remote development, auto-fetch runs on the host that owns the checkout and
 sends repository updates to your local Zed window. Your user settings are forwarded
