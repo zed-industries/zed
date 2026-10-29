@@ -1,0 +1,19 @@
+[package]
+name = "word_count_indicator"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/word_count_indicator.rs"
+doctest = false
+
+[dependencies]
+editor.workspace = true
+gpui.workspace = true
+ui.workspace = true
+workspace.workspace = true

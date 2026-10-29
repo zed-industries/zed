@@ -21842,6 +21842,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "word_count_indicator"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "gpui",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "workspace"
 version = "0.1.0"
 dependencies = [
@@ -22521,6 +22531,7 @@ dependencies = [
  "which_key",
  "windows 0.62.2",
  "windows_resources",
+ "word_count_indicator",
  "workspace",
  "zed-reqwest",
  "zed_actions",
