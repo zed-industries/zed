@@ -9,6 +9,7 @@ mod constants;
 mod control_characters;
 mod corner_solver;
 mod format_distance;
+mod retained_focus;
 mod search_input;
 mod with_rem_size;
 
@@ -18,6 +19,7 @@ pub use constants::*;
 pub use control_characters::*;
 pub use corner_solver::{CornerSolver, inner_corner_radius};
 pub use format_distance::*;
+pub use retained_focus::*;
 pub use search_input::*;
 pub use with_rem_size::*;
 
@@ -72,4 +74,16 @@ pub fn capitalize(str: &str) -> String {
         None => String::new(),
         Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
     }
+}
+
+pub fn format_number_with_commas(value: u128) -> String {
+    let digits = value.to_string();
+    let mut formatted = String::with_capacity(digits.len() + (digits.len() - 1) / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            formatted.push(',');
+        }
+        formatted.push(digit);
+    }
+    formatted
 }

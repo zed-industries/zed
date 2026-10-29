@@ -45,9 +45,14 @@ impl KeyContextView {
             let mut possibilities = cx.all_bindings_for_input(&pending);
             possibilities.reverse();
             this.last_keystrokes = Some(
-                json!(pending.iter().map(|p| p.unparse()).join(" "))
-                    .to_string()
-                    .into(),
+                json!(
+                    pending
+                        .iter()
+                        .map(|p| p.unparse(cx.platform_info().os))
+                        .join(" ")
+                )
+                .to_string()
+                .into(),
             );
             this.context_stack = e.context_stack.clone();
             this.last_possibilities = possibilities
@@ -249,7 +254,7 @@ impl Render for KeyContextView {
                 el.child(
                     Label::new(format!(
                         "Waiting for more input: {}",
-                        keystrokes.iter().map(|k| k.unparse()).join(" ")
+                        keystrokes.iter().map(|k| k.unparse(cx.platform_info().os)).join(" ")
                     ))
                     .ml(px(12.)),
                 )

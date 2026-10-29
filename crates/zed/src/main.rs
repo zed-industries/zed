@@ -554,7 +554,7 @@ fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
-        ui::on_new_scrollbars::<SettingsStore>(cx);
+        ui::observe_scrollbar_settings::<SettingsStore>(cx);
 
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
@@ -676,9 +676,7 @@ fn main() {
         );
         command_palette::init(cx);
         let copilot_chat_configuration = copilot_chat::CopilotChatConfiguration {
-            enterprise_uri: language::language_settings::all_language_settings(None, cx)
-                .edit_predictions
-                .copilot
+            enterprise_uri: settings::CopilotSettings::get_global(cx)
                 .enterprise_uri
                 .clone(),
         };
@@ -1926,7 +1924,12 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                 let Some(theme_path) = theme_path.log_err() else {
                     continue;
                 };
-                let Some(bytes) = fs.load_bytes(&theme_path).await.log_err() else {
+                let Some(bytes) = fs
+                    .load_bytes(&theme_path)
+                    .await
+                    .with_context(|| format!("loading theme bytes from {theme_path:?}"))
+                    .log_err()
+                else {
                     continue;
                 };
 
@@ -1958,7 +1961,11 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                     .is_some_and(|m| !m.is_dir)
                 {
                     let theme_registry = cx.update(|cx| ThemeRegistry::global(cx));
-                    if let Some(bytes) = fs.load_bytes(&event.path).await.log_err()
+                    if let Some(bytes) = fs
+                        .load_bytes(&event.path)
+                        .await
+                        .with_context(|| format!("loading theme bytes from {:?}", event.path))
+                        .log_err()
                         && load_user_theme(&theme_registry, &bytes).log_err().is_some()
                     {
                         cx.update(theme_settings::reload_theme);

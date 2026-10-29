@@ -17,7 +17,7 @@
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
-    eprintln!("bwrap_test_helper is only supported on Linux");
+    eprintln!("bwrap-test-helper is only supported on Linux");
     std::process::exit(1);
 }
 

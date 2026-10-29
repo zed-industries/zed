@@ -1,10 +1,12 @@
-use editor::{ToOffset, movement};
+use editor::movement;
 use gpui::{Action, Context, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use text::LineEnding;
 
-use crate::{Vim, state::Mode};
+use crate::{
+    Vim,
+    state::{Mode, Register},
+};
 
 /// Pastes text from the specified register at the cursor position.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
@@ -13,6 +15,36 @@ use crate::{Vim, state::Mode};
 pub struct HelixPaste {
     #[serde(default)]
     before: bool,
+}
+
+pub(super) fn replacement_texts(register: Register, selection_count: usize) -> Vec<String> {
+    let text = register.text;
+    let clipboard_selections = register.clipboard_selections;
+    let mut replacement_texts: Vec<String> = Vec::with_capacity(selection_count);
+    let mut start_offset = 0;
+
+    for index in 0..selection_count {
+        let to_insert = if let Some(clipboard_selection) = clipboard_selections
+            .as_ref()
+            .and_then(|selections| selections.get(index))
+        {
+            let end_offset = start_offset + clipboard_selection.len;
+            let text = text[start_offset..end_offset].to_string();
+            start_offset = if clipboard_selection.is_entire_line {
+                end_offset
+            } else {
+                end_offset + 1
+            };
+            text
+        } else if let Some(last_text) = replacement_texts.last() {
+            last_text.to_owned()
+        } else {
+            text.to_string()
+        };
+        replacement_texts.push(to_insert);
+    }
+
+    replacement_texts
 }
 
 impl Vim {
@@ -44,8 +76,6 @@ impl Vim {
                 .filter(|reg| !reg.text.is_empty()) else {
                     return;
                 };
-                let text = register.text;
-                let clipboard_selections = register.clipboard_selections;
 
                 let display_map = editor.display_snapshot(cx);
                 let current_selections = editor.selections.all_adjusted_display(&display_map);
@@ -61,30 +91,7 @@ impl Vim {
 
                 let mut edits = Vec::new();
                 let mut new_selections = Vec::new();
-                let mut start_offset = 0;
-
-                let mut replacement_texts: Vec<String> = Vec::new();
-
-                for ix in 0..current_selections.len() {
-                    let to_insert = if let Some(clip_sel) =
-                        clipboard_selections.as_ref().and_then(|s| s.get(ix))
-                    {
-                        let end_offset = start_offset + clip_sel.len;
-                        let text = text[start_offset..end_offset].to_string();
-                        start_offset = if clip_sel.is_entire_line {
-                            end_offset
-                        } else {
-                            end_offset + 1
-                        };
-                        text
-                    } else if let Some(last_text) = replacement_texts.last() {
-                        // We have more current selections than clipboard selections: repeat the last one.
-                        last_text.to_owned()
-                    } else {
-                        text.to_string()
-                    };
-                    replacement_texts.push(to_insert);
-                }
+                let replacement_texts = replacement_texts(register, current_selections.len());
 
                 let line_mode = replacement_texts.iter().any(|text| text.ends_with('\n'));
 
@@ -121,33 +128,16 @@ impl Vim {
                         sel.end
                     };
                     let point = display_point.to_point(&display_map);
-                    let anchor = if action.before {
-                        display_map.buffer_snapshot().anchor_after(point)
-                    } else {
-                        display_map.buffer_snapshot().anchor_before(point)
-                    };
-                    let mut to_insert = to_insert.repeat(count);
-                    // Buffer edits normalize line endings, so measure the normalized text.
-                    // Otherwise CRLF paste text can produce a selection range past the inserted text.
-                    // which can cause panics (selection offset greater than snapshot len) or invalid
-                    // selections
-                    LineEnding::normalize(&mut to_insert);
-                    new_selections.push((anchor, to_insert.len()));
-                    edits.push((point..point, to_insert));
+                    let snapshot = display_map.buffer_snapshot();
+                    new_selections
+                        .push(snapshot.anchor_before(point)..snapshot.anchor_after(point));
+                    edits.push((point..point, to_insert.repeat(count)));
                 }
 
                 editor.edit(edits, cx);
 
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_ranges(new_selections.into_iter().map(|(anchor, len)| {
-                        let offset = anchor.to_offset(&snapshot);
-                        if action.before {
-                            offset.saturating_sub_usize(len)..offset
-                        } else {
-                            offset..(offset + len)
-                        }
-                    }));
+                    s.select_ranges(new_selections);
                 })
             });
         });
@@ -165,7 +155,7 @@ mod test {
     use crate::{state::Mode, test::VimTestContext};
 
     #[gpui::test]
-    async fn test_system_clipboard_paste(cx: &mut gpui::TestAppContext) {
+    async fn test_helix_paste_ignores_system_clipboard(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
         cx.set_state(
@@ -180,36 +170,11 @@ mod test {
         cx.simulate_keystrokes("p");
         cx.assert_state(
             indoc! {"
-            The quic«clipboardˇ»k brown
+            The quiˇck brown
             fox jumps over
             the lazy dog."},
             Mode::HelixNormal,
         );
-
-        // Multiple cursors with system clipboard (no metadata) pastes
-        // the same text at each cursor.
-        cx.set_state(
-            indoc! {"
-            ˇThe quick brown
-            fox ˇjumps over
-            the lazy dog."},
-            Mode::HelixNormal,
-        );
-        cx.write_to_clipboard(ClipboardItem::new_string("hi".to_string()));
-        cx.simulate_keystrokes("p");
-        cx.assert_state(
-            indoc! {"
-            T«hiˇ»he quick brown
-            fox j«hiˇ»umps over
-            the lazy dog."},
-            Mode::HelixNormal,
-        );
-
-        // Multiple cursors on empty lines should paste on those same lines.
-        cx.set_state("ˇ\nˇ\nˇ\nend", Mode::HelixNormal);
-        cx.write_to_clipboard(ClipboardItem::new_string("X".to_string()));
-        cx.simulate_keystrokes("p");
-        cx.assert_state("«Xˇ»\n«Xˇ»\n«Xˇ»\nend", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -219,9 +184,33 @@ mod test {
         cx.set_state("ˇ", Mode::HelixNormal);
 
         cx.write_to_clipboard(ClipboardItem::new_string("a\r\nb".to_string()));
-        cx.simulate_keystrokes("p");
+        cx.simulate_keystrokes("\" + p");
 
         cx.assert_state("«a\nbˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_paste_in_expanded_deleted_hunk(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("ˇkept\n", Mode::HelixNormal);
+        cx.set_head_text("kept\ndeleted\n");
+        cx.update_editor(|editor, window, cx| {
+            editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
+        });
+
+        cx.write_to_clipboard(ClipboardItem::new_string("replacement text".to_string()));
+        cx.simulate_keystrokes("j p");
+
+        let buffer_text = cx.update_editor(|editor, _window, cx| {
+            let buffer = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("test editor should contain one buffer");
+            buffer.read(cx).snapshot().text()
+        });
+        assert_eq!(buffer_text, "kept\n");
     }
 
     #[gpui::test]

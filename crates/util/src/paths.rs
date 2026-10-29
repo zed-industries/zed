@@ -1,4 +1,4 @@
-use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -20,11 +20,14 @@ use path::rel_path::RelPathBuf;
 pub use path::PathStyle;
 
 /// Returns the path to the user's home directory.
+///
+/// This crate's own tests see a fixed fake path. Every other build, including
+/// builds with `test-support`, sees the real home directory.
 #[cfg(not(target_family = "wasm"))]
 pub fn home_dir() -> &'static PathBuf {
     static HOME_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     HOME_DIR.get_or_init(|| {
-        if cfg!(any(test, feature = "test-support")) {
+        if cfg!(test) {
             if cfg!(target_os = "macos") {
                 PathBuf::from("/Users/zed")
             } else if cfg!(target_os = "windows") {
@@ -56,31 +59,7 @@ pub trait PathExt {
     where
         Self: From<&'a Path>,
     {
-        #[cfg(target_family = "wasm")]
-        {
-            std::str::from_utf8(bytes)
-                .map(Path::new)
-                .map(Into::into)
-                .map_err(Into::into)
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::prelude::OsStrExt;
-            Ok(Self::from(Path::new(OsStr::from_bytes(bytes))))
-        }
-        #[cfg(windows)]
-        {
-            use anyhow::Context;
-            use tendril::fmt::{Format, WTF8};
-            WTF8::validate(bytes)
-                .then(|| {
-                    // Safety: bytes are valid WTF-8 sequence.
-                    Self::from(Path::new(unsafe {
-                        OsStr::from_encoded_bytes_unchecked(bytes)
-                    }))
-                })
-                .with_context(|| format!("Invalid WTF-8 sequence: {bytes:?}"))
-        }
+        path::try_from_bytes::<Self>(bytes)
     }
 
     /// Converts a local path to one that can be used inside of WSL.
@@ -231,6 +210,36 @@ pub fn strip_path_suffix<'a>(base: &'a Path, suffix: &Path) -> Option<&'a Path> 
     None
 }
 
+/// Normalizes a path by resolving `.` and `..` components without
+/// requiring the path to exist on disk (unlike `canonicalize`).
+pub fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut components = path.components().peekable();
+    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
+        components.next();
+        PathBuf::from(c.as_os_str())
+    } else {
+        PathBuf::new()
+    };
+
+    for component in components {
+        match component {
+            Component::Prefix(..) => unreachable!(),
+            Component::RootDir => {
+                ret.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                ret.pop();
+            }
+            Component::Normal(c) => {
+                ret.push(c);
+            }
+        }
+    }
+    ret
+}
+
 /// In memory, this is identical to `Path`. On non-Windows conversions to this type are no-ops. On
 /// windows, these conversions sanitize UNC paths by removing the `\\\\?\\` prefix.
 #[derive(Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -258,6 +267,10 @@ impl SanitizedPath {
 
         #[cfg(target_os = "windows")]
         {
+            let path = match path.to_str().and_then(|s| s.strip_prefix(r"\\?\UNC\")) {
+                Some(rest) => PathBuf::from(format!(r"\\{rest}")).into(),
+                None => path,
+            };
             let simplified = dunce::simplified(path.as_ref());
             if simplified == path.as_ref() {
                 // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
@@ -379,19 +392,6 @@ impl Display for RemotePathBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.string)
     }
-}
-
-pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
-    path_like.starts_with('/')
-        || path_style == PathStyle::Windows
-            && (path_like.starts_with('\\')
-                || path_like
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic())
-                    && path_like[1..]
-                        .strip_prefix(':')
-                        .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
 }
 
 #[derive(Debug, PartialEq)]
@@ -647,19 +647,31 @@ impl PathWithPosition {
         // in the future seems unlikely.
         static SUFFIX_RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(ROW_COL_CAPTURE_REGEX).unwrap());
+        // `Path::with_file_name` inserts the host's separator, which can
+        // corrupt Unix paths when the editor runs on Windows.
+        let replace_file_name = |input: &str, file_name: &str, replacement: &str| {
+            input.rsplit_once(file_name).map_or_else(
+                || PathBuf::from(input),
+                |(prefix, _)| PathBuf::from(format!("{prefix}{replacement}")),
+            )
+        };
         match SUFFIX_RE
             .captures(maybe_file_name_with_row_col)
-            .map(|caps| caps.extract())
-        {
-            Some((_, [file_name, maybe_row, maybe_column])) => {
+            .and_then(|captures| {
+                let file_name_end = captures.iter().skip(1).flatten().next()?.end();
+                let (_, [_, row, column]) = captures.extract();
+                Some((file_name_end, row, column))
+            }) {
+            Some((file_name_end, maybe_row, maybe_column)) => {
                 let row = maybe_row.parse::<u32>().ok();
                 let column = maybe_column.parse::<u32>().ok();
 
-                let (_, suffix) = trimmed.split_once(file_name).unwrap();
-                let path_without_suffix = &trimmed[..trimmed.len() - suffix.len()];
-
                 Self {
-                    path: Path::new(path_without_suffix).to_path_buf(),
+                    path: replace_file_name(
+                        trimmed,
+                        maybe_file_name_with_row_col,
+                        &maybe_file_name_with_row_col[..file_name_end],
+                    ),
                     row,
                     column,
                 }
@@ -668,8 +680,12 @@ impl PathWithPosition {
                 // The `ROW_COL_CAPTURE_REGEX` deals with separated digits only,
                 // but in reality there could be `foo/bar.py:22:in` inputs which we want to match too.
                 // The regex mentioned is not very extendable with "digit or random string" checks, so do this here instead.
+                let path = Path::new(s);
+                let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                    return Self::from_path(path.to_path_buf());
+                };
                 let delimiter = ':';
-                let mut path_parts = s
+                let mut path_parts = file_name
                     .rsplitn(3, delimiter)
                     .collect::<Vec<_>>()
                     .into_iter()
@@ -698,7 +714,11 @@ impl PathWithPosition {
                 }
 
                 Self {
-                    path: PathBuf::from(path_string),
+                    path: if row.is_some() {
+                        replace_file_name(s, file_name, &path_string)
+                    } else {
+                        path.to_path_buf()
+                    },
                     row,
                     column,
                 }
@@ -768,6 +788,44 @@ impl PathMatcher {
                     .build()
             })
             .collect::<Result<Vec<_>, _>>()?;
+        Self::from_globs(globs, path_style)
+    }
+
+    /// Skips invalid globs, reporting each error to `on_error`.
+    /// If the combined set cannot be built, reports the error and matches nothing.
+    pub fn new_lenient(
+        globs: impl IntoIterator<Item = impl AsRef<str>>,
+        path_style: PathStyle,
+        mut on_error: impl FnMut(globset::Error),
+    ) -> Self {
+        let globs = globs
+            .into_iter()
+            .filter_map(|pattern| {
+                match GlobBuilder::new(pattern.as_ref())
+                    .backslash_escape(path_style.is_posix())
+                    .build()
+                {
+                    Ok(glob) => Some(glob),
+                    Err(error) => {
+                        on_error(error);
+                        None
+                    }
+                }
+            })
+            .collect();
+        match Self::from_globs(globs, path_style) {
+            Ok(matcher) => matcher,
+            Err(error) => {
+                on_error(error);
+                Self {
+                    path_style,
+                    ..Self::default()
+                }
+            }
+        }
+    }
+
+    fn from_globs(globs: Vec<Glob>, path_style: PathStyle) -> Result<Self, globset::Error> {
         let sources = globs
             .iter()
             .filter_map(|glob| {
@@ -1032,6 +1090,11 @@ pub enum SortOrder {
     /// Pure Unicode codepoint comparison. No case folding, no natural number sorting.
     /// Uppercase ASCII sorts before lowercase. Accented characters sort after ASCII.
     Unicode,
+    /// Files are grouped by their last extension (case-insensitive) in ascending order,
+    /// with extensionless files, including dotfiles such as `.gitignore`, first.
+    /// Dotfiles with a further suffix, such as `.config.json`, keep that extension.
+    /// Within a group, names use the same natural sort as `Default`.
+    Extension,
 }
 
 /// Controls how files and directories are ordered relative to each other.
@@ -1130,6 +1193,17 @@ pub fn compare_rel_paths_by(
                 let (b_stem, b_ext) = b_leaf_file
                     .then(|| stem_and_extension(component_b))
                     .unwrap_or_default();
+                if order == SortOrder::Extension {
+                    // Directories have no extension and must take part in this comparison too,
+                    // otherwise mixed mode would produce an inconsistent (non-transitive) ordering.
+                    let extension_ordering = a_ext
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .cmp(&b_ext.unwrap_or_default().to_lowercase());
+                    if !extension_ordering.is_eq() {
+                        return extension_ordering;
+                    }
+                }
                 let a_key = if a_leaf_file {
                     a_stem
                 } else {
@@ -1385,7 +1459,7 @@ impl UrlExt for url::Url {
 
             let path = String::from_utf8(bytes).map_err(|_| ())?;
             debug_assert!(
-                PathStyle::Unix.is_absolute(&path),
+                PathStyle::Unix.is_absolute(Path::new(&path)),
                 "to_file_path() failed to produce an absolute Path"
             );
 
@@ -1456,7 +1530,7 @@ impl UrlExt for url::Url {
                 );
             }
             debug_assert!(
-                PathStyle::Windows.is_absolute(&string),
+                PathStyle::Windows.is_absolute(Path::new(&string)),
                 "to_file_path() failed to produce an absolute Path"
             );
             let path = PathBuf::from(string);
@@ -1470,6 +1544,67 @@ impl UrlExt for url::Url {
 mod tests {
     use super::*;
     use util_macros::perf;
+
+    #[test]
+    fn test_lenient_path_matcher() {
+        for path_style in [PathStyle::Unix, PathStyle::Windows] {
+            let patterns = ["**/.git", "[", "target/**", "{"];
+            let mut errors = Vec::new();
+            let matcher =
+                PathMatcher::new_lenient(patterns, path_style, |error| errors.push(error));
+            let expected = PathMatcher::new(["**/.git", "target/**"], path_style).unwrap();
+            assert_eq!(matcher, expected);
+            assert_eq!(errors.len(), 2);
+            assert_eq!(errors[0].glob(), Some("["));
+            assert_eq!(errors[1].glob(), Some("{"));
+            for path in ["nested/.git", "src/file.rs", "target/file.rs"] {
+                let path = RelPath::from_unix_str(path).unwrap();
+                assert_eq!(matcher.is_match(path), expected.is_match(path));
+            }
+            if path_style == PathStyle::local() {
+                assert!(matcher.is_match(RelPath::from_unix_str("nested/.git").unwrap()));
+                assert!(matcher.is_match(RelPath::from_unix_str("target/file.rs").unwrap()));
+            }
+            assert!(PathMatcher::new(patterns, path_style).is_err());
+
+            let mut errors = Vec::new();
+            let matcher =
+                PathMatcher::new_lenient(["[", "{"], path_style, |error| errors.push(error));
+            assert_eq!(errors.len(), 2);
+            assert_eq!(matcher.path_style, path_style);
+            assert_eq!(matcher.sources().count(), 0);
+            assert!(!matcher.is_match(RelPath::from_unix_str("file.rs").unwrap()));
+            assert!(!matcher.is_match_std_path("file.rs"));
+
+            let matcher = PathMatcher::new_lenient([] as [&str; 0], path_style, |_| {
+                panic!("empty patterns are valid")
+            });
+            assert_eq!(matcher.path_style, path_style);
+            assert_eq!(matcher.sources().count(), 0);
+            assert!(!matcher.is_match(RelPath::from_unix_str("file.rs").unwrap()));
+        }
+    }
+
+    #[test]
+    fn test_lenient_path_matcher_preserves_escaping() {
+        for path_style in [PathStyle::Unix, PathStyle::Windows] {
+            let patterns = [r"directory\file.rs", r"literal\*", r"literal\[name]"];
+            let strict = PathMatcher::new(patterns, path_style).unwrap();
+            let lenient = PathMatcher::new_lenient(patterns, path_style, |_| {
+                panic!("valid patterns are preserved")
+            });
+            assert_eq!(lenient, strict);
+            for path in [
+                "directory/file.rs",
+                "literal*",
+                "literal/file.rs",
+                "literal[name]",
+            ] {
+                let path = RelPath::from_unix_str(path).unwrap();
+                assert_eq!(lenient.is_match(path), strict.is_match(path));
+            }
+        }
+    }
 
     #[test]
     fn test_parse_str_treats_paren_suffix_as_position() {
@@ -1868,6 +2003,86 @@ mod tests {
     }
 
     #[perf]
+    fn compare_rel_paths_extension_groups_files() {
+        let mut paths = vec![
+            (RelPath::from_unix_str("b.rs").unwrap(), true),
+            (RelPath::from_unix_str("a.py").unwrap(), true),
+            (RelPath::from_unix_str("a.RS").unwrap(), true),
+            (RelPath::from_unix_str("file10.rs").unwrap(), true),
+            (RelPath::from_unix_str("file2.rs").unwrap(), true),
+            (RelPath::from_unix_str("Makefile").unwrap(), true),
+            (RelPath::from_unix_str(".gitignore").unwrap(), true),
+            (RelPath::from_unix_str(".config.json").unwrap(), true),
+            (RelPath::from_unix_str(".env.local").unwrap(), true),
+            (RelPath::from_unix_str("a.css").unwrap(), true),
+            (RelPath::from_unix_str("archive.tar.gz").unwrap(), true),
+            (RelPath::from_unix_str("src").unwrap(), false),
+        ];
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::DirectoriesFirst, SortOrder::Extension)
+        });
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::from_unix_str("src").unwrap(), false),
+                (RelPath::from_unix_str(".gitignore").unwrap(), true),
+                (RelPath::from_unix_str("Makefile").unwrap(), true),
+                (RelPath::from_unix_str("a.css").unwrap(), true),
+                (RelPath::from_unix_str("archive.tar.gz").unwrap(), true),
+                (RelPath::from_unix_str(".config.json").unwrap(), true),
+                (RelPath::from_unix_str(".env.local").unwrap(), true),
+                (RelPath::from_unix_str("a.py").unwrap(), true),
+                (RelPath::from_unix_str("a.RS").unwrap(), true),
+                (RelPath::from_unix_str("b.rs").unwrap(), true),
+                (RelPath::from_unix_str("file2.rs").unwrap(), true),
+                (RelPath::from_unix_str("file10.rs").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_extension_with_files_first() {
+        let mut paths = vec![
+            (RelPath::from_unix_str("z.rs").unwrap(), true),
+            (RelPath::from_unix_str("a.txt").unwrap(), true),
+            (RelPath::from_unix_str("m").unwrap(), false),
+            (RelPath::from_unix_str("b.py").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Extension)
+        });
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::from_unix_str("b.py").unwrap(), true),
+                (RelPath::from_unix_str("z.rs").unwrap(), true),
+                (RelPath::from_unix_str("a.txt").unwrap(), true),
+                (RelPath::from_unix_str("m").unwrap(), false),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_extension_mixed_is_consistent() {
+        let mut paths = vec![
+            (RelPath::from_unix_str("z.rs").unwrap(), true),
+            (RelPath::from_unix_str("a.txt").unwrap(), true),
+            (RelPath::from_unix_str("m").unwrap(), false),
+            (RelPath::from_unix_str("b").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Extension));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::from_unix_str("b").unwrap(), true),
+                (RelPath::from_unix_str("m").unwrap(), false),
+                (RelPath::from_unix_str("z.rs").unwrap(), true),
+                (RelPath::from_unix_str("a.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
     fn compare_rel_paths_mixed_same_stem_different_extension() {
         // Files with same stem but different extensions should sort by extension
         let mut paths = vec![
@@ -2252,6 +2467,122 @@ mod tests {
                 rel_path_entry("\u{00C9}something.txt", true),
             ]
         );
+    }
+
+    #[test]
+    fn path_with_position_preserves_paths_without_positions() {
+        for input in [
+            "",
+            "/",
+            "thf/",
+            "/test/cool/",
+            "/test/Ῥόδος/",
+            "parent//file.rs",
+            "parent/./file.rs",
+            "parent/file.rs/.",
+            "parent:12:3/file.rs/",
+            "file.rs:invalid/",
+            " parent/file.rs ",
+            r"C:\test\cool\",
+            r"C:\test\Ῥόδος\",
+            r"\\server\share\cool\",
+        ] {
+            let parsed = PathWithPosition::parse_str(input);
+            assert_eq!(parsed.path.as_os_str(), Path::new(input).as_os_str());
+            assert_eq!(parsed.row, None, "{input}");
+            assert_eq!(parsed.column, None, "{input}");
+        }
+    }
+
+    #[test]
+    fn path_with_position_preserves_path_separators() {
+        for (input, expected_path, expected_column) in [
+            (
+                "/home/user/project/src/main.rs:49",
+                "/home/user/project/src/main.rs",
+                None,
+            ),
+            (
+                "/home/user/project/src/main.rs:49:7",
+                "/home/user/project/src/main.rs",
+                Some(7),
+            ),
+            (
+                "/home/user/project/src/main.rs:49:in",
+                "/home/user/project/src/main.rs",
+                None,
+            ),
+            ("src/main.rs(49,7)", "src/main.rs", Some(7)),
+            ("src/main.rs:49/", "src/main.rs", None),
+            ("src/main.rs:49/.", "src/main.rs", None),
+            ("parent//file.rs:49", "parent//file.rs", None),
+            ("parent/./file.rs:49", "parent/./file.rs", None),
+            ("parent/😀.rs:49", "parent/😀.rs", None),
+            ("C:/project/src/main.rs:49", "C:/project/src/main.rs", None),
+            (
+                r"C:\project\src\main.rs:49",
+                r"C:\project\src\main.rs",
+                None,
+            ),
+            (r"src\mixed/main.rs:49", r"src\mixed/main.rs", None),
+            (
+                r"\\server\share/main.rs:49",
+                r"\\server\share/main.rs",
+                None,
+            ),
+        ] {
+            let parsed = PathWithPosition::parse_str(input);
+            assert_eq!(
+                parsed.path.as_os_str(),
+                OsStr::new(expected_path),
+                "{input}"
+            );
+            assert_eq!(parsed.row, Some(49), "{input}");
+            assert_eq!(parsed.column, expected_column, "{input}");
+        }
+    }
+
+    #[test]
+    fn path_with_position_preserves_repeated_filename() {
+        for (input, expected_path) in [
+            ("file.rs/file.rs:12:3", "file.rs/file.rs"),
+            ("file.rs-backups/file.rs(12,3)", "file.rs-backups/file.rs"),
+            ("😀.rs/😀.rs:12:3", "😀.rs/😀.rs"),
+            ("parent/a(b).rs(12,3)", "parent/a(b).rs"),
+            ("parent/😀(b).rs(12,3)", "parent/😀(b).rs"),
+            ("parent/a(b).rs:(12,3)", "parent/a(b).rs"),
+            (r"src\file.rs\file.rs:12:3", r"src\file.rs\file.rs"),
+        ] {
+            assert_eq!(
+                PathWithPosition::parse_str(input),
+                PathWithPosition {
+                    path: PathBuf::from(expected_path),
+                    row: Some(12),
+                    column: Some(3),
+                },
+                "{input}",
+            );
+        }
+    }
+
+    #[test]
+    fn path_with_position_preserves_parent_position_like_components() {
+        for (input, expected_path, row) in [
+            ("parent:12:3/file.rs", "parent:12:3/file.rs", None),
+            ("parent:12:3/file.rs:4:in", "parent:12:3/file.rs", Some(4)),
+            (" parent/file.rs ", " parent/file.rs ", None),
+            (" parent/file.rs:4:in ", " parent/file.rs", Some(4)),
+        ] {
+            assert_eq!(
+                PathWithPosition::parse_str(input),
+                PathWithPosition {
+                    path: PathBuf::from(expected_path),
+                    row,
+                    column: None,
+                },
+                "{input}",
+            );
+        }
     }
 
     #[perf]
@@ -2640,6 +2971,14 @@ mod tests {
             sanitized_path.to_string(),
             "C:\\Users\\someone\\test_file.rs"
         );
+    }
+
+    #[perf]
+    #[cfg(target_os = "windows")]
+    fn test_sanitized_path_verbatim_unc() {
+        let path: Arc<Path> = PathBuf::from("\\\\?\\UNC\\server\\share\\file.txt").into();
+        let sanitized_path = SanitizedPath::from_arc(path);
+        assert_eq!(sanitized_path.to_string(), "\\\\server\\share\\file.txt");
     }
 
     #[perf]
