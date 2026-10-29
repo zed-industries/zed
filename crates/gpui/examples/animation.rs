@@ -328,7 +328,7 @@ fn run_example() {
                 spring_damping_drag: None,
             })
         })
-        .unwrap();
+        .detach_and_log_err(cx);
     });
 }
 

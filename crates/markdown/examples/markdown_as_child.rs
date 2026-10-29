@@ -32,13 +32,14 @@ pub fn main() {
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
-        let _ = cx.open_window(WindowOptions::default(), |_, cx| {
+        cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|cx| {
                 let markdown = cx.new(|cx| Markdown::new(MARKDOWN_EXAMPLE.into(), None, None, cx));
 
                 HelloWorld { markdown }
             })
-        });
+        })
+        .detach_and_log_err(cx);
     });
 }
 struct HelloWorld {

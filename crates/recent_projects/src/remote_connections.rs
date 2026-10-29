@@ -215,27 +215,32 @@ pub async fn open_remote_project(
             cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
         options.window_bounds = workspace_position.window_bounds;
 
-        let window = cx.open_window(options, |window, cx| {
-            let project = project::Project::local(
-                app_state.client.clone(),
-                app_state.node_runtime.clone(),
-                app_state.user_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                None,
-                project::LocalProjectFlags {
-                    init_worktree_trust: false,
-                    ..Default::default()
-                },
-                cx,
-            );
-            let workspace = cx.new(|cx| {
-                let mut workspace = Workspace::new(None, project, app_state.clone(), window, cx);
-                workspace.centered_layout = workspace_position.centered_layout;
-                workspace
-            });
-            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
-        })?;
+        let centered_layout = workspace_position.centered_layout;
+        let app_state_for_window = app_state.clone();
+        let window = cx
+            .open_window(options, move |window, cx| {
+                let project = project::Project::local(
+                    app_state_for_window.client.clone(),
+                    app_state_for_window.node_runtime.clone(),
+                    app_state_for_window.user_store.clone(),
+                    app_state_for_window.languages.clone(),
+                    app_state_for_window.fs.clone(),
+                    None,
+                    project::LocalProjectFlags {
+                        init_worktree_trust: false,
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                let workspace = cx.new(|cx| {
+                    let mut workspace =
+                        Workspace::new(None, project, app_state_for_window.clone(), window, cx);
+                    workspace.centered_layout = centered_layout;
+                    workspace
+                });
+                cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+            })
+            .await?;
         let workspace = window.update(cx, |multi_workspace, _, _cx| {
             multi_workspace.workspace().clone()
         })?;

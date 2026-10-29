@@ -63,7 +63,8 @@ fn open_copilot_code_verification_window(copilot: &Entity<Copilot>, window: &Win
         gpui::size(width, height),
     ));
     let app_id = ReleaseChannel::global(cx).app_id();
-    cx.open_window(
+    let copilot = copilot.clone();
+    let open_window = cx.open_window(
         WindowOptions {
             kind: gpui::WindowKind::Floating,
             window_bounds: Some(window_bounds),
@@ -77,10 +78,15 @@ fn open_copilot_code_verification_window(copilot: &Entity<Copilot>, window: &Win
             app_id: Some(app_id.to_owned()),
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| CopilotCodeVerification::new(&copilot, window, cx)),
-    )
-    .context("Failed to open Copilot code verification window")
-    .log_err();
+        move |window, cx| cx.new(|cx| CopilotCodeVerification::new(&copilot, window, cx)),
+    );
+    cx.spawn(async move |_| {
+        open_window
+            .await
+            .context("Failed to open Copilot code verification window")?;
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 fn open_copilot_chat_code_verification_window(
@@ -95,7 +101,8 @@ fn open_copilot_chat_code_verification_window(
         current_window_center - point(height / 2.0, width / 2.0),
         gpui::size(height, width),
     ));
-    cx.open_window(
+    let copilot_chat = copilot_chat.clone();
+    let open_window = cx.open_window(
         WindowOptions {
             kind: gpui::WindowKind::Floating,
             window_bounds: Some(window_bounds),
@@ -107,10 +114,15 @@ fn open_copilot_chat_code_verification_window(
             }),
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| CopilotChatCodeVerification::new(&copilot_chat, window, cx)),
-    )
-    .context("Failed to open Copilot Chat code verification window")
-    .log_err();
+        move |window, cx| cx.new(|cx| CopilotChatCodeVerification::new(&copilot_chat, window, cx)),
+    );
+    cx.spawn(async move |_| {
+        open_window
+            .await
+            .context("Failed to open Copilot Chat code verification window")?;
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 fn copilot_toast(message: Option<&'static str>, window: &Window, cx: &mut App) {

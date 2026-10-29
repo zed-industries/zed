@@ -137,7 +137,7 @@ fn run_example() {
             },
             move |_, _| view,
         )
-        .expect("failed to open system notifications example window");
+        .detach_and_log_err(cx);
         cx.activate(true);
     });
 }

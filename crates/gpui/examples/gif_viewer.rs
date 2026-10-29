@@ -41,9 +41,9 @@ fn run_example() {
                 focus: true,
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| GifViewer::new(gif_path)),
+            move |_, cx| cx.new(|_| GifViewer::new(gif_path)),
         )
-        .unwrap();
+        .detach_and_log_err(cx);
         cx.activate(true);
     });
 }

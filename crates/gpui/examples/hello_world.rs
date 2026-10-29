@@ -109,7 +109,7 @@ fn run_example() {
                 })
             },
         )
-        .unwrap();
+        .detach_and_log_err(cx);
         cx.activate(true);
     });
 }

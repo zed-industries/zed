@@ -203,7 +203,7 @@ fn run_example() {
                 counter
             },
         )
-        .unwrap();
+        .detach_and_log_err(cx);
     });
 }
 
@@ -256,11 +256,11 @@ mod tests {
     /// Just like synchronous side effects, the window will be drawn after every "update*"
     /// call, so you can test render-dependent behavior.
     #[gpui::test]
-    fn test_counter_in_window(cx: &mut TestAppContext) {
-        let window = cx.update(|cx| {
-            cx.open_window(Default::default(), |_, cx| cx.new(|cx| Counter::new(cx)))
-                .unwrap()
-        });
+    async fn test_counter_in_window(cx: &mut TestAppContext) {
+        let window = cx
+            .update(|cx| cx.open_window(Default::default(), |_, cx| cx.new(Counter::new)))
+            .await
+            .unwrap();
 
         let mut cx = VisualTestContext::from_window(window.into(), cx);
         let counter = window.root(&mut cx).unwrap();
@@ -331,11 +331,11 @@ mod tests {
 
     /// GPUI also provides support for property testing, via the iterations flag
     #[gpui::test(iterations = 10)]
-    fn test_counter_random_operations(cx: &mut TestAppContext, mut rng: StdRng) {
-        let window = cx.update(|cx| {
-            cx.open_window(Default::default(), |_, cx| cx.new(|cx| Counter::new(cx)))
-                .unwrap()
-        });
+    async fn test_counter_random_operations(cx: &mut TestAppContext, mut rng: StdRng) {
+        let window = cx
+            .update(|cx| cx.open_window(Default::default(), |_, cx| cx.new(Counter::new)))
+            .await
+            .unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let counter = cx.new(|cx| Counter::new(cx));

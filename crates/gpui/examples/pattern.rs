@@ -117,7 +117,7 @@ fn run_example() {
             },
             |_window, cx| cx.new(|_cx| PatternExample),
         )
-        .unwrap();
+        .detach_and_log_err(cx);
 
         cx.activate(true);
     });

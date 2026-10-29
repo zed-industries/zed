@@ -101,9 +101,10 @@ use {
     assets::Assets,
     editor::display_map::DisplayRow,
     feature_flags::FeatureFlagAppExt as _,
+    futures::FutureExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
-        App, AppContext as _, Bounds, Entity, KeyBinding, Modifiers, VisualTestAppContext,
+        App, AppContext as _, Bounds, Entity, KeyBinding, Modifiers, Render, VisualTestAppContext,
         WindowBounds, WindowHandle, WindowOptions, point, px, size,
     },
     image::RgbaImage,
@@ -122,6 +123,18 @@ use {
     workspace::{AppState, MultiWorkspace, Workspace},
     zed_actions::OpenSettingsAt,
 };
+
+#[cfg(target_os = "macos")]
+fn open_visual_window<V: Render + 'static>(
+    cx: &mut VisualTestAppContext,
+    options: WindowOptions,
+    build_root_view: impl FnOnce(&mut gpui::Window, &mut App) -> Entity<V> + 'static,
+) -> Result<WindowHandle<V>> {
+    let task = cx.update(|cx| cx.open_window(options, build_root_view));
+    cx.run_until_parked();
+    task.now_or_never()
+        .context("Window creation did not complete")?
+}
 
 // All macOS-specific constants grouped together
 #[cfg(target_os = "macos")]
@@ -271,23 +284,21 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         )
     });
 
-    let workspace_window: WindowHandle<Workspace> = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
-                },
-            )
-        })
-        .context("Failed to open workspace window")?;
+    let project_for_window = project.clone();
+    let app_state_for_window = app_state.clone();
+    let workspace_window: WindowHandle<Workspace> = open_visual_window(
+        &mut cx,
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        move |window, cx| {
+            cx.new(|cx| Workspace::new(None, project_for_window, app_state_for_window, window, cx))
+        },
+    )
+    .context("Failed to open workspace window")?;
 
     cx.run_until_parked();
 
@@ -1060,23 +1071,21 @@ fn run_breakpoint_hover_visual_tests(
     });
 
     // Open workspace window
-    let workspace_window: WindowHandle<Workspace> = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
-                },
-            )
-        })
-        .context("Failed to open breakpoint test window")?;
+    let project_for_window = project.clone();
+    let app_state_for_window = app_state.clone();
+    let workspace_window: WindowHandle<Workspace> = open_visual_window(
+        cx,
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        move |window, cx| {
+            cx.new(|cx| Workspace::new(None, project_for_window, app_state_for_window, window, cx))
+        },
+    )
+    .context("Failed to open breakpoint test window")?;
 
     cx.run_until_parked();
 
@@ -1331,24 +1340,24 @@ fn run_settings_ui_subpage_visual_tests(
         )
     });
 
-    let workspace_window: WindowHandle<MultiWorkspace> = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let workspace = cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    });
-                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
-                },
-            )
-        })
-        .context("Failed to open workspace window")?;
+    let project_for_window = project.clone();
+    let app_state_for_window = app_state.clone();
+    let workspace_window: WindowHandle<MultiWorkspace> = open_visual_window(
+        cx,
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        move |window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(None, project_for_window, app_state_for_window, window, cx)
+            });
+            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+        },
+    )
+    .context("Failed to open workspace window")?;
 
     cx.run_until_parked();
 
@@ -1571,23 +1580,21 @@ import { AiPaneTabContext } from 'context';
         cx.update_flags(true, vec!["diff-review".to_string()]);
     });
 
-    let workspace_window: WindowHandle<Workspace> = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
-                },
-            )
-        })
-        .context("Failed to open diff review test window")?;
+    let project_for_window = project.clone();
+    let app_state_for_window = app_state.clone();
+    let workspace_window: WindowHandle<Workspace> = open_visual_window(
+        cx,
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        move |window, cx| {
+            cx.new(|cx| Workspace::new(None, project_for_window, app_state_for_window, window, cx))
+        },
+    )
+    .context("Failed to open diff review test window")?;
 
     cx.run_until_parked();
 
@@ -1650,23 +1657,21 @@ import { AiPaneTabContext } from 'context';
     });
 
     // Create a new window with just a regular editor
-    let regular_window: WindowHandle<Workspace> = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
-                },
-            )
-        })
-        .context("Failed to open regular editor window")?;
+    let project_for_window = project.clone();
+    let app_state_for_window = app_state.clone();
+    let regular_window: WindowHandle<Workspace> = open_visual_window(
+        cx,
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        move |window, cx| {
+            cx.new(|cx| Workspace::new(None, project_for_window, app_state_for_window, window, cx))
+        },
+    )
+    .context("Failed to open regular editor window")?;
 
     cx.run_until_parked();
 
@@ -2135,23 +2140,21 @@ fn run_agent_thread_view_test(
         size: window_size,
     };
 
-    let workspace_window: WindowHandle<Workspace> = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
-                },
-            )
-        })
-        .context("Failed to open agent window")?;
+    let project_for_window = project.clone();
+    let app_state_for_window = app_state.clone();
+    let workspace_window: WindowHandle<Workspace> = open_visual_window(
+        cx,
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        move |window, cx| {
+            cx.new(|cx| Workspace::new(None, project_for_window, app_state_for_window, window, cx))
+        },
+    )
+    .context("Failed to open agent window")?;
 
     cx.run_until_parked();
 
@@ -2367,24 +2370,24 @@ fn run_tool_permissions_visual_tests(
         )
     });
 
-    let workspace_window: WindowHandle<MultiWorkspace> = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let workspace = cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    });
-                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
-                },
-            )
-        })
-        .context("Failed to open workspace window for settings test")?;
+    let project_for_window = project.clone();
+    let app_state_for_window = app_state.clone();
+    let workspace_window: WindowHandle<MultiWorkspace> = open_visual_window(
+        cx,
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        move |window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(None, project_for_window, app_state_for_window, window, cx)
+            });
+            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+        },
+    )
+    .context("Failed to open workspace window for settings test")?;
 
     cx.run_until_parked();
 
@@ -2596,31 +2599,44 @@ fn run_multi_workspace_sidebar_visual_tests(
     };
 
     // Open a MultiWorkspace window with both workspaces created at construction time
-    let multi_workspace_window: WindowHandle<MultiWorkspace> = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let workspace1 = cx.new(|cx| {
-                        Workspace::new(None, project1.clone(), app_state.clone(), window, cx)
-                    });
-                    let workspace2 = cx.new(|cx| {
-                        Workspace::new(None, project2.clone(), app_state.clone(), window, cx)
-                    });
-                    cx.new(|cx| {
-                        let mut multi_workspace = MultiWorkspace::new(workspace1, window, cx);
-                        multi_workspace.activate(workspace2, None, window, cx);
-                        multi_workspace
-                    })
-                },
-            )
-        })
-        .context("Failed to open MultiWorkspace window")?;
+    let first_project_for_window = project1.clone();
+    let second_project_for_window = project2.clone();
+    let app_state_for_window = app_state.clone();
+    let multi_workspace_window: WindowHandle<MultiWorkspace> = open_visual_window(
+        cx,
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        move |window, cx| {
+            let workspace1 = cx.new(|cx| {
+                Workspace::new(
+                    None,
+                    first_project_for_window,
+                    app_state_for_window.clone(),
+                    window,
+                    cx,
+                )
+            });
+            let workspace2 = cx.new(|cx| {
+                Workspace::new(
+                    None,
+                    second_project_for_window,
+                    app_state_for_window,
+                    window,
+                    cx,
+                )
+            });
+            cx.new(|cx| {
+                let mut multi_workspace = MultiWorkspace::new(workspace1, window, cx);
+                multi_workspace.activate(workspace2, None, window, cx);
+                multi_workspace
+            })
+        },
+    )
+    .context("Failed to open MultiWorkspace window")?;
 
     cx.run_until_parked();
 
@@ -3085,19 +3101,17 @@ fn run_thread_item_branch_name_visual_tests(
         size: window_size,
     };
 
-    let window = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |_window, cx| cx.new(|_| ThreadItemBranchNameTestView),
-            )
-        })
-        .context("Failed to open thread item branch name test window")?;
+    let window = open_visual_window(
+        cx,
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        |_window, cx| cx.new(|_| ThreadItemBranchNameTestView),
+    )
+    .context("Failed to open thread item branch name test window")?;
 
     cx.run_until_parked();
 
@@ -3229,19 +3243,17 @@ fn run_thread_item_icon_decorations_visual_tests(
         size: window_size,
     };
 
-    let window = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |_window, cx| cx.new(|_| ThreadItemIconDecorationsTestView),
-            )
-        })
-        .context("Failed to open thread item icon decorations test window")?;
+    let window = open_visual_window(
+        cx,
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        |_window, cx| cx.new(|_| ThreadItemIconDecorationsTestView),
+    )
+    .context("Failed to open thread item icon decorations test window")?;
 
     cx.run_until_parked();
 
@@ -3285,19 +3297,17 @@ fn run_error_wrapping_visual_tests(
         size: window_size,
     };
 
-    let window = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |_window, cx| cx.new(|_| ErrorWrappingTestView),
-            )
-        })
-        .context("Failed to open error wrapping test window")?;
+    let window = open_visual_window(
+        cx,
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        |_window, cx| cx.new(|_| ErrorWrappingTestView),
+    )
+    .context("Failed to open error wrapping test window")?;
 
     cx.run_until_parked();
 
@@ -3384,33 +3394,39 @@ fn open_sidebar_test_window(
         .ok_or_else(|| anyhow::anyhow!("need at least one project"))?;
     let remaining: Vec<_> = projects_iter.collect();
 
-    let multi_workspace_window: WindowHandle<MultiWorkspace> = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let first_ws = cx.new(|cx| {
-                        Workspace::new(None, first_project.clone(), app_state.clone(), window, cx)
+    let first_project_for_window = first_project.clone();
+    let app_state_for_window = app_state.clone();
+    let multi_workspace_window: WindowHandle<MultiWorkspace> = open_visual_window(
+        cx,
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        move |window, cx| {
+            let first_ws = cx.new(|cx| {
+                Workspace::new(
+                    None,
+                    first_project_for_window,
+                    app_state_for_window.clone(),
+                    window,
+                    cx,
+                )
+            });
+            cx.new(|cx| {
+                let mut mw = MultiWorkspace::new(first_ws, window, cx);
+                for project in remaining {
+                    let ws = cx.new(|cx| {
+                        Workspace::new(None, project, app_state_for_window.clone(), window, cx)
                     });
-                    cx.new(|cx| {
-                        let mut mw = MultiWorkspace::new(first_ws, window, cx);
-                        for project in remaining {
-                            let ws = cx.new(|cx| {
-                                Workspace::new(None, project, app_state.clone(), window, cx)
-                            });
-                            mw.activate(ws, None, window, cx);
-                        }
-                        mw
-                    })
-                },
-            )
-        })
-        .context("Failed to open MultiWorkspace window")?;
+                    mw.activate(ws, None, window, cx);
+                }
+                mw
+            })
+        },
+    )
+    .context("Failed to open MultiWorkspace window")?;
 
     cx.run_until_parked();
 

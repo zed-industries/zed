@@ -2097,6 +2097,7 @@ mod display_mode_tests {
                         .update(|cx| {
                             cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| Blank))
                         })
+                        .await
                         .expect("headless mode opens headless windows");
                     let attach = cx.update(|cx| {
                         cx.request_windowing(WindowingRequest::Windowed(
