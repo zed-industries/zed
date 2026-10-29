@@ -614,6 +614,9 @@ impl LocalLspStore {
                 }
 
                 let code_action_kinds = adapter.code_action_kinds();
+                // Keep pending changes separate from the folders sent during initialization,
+                // so changes while initialization is in flight can be notified afterward.
+                let workspace_folders = pending_workspace_folders.lock().clone();
                 lsp::LanguageServer::new(
                     stderr_capture,
                     server_id,
@@ -621,7 +624,7 @@ impl LocalLspStore {
                     binary,
                     &worktree_abs_path,
                     code_action_kinds,
-                    Some(pending_workspace_folders),
+                    Some(Arc::new(Mutex::new(workspace_folders))),
                     cx,
                 )
             }
@@ -4098,6 +4101,31 @@ impl LocalLspStore {
         })
     }
 
+    fn refresh_workspace_folders(&self, server_ids: &[LanguageServerId], cx: &App) {
+        let worktree_store = self.worktree_store.read(cx);
+        for server_id in server_ids {
+            let mut workspace_folders = BTreeSet::new();
+            for (seed, server) in &self.language_server_ids {
+                if server.id != *server_id {
+                    continue;
+                }
+                let Some(worktree) = worktree_store.worktree_for_id(seed.worktree_id, cx) else {
+                    continue;
+                };
+                let worktree = worktree.read(cx);
+                workspace_folders.extend(
+                    server
+                        .project_roots
+                        .iter()
+                        .filter_map(|path| workspace_folder_uri(worktree, path)),
+                );
+            }
+            if let Some(server) = self.language_servers.get(server_id) {
+                server.set_workspace_folders(workspace_folders);
+            }
+        }
+    }
+
     fn remove_worktree(
         &mut self,
         id_to_remove: WorktreeId,
@@ -4118,11 +4146,17 @@ impl LocalLspStore {
                 servers_to_preserve.insert(state.id);
             }
         }
+        let servers_to_update = servers_to_remove
+            .iter()
+            .filter(|server_id| servers_to_preserve.contains(server_id))
+            .copied()
+            .collect::<Vec<_>>();
         servers_to_remove.retain(|server_id| !servers_to_preserve.contains(server_id));
         self.language_server_ids.retain(|seed, state| {
             seed.worktree_id != id_to_remove && !servers_to_remove.contains(&state.id)
         });
         self.lsp_tree.instances.remove(&id_to_remove);
+        self.refresh_workspace_folders(&servers_to_update, cx);
         for server_id_to_remove in &servers_to_remove {
             self.language_server_watched_paths
                 .remove(server_id_to_remove);
@@ -14008,7 +14042,6 @@ impl LspStore {
         language_server_ids.sort_unstable();
         language_server_ids.dedup();
 
-        // let abs_path = worktree_handle.read(cx).abs_path();
         for server_id in &language_server_ids {
             if let Some(LanguageServerState::Running { server, .. }) =
                 local.language_servers.get(server_id)
@@ -14046,6 +14079,7 @@ impl LspStore {
                 }
             }
         }
+        local.refresh_workspace_folders(&language_server_ids, cx);
         for (path, _, _) in changes {
             if let Some(file_name) = path.file_name()
                 && local.watched_manifest_filenames.contains(file_name)
@@ -16735,15 +16769,25 @@ impl LanguageServerState {
             }
         }
     }
-    fn _remove_workspace_folder(&self, uri: Uri) {
+    fn set_workspace_folders(&self, workspace_folders: BTreeSet<Uri>) {
         match self {
             LanguageServerState::Starting {
                 pending_workspace_folders,
                 ..
             } => {
-                pending_workspace_folders.lock().remove(&uri);
+                *pending_workspace_folders.lock() = workspace_folders;
             }
-            LanguageServerState::Running { server, .. } => server.remove_workspace_folder(uri),
+            LanguageServerState::Running { server, .. } => {
+                let supports_folder_changes = server
+                    .capabilities()
+                    .workspace
+                    .and_then(|workspace| workspace.workspace_folders)
+                    .and_then(|folders| folders.change_notifications)
+                    .is_some_and(|notifications| !matches!(notifications, lsp::OneOf::Left(false)));
+                if supports_folder_changes {
+                    server.set_workspace_folders(workspace_folders);
+                }
+            }
         }
     }
 }
