@@ -3,7 +3,10 @@ use gpui::{Action, Context, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::{Vim, state::Mode};
+use crate::{
+    Vim,
+    state::{Mode, Register},
+};
 
 /// Pastes text from the specified register at the cursor position.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
@@ -12,6 +15,36 @@ use crate::{Vim, state::Mode};
 pub struct HelixPaste {
     #[serde(default)]
     before: bool,
+}
+
+pub(super) fn replacement_texts(register: Register, selection_count: usize) -> Vec<String> {
+    let text = register.text;
+    let clipboard_selections = register.clipboard_selections;
+    let mut replacement_texts: Vec<String> = Vec::with_capacity(selection_count);
+    let mut start_offset = 0;
+
+    for index in 0..selection_count {
+        let to_insert = if let Some(clipboard_selection) = clipboard_selections
+            .as_ref()
+            .and_then(|selections| selections.get(index))
+        {
+            let end_offset = start_offset + clipboard_selection.len;
+            let text = text[start_offset..end_offset].to_string();
+            start_offset = if clipboard_selection.is_entire_line {
+                end_offset
+            } else {
+                end_offset + 1
+            };
+            text
+        } else if let Some(last_text) = replacement_texts.last() {
+            last_text.to_owned()
+        } else {
+            text.to_string()
+        };
+        replacement_texts.push(to_insert);
+    }
+
+    replacement_texts
 }
 
 impl Vim {
@@ -37,19 +70,12 @@ impl Vim {
 
                 let selected_register = vim.selected_register.take();
 
-                // With an explicit register, defer to read_register so `+`/`*` still hit the clipboard
                 let Some(register) = Vim::update_globals(cx, |globals, cx| {
-                    if selected_register.is_some() {
-                        globals.read_register(selected_register, Some(editor), cx)
-                    } else {
-                        globals.read_default_register()
-                    }
+                    globals.read_register(selected_register, Some(editor), cx)
                 })
                 .filter(|reg| !reg.text.is_empty()) else {
                     return;
                 };
-                let text = register.text;
-                let clipboard_selections = register.clipboard_selections;
 
                 let display_map = editor.display_snapshot(cx);
                 let current_selections = editor.selections.all_adjusted_display(&display_map);
@@ -65,30 +91,7 @@ impl Vim {
 
                 let mut edits = Vec::new();
                 let mut new_selections = Vec::new();
-                let mut start_offset = 0;
-
-                let mut replacement_texts: Vec<String> = Vec::new();
-
-                for ix in 0..current_selections.len() {
-                    let to_insert = if let Some(clip_sel) =
-                        clipboard_selections.as_ref().and_then(|s| s.get(ix))
-                    {
-                        let end_offset = start_offset + clip_sel.len;
-                        let text = text[start_offset..end_offset].to_string();
-                        start_offset = if clip_sel.is_entire_line {
-                            end_offset
-                        } else {
-                            end_offset + 1
-                        };
-                        text
-                    } else if let Some(last_text) = replacement_texts.last() {
-                        // We have more current selections than clipboard selections: repeat the last one.
-                        last_text.to_owned()
-                    } else {
-                        text.to_string()
-                    };
-                    replacement_texts.push(to_insert);
-                }
+                let replacement_texts = replacement_texts(register, current_selections.len());
 
                 let line_mode = replacement_texts.iter().any(|text| text.ends_with('\n'));
 
@@ -181,7 +184,7 @@ mod test {
         cx.set_state("ˇ", Mode::HelixNormal);
 
         cx.write_to_clipboard(ClipboardItem::new_string("a\r\nb".to_string()));
-        cx.simulate_keystrokes("p");
+        cx.simulate_keystrokes("\" + p");
 
         cx.assert_state("«a\nbˇ»", Mode::HelixNormal);
     }

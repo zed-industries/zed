@@ -37,6 +37,7 @@ use ui::{
 };
 use util::ResultExt;
 use util::rel_path::RelPath;
+use vim_mode_setting::HelixModeSetting;
 use workspace::searchable::Direction;
 use workspace::{MultiWorkspace, Workspace, WorkspaceDb, WorkspaceId};
 
@@ -873,7 +874,7 @@ impl VimGlobals {
                 }
             }
         } else {
-            let setting = VimSettings::get_global(cx).use_system_clipboard;
+            let setting = Self::default_register_clipboard_policy(cx);
             if setting == UseSystemClipboard::Always
                 || setting == UseSystemClipboard::OnYank && is_yank
             {
@@ -906,9 +907,12 @@ impl VimGlobals {
         }
     }
 
-    /// Reads the default register `"` literally, ignoring `use_system_clipboard`
-    pub(crate) fn read_default_register(&self) -> Option<Register> {
-        self.registers.get(&'"').cloned()
+    fn default_register_clipboard_policy(cx: &App) -> UseSystemClipboard {
+        if HelixModeSetting::get_global(cx).0 {
+            UseSystemClipboard::Never
+        } else {
+            VimSettings::get_global(cx).use_system_clipboard
+        }
     }
 
     pub(crate) fn read_register(
@@ -918,7 +922,7 @@ impl VimGlobals {
         cx: &mut App,
     ) -> Option<Register> {
         let Some(register) = register.filter(|reg| *reg != '"') else {
-            let setting = VimSettings::get_global(cx).use_system_clipboard;
+            let setting = Self::default_register_clipboard_policy(cx);
             return match setting {
                 UseSystemClipboard::Always => cx.read_from_clipboard().map(|item| item.into()),
                 UseSystemClipboard::OnYank if self.system_clipboard_is_newer(cx) => {
