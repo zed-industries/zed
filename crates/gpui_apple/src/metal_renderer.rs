@@ -118,17 +118,20 @@ impl InstanceBufferPool {
     }
 }
 
+enum DisplayLinkMode {
+    Detached,
+    Attached {
+        drawable: Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>,
+    },
+}
+
 pub struct MetalRenderer {
     device: Retained<ProtocolObject<dyn MTLDevice>>,
     layer: Option<Retained<CAMetalLayer>>,
     is_apple_gpu: bool,
     is_unified_memory: bool,
     presents_with_transaction: bool,
-    /// A drawable a `CAMetalDisplayLink` handed out for the frame being drawn.
-    frame_drawable: Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>,
-    /// Whether a `CAMetalDisplayLink` drives the layer, which makes
-    /// `nextDrawable` raise `CAMetalLayerInvalidOperation`.
-    display_link_attached: bool,
+    display_link_mode: DisplayLinkMode,
     /// For headless rendering, tracks whether output should be opaque
     opaque: bool,
     command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
@@ -415,8 +418,7 @@ impl MetalRenderer {
             device,
             layer,
             presents_with_transaction: false,
-            frame_drawable: None,
-            display_link_attached: false,
+            display_link_mode: DisplayLinkMode::Detached,
             is_apple_gpu,
             is_unified_memory,
             opaque,
@@ -462,17 +464,38 @@ impl MetalRenderer {
     /// the frame to reach the display on time; `nextDrawable` would instead
     /// wait for the compositor to release one. Pass `None` once the frame is
     /// done, so a drawable the frame did not use goes back to the layer.
+    ///
+    /// Returns the drawable this replaces: after a frame, `Some` means the
+    /// frame neither drew nor presented.
+    ///
+    /// This is a setter rather than a guard scoped to one frame because the
+    /// window releases its lock on the renderer while GPUI draws.
     pub fn set_frame_drawable(
         &mut self,
         drawable: Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>,
-    ) {
-        self.frame_drawable = drawable;
+    ) -> Option<Retained<ProtocolObject<dyn CAMetalDrawable>>> {
+        match &mut self.display_link_mode {
+            DisplayLinkMode::Attached { drawable: current } => mem::replace(current, drawable),
+            DisplayLinkMode::Detached => {
+                // Only a live link hands out drawables, and a link is detached
+                // only after it has been invalidated.
+                debug_assert!(
+                    drawable.is_none(),
+                    "received a display link drawable while detached"
+                );
+                None
+            }
+        }
     }
 
     /// Record whether a `CAMetalDisplayLink` drives the layer. While one
     /// does, frames are drawn only into the drawables it hands out.
     pub fn set_display_link_attached(&mut self, attached: bool) {
-        self.display_link_attached = attached;
+        self.display_link_mode = if attached {
+            DisplayLinkMode::Attached { drawable: None }
+        } else {
+            DisplayLinkMode::Detached
+        };
     }
 
     pub fn set_presents_with_transaction(&mut self, presents_with_transaction: bool) {
@@ -565,21 +588,24 @@ impl MetalRenderer {
                 return;
             }
         };
-        let drawable = if let Some(drawable) = self.frame_drawable.take() {
-            drawable
-        } else if self.display_link_attached {
-            // The exception `nextDrawable` would raise here cannot unwind
-            // through the Rust frames above, so it would abort the process.
-            log::error!("skipped a frame drawn outside its display link's update");
-            return;
-        } else if let Some(drawable) = layer.nextDrawable() {
-            drawable
-        } else {
-            log::error!(
-                "failed to retrieve next drawable, drawable size: {:?}",
-                layer.drawableSize()
-            );
-            return;
+        let drawable = match &mut self.display_link_mode {
+            DisplayLinkMode::Attached { drawable } => {
+                let Some(drawable) = drawable.take() else {
+                    log::error!("skipped a frame drawn outside its display link's update");
+                    return;
+                };
+                drawable
+            }
+            DisplayLinkMode::Detached => {
+                let Some(drawable) = layer.nextDrawable() else {
+                    log::error!(
+                        "failed to retrieve next drawable, drawable size: {:?}",
+                        layer.drawableSize()
+                    );
+                    return;
+                };
+                drawable
+            }
         };
         // A display link's drawable was sized when the link handed it out,
         // which can be before a resize the layer has since taken.
@@ -1891,6 +1917,51 @@ mod tests {
         CVPixelBufferUnlockBaseAddress, kCVPixelBufferIOSurfacePropertiesKey,
     };
     use objc2_metal::MTLCommandBufferStatus;
+
+    #[test]
+    fn display_link_mode_consumes_and_clears_drawables() -> Result<()> {
+        let mut renderer = MetalRenderer::new(Default::default(), false, false)?;
+        renderer.update_drawable_size(size(DevicePixels(64), DevicePixels(64)));
+        let drawable = renderer
+            .layer()
+            .and_then(|layer| layer.nextDrawable())
+            .context("window renderer must supply a drawable")?;
+
+        renderer.set_display_link_attached(true);
+        assert!(matches!(
+            renderer.display_link_mode,
+            DisplayLinkMode::Attached { drawable: None }
+        ));
+        assert!(
+            renderer
+                .set_frame_drawable(Some(drawable.clone()))
+                .is_none()
+        );
+        assert!(matches!(
+            renderer.display_link_mode,
+            DisplayLinkMode::Attached { drawable: Some(_) }
+        ));
+        renderer.draw(&Scene::default());
+        assert!(matches!(
+            renderer.display_link_mode,
+            DisplayLinkMode::Attached { drawable: None }
+        ));
+        // A frame that drew consumed its drawable; one that didn't hands it back.
+        assert!(
+            renderer
+                .set_frame_drawable(Some(drawable.clone()))
+                .is_none()
+        );
+        assert!(renderer.set_frame_drawable(None).is_some());
+
+        renderer.set_frame_drawable(Some(drawable));
+        renderer.set_display_link_attached(false);
+        assert!(matches!(
+            renderer.display_link_mode,
+            DisplayLinkMode::Detached
+        ));
+        Ok(())
+    }
 
     #[test]
     fn render_core_video_surface() {
