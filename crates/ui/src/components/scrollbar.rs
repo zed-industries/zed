@@ -1765,7 +1765,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                         state.show_scrollbars(cx);
                                     }
                                     state.update_hovered_thumb(&event.position, window, cx);
-                                    if state.thumb_state != ThumbState::Inactive {
+                                    if state.hit_for_position(&event.position).is_some() {
                                         cx.stop_propagation();
                                     }
                                 }
@@ -1819,7 +1819,7 @@ impl<T: ScrollableHandle> IntoElement for ScrollbarElement<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, div, point};
+    use gpui::{Modifiers, PlatformInput, TestAppContext, div, point};
 
     struct TestScrollbarSetting(ShowScrollbar);
 
@@ -1967,14 +1967,19 @@ mod tests {
 
     struct ScrollbarTestView {
         handle: ScrollHandle,
+        reserve_track: bool,
         scrollbar: Option<Entity<ScrollbarStateWrapper<ScrollHandle>>>,
     }
 
     impl Render for ScrollbarTestView {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let config = Scrollbars::always_visible(ScrollAxes::Vertical)
-                .tracked_scroll_handle(&self.handle)
-                .with_track_along(ScrollAxes::Vertical, Hsla::transparent_black());
+                .tracked_scroll_handle(&self.handle);
+            let config = if self.reserve_track {
+                config.with_track_along(ScrollAxes::Vertical, Hsla::transparent_black())
+            } else {
+                config
+            };
             let scrollbar = get_scrollbar_state(
                 config,
                 &StyleRefinement::default(),
@@ -2009,6 +2014,7 @@ mod tests {
         });
         let (view, cx) = cx.add_window_view(|_, _| ScrollbarTestView {
             handle: ScrollHandle::new(),
+            reserve_track: true,
             scrollbar: None,
         });
 
@@ -2045,5 +2051,79 @@ mod tests {
                     .is_some()
             );
         });
+    }
+
+    #[gpui::test]
+    fn mouse_move_over_scrollbar_track_does_not_propagate(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        // No explicitly reserved track: this mirrors `Scrollbars::for_settings`,
+        // which is what hover popovers use. Before the track was made clickable,
+        // only the thumb intercepted mouse moves here.
+        let (view, cx) = cx.add_window_view(|_, _| ScrollbarTestView {
+            handle: ScrollHandle::new(),
+            reserve_track: false,
+            scrollbar: None,
+        });
+
+        let (track_point, content_point) = view.read_with(cx, |view, cx| {
+            let scrollbar = view
+                .scrollbar
+                .as_ref()
+                .expect("scrollbar rendered")
+                .read(cx)
+                .0
+                .read(cx);
+            let prepaint_state = scrollbar
+                .last_prepaint_state
+                .as_ref()
+                .expect("prepaint state");
+            let thumb = prepaint_state
+                .thumbs
+                .iter()
+                .find(|thumb| thumb.axis == ScrollbarAxis::Vertical)
+                .expect("vertical thumb");
+
+            let track_point = point(
+                thumb.track_bounds.center().x,
+                thumb.track_bounds.bottom() - px(16.),
+            );
+            assert!(thumb.track_bounds.contains(&track_point));
+            assert!(
+                !thumb.thumb_hit_bounds.contains(&track_point),
+                "expected a point on the track, outside the thumb"
+            );
+
+            (track_point, point(px(20.), px(20.)))
+        });
+
+        let mut dispatch_move = |position| {
+            cx.update(|window, cx| {
+                window.dispatch_event(
+                    PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        modifiers: Modifiers::default(),
+                        pressed_button: None,
+                    }),
+                    cx,
+                )
+            })
+        };
+
+        assert!(
+            dispatch_move(content_point).propagate,
+            "mouse moves over the content should propagate"
+        );
+
+        // A hover popover dismisses itself from a mousemove that reaches its
+        // editor's handler, so the scrollbar track must stop propagation just
+        // like the thumb does.
+        assert!(
+            !dispatch_move(track_point).propagate,
+            "mouse moves over the scrollbar track should not propagate"
+        );
     }
 }
