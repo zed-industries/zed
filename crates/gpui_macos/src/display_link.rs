@@ -50,6 +50,7 @@
 //! is a std implementation detail, not a guarantee; if it changes, the cost
 //! is added latency under contention, not incorrectness.)
 
+use crate::main_thread_marker;
 use anyhow::Result;
 use core_graphics::display::CGDirectDisplayID;
 use dispatch2::{
@@ -113,7 +114,7 @@ fn lock_registry() -> MutexGuard<'static, Registry> {
 
 fn debug_assert_main_thread() {
     debug_assert!(
-        objc2::MainThreadMarker::new().is_some(),
+        main_thread_marker().is_some(),
         "display link registry mutations must happen on the main thread; \
          the registry's lock ordering and state consistency depend on it"
     );

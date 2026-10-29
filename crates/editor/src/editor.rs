@@ -265,7 +265,10 @@ use theme::{
 use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
     Avatar, ContextMenu, Disclosure, IconButtonShape, Indicator, Key, KeyBinding, Tooltip,
-    prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
+    prelude::*,
+    scrollbars::ScrollbarAutoHide,
+    tooltip_container,
+    utils::{RetainedFocusExt as _, WithRemSize},
 };
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
@@ -927,6 +930,16 @@ struct GutterHoverButton {
     is_active: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum LspDataKind {
+    PullDiagnostics,
+    DocumentColors,
+    DocumentLinks,
+    FoldingRanges,
+    CodeLens,
+    DocumentSymbols,
+}
+
 enum CodeActionsForSelection {
     None,
     Fetching(Shared<Task<Option<ActionFetchReady>>>),
@@ -1170,7 +1183,8 @@ pub struct Editor {
     /// Counter for generating unique comment IDs.
     next_review_comment_id: usize,
     hovered_diff_hunk_row: Option<DisplayRow>,
-    pull_diagnostics_task: Task<()>,
+    lsp_data_tasks: HashMap<BufferId, HashMap<LspDataKind, Shared<Task<()>>>>,
+    offscreen_lsp_data_tasks: HashMap<LspDataKind, (BufferId, Task<()>)>,
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -1196,10 +1210,7 @@ pub struct Editor {
     colors: Option<LspColorData>,
     code_lens: Option<CodeLensState>,
     post_scroll_update: Task<()>,
-    refresh_colors_task: Task<()>,
-    refresh_code_lens_task: Task<()>,
     use_document_folding_ranges: bool,
-    refresh_folding_ranges_task: Task<()>,
     inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
     select_next_options: Option<SelectSearchOptions>,
@@ -1212,7 +1223,6 @@ pub struct Editor {
     bracket_fetched_tree_sitter_chunks: HashMap<Range<text::Anchor>, HashSet<Range<BufferRow>>>,
     semantic_token_state: SemanticTokenState,
     pub(crate) refresh_matching_bracket_highlights_task: Task<()>,
-    refresh_document_symbols_task: Shared<Task<()>>,
     lsp_document_links: LspDocumentLinks,
     lsp_document_symbols: HashMap<BufferId, Vec<OutlineItem<text::Anchor>>>,
     refresh_outline_symbols_at_cursor_at_cursor_task: Task<()>,
@@ -1753,37 +1763,40 @@ struct GutterButtonTooltip {
 }
 
 impl GutterButtonTooltip {
-    fn active_intent(&self, modifiers: Modifiers) -> GutterButtonIntent {
-        if modifiers.secondary() {
+    fn active_intent(&self, modifiers: Modifiers, cx: &App) -> GutterButtonIntent {
+        if modifiers.secondary(cx) {
             self.secondary
         } else {
             self.primary
         }
     }
 
-    fn meta_text(&self) -> String {
+    fn meta_text(&self, cx: &App) -> String {
         const RIGHT_CLICK_HINT: &str = "right-click for more options";
 
         if self.primary == self.secondary {
             return RIGHT_CLICK_HINT.to_string();
         }
         let modifier_as_text = gpui::Keystroke {
-            modifiers: Modifiers::secondary_key(),
+            modifiers: Modifiers::secondary_key(cx),
             ..Default::default()
         };
         let secondary = match self.secondary {
             GutterButtonIntent::SetBookmark => "bookmark",
             GutterButtonIntent::SetBreakpoint => "breakpoint",
         };
-        format!("{modifier_as_text}-click to add a {secondary}\n{RIGHT_CLICK_HINT}")
+        format!(
+            "{}-click to add a {secondary}\n{RIGHT_CLICK_HINT}",
+            modifier_as_text.display(cx.platform_info().os)
+        )
     }
 }
 
 impl Render for GutterButtonTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let intent = self.active_intent(window.modifiers());
+        let intent = self.active_intent(window.modifiers(), cx);
         let key_binding = KeyBinding::for_action_in(intent.action(), &self.focus_handle, cx);
-        let meta_text = self.meta_text();
+        let meta_text = self.meta_text(cx);
 
         #[cfg(test)]
         if let Some(on_render) = &self.on_render {
@@ -2324,7 +2337,11 @@ impl Editor {
 
         let inlay_hint_settings =
             inlay_hint_settings(selections.newest_anchor().head(), &buffer_snapshot, cx);
-        let focus_handle = cx.focus_handle();
+        let focus_handle = if mode.is_single_line() {
+            cx.retained_focus_handle()
+        } else {
+            cx.focus_handle()
+        };
         if !is_minimap {
             cx.on_focus(&focus_handle, window, Self::handle_focus)
                 .detach();
@@ -2551,13 +2568,11 @@ impl Editor {
                 })
                 .unwrap_or_default(),
             runnables: RunnableData::new(),
-            pull_diagnostics_task: Task::ready(()),
+            lsp_data_tasks: HashMap::default(),
+            offscreen_lsp_data_tasks: HashMap::default(),
             colors: None,
             code_lens: None,
-            refresh_colors_task: Task::ready(()),
-            refresh_code_lens_task: Task::ready(()),
             use_document_folding_ranges: false,
-            refresh_folding_ranges_task: Task::ready(()),
             inlay_hints: None,
             next_color_inlay_id: 0,
             post_scroll_update: Task::ready(()),
@@ -2594,7 +2609,6 @@ impl Editor {
             bracket_fetched_tree_sitter_chunks: HashMap::default(),
             number_deleted_lines: false,
             refresh_matching_bracket_highlights_task: Task::ready(()),
-            refresh_document_symbols_task: Task::ready(()).shared(),
             lsp_document_links: LspDocumentLinks::new(cx),
             lsp_document_symbols: HashMap::default(),
             refresh_outline_symbols_at_cursor_at_cursor_task: Task::ready(()),
@@ -2650,9 +2664,8 @@ impl Editor {
                                 new_anchor.offset,
                             );
                         });
-
-                        editor.update_data_on_scroll(true, window, cx);
                     }
+                    editor.update_data_on_scroll(true, window, cx);
                     editor.refresh_sticky_headers(&editor.snapshot(window, cx), cx);
                 }
                 EditorEvent::Edited { .. } => {
@@ -2787,7 +2800,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> KeyContext {
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("Editor");
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
@@ -4191,7 +4204,7 @@ impl Editor {
 
     fn is_cmd_or_ctrl_pressed(modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
         match EditorSettings::get_global(cx).multi_cursor_modifier {
-            MultiCursorModifier::Alt => modifiers.secondary(),
+            MultiCursorModifier::Alt => modifiers.secondary(cx),
             MultiCursorModifier::CmdOrCtrl => modifiers.alt,
         }
     }
@@ -4199,7 +4212,7 @@ impl Editor {
     fn is_alt_pressed(modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
         match EditorSettings::get_global(cx).multi_cursor_modifier {
             MultiCursorModifier::Alt => modifiers.alt,
-            MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
+            MultiCursorModifier::CmdOrCtrl => modifiers.secondary(cx),
         }
     }
 
@@ -4737,7 +4750,7 @@ impl Editor {
         let breakpoint = Arc::from(breakpoint.clone());
 
         let alt_as_text = gpui::Keystroke {
-            modifiers: Modifiers::secondary_key(),
+            modifiers: Modifiers::secondary_key(cx),
             ..Default::default()
         };
         let primary_action_text = "Unset breakpoint";
@@ -4748,7 +4761,8 @@ impl Editor {
             SharedString::from("No executable code is associated with this line.")
         } else if !breakpoint.is_disabled() {
             SharedString::from(format!(
-                "{alt_as_text}-click to disable\nright-click for more options"
+                "{}-click to disable\nright-click for more options",
+                alt_as_text.display(cx.platform_info().os)
             ))
         } else {
             SharedString::from("Right-click for more options")
@@ -4818,7 +4832,7 @@ impl Editor {
             }
         };
 
-        let intent = if window.modifiers().secondary() {
+        let intent = if window.modifiers().secondary(cx) {
             secondary
         } else {
             primary
@@ -4834,7 +4848,7 @@ impl Editor {
             .on_click(cx.listener({
                 move |editor, _: &ClickEvent, window, cx| {
                     window.focus(&editor.focus_handle(cx), cx);
-                    let intent = if window.modifiers().secondary() {
+                    let intent = if window.modifiers().secondary(cx) {
                         secondary
                     } else {
                         primary
@@ -10155,6 +10169,7 @@ impl Editor {
                 }
                 self.refresh_document_highlights(cx);
                 let buffer_id = buffer.read(cx).remote_id();
+                self.remove_invalid_lsp_data(&[buffer_id], false, cx);
                 if self.buffer.read(cx).diff_for(buffer_id).is_none()
                     && let Some(project) = self.project.clone()
                 {
@@ -10178,6 +10193,7 @@ impl Editor {
                 });
             }
             multi_buffer::Event::BuffersRemoved { removed_buffer_ids } => {
+                self.remove_invalid_lsp_data(removed_buffer_ids, true, cx);
                 if let Some(inlay_hints) = &mut self.inlay_hints {
                     inlay_hints.remove_inlay_chunk_data(removed_buffer_ids);
                 }
@@ -10467,7 +10483,7 @@ impl Editor {
                     self.refresh_document_links(None, cx);
                 } else {
                     self.lsp_document_links.per_buffer.clear();
-                    self.lsp_document_links.refresh_task = Task::ready(());
+                    self.clear_lsp_data_tasks(LspDataKind::DocumentLinks);
                 }
             }
 
@@ -11422,6 +11438,110 @@ impl Editor {
         self.refresh_folding_ranges(for_buffer, window, cx);
         self.refresh_code_lenses(for_buffer, window, cx);
         self.refresh_document_symbols(for_buffer, cx);
+    }
+
+    fn lsp_data_buffers(
+        &self,
+        for_buffer: Option<BufferId>,
+        cx: &mut Context<Self>,
+    ) -> Vec<Entity<Buffer>> {
+        self.visible_buffers(cx)
+            .into_iter()
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
+            .chain(for_buffer.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
+            .filter(|buffer| {
+                let buffer_id = buffer.read(cx).remote_id();
+                for_buffer.is_none_or(|for_buffer| for_buffer == buffer_id)
+                    && self.registered_buffers.contains_key(&buffer_id)
+            })
+            .unique_by(|buffer| buffer.read(cx).remote_id())
+            .collect()
+    }
+
+    fn is_buffer_visible(&self, buffer_id: BufferId, cx: &mut Context<Self>) -> bool {
+        self.buffer.read(cx).is_singleton()
+            || self
+                .visible_buffers(cx)
+                .iter()
+                .any(|buffer| buffer.read(cx).remote_id() == buffer_id)
+    }
+
+    fn spawn_lsp_data_tasks(
+        &mut self,
+        kind: LspDataKind,
+        for_buffer: Option<BufferId>,
+        buffers: Vec<Entity<Buffer>>,
+        cx: &mut Context<Self>,
+        spawn: impl Fn(Entity<Buffer>, &mut Context<Self>) -> Task<()>,
+    ) {
+        let Some(buffer_id) = for_buffer else {
+            self.clear_lsp_data_tasks(kind);
+            for buffer in buffers {
+                let buffer_id = buffer.read(cx).remote_id();
+                let task = spawn(buffer, cx).shared();
+                self.insert_lsp_data_task(kind, buffer_id, task);
+            }
+            return;
+        };
+
+        if let Some(tasks) = self.lsp_data_tasks.get_mut(&buffer_id) {
+            tasks.remove(&kind);
+        }
+        if self
+            .offscreen_lsp_data_tasks
+            .get(&kind)
+            .is_some_and(|(task_buffer_id, _)| *task_buffer_id == buffer_id)
+        {
+            self.offscreen_lsp_data_tasks.remove(&kind);
+        }
+        let is_visible = self.is_buffer_visible(buffer_id, cx);
+        for buffer in buffers {
+            let task = spawn(buffer, cx);
+            if is_visible {
+                self.insert_lsp_data_task(kind, buffer_id, task.shared());
+            } else {
+                self.offscreen_lsp_data_tasks
+                    .insert(kind, (buffer_id, task));
+            }
+        }
+    }
+
+    fn insert_lsp_data_task(
+        &mut self,
+        kind: LspDataKind,
+        buffer_id: BufferId,
+        task: Shared<Task<()>>,
+    ) {
+        self.lsp_data_tasks
+            .entry(buffer_id)
+            .or_default()
+            .insert(kind, task);
+    }
+
+    fn clear_lsp_data_tasks(&mut self, kind: LspDataKind) {
+        for tasks in self.lsp_data_tasks.values_mut() {
+            tasks.remove(&kind);
+        }
+        self.offscreen_lsp_data_tasks.remove(&kind);
+    }
+
+    fn remove_invalid_lsp_data(
+        &mut self,
+        buffer_ids: &[BufferId],
+        buffers_removed: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        for buffer_id in buffer_ids {
+            if snapshot.buffer_for_id(*buffer_id).is_none() {
+                self.lsp_data_tasks.remove(buffer_id);
+                self.offscreen_lsp_data_tasks
+                    .retain(|_, (task_buffer_id, _)| task_buffer_id != buffer_id);
+            }
+        }
+        self.remove_invalid_code_lenses(buffer_ids, buffers_removed, &snapshot, cx);
+        self.remove_invalid_inline_diagnostics(buffer_ids, buffers_removed, &snapshot, cx);
+        self.remove_invalid_document_colors(buffer_ids, buffers_removed, &snapshot, cx);
     }
 
     fn is_eligible_for_language_detection(buffer: &Buffer) -> bool {

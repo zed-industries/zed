@@ -29,7 +29,10 @@ pub fn headless() -> gpui::Application {
 /// It starts windowed in the process's own environment, or headless if that names no allowed
 /// display server. Set another initial mode with [`gpui::Application::with_windowing`], and
 /// switch later with [`gpui::App::request_windowing`].
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "freebsd"),
+    not(target_env = "ohos")
+))]
 pub fn linux(allowed_modes: gpui::WindowingModes) -> gpui::Application {
     gpui::Application::with_platform(gpui_linux::linux_platform(allowed_modes))
 }
@@ -83,7 +86,18 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
         )
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_env = "ohos")]
+    {
+        let _ = headless;
+        panic!(
+            "gpui_platform does not select an OpenHarmony backend; inject gpui-ohos with Application::with_platform"
+        )
+    }
+
+    #[cfg(all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(target_env = "ohos")
+    ))]
     {
         gpui_linux::current_platform(headless)
     }
@@ -118,7 +132,7 @@ pub fn current_headless_renderer() -> anyhow::Result<Option<Box<dyn gpui::Platfo
     #[cfg(target_os = "macos")]
     {
         Ok(Some(Box::new(
-            gpui_macos::metal_renderer::MetalHeadlessRenderer::new(),
+            gpui_macos::metal_renderer::MetalHeadlessRenderer::new()?,
         )))
     }
 

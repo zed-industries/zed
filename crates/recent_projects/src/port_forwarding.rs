@@ -9,6 +9,7 @@ use gpui::{
 use project::Fs;
 use remote::{RemoteConnectionIdentity, SshConnectionOptions, SshPortForwardOption};
 use settings::{Settings as _, SettingsStore, SshConnection, update_settings_file_with_completion};
+use std::borrow::Cow;
 use std::sync::Arc;
 use ui::{
     Button, Color, Icon, IconButton, IconButtonShape, IconName, IconSize, Label, LabelSize,
@@ -24,16 +25,16 @@ fn ssh_connection_identity(
     host: impl Into<String>,
     username: Option<String>,
     port: Option<u16>,
-) -> RemoteConnectionIdentity {
+) -> RemoteConnectionIdentity<'static> {
     RemoteConnectionIdentity::Ssh {
-        host: host.into(),
-        username,
+        host: Cow::Owned(host.into()),
+        username: username.map(Cow::Owned),
         port,
     }
 }
 
 fn ssh_identity_matches_connection(
-    identity: &RemoteConnectionIdentity,
+    identity: &RemoteConnectionIdentity<'_>,
     connection: &SshConnection,
 ) -> bool {
     let RemoteConnectionIdentity::Ssh {
@@ -45,7 +46,9 @@ fn ssh_identity_matches_connection(
         return false;
     };
 
-    host == &connection.host && username == &connection.username && port == &connection.port
+    host.as_ref() == connection.host
+        && username.as_deref() == connection.username.as_deref()
+        && *port == connection.port
 }
 
 struct ForwardEditor {
@@ -130,7 +133,7 @@ impl ForwardUpdateError {
 }
 
 pub struct PortForwardingPopover {
-    connection: RemoteConnectionIdentity,
+    connection: RemoteConnectionIdentity<'static>,
     connection_name: SharedString,
     fs: Arc<dyn Fs>,
     workspace: WeakEntity<Workspace>,
@@ -752,7 +755,7 @@ impl PortForwardingPopover {
 }
 
 fn read_forwards(
-    identity: &RemoteConnectionIdentity,
+    identity: &RemoteConnectionIdentity<'_>,
     cx: &App,
 ) -> Result<Vec<SshPortForwardOption>, ForwardUpdateError> {
     let connections = RemoteSettings::get_global(cx)
@@ -769,7 +772,7 @@ fn read_forwards(
 
 fn apply_settings_change(
     settings: &mut settings::RemoteSettingsContent,
-    identity: &RemoteConnectionIdentity,
+    identity: &RemoteConnectionIdentity<'_>,
     change: ForwardChange,
 ) -> Result<Vec<SshPortForwardOption>, String> {
     let mut connections = settings.ssh_connections.clone().unwrap_or_default();
@@ -817,8 +820,8 @@ fn apply_settings_change(
                 )
                 .map_err(|error| error.message().to_owned())?;
                 connections.push(SshConnection {
-                    host: host.clone(),
-                    username: username.clone(),
+                    host: host.to_string(),
+                    username: username.as_ref().map(ToString::to_string),
                     port: *port,
                     port_forwards: Some(forwards.clone()),
                     ..Default::default()
@@ -1060,7 +1063,7 @@ mod tests {
 
     fn assert_persisted_connections(
         cx: &mut gpui::VisualTestContext,
-        identity: &RemoteConnectionIdentity,
+        identity: &RemoteConnectionIdentity<'_>,
         target_forwards: &[SshPortForwardOption],
     ) {
         let connections = cx.update(|_, cx| read_ssh_connections(cx));

@@ -2501,7 +2501,7 @@ impl Interactivity {
                 .tracked_scroll_handle
                 .as_ref()
                 .map(|handle| handle.0.borrow_mut());
-            if let Some(mut scroll_handle_state) = tracked_scroll_handle.as_deref_mut() {
+            if let Some(scroll_handle_state) = tracked_scroll_handle.as_deref_mut() {
                 scroll_handle_state.overflow = style.overflow;
                 scroll_to_bottom = mem::take(&mut scroll_handle_state.scroll_to_bottom);
             }
@@ -2731,12 +2731,12 @@ impl Interactivity {
                     };
                     if let Some(source_location) = self.source_location
                         && text_bounds.contains(&window.mouse_position())
-                        && window.modifiers().secondary()
+                        && window.modifiers().secondary(cx)
                     {
-                        let secondary_held = window.modifiers().secondary();
+                        let secondary_held = window.modifiers().secondary(cx);
                         window.on_key_event({
-                            move |e: &crate::ModifiersChangedEvent, _phase, window, _cx| {
-                                if e.modifiers.secondary() != secondary_held
+                            move |e: &crate::ModifiersChangedEvent, _phase, window, cx| {
+                                if e.modifiers.secondary(cx) != secondary_held
                                     && text_bounds.contains(&window.mouse_position())
                                 {
                                     window.refresh();
@@ -4456,7 +4456,7 @@ impl ScrollHandle {
     /// Set the offset explicitly. The offset is the distance from the top left of the
     /// parent container to the top left of the first child.
     /// As you scroll further down the offset becomes more negative.
-    pub fn set_offset(&self, mut position: Point<Pixels>) {
+    pub fn set_offset(&self, position: Point<Pixels>) {
         let state = self.0.borrow();
         *state.offset.borrow_mut() = position;
     }
@@ -5141,7 +5141,7 @@ mod tests {
     fn tooltip_respects_custom_show_delay() {
         let extra_delay = Duration::from_secs(1);
         let show_delay_override = DEFAULT_TOOLTIP_SHOW_DELAY + extra_delay;
-        let (mut test_app, _any_window, captured_active_tooltip) =
+        let (test_app, _any_window, captured_active_tooltip) =
             setup_tooltip_owner_test(Some(show_delay_override));
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
@@ -5505,7 +5505,8 @@ mod tests {
     }
 
     fn key_down(cx: &mut TestAppContext, window: AnyWindowHandle, key: &str) {
-        let keystroke = Keystroke::parse(key).unwrap();
+        let os = cx.read(|cx| cx.platform_info().os);
+        let keystroke = Keystroke::parse_with_os(key, os).unwrap();
         cx.update_window(window, |_, window, cx| {
             window.dispatch_event(
                 KeyDownEvent {
@@ -5521,7 +5522,8 @@ mod tests {
     }
 
     fn key_up(cx: &mut TestAppContext, window: AnyWindowHandle, key: &str) {
-        let keystroke = Keystroke::parse(key).unwrap();
+        let os = cx.read(|cx| cx.platform_info().os);
+        let keystroke = Keystroke::parse_with_os(key, os).unwrap();
         cx.update_window(window, |_, window, cx| {
             window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
         })

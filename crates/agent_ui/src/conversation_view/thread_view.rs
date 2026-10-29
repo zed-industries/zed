@@ -11,7 +11,8 @@ use std::{cell::RefCell, path::Path};
 use acp_thread::{
     Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity, OutputTokensUpdate,
     SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason,
-    SubmissionId, SubmissionResponse, SubmissionState, ToolCallLocation, decode_path_escapes,
+    SessionMessageSide, SubmissionId, SubmissionResponse, SubmissionState, ToolCallLocation,
+    decode_path_escapes,
 };
 use agent::{
     SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
@@ -55,8 +56,20 @@ use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
 };
-use super::subagent_card::{SubagentCardState, SubagentStatus};
+use super::subagent_card::{
+    AcpSubagentCard, SubagentCardId, SubagentCardState, SubagentStatus, acp_subagent_card,
+};
 use super::*;
+
+/// How a parent's view names a subagent. An ACP parent's own title for the subagent
+/// describes it in that view, so it wins over the subagent's title for itself.
+pub(super) fn subagent_label(thread: &AcpThread) -> SharedString {
+    thread
+        .subagent_association()
+        .and_then(|association| association.title.clone())
+        .or_else(|| thread.title())
+        .unwrap_or_else(|| "Subagent".into())
+}
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
 
@@ -2123,7 +2136,7 @@ impl ThreadView {
                     .read()
                     .available_commands()
                     .iter()
-                    .any(|available_command| available_command.name == "logout");
+                    .any(|available_command| available_command.name() == "logout");
             if can_login && !logout_supported {
                 message_editor.update(cx, |editor, cx| editor.clear(window, cx));
                 self.clear_external_source_prompt_warning(cx);
@@ -3741,19 +3754,6 @@ impl ThreadView {
 
     // thread stuff
 
-    pub fn restore_checkpoint(&mut self, client_id: &ClientUserMessageId, cx: &mut Context<Self>) {
-        self.thread
-            .update(cx, |thread, cx| {
-                telemetry::event!(
-                    "Agent Checkpoint Restored",
-                    agent = thread.connection().telemetry_id(),
-                    session = thread.session_id().clone(),
-                );
-                thread.restore_checkpoint(client_id.clone(), cx)
-            })
-            .detach_and_log_err(cx);
-    }
-
     pub fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
         self.thread_error = None;
         self.thread_error_markdown = None;
@@ -4329,7 +4329,7 @@ impl ThreadView {
                 } else {
                     Some(format!(
                         "Subagent: {} ({session_id})",
-                        thread.title().unwrap_or_else(|| "Subagent".into())
+                        subagent_label(thread)
                     ))
                 };
                 cards.push(self.render_generic_permission_card(
@@ -5207,7 +5207,16 @@ impl ThreadView {
             return false;
         };
 
-        let my_session_id = self.thread.read(cx).session_id().clone();
+        // A subagent that reports its own state shows that. Otherwise, as for a native
+        // subagent saved before it recorded outcomes, its outcome is its parent's tool call.
+        let thread = self.thread.read(cx);
+        if thread.subagent_association().is_some() && thread.has_received_session_state() {
+            return SubagentCardState::from_acp_subagent(thread, None)
+                .status
+                .is_failed_or_canceled();
+        }
+
+        let my_session_id = thread.session_id().clone();
 
         self.server_view
             .upgrade()
@@ -5234,6 +5243,12 @@ impl ThreadView {
         let thread = self.thread.clone();
         let is_done = thread.read(cx).status() == ThreadStatus::Idle;
         let is_canceled_or_failed = self.is_subagent_canceled_or_failed(cx);
+        // An ACP subagent can only be cancelled when its parent advertises `cancel` for it.
+        let can_stop = !is_done
+            && thread
+                .read(cx)
+                .subagent_association()
+                .is_none_or(|association| association.can_cancel);
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 
@@ -5276,15 +5291,22 @@ impl ThreadView {
                         .child(
                             h_flex()
                                 .gap_0p5()
-                                .when(!is_done, |this| {
+                                .when(can_stop, |this| {
                                     this.child(
-                                        IconButton::new("stop_subagent", IconName::Stop)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Error)
-                                            .tooltip(Tooltip::text("Stop Subagent"))
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.cancel_thread(&thread, cx).detach();
-                                            })),
+                                        div()
+                                            .debug_selector(|| "subagent-titlebar-stop".into())
+                                            .child(
+                                                IconButton::new("stop_subagent", IconName::Stop)
+                                                    .icon_size(IconSize::Small)
+                                                    .icon_color(Color::Error)
+                                                    .tooltip(Tooltip::text("Stop Subagent"))
+                                                    .on_click(cx.listener(
+                                                        move |this, _, _, cx| {
+                                                            this.cancel_thread(&thread, cx)
+                                                                .detach();
+                                                        },
+                                                    )),
+                                            ),
                                     )
                                 })
                                 .child(
@@ -5312,7 +5334,15 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if self.is_subagent() {
-            return div().into_any_element();
+            return h_flex()
+                .px_2()
+                .py_1()
+                .children(
+                    self.config_options_view
+                        .clone()
+                        .filter(|view| view.read(cx).is_read_only()),
+                )
+                .into_any_element();
         }
 
         let focus_handle = self.message_editor.focus_handle(cx);
@@ -7215,13 +7245,8 @@ impl ThreadView {
                 let opaque_window = cx.theme().window_background_appearance()
                     == gpui::WindowBackgroundAppearance::Opaque;
 
-                let has_checkpoint_button = message
-                    .checkpoint
-                    .as_ref()
-                    .is_some_and(|checkpoint| checkpoint.show);
-
                 let is_subagent = self.is_subagent();
-                let can_restore_checkpoint = self
+                let can_rewind = self
                     .thread
                     .read(cx)
                     .can_rewind_to(message.client_id.as_ref(), cx);
@@ -7230,7 +7255,7 @@ impl ThreadView {
                     .source_blocks()
                     .iter()
                     .all(acp_thread::content::can_convert_to_v1);
-                let is_editable = can_restore_checkpoint && source_is_representable;
+                let is_editable = can_rewind && source_is_representable;
                 let agent_name = if is_subagent {
                     "subagents".into()
                 } else {
@@ -7250,25 +7275,6 @@ impl ThreadView {
                     .px_2()
                     .gap_1p5()
                     .w_full()
-                    .when(can_restore_checkpoint && has_checkpoint_button, |this| {
-                        this.children(message.client_id.clone().map(|client_id| {
-                            h_flex()
-                                .px_3()
-                                .gap_2()
-                                .child(Divider::horizontal())
-                                .child(
-                                    Button::new("restore-checkpoint", "Restore Checkpoint")
-                                        .start_icon(Icon::new(IconName::Undo).size(IconSize::XSmall).color(Color::Muted))
-                                        .label_size(LabelSize::XSmall)
-                                        .color(Color::Muted)
-                                        .tooltip(Tooltip::text("Restores all files in the project to the content they had at this point in the conversation."))
-                                        .on_click(cx.listener(move |this, _, _window, cx| {
-                                            this.restore_checkpoint(&client_id, cx);
-                                        }))
-                                )
-                                .child(Divider::horizontal())
-                        }))
-                    })
                     .child(
                         div()
                             .relative()
@@ -7524,6 +7530,23 @@ impl ThreadView {
             }
             AgentThreadEntry::ContextCompaction(compaction) => {
                 self.render_context_compaction(entry_ix, compaction, window, cx)
+            }
+            AgentThreadEntry::SessionMessage(message) => {
+                let session_message =
+                    match acp_subagent_card(self.thread.read(cx), entry_ix, message, cx) {
+                        Some(card) => self.render_acp_subagent_card(entry_ix, &card, window, cx),
+                        None => self.render_session_message(entry_ix, message, window, cx),
+                    };
+                if let Some(handle) = self
+                    .entry_view_state
+                    .read(cx)
+                    .entry(entry_ix)
+                    .and_then(|entry| entry.focus_handle(cx))
+                {
+                    session_message.track_focus(&handle).into_any()
+                } else {
+                    session_message.into_any()
+                }
             }
         };
 
@@ -8095,6 +8118,14 @@ impl ThreadView {
 
     pub fn scroll_to_end(&mut self, cx: &mut Context<Self>) {
         self.list_state.scroll_to_end();
+        cx.notify();
+    }
+
+    pub(crate) fn scroll_to_entry(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
+        self.list_state.scroll_to(ListOffset {
+            item_ix: entry_ix,
+            offset_in_item: px(0.),
+        });
         cx.notify();
     }
 
@@ -8841,11 +8872,166 @@ impl ThreadView {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
 
         has_running_terminal_call
+    }
+
+    fn render_session_message(
+        &self,
+        entry_ix: usize,
+        message: &acp_thread::SessionMessage,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let own_session_id = self.thread.read(cx).session_id().clone();
+        let (icon, direction, participant) = match message.side(&own_session_id) {
+            SessionMessageSide::Outgoing { recipient } => (IconName::Send, "To", recipient),
+            SessionMessageSide::Incoming { sender } => (IconName::Envelope, "From", sender),
+            SessionMessageSide::Unknown => (IconName::Envelope, "Message between sessions", None),
+        };
+        let participant = participant.map(|session_id| {
+            match self.session_participant_label(session_id, cx) {
+                Some(label) => div()
+                    .debug_selector(move || format!("session-message-participant-{entry_ix}"))
+                    .child(
+                        Button::new(("session-message-participant", entry_ix), label)
+                            .label_size(LabelSize::Small)
+                            .tooltip(Tooltip::text("Open Session"))
+                            .on_click(cx.listener({
+                                let session_id = session_id.clone();
+                                move |this, _, window, cx| {
+                                    this.open_session_message_participant(
+                                        entry_ix,
+                                        &session_id,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            })),
+                    )
+                    .into_any_element(),
+                // The RFD allows messages naming a session this conversation never learned about.
+                None => Label::new("Unavailable Session")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .into_any_element(),
+            }
+        });
+
+        v_flex()
+            .px_5()
+            .py_1p5()
+            .w_full()
+            .gap_1p5()
+            .text_ui(cx)
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                    .child(
+                        Label::new(direction)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .children(participant),
+            )
+            .child(
+                div()
+                    .pl_3()
+                    .border_l_2()
+                    .border_color(cx.theme().colors().border)
+                    .child(self.render_message_content(entry_ix, 0, &message.content, window, cx)),
+            )
+    }
+
+    fn render_acp_subagent_card(
+        &self,
+        entry_ix: usize,
+        card: &AcpSubagentCard,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let subagent = card.subagent.read(cx);
+        let subagent_session_id = subagent.session_id().clone();
+        let subagent_thread_view = self
+            .server_view
+            .upgrade()
+            .and_then(|server_view| server_view.read(cx).as_connected())
+            .and_then(|connected| connected.threads.get(&subagent_session_id));
+        let content = self.render_subagent_card(
+            self.thread.read(cx).session_id(),
+            entry_ix,
+            &card.id,
+            &SubagentCardState::from_acp_subagent(subagent, card.entries),
+            subagent_thread_view,
+            &self.focus_handle(cx),
+            window,
+            cx,
+        );
+
+        v_flex()
+            .mx_5()
+            .my_1p5()
+            .gap_3()
+            .debug_selector(move || format!("subagent-card-{entry_ix}"))
+            .child(content)
+    }
+
+    /// Opens the other participant of the session message at `entry_ix`, at its view of the
+    /// message when the two views are linked.
+    fn open_session_message_participant(
+        &mut self,
+        entry_ix: usize,
+        session_id: &acp_v2::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(server_view) = self.server_view.upgrade() else {
+            return;
+        };
+        let participant_view = server_view.read(cx).thread_view(session_id);
+        let thread = self.thread.read(cx);
+        let linked_entry_ix = participant_view.as_ref().and_then(|participant_view| {
+            let Some(AgentThreadEntry::SessionMessage(message)) = thread.entries().get(entry_ix)
+            else {
+                return None;
+            };
+            participant_view
+                .read(cx)
+                .thread
+                .read(cx)
+                .linked_session_message(message, thread.session_id())
+        });
+        server_view.update(cx, |view, cx| {
+            view.navigate_to_thread(session_id.clone(), window, cx)
+        });
+        if let Some(participant_view) = participant_view
+            && let Some(linked_entry_ix) = linked_entry_ix
+        {
+            participant_view.update(cx, |view, cx| view.scroll_to_entry(linked_entry_ix, cx));
+        }
+    }
+
+    /// How this conversation names another of its sessions, or `None` when it has no thread
+    /// for that session.
+    pub(super) fn session_participant_label(
+        &self,
+        session_id: &acp_v2::SessionId,
+        cx: &App,
+    ) -> Option<SharedString> {
+        // Read the thread through the conversation rather than its view: an expanded subagent
+        // card renders the subagent's entries while the parent's view is being updated.
+        let conversation = self.conversation.read(cx);
+        let thread = conversation.thread(session_id)?.read(cx);
+        Some(if thread.parent_session_id().is_none() {
+            "Main Agent".into()
+        } else {
+            subagent_label(thread)
+        })
     }
 
     fn render_collapsible_command(
@@ -11309,7 +11495,10 @@ impl ThreadView {
                             selections.select_anchor_ranges([anchor..anchor]);
                         })
                     } else {
-                        let row = tool_call_location.line.unwrap_or_default();
+                        // ACP numbers lines from 1; editor rows start at 0.
+                        let row = tool_call_location
+                            .line
+                            .map_or(0, |line| line.saturating_sub(1));
                         editor.change_selections(Default::default(), window, cx, |selections| {
                             selections.select_ranges([Point::new(row, 0)..Point::new(row, 0)]);
                         })
@@ -11769,11 +11958,16 @@ impl ThreadView {
                 .and_then(|connected| connected.threads.get(&session_id))
         });
 
+        let state = SubagentCardState::for_subagent_tool_call(
+            tool_call,
+            subagent_thread_view.map(|view| view.read(cx).thread.read(cx)),
+            cx,
+        );
         let content = self.render_subagent_card(
             active_session_id,
             entry_ix,
-            &tool_call.id,
-            &SubagentCardState::from_tool_call(tool_call, cx),
+            &SubagentCardId::ToolCall(tool_call.id.clone()),
+            &state,
             subagent_thread_view,
             focus_handle,
             window,
@@ -11783,13 +11977,11 @@ impl ThreadView {
         v_flex().mx_5().my_1p5().gap_3().child(content)
     }
 
-    /// `card_id` keys the card's expansion state and element IDs, since the same
-    /// subagent can have one card per message it was sent.
     fn render_subagent_card(
         &self,
         active_session_id: &acp_v2::SessionId,
         entry_ix: usize,
-        card_id: &acp_v2::ToolCallId,
+        card_id: &SubagentCardId,
         state: &SubagentCardState,
         thread_view: Option<&Entity<ThreadView>>,
         focus_handle: &FocusHandle,
@@ -11815,10 +12007,7 @@ impl ThreadView {
             })
             .is_some();
 
-        let is_expanded = self
-            .entry_view_state
-            .read(cx)
-            .is_tool_call_expanded(card_id);
+        let is_expanded = self.is_subagent_card_expanded(card_id, cx);
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(changed_buffers, cx);
 
@@ -11872,6 +12061,15 @@ impl ThreadView {
                 SubagentStatus::Completed => Icon::new(IconName::Check)
                     .size(IconSize::Small)
                     .color(Color::Success)
+                    .into_any_element(),
+                SubagentStatus::Unknown => div()
+                    .id(status_icon)
+                    .child(
+                        Icon::new(IconName::CircleHelp)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .tooltip(Tooltip::text("Subagent Status Unknown"))
                     .into_any_element(),
             });
 
@@ -12006,10 +12204,7 @@ impl ThreadView {
                                         let card_id = card_id.clone();
                                         move |this, _, window, cx| {
                                             let expanded =
-                                                this.entry_view_state.update(cx, |state, _cx| {
-                                                    state.toggle_tool_call_expansion(&card_id);
-                                                    state.is_tool_call_expanded(&card_id)
-                                                });
+                                                this.toggle_subagent_card_expansion(&card_id, cx);
                                             this.materialize_tool_call_views(entry_ix, window, cx);
                                             this.refresh_thread_search(window, cx);
                                             telemetry::event!("Subagent Toggled", expanded);
@@ -12020,22 +12215,29 @@ impl ThreadView {
                     )
                     .when(state.can_stop && subagent_session_id.is_some(), |buttons| {
                         buttons.child(
-                            IconButton::new(format!("stop-subagent-{}", entry_ix), IconName::Stop)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Error)
-                                .tooltip(Tooltip::text("Stop Subagent"))
-                                .when_some(
-                                    thread_view
-                                        .as_ref()
-                                        .map(|view| view.read(cx).thread.clone()),
-                                    |this, thread| {
-                                        this.on_click(cx.listener(
-                                            move |this, _event, _window, cx| {
-                                                telemetry::event!("Subagent Stopped");
-                                                this.cancel_thread(&thread, cx).detach();
-                                            },
-                                        ))
-                                    },
+                            div()
+                                .debug_selector(move || format!("stop-subagent-{entry_ix}"))
+                                .child(
+                                    IconButton::new(
+                                        format!("stop-subagent-{}", entry_ix),
+                                        IconName::Stop,
+                                    )
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Error)
+                                    .tooltip(Tooltip::text("Stop Subagent"))
+                                    .when_some(
+                                        thread_view
+                                            .as_ref()
+                                            .map(|view| view.read(cx).thread.clone()),
+                                        |this, thread| {
+                                            this.on_click(cx.listener(
+                                                move |this, _event, _window, cx| {
+                                                    telemetry::event!("Subagent Stopped");
+                                                    this.cancel_thread(&thread, cx).detach();
+                                                },
+                                            ))
+                                        },
+                                    ),
                                 ),
                         )
                     }),
@@ -12049,9 +12251,12 @@ impl ThreadView {
                     .pending_tool_call(tv_session_id, cx);
 
                 let nav_session_id = tv_session_id.clone();
+                let fullscreen_entry = state.fullscreen_entry();
+                let subagent_view = thread_view.clone();
 
                 let fullscreen_toggle = h_flex()
                     .id(entry_ix)
+                    .debug_selector(move || format!("subagent-fullscreen-{entry_ix}"))
                     .py_1()
                     .w_full()
                     .justify_center()
@@ -12073,6 +12278,9 @@ impl ThreadView {
                                 this.navigate_to_thread(nav_session_id.clone(), window, cx);
                             })
                             .ok();
+                        if let Some(entry_ix) = fullscreen_entry {
+                            subagent_view.update(cx, |view, cx| view.scroll_to_entry(entry_ix, cx));
+                        }
                     }));
 
                 if is_running && let Some((_, subagent_tool_call_id, _)) = pending_tool_call {
@@ -12117,10 +12325,31 @@ impl ThreadView {
             .into_any_element()
     }
 
+    fn is_subagent_card_expanded(&self, card_id: &SubagentCardId, cx: &App) -> bool {
+        let state = self.entry_view_state.read(cx);
+        match card_id {
+            SubagentCardId::ToolCall(id) => state.is_tool_call_expanded(id),
+            SubagentCardId::SessionMessage(id) => state.is_session_message_card_expanded(id),
+        }
+    }
+
+    /// Returns whether the card is expanded afterwards.
+    fn toggle_subagent_card_expansion(
+        &mut self,
+        card_id: &SubagentCardId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.entry_view_state.update(cx, |state, _| match card_id {
+            SubagentCardId::ToolCall(id) => state.toggle_tool_call_expansion(id),
+            SubagentCardId::SessionMessage(id) => state.toggle_session_message_card_expansion(id),
+        });
+        self.is_subagent_card_expanded(card_id, cx)
+    }
+
     fn render_subagent_expanded_content(
         &self,
         thread_view: &Entity<ThreadView>,
-        card_id: &acp_v2::ToolCallId,
+        card_id: &SubagentCardId,
         state: &SubagentCardState,
         window: &Window,
         cx: &Context<Self>,
@@ -12184,7 +12413,7 @@ impl ThreadView {
                     // Include the card id so the same subagent session
                     // rendered in multiple parent cards gets distinct element
                     // ids for its inlined entries (avoids duplicate a11y ids).
-                    .id(format!("subagent-entries-{}-{}", session_id, card_id.0))
+                    .id(format!("subagent-entries-{}-{}", session_id, card_id))
                     .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )
@@ -13832,7 +14061,7 @@ pub(crate) fn open_link(
                                     .into_iter()
                                     .flatten()
                                     .filter_map(move |path| {
-                                        path_style.join_path_preserving_components(root, path).ok()
+                                        (!path_style.has_root(path)).then(|| path_style.join(root, path))
                                     })
                                 })
                                 .collect::<Vec<_>>()
@@ -14098,8 +14327,8 @@ fn leading_native_command(
     let name_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
     let name = &rest[..name_end];
     let is_native = available_commands.iter().any(|command| {
-        command.name == name
-            && acp_thread::command_category_from_meta(&command.meta)
+        command.name() == name
+            && acp_thread::command_category_from_meta(command.meta())
                 == Some(acp_thread::CommandCategory::Native)
     });
     is_native.then(|| name.to_string())
@@ -14181,14 +14410,14 @@ mod tests {
     }
 
     fn native_command(name: &str) -> acp_v2::AvailableCommand {
-        acp_v2::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
-            acp_thread::CommandCategory::Native,
+        acp_v2::AvailableCommand::Command(acp_v2::Command::new(name, "").meta(
+            acp_thread::meta_with_command_category(acp_thread::CommandCategory::Native),
         ))
     }
 
     fn mcp_command(name: &str) -> acp_v2::AvailableCommand {
-        acp_v2::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
-            acp_thread::CommandCategory::Mcp,
+        acp_v2::AvailableCommand::Command(acp_v2::Command::new(name, "").meta(
+            acp_thread::meta_with_command_category(acp_thread::CommandCategory::Mcp),
         ))
     }
 
@@ -14942,18 +15171,14 @@ mod tests {
                 vec![
                     Path::new(path!("/project"))
                         .join("crates/editor/src/inlays/inlay_hints.rs:394"),
-                    Path::new(path!("/project"))
-                        .join("crates/editor/src/inlays")
-                        .join("inlay_hints.rs"),
+                    Path::new(path!("/project")).join("crates/editor/src/inlays/inlay_hints.rs"),
                 ],
             ),
             (
                 "crates/editor/src/element.rs:608".to_string(),
                 vec![
                     Path::new(path!("/project")).join("crates/editor/src/element.rs:608"),
-                    Path::new(path!("/project"))
-                        .join("crates/editor/src")
-                        .join("element.rs"),
+                    Path::new(path!("/project")).join("crates/editor/src/element.rs"),
                 ],
             ),
             (missing_file_uri.clone(), Vec::new()),
@@ -14961,9 +15186,7 @@ mod tests {
                 "../outside/missing.md:2".to_string(),
                 vec![
                     Path::new(path!("/project")).join("../outside/missing.md:2"),
-                    Path::new(path!("/project"))
-                        .join("../outside")
-                        .join("missing.md"),
+                    Path::new(path!("/project")).join("../outside/missing.md"),
                 ],
             ),
             (
