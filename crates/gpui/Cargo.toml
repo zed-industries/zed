@@ -20,6 +20,7 @@ workspace = true
 [features]
 default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
+    "bench_metrics?/test-support",
     "collections/test-support",
     "http_client/test-support",
     "wayland",
@@ -75,6 +76,7 @@ futures-concurrency = { workspace = true, optional = true }
 gpui_macros.workspace = true
 gpui_shared_string.workspace = true
 http_client.workspace = true
+icu_segmenter.workspace = true
 image.workspace = true
 inventory.workspace = true
 itertools.workspace = true
@@ -113,6 +115,7 @@ taffy = { workspace = true, features = [
     "content_size",
 ] }
 thiserror.workspace = true
+unicode-segmentation.workspace = true
 gpui_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }
 waker-fn = "1.2.0"
@@ -171,7 +174,6 @@ windows = { workspace = true, features = [
 
 [dev-dependencies]
 backtrace.workspace = true
-bench_metrics = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 futures-concurrency.workspace = true
@@ -182,7 +184,6 @@ gpui_util.workspace = true
 lyon = { version = "1.0", features = ["extra"] }
 rand = { workspace = true, default-features = true }
 scheduler = { workspace = true, features = ["test-support"] }
-unicode-segmentation.workspace = true
 util_macros.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
@@ -191,6 +192,7 @@ proptest.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
+gpui_web.workspace = true
 wasm-bindgen.workspace = true
 web-sys.workspace = true
 

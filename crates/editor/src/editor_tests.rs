@@ -28149,11 +28149,21 @@ async fn test_go_to_symbol_after_edit(cx: &mut TestAppContext) {
         cx.set_state("padding\nˇ\n");
         let (ready, pending) = oneshot::channel();
         let navigation = cx.update_editor(|editor, window, cx| {
-            editor.refresh_document_symbols_task = cx
-                .background_spawn(async move {
+            let buffer_id = editor
+                .buffer
+                .read(cx)
+                .as_singleton()
+                .unwrap()
+                .read(cx)
+                .remote_id();
+            editor.insert_lsp_data_task(
+                LspDataKind::DocumentSymbols,
+                buffer_id,
+                cx.background_spawn(async move {
                     pending.await.expect("symbol refresh should complete");
                 })
-                .shared();
+                .shared(),
+            );
             editor.go_to_symbol_by_offset(window, cx, direction)
         });
         cx.run_until_parked();
@@ -42798,6 +42808,285 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_lsp_data_for_every_multibuffer_buffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.document_folding_ranges = Some(settings::DocumentFoldingRanges::On);
+        settings.defaults.document_symbols = Some(settings::DocumentSymbols::On);
+    });
+    update_test_editor_settings(cx, &|settings| {
+        settings.lsp_document_colors = Some(settings::DocumentColorsRenderMode::Border);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.rs": "fn a() {}\nfn b() {}\nfn c() {}",
+            "b.rs": "fn d() {}",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
+                folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
+                document_link_provider: Some(lsp::DocumentLinkOptions {
+                    resolve_provider: None,
+                    work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
+                }),
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions::default(),
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let requests = requests.clone();
+                move |server| {
+                    record_lsp_requests::<lsp::request::DocumentColor>(
+                        server,
+                        &requests,
+                        |params| params.text_document.uri.clone(),
+                        |file_name| {
+                            let row = if file_name == "a.rs" { 2 } else { 0 };
+                            vec![lsp::ColorInformation {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(row, 0),
+                                    lsp::Position::new(row, 2),
+                                ),
+                                color: lsp::Color {
+                                    red: 1.0,
+                                    green: 0.0,
+                                    blue: 0.0,
+                                    alpha: 1.0,
+                                },
+                            }]
+                        },
+                    );
+                    record_lsp_requests::<lsp::request::FoldingRangeRequest>(
+                        server,
+                        &requests,
+                        |params| params.text_document.uri.clone(),
+                        |_| Some(Vec::new()),
+                    );
+                    record_lsp_requests::<lsp::request::DocumentLinkRequest>(
+                        server,
+                        &requests,
+                        |params| params.text_document.uri.clone(),
+                        |_| Some(Vec::new()),
+                    );
+                    record_lsp_requests::<lsp::request::DocumentSymbolRequest>(
+                        server,
+                        &requests,
+                        |params| params.text_document.uri.clone(),
+                        |_| Some(lsp::DocumentSymbolResponse::Flat(Vec::new())),
+                    );
+                    record_lsp_requests::<lsp::request::DocumentDiagnosticRequest>(
+                        server,
+                        &requests,
+                        |params| params.text_document.uri.clone(),
+                        |_| {
+                            lsp::DocumentDiagnosticReportResult::Report(
+                                lsp::DocumentDiagnosticReport::Full(
+                                    lsp::RelatedFullDocumentDiagnosticReport::default(),
+                                ),
+                            )
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    let first_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let second_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/b.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let multibuffer = cx.new(|_| MultiBuffer::new(ReadWrite));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project, multibuffer.clone(), window, cx)
+    });
+    multibuffer.update(cx, |multibuffer, cx| {
+        for (index, buffer) in [&first_buffer, &second_buffer].into_iter().enumerate() {
+            let max_point = buffer.read(cx).max_point();
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(index as u64),
+                buffer.clone(),
+                [Point::zero()..max_point],
+                0,
+                cx,
+            );
+        }
+    });
+    let _server = fake_servers.next().await.unwrap();
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+
+    let mut requested = requests.lock().drain(..).collect::<Vec<_>>();
+    requested.sort();
+    requested.dedup();
+    assert_eq!(
+        requested,
+        [
+            "textDocument/diagnostic",
+            "textDocument/documentColor",
+            "textDocument/documentLink",
+            "textDocument/documentSymbol",
+            "textDocument/foldingRange",
+        ]
+        .into_iter()
+        .flat_map(|method| ["a.rs", "b.rs"].map(|file_name| (method, file_name.to_string())))
+        .collect::<Vec<_>>(),
+    );
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(document_color_rows(editor, window, cx), vec![2, 3]);
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            first_buffer.clone(),
+            [Point::zero()..Point::new(0, 9)],
+            0,
+            cx,
+        );
+    });
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(document_color_rows(editor, window, cx), vec![1]);
+    });
+}
+
+#[gpui::test]
+async fn test_lsp_data_for_offscreen_multibuffer_edits(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.rs": "fn a() {}\n".repeat(200),
+            "b.rs": "fn b() {}",
+            "c.rs": "fn c() {}",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions::default(),
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let requests = requests.clone();
+                move |server| {
+                    record_lsp_requests::<lsp::request::DocumentColor>(
+                        server,
+                        &requests,
+                        |params| params.text_document.uri.clone(),
+                        |_| Vec::new(),
+                    );
+                    record_lsp_requests::<lsp::request::DocumentDiagnosticRequest>(
+                        server,
+                        &requests,
+                        |params| params.text_document.uri.clone(),
+                        |_| {
+                            lsp::DocumentDiagnosticReportResult::Report(
+                                lsp::DocumentDiagnosticReport::Full(
+                                    lsp::RelatedFullDocumentDiagnosticReport::default(),
+                                ),
+                            )
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    let first_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let second_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/b.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let third_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/c.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let multibuffer = cx.new(|_| MultiBuffer::new(ReadWrite));
+    let (_editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project, multibuffer.clone(), window, cx)
+    });
+    multibuffer.update(cx, |multibuffer, cx| {
+        for (index, buffer) in [&first_buffer, &second_buffer, &third_buffer]
+            .into_iter()
+            .enumerate()
+        {
+            let max_point = buffer.read(cx).max_point();
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(index as u64),
+                buffer.clone(),
+                [Point::zero()..max_point],
+                0,
+                cx,
+            );
+        }
+    });
+    let _server = fake_servers.next().await.unwrap();
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    requests.lock().clear();
+
+    for buffer in [&second_buffer, &third_buffer] {
+        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "x")], None, cx));
+    }
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    let mut requested = requests.lock().drain(..).collect::<Vec<_>>();
+    requested.sort();
+    requested.dedup();
+    assert_eq!(
+        requested,
+        vec![
+            ("textDocument/diagnostic", "c.rs".to_string()),
+            ("textDocument/documentColor", "c.rs".to_string()),
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_add_selection_after_moving_with_multiple_cursors(cx: &mut TestAppContext) {
     // Regression test for issue #11671
     // Previously, adding a cursor after moving multiple cursors would reset
@@ -51099,4 +51388,43 @@ async fn assert_on_type_formatting_request_position(
 
     cx.assert_editor_state(expected_state);
     assert!(request.next().await.is_some());
+}
+
+fn record_lsp_requests<R>(
+    server: &lsp::FakeLanguageServer,
+    requests: &Arc<Mutex<Vec<(&'static str, String)>>>,
+    uri: fn(&R::Params) -> lsp::Uri,
+    response: fn(&str) -> R::Result,
+) where
+    R: 'static + lsp::request::Request,
+    R::Params: 'static + Send,
+    R::Result: 'static + Send,
+{
+    let requests = requests.clone();
+    server.set_request_handler::<R, _, _>(move |params, _| {
+        let uri = uri(&params).to_string();
+        let file_name = uri.rsplit('/').next().unwrap_or_default().to_string();
+        let result = response(&file_name);
+        requests.lock().push((R::METHOD, file_name));
+        async move { Ok(result) }
+    });
+}
+
+fn document_color_rows(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Vec<u32> {
+    let snapshot = editor.snapshot(window, cx);
+    let Some(colors) = editor.colors.as_ref() else {
+        return Vec::new();
+    };
+    let mut rows = colors
+        .editor_display_highlights(&snapshot)
+        .1
+        .into_iter()
+        .map(|(range, _)| range.start.to_point(&snapshot.display_snapshot).row)
+        .collect::<Vec<_>>();
+    rows.sort();
+    rows
 }

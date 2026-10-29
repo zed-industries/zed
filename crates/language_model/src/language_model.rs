@@ -8,8 +8,8 @@ pub mod fake_provider;
 pub use language_model_core::*;
 
 use anyhow::Result;
-use futures::{FutureExt, SinkExt};
-use futures::{StreamExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
+use futures::FutureExt;
+use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, BackgroundExecutor, Task, Window};
 use icons::IconName;
 use parking_lot::Mutex;
@@ -35,7 +35,10 @@ pub fn stream_in_background<Output>(
 where
     Output: Send + 'static,
 {
-    let (mut sender, receiver) = mpsc::channel(BACKGROUND_STREAM_BUFFER_SIZE);
+    // `futures::channel::mpsc` parks a full sender behind a `std` mutex that the
+    // receiver also locks, which traps when the receiver polls on the browser's
+    // main thread.
+    let (sender, receiver) = async_channel::bounded(BACKGROUND_STREAM_BUFFER_SIZE);
     let task = executor.spawn(async move {
         while let Some(event) = events.next().await {
             if sender.send(event).await.is_err() {
