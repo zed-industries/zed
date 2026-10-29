@@ -124,11 +124,15 @@ impl DevContainerContext {
     }
 
     pub async fn environment(&self, cx: &mut impl AppContext) -> HashMap<String, String> {
-        let environment = match self.environment.update(cx, |this, cx| {
-            this.local_directory_environment(&Shell::System, self.project_directory.clone(), cx)
-        }) {
-            Ok(task) => task.await,
-            Err(_) => None,
+        let environment = match self
+            .environment
+            .update(cx, |this, cx| {
+                this.local_directory_environment(&Shell::System, self.project_directory.clone(), cx)
+            })
+            .log_err()
+        {
+            Some(task) => task.await,
+            None => None,
         };
         // `localEnv` is resolved from this map alone, so falling back to an empty map
         // would blank out every variable when the shell environment can't be captured.
@@ -138,7 +142,10 @@ impl DevContainerContext {
                 log::warn!(
                     "Failed to load project environment for Dev Container, using Zed's process environment"
                 );
-                std::env::vars().collect()
+                // `std::env::vars` panics on non-UTF-8 entries; skip those instead.
+                std::env::vars_os()
+                    .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+                    .collect()
             })
     }
 }
@@ -1716,7 +1723,8 @@ mod tests {
 
         let environment = context.environment(cx).await;
 
-        assert_eq!(environment.get("PATH"), std::env::var("PATH").ok().as_ref());
+        assert!(!environment.is_empty());
+        assert_eq!(environment, std::env::vars().collect());
     }
 
     #[gpui::test]
