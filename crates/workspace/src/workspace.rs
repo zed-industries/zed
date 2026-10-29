@@ -1039,11 +1039,9 @@ pub fn prompt_for_open_files_and_open(
 }
 
 fn prompt_and_open_files(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
-    if let Some(workspace_window) =
-        workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
-            .into_iter()
-            .next()
-    {
+    let workspace_window =
+        workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx).next();
+    if let Some(workspace_window) = workspace_window {
         workspace_window
             .update(cx, |multi_workspace, window, cx| {
                 let workspace = multi_workspace.workspace().clone();

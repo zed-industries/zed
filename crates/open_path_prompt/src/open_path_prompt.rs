@@ -234,7 +234,7 @@ impl OpenPathPrompt {
                     .show_hidden()
                     .with_files_tx(tx)
                     .with_footer(Arc::new(|window, cx| {
-                        let secondary = window.modifiers().secondary();
+                        let secondary = window.modifiers().secondary(cx);
                         Some(
                             h_flex()
                                 .w_full()
