@@ -3531,6 +3531,72 @@ async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut 
 }
 
 #[gpui::test]
+async fn test_removing_remote_worktree_keeps_remaining_repository_active(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "remaining": { ".git": {}, "file.txt": "remaining" },
+            "active": { ".git": {}, "file.txt": "active" },
+            "other": { ".git": {}, "file.txt": "other" },
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let mut worktree_ids = HashMap::default();
+    for name in ["remaining", "active", "other"] {
+        let root = Path::new(path!("/code")).join(name);
+        let (worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(root, true, cx)
+            })
+            .await
+            .expect("open remote worktree");
+        worktree_ids.insert(name, worktree.read_with(cx, |worktree, _| worktree.id()));
+    }
+    cx.run_until_parked();
+
+    let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+    let repository_for_name = |name: &str, cx: &mut TestAppContext| {
+        let root = Path::new(path!("/code")).join(name);
+        git_store.read_with(cx, |git_store, cx| {
+            git_store
+                .repositories()
+                .values()
+                .find(|repository| repository.read(cx).work_directory_abs_path.as_ref() == root)
+                .cloned()
+                .expect("remote repository is available")
+        })
+    };
+    let active_repository = repository_for_name("active", cx);
+    let remaining_repository = repository_for_name("remaining", cx);
+    active_repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+
+    for (name, expected_repository, expected_count) in [
+        ("other", Some(active_repository), 2),
+        ("active", Some(remaining_repository), 1),
+        ("remaining", None, 0),
+    ] {
+        let worktree_id = *worktree_ids.get(name).expect("remote worktree exists");
+        project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+        cx.run_until_parked();
+
+        git_store.read_with(cx, |git_store, _| {
+            assert_eq!(git_store.repositories().len(), expected_count);
+            assert_eq!(
+                git_store.active_repository(),
+                expected_repository,
+                "removing {name} should preserve a remaining active repository"
+            );
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_adding_then_removing_then_adding_worktrees(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
