@@ -107,17 +107,11 @@ pub(crate) fn trash_skill(
                     let project_path = project
                         .project_path_for_absolute_path(&directory_path, cx)
                         .context("skill directory is outside the project's worktrees")?;
-                    // Already deleted outside Zed.
-                    let Some(entry_id) = project
+                    let entry_id = project
                         .entry_for_path(&project_path, cx)
-                        .map(|entry| entry.id)
-                    else {
-                        return Ok(None);
-                    };
-                    project
-                        .trash_entry(entry_id, cx)
-                        .context("worktree not found")
-                        .map(Some)
+                        .map(|entry| entry.id);
+                    // Already deleted outside Zed.
+                    anyhow::Ok(entry_id.and_then(|entry_id| project.trash_entry(entry_id, cx)))
                 });
                 match trash_task {
                     Ok(Some(trash_task)) => trash_task.await.map(|_| ()),
