@@ -180,7 +180,14 @@ When opening a remote project there are three relevant settings locations:
 - The server Zed settings (in the same place) on the remote server.
 - The project settings (in `.zed/settings.json` or `.editorconfig` of your project)
 
-Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main settings file.
+Both the local Zed and the server Zed read supported project settings. Zed forwards
+your local user settings to the server, where server settings override them.
+
+Git auto-fetch runs on the server and sends updated branch information to your
+local Zed window. Enable `git.auto_fetch` in your user settings or the server's
+settings. Git settings are not read from project `.zed/settings.json` files. See
+[Auto Fetch](./reference/all-settings.md#auto-fetch) for configuration and credential
+requirements.
 
 Which settings file you should use depends on the kind of setting you want to make:
 
@@ -228,7 +235,7 @@ If you'd like to maintain the server binary yourself you can. You can either dow
 
 ```bash
 cargo build --release --package remote_server
-llvm-objcopy --strip-debug target/release/remote_server
+llvm-objcopy --strip-debug target/release/remote-server
 ```
 
 Stripping debug symbols matches the packaging step in [`script/bundle-linux`](https://github.com/zed-industries/zed/blob/main/script/bundle-linux) and keeps the binary closer to the size of Zed's prebuilt downloads. Prefer `llvm-objcopy` because GNU `objcopy` may not understand newer LLVM-emitted CREL sections.
@@ -237,7 +244,7 @@ The official Linux release builds a musl/static remote server. If you need that,
 
 ```bash
 RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --package remote_server --target x86_64-unknown-linux-musl
-llvm-objcopy --strip-debug target/x86_64-unknown-linux-musl/release/remote_server
+llvm-objcopy --strip-debug target/x86_64-unknown-linux-musl/release/remote-server
 ```
 
 If you do this, you must upload it to `~/.zed_server/zed-remote-server-{RELEASE_CHANNEL}-{VERSION}` on the server, for example `~/.zed_server/zed-remote-server-stable-0.217.3+stable.105.80433cb239e868271457ac376673a5f75bc4adb1`. The version must exactly match the version of Zed itself you are using.

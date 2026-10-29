@@ -144,7 +144,7 @@ fn report_from_json_example(
 
 fn print_usage() {
     eprintln!(
-        "Usage:\n  edit_prediction_metrics --base <base.txt> --expected-patch <expected.diff> --actual-patch <actual.diff>\n  edit_prediction_metrics --json <example.json> [--prediction-index <n>]"
+        "Usage:\n  edit-prediction-metrics --base <base.txt> --expected-patch <expected.diff> --actual-patch <actual.diff>\n  edit-prediction-metrics --json <example.json> [--prediction-index <n>]"
     );
 }
 

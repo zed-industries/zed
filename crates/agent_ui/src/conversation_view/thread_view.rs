@@ -71,6 +71,10 @@ pub(super) fn subagent_label(thread: &AcpThread) -> SharedString {
         .unwrap_or_else(|| "Subagent".into())
 }
 
+/// Most agents echo an accepted prompt almost immediately, so the in-flight status row
+/// only appears for submissions that stay unsettled long enough to be worth reporting.
+pub(crate) const UNSETTLED_SUBMISSION_REVEAL_DELAY: Duration = Duration::from_secs(1);
+
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
 
 pub(super) struct ThreadRecovery {
@@ -782,6 +786,8 @@ pub struct ThreadView {
     _sandbox_status_refresh_task: Option<Task<()>>,
     pub hovered_edited_file_buttons: Option<usize>,
     pub current_submission: Option<SubmissionId>,
+    revealed_unsettled_submissions: HashSet<SubmissionId>,
+    submission_reveal_tasks: HashMap<SubmissionId, Task<()>>,
     pub _subscriptions: Vec<Subscription>,
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -1240,6 +1246,13 @@ impl ThreadView {
         }));
 
         let current_submission = thread.read(cx).latest_submission_id();
+        // Submissions that were already in flight when this view was built have had
+        // time to settle, so they are shown without a reveal delay.
+        let revealed_unsettled_submissions = thread
+            .read(cx)
+            .recoverable_submissions()
+            .map(|(submission_id, _)| submission_id)
+            .collect();
         let mut this = Self {
             root_thread_id,
             session_id,
@@ -1294,6 +1307,8 @@ impl ThreadView {
             _sandbox_status_refresh_task: None,
             hovered_edited_file_buttons: None,
             current_submission,
+            revealed_unsettled_submissions,
+            submission_reveal_tasks: HashMap::default(),
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
@@ -1869,6 +1884,45 @@ impl ThreadView {
         }
     }
 
+    pub(crate) fn sync_submission_reveal(
+        &mut self,
+        submission_id: SubmissionId,
+        cx: &mut Context<Self>,
+    ) {
+        let is_unsettled = self
+            .thread
+            .read(cx)
+            .submission(submission_id)
+            .is_some_and(|record| {
+                matches!(
+                    record.state,
+                    SubmissionState::Pending | SubmissionState::Accepted { echoed: false, .. }
+                )
+            });
+        if !is_unsettled {
+            self.revealed_unsettled_submissions.remove(&submission_id);
+            self.submission_reveal_tasks.remove(&submission_id);
+            return;
+        }
+        if self.revealed_unsettled_submissions.contains(&submission_id)
+            || self.submission_reveal_tasks.contains_key(&submission_id)
+        {
+            return;
+        }
+        let task = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(UNSETTLED_SUBMISSION_REVEAL_DELAY)
+                .await;
+            this.update(cx, |this, cx| {
+                this.submission_reveal_tasks.remove(&submission_id);
+                this.revealed_unsettled_submissions.insert(submission_id);
+                cx.notify();
+            })
+            .log_err();
+        });
+        self.submission_reveal_tasks.insert(submission_id, task);
+    }
+
     fn render_recoverable_submissions(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let submissions = {
             let thread = self.thread.read(cx);
@@ -1877,42 +1931,55 @@ impl ThreadView {
             }
             thread
                 .recoverable_submissions()
+                .filter(|(submission_id, record)| {
+                    !matches!(
+                        record.state,
+                        SubmissionState::Pending | SubmissionState::Accepted { echoed: false, .. }
+                    ) || self.revealed_unsettled_submissions.contains(submission_id)
+                })
                 .map(|(submission_id, record)| {
-                    let (status, settled): (SharedString, bool) = match &record.state {
-                        SubmissionState::Pending => ("Sending message…".into(), false),
-                        SubmissionState::Accepted { echoed: false, .. } => {
-                            ("Waiting for message to appear…".into(), false)
-                        }
-                        SubmissionState::Disconnected { receipt: Some(_) } => {
-                            ("Message accepted; agent connection lost".into(), true)
-                        }
-                        SubmissionState::Disconnected { receipt: None } => (
-                            "Connection lost; message acceptance is unknown".into(),
-                            true,
-                        ),
-                        SubmissionState::Failed(error) => (
-                            format!(
-                                "Message failed to send: {}",
-                                util::truncate_and_trailoff(error, 160)
-                            )
-                            .into(),
-                            true,
-                        ),
-                        SubmissionState::Cancelled => ("Message cancelled".into(), true),
-                        _ => ("Message".into(), false),
-                    };
+                    let (status, detail, settled): (SharedString, Option<SharedString>, bool) =
+                        match &record.state {
+                            SubmissionState::Pending => ("Sending…".into(), None, false),
+                            SubmissionState::Accepted { echoed: false, .. } => (
+                                "Waiting…".into(),
+                                Some("The agent accepted this message but hasn't shown it yet.".into()),
+                                false,
+                            ),
+                            SubmissionState::Disconnected { receipt: Some(_) } => (
+                                "Connection lost".into(),
+                                Some("The agent accepted this message, then the connection was lost.".into()),
+                                true,
+                            ),
+                            SubmissionState::Disconnected { receipt: None } => (
+                                "Connection lost".into(),
+                                Some("The connection was lost before the agent confirmed this message.".into()),
+                                true,
+                            ),
+                            SubmissionState::Failed(error) => (
+                                "Failed".into(),
+                                Some(util::truncate_and_trailoff(error, 500).into()),
+                                true,
+                            ),
+                            SubmissionState::Cancelled => ("Cancelled".into(), None, true),
+                            _ => ("Message".into(), None, false),
+                        };
+                    let preview: String =
+                        Itertools::intersperse(Self::submission_text_parts(&record.content), " ")
+                            .flat_map(str::chars)
+                            .take(201)
+                            .map(|character| if character.is_whitespace() { ' ' } else { character })
+                            .collect();
                     (
                         submission_id,
                         status,
+                        detail,
                         settled,
                         matches!(
                             record.state,
                             SubmissionState::Failed(_) | SubmissionState::Cancelled
                         ),
-                        Itertools::intersperse(Self::submission_text_parts(&record.content), "\n")
-                            .flat_map(str::chars)
-                            .take(161)
-                            .collect::<String>(),
+                        SharedString::from(util::truncate_and_trailoff(&preview, 200)),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1922,18 +1989,44 @@ impl ThreadView {
         }
         let rows = submissions
             .into_iter()
-            .map(|(submission_id, status, settled, restorable, text)| {
-                let preview: SharedString = util::truncate_and_trailoff(&text, 160).into();
+            .map(|(submission_id, status, detail, settled, restorable, preview)| {
                 let row_id = submission_id.as_u64();
-                v_flex()
+                let status_color = match (settled, restorable) {
+                    (false, _) => Color::Muted,
+                    (true, true) => Color::Error,
+                    (true, false) => Color::Warning,
+                };
+                h_flex()
                     .id(("recoverable-submission", row_id))
+                    .w_full()
                     .px_3()
-                    .py_1()
-                    .gap_1()
-                    .child(Label::new(status).size(LabelSize::Small))
-                    .child(Label::new(preview).size(LabelSize::Small))
+                    .py_0p5()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id(("recoverable-submission-status", row_id))
+                            .flex_none()
+                            .child(
+                                Label::new(status)
+                                    .size(LabelSize::Small)
+                                    .color(status_color),
+                            )
+                            .when_some(detail, |this, detail| {
+                                this.tooltip(Tooltip::text(detail))
+                            }),
+                    )
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Label::new(preview)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .single_line()
+                                .truncate(),
+                        ),
+                    )
                     .child(
                         h_flex()
+                            .flex_none()
                             .gap_1()
                             .child(
                                 div()
@@ -1996,7 +2089,10 @@ impl ThreadView {
         Some(
             v_flex()
                 .id("recoverable-submissions")
-                .max_h(px(180.))
+                .py_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .max_h(px(120.))
                 .overflow_y_scroll()
                 .children(rows),
         )
