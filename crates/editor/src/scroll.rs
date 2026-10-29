@@ -851,7 +851,7 @@ impl Editor {
             && let Some(last_position_map) = &self.last_position_map
         {
             current_position.x +=
-                f64::from(self.gutter_dimensions.margin / last_position_map.em_layout_width);
+                f64::from(self.gutter_dimensions.margin / last_position_map.em_advance);
         }
         let new_position = current_position
             + point(
@@ -948,12 +948,13 @@ impl Editor {
                 .text
                 .font_size
                 .to_pixels(text_layout_details.rem_size);
-            let em_layout_width = text_layout_details
+            let em_advance = text_layout_details
                 .text_system
-                .em_layout_width(font_id, font_size);
+                .em_advance(font_id, font_size)
+                .expect("resolved editor font must have an em advance");
             let head_x = snapshot.x_for_display_point(newest_head, &text_layout_details);
             let screen_left_x = snapshot.x_for_display_point(screen_top, &text_layout_details);
-            let on_screen = head_x <= screen_left_x + em_layout_width * visible_columns as f32;
+            let on_screen = head_x <= screen_left_x + em_advance * visible_columns as f32;
             if on_screen {
                 return Ordering::Equal;
             }

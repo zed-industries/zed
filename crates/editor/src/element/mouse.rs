@@ -533,7 +533,7 @@ impl EditorElement {
 
                         editor.update(cx, |editor, cx| {
                             let line_height = position_map.line_height;
-                            let glyph_width = position_map.em_layout_width;
+                            let glyph_width = position_map.em_advance;
                             let delta = match delta {
                                 gpui::ScrollDelta::Pixels(mut pixels) => {
                                     //Trackpad
@@ -1080,7 +1080,7 @@ impl EditorElement {
 
             let scroll_margin_x = EditorSettings::get_global(cx).horizontal_scroll_margin;
 
-            let scroll_space: Pixels = scroll_margin_x * position_map.em_layout_width;
+            let scroll_space: Pixels = scroll_margin_x * position_map.em_advance;
 
             let left = text_bounds.origin.x + scroll_space;
             let right = text_bounds.top_right().x - scroll_space;

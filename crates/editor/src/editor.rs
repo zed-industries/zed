@@ -1330,7 +1330,7 @@ impl GutterDimensions {
 
 struct CharacterDimensions {
     em_width: Pixels,
-    em_layout_width: Pixels,
+    em_advance: Pixels,
     line_height: Pixels,
 }
 
@@ -11234,11 +11234,14 @@ impl Editor {
         let font_size = style.text.font_size.to_pixels(window.rem_size());
         let line_height = style.text.line_height_in_pixels(window.rem_size());
         let em_width = window.text_system().em_width(font_id, font_size).unwrap();
-        let em_layout_width = window.text_system().em_layout_width(font_id, font_size);
+        let em_advance = window
+            .text_system()
+            .em_advance(font_id, font_size)
+            .expect("resolved editor font must have an em advance");
 
         CharacterDimensions {
             em_width,
-            em_layout_width,
+            em_advance,
             line_height,
         }
     }
@@ -12504,7 +12507,10 @@ impl EditorSnapshot {
         let font_size = style.text.font_size.to_pixels(window.rem_size());
         let text_system = window.text_system();
         let font_id = text_system.resolve_font(&style.text.font());
-        digit_count as f32 * text_system.em_layout_width(font_id, font_size)
+        digit_count as f32
+            * text_system
+                .em_advance(font_id, font_size)
+                .expect("resolved editor font must have an em advance")
     }
 
     pub fn gutter_dimensions(
