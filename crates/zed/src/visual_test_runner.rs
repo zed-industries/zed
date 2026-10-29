@@ -284,7 +284,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         )
     });
 
-    let project_for_window = project.clone();
+    let project_for_window = project;
     let app_state_for_window = app_state.clone();
     let workspace_window: WindowHandle<Workspace> = open_visual_window(
         &mut cx,
@@ -1071,7 +1071,7 @@ fn run_breakpoint_hover_visual_tests(
     });
 
     // Open workspace window
-    let project_for_window = project.clone();
+    let project_for_window = project;
     let app_state_for_window = app_state.clone();
     let workspace_window: WindowHandle<Workspace> = open_visual_window(
         cx,
@@ -1340,7 +1340,7 @@ fn run_settings_ui_subpage_visual_tests(
         )
     });
 
-    let project_for_window = project.clone();
+    let project_for_window = project;
     let app_state_for_window = app_state.clone();
     let workspace_window: WindowHandle<MultiWorkspace> = open_visual_window(
         cx,
@@ -2370,7 +2370,7 @@ fn run_tool_permissions_visual_tests(
         )
     });
 
-    let project_for_window = project.clone();
+    let project_for_window = project;
     let app_state_for_window = app_state.clone();
     let workspace_window: WindowHandle<MultiWorkspace> = open_visual_window(
         cx,
@@ -2599,8 +2599,8 @@ fn run_multi_workspace_sidebar_visual_tests(
     };
 
     // Open a MultiWorkspace window with both workspaces created at construction time
-    let first_project_for_window = project1.clone();
-    let second_project_for_window = project2.clone();
+    let first_project_for_window = project1;
+    let second_project_for_window = project2;
     let app_state_for_window = app_state.clone();
     let multi_workspace_window: WindowHandle<MultiWorkspace> = open_visual_window(
         cx,
@@ -3394,7 +3394,7 @@ fn open_sidebar_test_window(
         .ok_or_else(|| anyhow::anyhow!("need at least one project"))?;
     let remaining: Vec<_> = projects_iter.collect();
 
-    let first_project_for_window = first_project.clone();
+    let first_project_for_window = first_project;
     let app_state_for_window = app_state.clone();
     let multi_workspace_window: WindowHandle<MultiWorkspace> = open_visual_window(
         cx,
