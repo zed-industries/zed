@@ -9545,6 +9545,7 @@ name = "language_model"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
  "base64 0.22.1",
  "collections",
  "credentials_provider",
