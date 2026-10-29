@@ -627,7 +627,6 @@ impl SplittableEditor {
             editor.disable_runnables();
             editor.disable_code_lens(cx);
             editor.disable_inline_diagnostics();
-            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor.set_diff_hunk_renderer(Some(Arc::new(DefaultDiffHunkRenderer)), cx);
             editor
@@ -728,6 +727,7 @@ impl SplittableEditor {
         });
 
         let splittable = cx.weak_entity();
+        let rhs_mouse_wheel_zoom = self.rhs_editor.read(cx).enable_mouse_wheel_zoom;
         let rhs_editor = self.rhs_editor.downgrade();
         let lhs_editor = cx.new(|cx| {
             let mut editor =
@@ -746,7 +746,9 @@ impl SplittableEditor {
             editor.disable_lsp_data();
             editor.disable_runnables();
             editor.disable_diagnostics(cx);
-            editor.disable_mouse_wheel_zoom();
+            if !rhs_mouse_wheel_zoom {
+                editor.disable_mouse_wheel_zoom();
+            }
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
         });
@@ -2698,6 +2700,34 @@ mod tests {
                 editor.check_invariants(quiesced, cx);
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_lhs_inherits_mouse_wheel_zoom(cx: &mut gpui::TestAppContext) {
+        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Unified).await;
+        editor.update_in(cx, |splittable_editor, window, cx| {
+            splittable_editor.split(window, cx);
+        });
+        editor.read_with(cx, |splittable_editor, cx| {
+            assert!(
+                splittable_editor
+                    .rhs_editor
+                    .read(cx)
+                    .enable_mouse_wheel_zoom
+            );
+            let lhs_editor = splittable_editor.lhs_editor().unwrap().read(cx);
+            assert!(lhs_editor.enable_mouse_wheel_zoom);
+        });
+
+        editor.update_in(cx, |splittable_editor, window, cx| {
+            splittable_editor.unsplit(window, cx);
+            splittable_editor.update_editors(cx, |editor, _| editor.disable_mouse_wheel_zoom());
+            splittable_editor.split(window, cx);
+        });
+        editor.read_with(cx, |splittable_editor, cx| {
+            let lhs_editor = splittable_editor.lhs_editor().unwrap().read(cx);
+            assert!(!lhs_editor.enable_mouse_wheel_zoom);
+        });
     }
 
     #[gpui::test]
