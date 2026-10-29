@@ -1753,12 +1753,16 @@ mod tests {
 
         // When base_indent + extra fits within wrap width (6 + 2 + 2 <= 10),
         // the extra indent is applied and not clamped.
+        // Spaces count toward the width, so the separators occupy their own rows
+        // rather than overflowing the preceding row or splitting the following word.
         //
         // Expected wrapped lines (10 columns):
         //   |      ab  |  (row 0: 6 spaces + "ab ", len 9)
         //   |        cd|  (row 1: 8 spaces + "cd", len 10)
-        //   |        ef|  (row 2: 8 spaces + "ef", len 10)
-        //   |        gh|  (row 3: 8 spaces + "gh", len 10)
+        //   |          |  (row 2: 8 spaces + " ", len 9)
+        //   |        ef|  (row 3: 8 spaces + "ef", len 10)
+        //   |          |  (row 4: 8 spaces + " ", len 9)
+        //   |        gh|  (row 5: 8 spaces + "gh", len 10)
         assert_eq!(
             wrapper
                 .wrap_line(
@@ -1770,7 +1774,8 @@ mod tests {
             &[
                 Boundary::new(9, 8),
                 Boundary::new(11, 8),
-                Boundary::new(13, 8),
+                Boundary::new(12, 8),
+                Boundary::new(14, 8),
                 Boundary::new(15, 8),
             ]
         );
