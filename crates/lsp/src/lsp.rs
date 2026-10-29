@@ -1744,7 +1744,7 @@ impl LanguageServer {
                 ws.workspace_folders.and_then(|folders| {
                     folders
                         .change_notifications
-                        .map(|caps| !matches!(caps, OneOf::Left(false)))
+                        .map(|caps| matches!(caps, OneOf::Left(false)))
                 })
             })
             .unwrap_or(true)
@@ -2652,6 +2652,72 @@ mod tests {
             name: "my project".to_string(),
         }];
         assert_eq!(workspace_folders, expected_workspace_folders);
+    }
+
+    #[gpui::test]
+    async fn test_remove_workspace_folder_respects_change_notifications(cx: &mut TestAppContext) {
+        for (change_notifications, should_remove) in [
+            (Some(OneOf::Left(true)), true),
+            (Some(OneOf::Right("workspace-folders".to_owned())), true),
+            (Some(OneOf::Left(false)), false),
+            (None, false),
+        ] {
+            let (server, mut fake) = FakeLanguageServer::new(
+                LanguageServerId(0),
+                LanguageServerBinary {
+                    path: "path/to/language-server".into(),
+                    arguments: vec![],
+                    env: None,
+                },
+                "test-lsp".to_owned(),
+                ServerCapabilities::default(),
+                &mut cx.to_async(),
+            );
+            *server.capabilities.write() = ServerCapabilities {
+                workspace: Some(WorkspaceServerCapabilities {
+                    workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                        supported: Some(true),
+                        change_notifications,
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let uri = Uri::from_file_path(std::env::temp_dir().join("workspace"))
+                .expect("valid workspace URI");
+            server
+                .workspace_folders
+                .as_ref()
+                .expect("fake server has workspace folders")
+                .lock()
+                .insert(uri.clone());
+
+            server.remove_workspace_folder(uri.clone());
+            assert_eq!(server.workspace_folders().contains(&uri), !should_remove);
+            cx.run_until_parked();
+            let notification = fake
+                .try_receive_notification::<DidChangeWorkspaceFolders>()
+                .now_or_never()
+                .flatten();
+            assert_eq!(
+                notification,
+                should_remove.then(|| DidChangeWorkspaceFoldersParams {
+                    event: WorkspaceFoldersChangeEvent {
+                        added: vec![],
+                        removed: vec![workspace_folder_for_uri(uri.clone())],
+                    },
+                })
+            );
+
+            server.remove_workspace_folder(uri);
+            cx.run_until_parked();
+            assert!(
+                fake.try_receive_notification::<DidChangeWorkspaceFolders>()
+                    .now_or_never()
+                    .flatten()
+                    .is_none()
+            );
+        }
     }
 
     struct ShutdownTestOutput {
