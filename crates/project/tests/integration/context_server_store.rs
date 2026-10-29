@@ -817,7 +817,7 @@ async fn test_stdio_server_restarts_when_project_root_becomes_available(cx: &mut
 }
 
 #[gpui::test]
-async fn test_global_context_servers_configured_without_worktrees(cx: &mut TestAppContext) {
+async fn test_global_context_servers_start_without_worktrees(cx: &mut TestAppContext) {
     let server_id = ContextServerId("my-server".into());
 
     cx.update(|cx| {
@@ -826,28 +826,40 @@ async fn test_global_context_servers_configured_without_worktrees(cx: &mut TestA
     });
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [], cx).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let executor = cx.executor();
+    store.update(cx, |store, _| {
+        store.set_context_server_factory(Box::new(move |id, _| {
+            Arc::new(ContextServer::new(
+                id.clone(),
+                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+            ))
+        }));
+    });
 
     set_context_server_configuration(
         vec![(
             server_id.0.clone(),
-            settings::ContextServerSettingsContent::Http {
+            settings::ContextServerSettingsContent::Stdio {
                 enabled: true,
-                url: "https://example.com/mcp".to_string(),
-                headers: Default::default(),
-                timeout: None,
-                oauth: None,
+                remote: false,
+                command: ContextServerCommand {
+                    path: "somebinary".into(),
+                    args: vec!["arg".to_string()],
+                    env: None,
+                    timeout: None,
+                },
             },
         )],
         cx,
     );
     cx.run_until_parked();
 
-    let store = project.read_with(cx, |project, _| project.context_server_store());
     cx.update(|cx| {
         assert_eq!(
-            store.read(cx).configured_server_ids(),
-            vec![server_id.clone()],
-            "user-level context servers must be configured before any worktree exists"
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "user-level context servers must start before any worktree exists"
         );
     });
 }
