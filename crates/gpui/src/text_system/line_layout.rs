@@ -199,7 +199,7 @@ impl LineLayout {
         scratch: &mut WrapScratch,
     ) -> SmallVec<[WrapBoundary; 1]> {
         let mut boundaries = SmallVec::new();
-        let mut previous_segment = None;
+        let mut current_segment: Option<Range<usize>> = None;
         let mut last_candidate_ix = None;
         let mut last_candidate_x = px(0.);
         let mut last_boundary = WrapBoundary {
@@ -245,16 +245,26 @@ impl LineLayout {
                 continue;
             }
 
-            if ch != ' ' {
+            if ch != ' '
+                && current_segment
+                    .as_ref()
+                    .is_none_or(|segment| !segment.contains(&index))
+            {
                 // Detect transitions between line-break segments rather than matching glyph
                 // indices directly, to accommodate RTL text. Workaround for the lack of complete
                 // UAX #9 support.
                 let segment = break_indices.partition_point(|break_index| *break_index <= index);
-                if previous_segment.is_some_and(|previous| previous != segment) {
+                if current_segment.is_some() {
                     last_candidate_ix = Some(boundary);
                     last_candidate_x = x;
                 }
-                previous_segment = Some(segment);
+                let start = segment
+                    .checked_sub(1)
+                    .and_then(|previous| break_indices.get(previous))
+                    .copied()
+                    .unwrap_or(0);
+                let end = break_indices.get(segment).copied().unwrap_or(text.len());
+                current_segment = Some(start..end);
             }
 
             let next_x = glyphs.peek().map_or(self.width, |(_, _, _, x)| *x);
