@@ -514,10 +514,11 @@ impl MentionSet {
         // Project skills may be on a remote machine, so read them through the project.
         // Global skills stay local, even if a worktree contains their path.
         if let Some(project) = self.project.upgrade()
-            && let Some(project_path) =
-                project_path_for_skill(project.read(cx), &source, &skill_file_path, cx)
+            && let Some(buffer) = project.update(cx, |project, cx| {
+                let project_path = project_path_for_skill(project, &source, &skill_file_path, cx)?;
+                Some(project.open_buffer(project_path, cx))
+            })
         {
-            let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
             return cx.spawn(async move |_, cx| {
                 let buffer = buffer.await?;
                 let content = buffer.update(cx, |buffer, _cx| buffer.text());
