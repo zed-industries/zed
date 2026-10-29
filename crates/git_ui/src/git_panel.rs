@@ -8901,10 +8901,11 @@ impl GitPanel {
         };
 
         let folder_indicator = settings.folder_indicator;
-        let name_row = h_flex()
-            .min_w_0()
-            .flex_1()
+
+        let icons = h_flex()
+            .flex_none()
             .gap_1()
+            .when(tree_view, |this| this.pl(px(depth as f32 * TREE_INDENT)))
             .when(settings.file_icons, |this| {
                 let icon = file_icon
                     .map(Icon::from_path)
@@ -8932,26 +8933,27 @@ impl GitPanel {
             })
             .when(status_style != StatusStyle::LabelColor, |el| {
                 el.child(git_status_icon(status))
-            })
-            .map(|this| {
-                if tree_view {
-                    this.pl(px(depth as f32 * TREE_INDENT)).child(
-                        self.entry_label(display_name, label_color)
-                            .when(status.is_deleted(), Label::strikethrough)
-                            .truncate(),
-                    )
-                } else {
-                    this.child(self.path_formatted(
-                        entry.parent_dir(path_style),
-                        path_color,
-                        display_name,
-                        label_color,
-                        path_style,
-                        git_path_style,
-                        status.is_deleted(),
-                    ))
-                }
             });
+
+        let name_and_path = h_flex().min_w_0().flex_1().map(|this| {
+            if tree_view {
+                this.child(
+                    self.entry_label(display_name, label_color)
+                        .when(status.is_deleted(), Label::strikethrough)
+                        .truncate(),
+                )
+            } else {
+                this.child(self.path_formatted(
+                    entry.parent_dir(path_style),
+                    path_color,
+                    display_name,
+                    label_color,
+                    path_style,
+                    git_path_style,
+                    status.is_deleted(),
+                ))
+            }
+        });
 
         let id_for_diff_stat = id.clone();
 
@@ -8970,7 +8972,8 @@ impl GitPanel {
             .bg(base_bg)
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
-            .child(name_row)
+            .child(icons)
+            .child(name_and_path)
             .when(GitPanelSettings::get_global(cx).diff_stats, |el| {
                 el.when_some(entry.diff_stat, move |this, stat| {
                     let id = format!("diff-stat-{}", id_for_diff_stat);
