@@ -180,7 +180,14 @@ When opening a remote project there are three relevant settings locations:
 - The server Zed settings (in the same place) on the remote server.
 - The project settings (in `.zed/settings.json` or `.editorconfig` of your project)
 
-Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main settings file.
+Both the local Zed and the server Zed read supported project settings. Zed forwards
+your local user settings to the server, where server settings override them.
+
+Git auto-fetch runs on the server and sends updated branch information to your
+local Zed window. Enable `git.auto_fetch` in your user settings or the server's
+settings. Git settings are not read from project `.zed/settings.json` files. See
+[Auto Fetch](./reference/all-settings.md#auto-fetch) for configuration and credential
+requirements.
 
 Which settings file you should use depends on the kind of setting you want to make:
 
