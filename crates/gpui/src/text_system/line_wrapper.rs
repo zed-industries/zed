@@ -32,6 +32,7 @@ pub struct LineWrapper {
     pub(crate) font_id: FontId,
     pub(crate) font_size: Pixels,
     char_widths: CharWidthCache,
+    text_buffer: String,
 }
 
 /// Cached character widths for one font and size.
@@ -64,6 +65,7 @@ impl LineWrapper {
             font_id,
             font_size,
             char_widths,
+            text_buffer: String::new(),
         }
     }
 
@@ -85,7 +87,14 @@ impl LineWrapper {
         let mut last_candidate_width = px(0.);
         let mut last_wrap_ix = 0;
         let mut index = 0;
-        let mut text = String::new();
+        let Self {
+            text_buffer: text,
+            char_widths,
+            text_system,
+            font_id,
+            font_size,
+        } = self;
+        text.clear();
         for fragment in fragments {
             match fragment {
                 LineFragment::Text {
@@ -97,16 +106,14 @@ impl LineWrapper {
                 }
             }
         }
-        let mut break_indices = Self::break_indices(&text)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .peekable();
+        let mut break_indices = Self::break_indices(text).peekable();
         let mut grapheme_indices = text
             .grapheme_indices(true)
             .map(|(index, _)| index)
-            .collect::<Vec<_>>()
-            .into_iter()
             .peekable();
+        let mut width_for_char = move |character| {
+            width_for_char(char_widths, character, text_system, *font_id, *font_size)
+        };
         let mut grapheme_index = 0;
         let mut width_before_grapheme = px(0.);
         let mut candidates = fragments
@@ -118,11 +125,9 @@ impl LineWrapper {
                 let ix = index;
                 index += candidate.len_utf8();
                 while grapheme_indices
-                    .peek()
-                    .is_some_and(|position| *position < ix)
-                {
-                    grapheme_indices.next();
-                }
+                    .next_if(|position| *position < ix)
+                    .is_some()
+                {}
                 let is_grapheme_boundary = grapheme_indices.next_if_eq(&ix).is_some();
                 if is_grapheme_boundary {
                     grapheme_index = ix;
@@ -145,7 +150,7 @@ impl LineWrapper {
                             first_non_whitespace_ix = Some(ix);
                         }
 
-                        self.width_for_char(c)
+                        width_for_char(c)
                     }
                     WrapBoundaryCandidate::Element {
                         width: element_width,
@@ -190,13 +195,11 @@ impl LineWrapper {
                         IndentAdjustment::ExtraColumns(extra) => {
                             if let Some(base_indent) = base_indent {
                                 let candidate = base_indent.saturating_add(extra);
-                                let candidate_indent_width =
-                                    self.width_for_char(' ') * candidate as f32;
+                                let candidate_indent_width = width_for_char(' ') * candidate as f32;
                                 // Reserve headroom for any carried suffix from an earlier word boundary
                                 // (and at least 2 columns for a full-width character) so the continuation
                                 // line does not immediately exceed wrap width.
-                                let min_headroom =
-                                    carried_width.max(self.width_for_char(' ') * 2.0);
+                                let min_headroom = carried_width.max(width_for_char(' ') * 2.0);
                                 if candidate_indent_width + min_headroom > wrap_width {
                                     0
                                 } else {
@@ -220,7 +223,7 @@ impl LineWrapper {
                     }
                     last_candidate_ix = 0;
 
-                    let indent_width = self.width_for_char(' ') * next_indent as f32;
+                    let indent_width = width_for_char(' ') * next_indent as f32;
                     width += indent_width;
                     width_before_grapheme += indent_width;
 
@@ -546,25 +549,38 @@ impl LineWrapper {
 
     #[inline(always)]
     fn width_for_char(&mut self, c: char) -> Pixels {
-        if (c as u32) < 128 {
-            if let Some(cached_width) = self.char_widths.ascii[c as usize] {
-                cached_width
-            } else {
-                let width = self
-                    .text_system
-                    .layout_width(self.font_id, self.font_size, c);
-                self.char_widths.ascii[c as usize] = Some(width);
-                width
-            }
-        } else if let Some(cached_width) = self.char_widths.other.get(&c) {
-            *cached_width
+        width_for_char(
+            &mut self.char_widths,
+            c,
+            &self.text_system,
+            self.font_id,
+            self.font_size,
+        )
+    }
+}
+
+#[inline(always)]
+fn width_for_char(
+    char_widths: &mut CharWidthCache,
+    c: char,
+    text_system: &TextSystem,
+    font_id: FontId,
+    font_size: Pixels,
+) -> Pixels {
+    if (c as u32) < 128 {
+        if let Some(cached_width) = char_widths.ascii[c as usize] {
+            cached_width
         } else {
-            let width = self
-                .text_system
-                .layout_width(self.font_id, self.font_size, c);
-            self.char_widths.other.insert(c, width);
+            let width = text_system.layout_width(font_id, font_size, c);
+            char_widths.ascii[c as usize] = Some(width);
             width
         }
+    } else if let Some(cached_width) = char_widths.other.get(&c) {
+        *cached_width
+    } else {
+        let width = text_system.layout_width(font_id, font_size, c);
+        char_widths.other.insert(c, width);
+        width
     }
 }
 
