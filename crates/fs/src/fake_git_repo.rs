@@ -12,10 +12,10 @@ use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions, CreateWorktreeTarget,
-        FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE, GitCaller, GitRepository,
-        InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit, Remote, RepoPath,
-        ResetMode, SearchCommitArgs, Worktree, commit_hash_search_query,
+        AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
+        CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
+        GitRepository, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit, Remote,
+        RepoPath, ResetMode, SearchCommitArgs, Worktree, commit_hash_search_query,
     },
     stash::GitStash,
     status::{
@@ -1266,7 +1266,7 @@ impl GitRepository for FakeGitRepository {
         _message: gpui::SharedString,
         _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
         options: CommitOptions,
-        _caller: GitCaller,
+        _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
@@ -1305,7 +1305,7 @@ impl GitRepository for FakeGitRepository {
         _remote_branch: String,
         _remote: String,
         _options: Option<PushOptions>,
-        _caller: GitCaller,
+        _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::RemoteCommandOutput>> {
@@ -1317,7 +1317,7 @@ impl GitRepository for FakeGitRepository {
         _branch: Option<String>,
         _remote: String,
         _rebase: bool,
-        _caller: GitCaller,
+        _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::RemoteCommandOutput>> {
@@ -1327,7 +1327,7 @@ impl GitRepository for FakeGitRepository {
     fn fetch(
         &self,
         fetch_options: FetchOptions,
-        _caller: GitCaller,
+        _askpass: Option<AskPassDelegate>,
         _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::RemoteCommandOutput>> {

@@ -46,29 +46,6 @@ pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 
-/// Who a git operation is running on behalf of.
-///
-/// A remote git operation can be asked for credentials through several
-/// independent channels — git itself, an external credential helper, and ssh —
-/// and only some of them route through Zed's askpass. Passing this instead of a
-/// bare [`AskPassDelegate`] keeps that list in one place
-/// ([`GitBinary::run_remote_command`]) rather than at each call site, and leaves
-/// nothing to fall back on when no user is attached.
-pub enum GitCaller {
-    /// A user started this operation and is waiting on it. Prompts route to the
-    /// UI through the delegate.
-    User(AskPassDelegate),
-    /// Background work with no user attached, such as auto-fetch. Nothing can
-    /// answer a prompt, so every prompting channel is closed. Credential helpers
-    /// that answer from a keychain without prompting still work, which is what
-    /// makes an unattended fetch useful at all.
-    ///
-    /// gpg's own pinentry can still open a dialog when signing. No background
-    /// caller signs today, so that channel is left alone rather than given a
-    /// policy nothing exercises.
-    Background,
-}
-
 /// Format string used in graph log to get initial data for the git graph
 /// %H - Full commit hash
 /// %P - Parent hashes
@@ -1003,7 +980,7 @@ pub trait GitRepository: Send + Sync {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
-        caller: GitCaller,
+        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -1044,7 +1021,7 @@ pub trait GitRepository: Send + Sync {
         remote_branch_name: String,
         upstream_name: String,
         options: Option<PushOptions>,
-        caller: GitCaller,
+        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -1056,7 +1033,7 @@ pub trait GitRepository: Send + Sync {
         branch_name: Option<String>,
         upstream_name: String,
         rebase: bool,
-        caller: GitCaller,
+        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -1066,7 +1043,7 @@ pub trait GitRepository: Send + Sync {
     fn fetch(
         &self,
         fetch_options: FetchOptions,
-        caller: GitCaller,
+        askpass: Option<AskPassDelegate>,
         env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -2800,7 +2777,7 @@ impl GitRepository for RealGitRepository {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
-        caller: GitCaller,
+        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let git = self.git_binary_in_worktree();
@@ -2808,7 +2785,7 @@ impl GitRepository for RealGitRepository {
         // which we want to block on.
         async move {
             let git = git?;
-            git.run_remote_command(caller, &env, &["commit", "--quiet", "-m"], |cmd| {
+            git.run_remote_command(Some(askpass), &env, &["commit", "--quiet", "-m"], |cmd| {
                 cmd.arg(&message.to_string())
                     .arg("--cleanup=strip")
                     .stdout(Stdio::piped())
@@ -2870,7 +2847,7 @@ impl GitRepository for RealGitRepository {
         remote_branch_name: String,
         remote_name: String,
         options: Option<PushOptions>,
-        caller: GitCaller,
+        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
@@ -2890,7 +2867,7 @@ impl GitRepository for RealGitRepository {
                 executor,
                 is_trusted,
             );
-            git.run_remote_command(caller, &env, &["push"], |command| {
+            git.run_remote_command(Some(askpass), &env, &["push"], |command| {
                 command
                     .args(options.map(|option| match option {
                         PushOptions::SetUpstream => "--set-upstream",
@@ -2912,7 +2889,7 @@ impl GitRepository for RealGitRepository {
         branch_name: Option<String>,
         remote_name: String,
         rebase: bool,
-        caller: GitCaller,
+        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
@@ -2932,7 +2909,7 @@ impl GitRepository for RealGitRepository {
                 executor,
                 is_trusted,
             );
-            git.run_remote_command(caller, &env, &["pull"], |command| {
+            git.run_remote_command(Some(askpass), &env, &["pull"], |command| {
                 if rebase {
                     command.arg("--rebase");
                 }
@@ -2951,7 +2928,7 @@ impl GitRepository for RealGitRepository {
     fn fetch(
         &self,
         fetch_options: FetchOptions,
-        caller: GitCaller,
+        askpass: Option<AskPassDelegate>,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
@@ -2972,7 +2949,7 @@ impl GitRepository for RealGitRepository {
                 executor,
                 is_trusted,
             );
-            git.run_remote_command(caller, &env, &["fetch", &remote_name], |command| {
+            git.run_remote_command(askpass, &env, &["fetch", &remote_name], |command| {
                 command.stdout(Stdio::piped()).stderr(Stdio::piped());
             })
             .await
@@ -3863,17 +3840,11 @@ impl GitBinary {
         command
     }
 
-    /// Runs a git command that may be asked for credentials, applying everything
-    /// `caller` implies.
-    ///
-    /// Every such command goes through here rather than building its own: git
-    /// itself, an external credential helper, and ssh each prompt through a
-    /// different mechanism and are each closed off differently, so a call site
-    /// that assembled its own command would silently miss whichever one it forgot.
-    /// `configure` adds the arguments and redirections specific to the operation.
+    /// Git, credential helpers, and SSH have separate prompting mechanisms, so
+    /// omitting an askpass delegate must configure more than Zed's prompt path.
     async fn run_remote_command<S>(
         &self,
-        caller: GitCaller,
+        askpass: Option<AskPassDelegate>,
         env: &HashMap<String, String>,
         args: &[S],
         configure: impl FnOnce(&mut util::command::Command),
@@ -3882,7 +3853,7 @@ impl GitBinary {
         S: AsRef<OsStr>,
     {
         let mut config = Vec::new();
-        if matches!(caller, GitCaller::Background) {
+        if askpass.is_none() {
             // Narrower than clearing `credential.helper`, which would also disable
             // helpers that answer from a keychain without prompting — exactly what
             // makes an unattended fetch useful. Only prompting is forbidden, and
@@ -3899,9 +3870,9 @@ impl GitBinary {
         command.envs(env.iter());
         configure(&mut command);
 
-        match caller {
-            GitCaller::User(delegate) => self.run_with_askpass(delegate, env, command).await,
-            GitCaller::Background => {
+        match askpass {
+            Some(delegate) => self.run_with_askpass(delegate, env, command).await,
+            None => {
                 // These are set after the project environment has been applied
                 // above, so that environment cannot override them.
                 command.env("GIT_TERMINAL_PROMPT", "0");
@@ -5730,7 +5701,7 @@ mod tests {
             "Commit in untrusted repo".into(),
             None,
             CommitOptions::default(),
-            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -5747,7 +5718,7 @@ mod tests {
             "Commit blocked by hook".into(),
             None,
             CommitOptions::default(),
-            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -5763,7 +5734,7 @@ mod tests {
             "Original message".into(),
             None,
             CommitOptions::default(),
-            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -5785,7 +5756,7 @@ mod tests {
                 no_verify: true,
                 ..Default::default()
             },
-            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -5840,7 +5811,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
-            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -5988,7 +5959,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
-            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -6254,7 +6225,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
-            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -6342,7 +6313,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
-            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -6440,7 +6411,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
-            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
             Arc::new(test_commit_envs()),
         )
         .await

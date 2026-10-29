@@ -40,9 +40,9 @@ use git::{
     repository::{
         Branch, BranchesScanResult, CommitData, CommitDetails, CommitFileStatus, CommitOptions,
         CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions, FileHistoryChangedFileSets,
-        GitCaller, GitCommitTemplate, GitRepository, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
-        UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag, is_binary_content,
+        GitCommitTemplate, GitRepository, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
+        Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
+        Worktree as GitWorktree, delete_branch_flag, is_binary_content,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -3454,7 +3454,7 @@ impl GitStore {
 
         let remote_output = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.fetch(fetch_options, askpass, cx)
+                repository_handle.fetch(fetch_options, Some(askpass), cx)
             })
             .await??;
 
@@ -8550,13 +8550,7 @@ impl Repository {
                         ..
                     }) => {
                         backend
-                            .commit(
-                                message,
-                                name_and_email,
-                                options,
-                                GitCaller::User(askpass),
-                                environment,
-                            )
+                            .commit(message, name_and_email, options, askpass, environment)
                             .await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
@@ -8704,7 +8698,7 @@ impl Repository {
                     continue;
                 }
                 let fetch = this.update(cx, |this, cx| {
-                    this.fetch_with_caller(FetchOptions::Remote(remote), GitCaller::Background, cx)
+                    this.fetch(FetchOptions::Remote(remote), None, cx)
                 })?;
                 if let Err(error) = fetch.await? {
                     log::debug!("auto-fetch failed: {error:#}");
@@ -8723,7 +8717,7 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        let receiver = self.fetch(FetchOptions::Unshallow, askpass, cx);
+        let receiver = self.fetch(FetchOptions::Unshallow, Some(askpass), cx);
         self.unshallow_state = UnshallowState::InProgress;
         cx.notify();
         let (tx, rx) = oneshot::channel();
@@ -8750,16 +8744,7 @@ impl Repository {
     pub fn fetch(
         &mut self,
         fetch_options: FetchOptions,
-        askpass: AskPassDelegate,
-        cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        self.fetch_with_caller(fetch_options, GitCaller::User(askpass), cx)
-    }
-
-    fn fetch_with_caller(
-        &mut self,
-        fetch_options: FetchOptions,
-        caller: GitCaller,
+        askpass: Option<AskPassDelegate>,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let askpass_delegates = self.askpass_delegates.clone();
@@ -8776,7 +8761,7 @@ impl Repository {
             });
 
         let this = cx.weak_entity();
-        let status = matches!(caller, GitCaller::User(_)).then(|| "git fetch".into());
+        let status = askpass.is_some().then(|| "git fetch".into());
         self.send_job("fetch", status, move |git_repo, mut cx| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState {
@@ -8784,11 +8769,11 @@ impl Repository {
                     environment,
                     ..
                 }) => {
-                    if matches!(caller, GitCaller::Background) && !backend.is_trusted() {
+                    if askpass.is_none() && !backend.is_trusted() {
                         bail!("auto-fetch requires a trusted repository");
                     }
                     let result = backend
-                        .fetch(fetch_options, caller, environment, cx.clone())
+                        .fetch(fetch_options, askpass, environment, cx.clone())
                         .await;
                     if result.is_ok() {
                         Self::refresh_branch_list(&this, backend, updates_tx, &mut cx).await?;
@@ -8796,7 +8781,7 @@ impl Repository {
                     result
                 }
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                    let GitCaller::User(askpass) = caller else {
+                    let Some(askpass) = askpass else {
                         bail!("auto-fetch must run on the repository host");
                     };
                     let _askpass_operation =
@@ -8867,7 +8852,7 @@ impl Repository {
                                 remote_branch.to_string(),
                                 remote.to_string(),
                                 options,
-                                GitCaller::User(askpass),
+                                askpass,
                                 environment.clone(),
                                 cx.clone(),
                             )
@@ -8945,7 +8930,7 @@ impl Repository {
                                 branch.as_ref().map(|b| b.to_string()),
                                 remote.to_string(),
                                 rebase,
-                                GitCaller::User(askpass),
+                                askpass,
                                 environment.clone(),
                                 cx,
                             )
