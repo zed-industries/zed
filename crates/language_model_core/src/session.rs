@@ -34,9 +34,7 @@ pub struct SessionConfig {
 
 /// Request parameters outside the cached prefix, chosen per round.
 ///
-/// Each field is copied into the [`LanguageModelRequest`] field of the same
-/// name. `tool_choice`, `stop`, `compact_at_tokens`, and `max_output_tokens` always
-/// take their defaults.
+/// Each field is copied into the [`LanguageModelRequest`] field of the same name.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RoundParameters {
     pub intent: Option<CompletionIntent>,
@@ -45,6 +43,27 @@ pub struct RoundParameters {
     pub thinking_allowed: bool,
     pub thinking_effort: Option<String>,
     pub speed: Option<Speed>,
+    pub tool_choice: Option<crate::LanguageModelToolChoice>,
+    pub stop: Vec<String>,
+    pub compact_at_tokens: Option<u64>,
+    pub max_output_tokens: Option<u64>,
+}
+
+impl From<&LanguageModelRequest> for RoundParameters {
+    fn from(request: &LanguageModelRequest) -> Self {
+        Self {
+            intent: request.intent,
+            prompt_id: request.prompt_id.clone(),
+            temperature: request.temperature,
+            thinking_allowed: request.thinking_allowed,
+            thinking_effort: request.thinking_effort.clone(),
+            speed: request.speed,
+            tool_choice: request.tool_choice.clone(),
+            stop: request.stop.clone(),
+            compact_at_tokens: request.compact_at_tokens,
+            max_output_tokens: request.max_output_tokens,
+        }
+    }
 }
 
 /// One part of a user message.
@@ -58,6 +77,7 @@ pub enum UserContent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SessionInput {
     UserMessage(Vec<UserContent>),
+    Instruction(String),
 }
 
 /// Identifies an appended input, for [`SessionLog::truncate`].
@@ -129,6 +149,8 @@ pub enum SessionError {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionLog {
     config: SessionConfig,
+    #[serde(default)]
+    history: Vec<LanguageModelRequestMessage>,
     entries: Vec<SessionLogEntry>,
     next_anchor: u64,
 }
@@ -138,6 +160,40 @@ impl SessionLog {
     pub fn new(config: SessionConfig) -> Self {
         Self {
             config,
+            history: Vec::new(),
+            entries: Vec::new(),
+            next_anchor: 0,
+        }
+    }
+
+    /// Seeds a session from an existing model-facing request.
+    ///
+    /// History, including opaque compaction blocks, is retained without
+    /// folding it back through streaming events. This cannot establish that
+    /// the host reconstructed the original provider prefix exactly.
+    pub fn from_request(mut request: LanguageModelRequest) -> Self {
+        let system_prompt = match request.messages.first() {
+            Some(LanguageModelRequestMessage {
+                role: Role::System,
+                content,
+                ..
+            }) => match content.as_slice() {
+                [MessageContent::Text(text)] => Some(text.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if system_prompt.is_some() {
+            request.messages.remove(0);
+        }
+        Self {
+            config: SessionConfig {
+                thread_id: request.thread_id,
+                prompt_cache_key: request.prompt_cache_key,
+                system_prompt,
+                tools: request.tools,
+            },
+            history: request.messages,
             entries: Vec::new(),
             next_anchor: 0,
         }
@@ -230,6 +286,10 @@ impl SessionLog {
     ) -> Result<(), SessionError> {
         match self.entries.last() {
             Some(SessionLogEntry::Input { .. } | SessionLogEntry::ToolResult(_)) => {}
+            None if self
+                .history
+                .last()
+                .is_some_and(|message| matches!(message.role, Role::User | Role::System)) => {}
             Some(SessionLogEntry::Output(_)) | None => return Err(SessionError::NoPendingInput),
         }
         self.entries.push(SessionLogEntry::Output(AssistantOutput {
@@ -290,6 +350,7 @@ impl SessionLog {
                 reasoning_details: None,
             });
         }
+        messages.extend(self.history.iter().cloned());
 
         for (index, entry) in self.entries.iter().enumerate() {
             match entry {
@@ -309,6 +370,17 @@ impl SessionLog {
                                 UserContent::Image(image) => MessageContent::Image(image.clone()),
                             })
                             .collect(),
+                        cache: false,
+                        reasoning_details: None,
+                    });
+                }
+                SessionLogEntry::Input {
+                    input: SessionInput::Instruction(text),
+                    ..
+                } => {
+                    messages.push(LanguageModelRequestMessage {
+                        role: Role::System,
+                        content: vec![MessageContent::Text(text.clone())],
                         cache: false,
                         reasoning_details: None,
                     });
@@ -348,14 +420,14 @@ impl SessionLog {
             intent: parameters.intent,
             messages,
             tools: self.config.tools.clone(),
-            tool_choice: None,
-            stop: Vec::new(),
+            tool_choice: parameters.tool_choice.clone(),
+            stop: parameters.stop.clone(),
             temperature: parameters.temperature,
             thinking_allowed: parameters.thinking_allowed,
             thinking_effort: parameters.thinking_effort.clone(),
             speed: parameters.speed,
-            compact_at_tokens: None,
-            max_output_tokens: None,
+            compact_at_tokens: parameters.compact_at_tokens,
+            max_output_tokens: parameters.max_output_tokens,
         }
     }
 }
@@ -549,6 +621,82 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn restored_request_preserves_compaction_and_round_parameters() {
+        let mut request = full_log().create_request(&RoundParameters::default());
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Compaction(
+                crate::CompactedContext::Summary {
+                    content: "Earlier conversation".into(),
+                    provider_state: None,
+                },
+            )],
+            cache: true,
+            reasoning_details: None,
+        });
+        request.compact_at_tokens = Some(1234);
+        request.max_output_tokens = Some(456);
+        request.tool_choice = Some(crate::LanguageModelToolChoice::Any);
+        request.stop = vec!["STOP".into()];
+        let parameters = RoundParameters::from(&request);
+        let mut log = SessionLog::from_request(request.clone());
+        let restored = log.create_request(&parameters);
+        assert_eq!(restored, request);
+        log.begin_round(provider(), model()).unwrap();
+        log.record_output(&LanguageModelCompletionEvent::Text("Continuing".into()));
+        log.end_round();
+        assert!(matches!(
+            log.entries().last(),
+            Some(SessionLogEntry::Output(_))
+        ));
+    }
+
+    #[test]
+    fn instruction_updates_append_system_messages_and_can_be_truncated() {
+        let mut log = SessionLog::new(SessionConfig {
+            system_prompt: Some("Initial instructions".into()),
+            ..config_without_system_prompt()
+        });
+        log.append(user_text("Hello"));
+        run_round(
+            &mut log,
+            &[
+                LanguageModelCompletionEvent::Text("Hi".into()),
+                LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+            ],
+        );
+        let original = log.create_request(&RoundParameters::default());
+        let update = log.append(SessionInput::Instruction("Updated rules".into()));
+        let messages = log.create_request(&RoundParameters::default()).messages;
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| (message.role, message.content.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    Role::System,
+                    vec![MessageContent::Text("Initial instructions".into())]
+                ),
+                (Role::User, vec![MessageContent::Text("Hello".into())]),
+                (Role::Assistant, vec![MessageContent::Text("Hi".into())]),
+                (
+                    Role::System,
+                    vec![MessageContent::Text("Updated rules".into())]
+                ),
+            ]
+        );
+        assert_eq!(
+            log.config().system_prompt.as_deref(),
+            Some("Initial instructions")
+        );
+        log.begin_round(provider(), model()).unwrap();
+        log.end_round();
+        log.truncate(update).unwrap();
+        assert_eq!(log.create_request(&RoundParameters::default()), original);
+    }
+
+    #[test]
     fn create_request_matches_expected_request() {
         let log = full_log();
         let parameters = RoundParameters {
@@ -558,6 +706,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: Some("high".into()),
             speed: Some(Speed::Fast),
+            ..RoundParameters::default()
         };
 
         assert_eq!(

@@ -77,7 +77,7 @@ impl LanguageModelSession {
         self.log.clone()
     }
 
-    /// Appends `input`, cancelling the active round first.
+    /// Appends user input or instructions, cancelling the active round first.
     pub fn append(&mut self, input: SessionInput) -> SessionAnchor {
         self.cancel_round();
         self.log.append(input)
@@ -219,6 +219,31 @@ mod tests {
     use gpui::{AppContext as _, AsyncApp, Entity, TestAppContext};
     use parking_lot::Mutex;
     use serde_json::json;
+
+    #[gpui::test]
+    fn instruction_update_cancels_the_round_and_is_sent_as_system(cx: &mut TestAppContext) {
+        let (fake, session) = setup(cx);
+        let model = fake.model("fake");
+        let _first_stream = session.update(cx, |session, cx| {
+            session.append(user_text("Hello"));
+            session.complete(parameters(), cx).unwrap()
+        });
+        cx.run_until_parked();
+        let first_request = only_pending(&fake);
+        let _next_stream = session.update(cx, |session, cx| {
+            session.append(SessionInput::Instruction("Use the updated rules".into()));
+            session.complete(parameters(), cx).unwrap()
+        });
+        cx.run_until_parked();
+        assert!(fake.is_stream_closed(&model, &first_request));
+        let request = fake.pending_completions().pop().unwrap();
+        let instruction = request.messages.last().unwrap();
+        assert_eq!(instruction.role, language_model_core::Role::System);
+        assert_eq!(
+            instruction.content,
+            vec![MessageContent::Text("Use the updated rules".into())]
+        );
+    }
 
     #[gpui::test]
     fn complete_sends_the_created_request(cx: &mut TestAppContext) {

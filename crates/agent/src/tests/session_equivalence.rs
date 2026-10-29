@@ -619,6 +619,7 @@ fn round_parameters(request: &LanguageModelRequest) -> RoundParameters {
         thinking_allowed: request.thinking_allowed,
         thinking_effort: request.thinking_effort.clone(),
         speed: request.speed,
+        ..RoundParameters::default()
     }
 }
 
