@@ -4736,6 +4736,81 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 }
 
 #[gpui::test]
+async fn test_remote_git_parent_branch(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    let project_directory = Path::new(path!("/code/project1"));
+    let dot_git = project_directory.join(".git");
+    fs.insert_tree(project_directory, json!({ ".git": {} }))
+        .await;
+    fs.with_git_state(&dot_git, true, |state| {
+        state.parent_branch_name = Some("topic".into());
+    })
+    .expect("set parent branch");
+
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(project_directory, true, cx)
+        })
+        .await
+        .expect("open remote worktree");
+    cx.run_until_parked();
+    let repository = project.read_with(cx, |project, cx| {
+        project.active_repository(cx).expect("active repository")
+    });
+
+    let parent_branch = repository
+        .update(cx, |repository, _| repository.parent_branch())
+        .await
+        .expect("receive parent branch")
+        .expect("resolve parent branch");
+    assert_eq!(parent_branch.as_deref(), Some("topic"));
+
+    for (include_remote_name, expected_branch) in [(false, "main"), (true, "origin/main")] {
+        let default_branch = repository
+            .update(cx, |repository, _| {
+                repository.default_branch(include_remote_name)
+            })
+            .await
+            .expect("receive default branch")
+            .expect("resolve default branch");
+        assert_eq!(default_branch.as_deref(), Some(expected_branch));
+    }
+
+    for (diff_base, expected_branch) in [
+        (settings::GitDiffBaseSetting::Head, "origin/main"),
+        (settings::GitDiffBaseSetting::DefaultBranch, "origin/main"),
+        (settings::GitDiffBaseSetting::ParentBranch, "topic"),
+    ] {
+        let branch = repository
+            .update(cx, |repository, cx| {
+                repository.branch_diff_base(diff_base, cx)
+            })
+            .await
+            .expect("resolve remote diff base");
+        assert_eq!(branch.as_deref(), Some(expected_branch));
+    }
+
+    fs.with_git_state(&dot_git, true, |state| {
+        state.parent_branch_name = None;
+    })
+    .expect("clear parent branch");
+    let parent_branch = repository
+        .update(cx, |repository, _| repository.parent_branch())
+        .await
+        .expect("receive missing parent branch")
+        .expect("resolve missing parent branch");
+    assert_eq!(parent_branch, None);
+    let branch = repository
+        .update(cx, |repository, cx| {
+            repository.branch_diff_base(settings::GitDiffBaseSetting::ParentBranch, cx)
+        })
+        .await
+        .expect("resolve default branch fallback");
+    assert_eq!(branch.as_deref(), Some("origin/main"));
+}
+
+#[gpui::test]
 async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(

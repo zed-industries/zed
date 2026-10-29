@@ -868,6 +868,9 @@ pub enum GitDiffBaseSetting {
     /// Repositories where no default branch can be resolved fall back
     /// to `head` behavior.
     DefaultBranch,
+    /// Diff against the merge base with the nearest inferred parent branch.
+    /// Falls back to the repository's default branch, then to HEAD.
+    ParentBranch,
 }
 
 #[with_fallible_options]
