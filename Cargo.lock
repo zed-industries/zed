@@ -11335,7 +11335,6 @@ name = "notifications"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "channel",
  "client",
  "component",
  "futures-lite 2.6.1",
