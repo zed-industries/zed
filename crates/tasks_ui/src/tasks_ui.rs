@@ -667,7 +667,10 @@ mod tests {
             .update_in(cx, |editor, window, cx| editor.task_context(window, cx))
             .await
             .expect("editor should provide a task context");
-
+        assert_eq!(
+            item_context.task_variables.get(&VariableName::WorktreeRoot),
+            Some(path!("/external"))
+        );
         assert_eq!(
             item_context.task_variables.get(&VariableName::RelativeFile),
             Some("notes.txt")
