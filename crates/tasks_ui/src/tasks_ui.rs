@@ -447,14 +447,7 @@ pub fn task_contexts(
                 && let Some(project_root) =
                     active_worktree.and_then(|worktree_id| worktree_abs_paths.get(&worktree_id))
             {
-                // Items outside of visible directory worktrees (e.g. the global `tasks.json`
-                // opened via `zed: open tasks`) keep their file variables, but use the visible
-                // project's root and cwd.
-                editor_context.task_variables.insert(
-                    VariableName::WorktreeRoot,
-                    project_root.to_string_lossy().into_owned(),
-                );
-                editor_context.cwd = Some(project_root.to_path_buf());
+                use_project_root_for_external_item(&mut editor_context, project_root);
             }
             task_contexts.active_item_context =
                 Some((active_item_worktree, location, editor_context));
@@ -479,6 +472,26 @@ pub fn task_contexts(
         );
         task_contexts
     })
+}
+
+/// Items outside of visible directory worktrees (e.g. the global `tasks.json` opened via
+/// `zed: open tasks`) keep their file variables, but use the visible project's root and cwd.
+/// Everything else derived from their own worktree is dropped: relative paths would point into
+/// an unrelated directory, and its environment would override the one the terminal loads for
+/// the project's cwd.
+fn use_project_root_for_external_item(editor_context: &mut TaskContext, project_root: &Path) {
+    editor_context.task_variables.insert(
+        VariableName::WorktreeRoot,
+        project_root.to_string_lossy().into_owned(),
+    );
+    editor_context
+        .task_variables
+        .remove(&VariableName::RelativeFile);
+    editor_context
+        .task_variables
+        .remove(&VariableName::RelativeDir);
+    editor_context.cwd = Some(project_root.to_path_buf());
+    editor_context.project_env.clear();
 }
 
 fn is_visible_directory(worktree: &Entity<Worktree>, cx: &App) -> bool {
@@ -511,16 +524,18 @@ mod tests {
     use gpui::{Entity, TestAppContext, VisualTestContext};
     use language::{Language, LanguageConfig};
     use project::{
-        BasicContextProvider, FakeFs, Inventory, Project,
+        BasicContextProvider, FakeFs, Inventory, Project, TaskContexts, TaskSourceKind, WorktreeId,
         task_store::{TaskSettingsLocation, TaskStore},
     };
     use serde_json::json;
-    use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
+    use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables, VariableName};
     use ui::VisualContext;
     use util::{path, rel_path::rel_path};
     use workspace::{AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace};
 
-    use crate::{Rerun, Spawn, task_contexts};
+    use crate::{
+        Rerun, Spawn, task_contexts, use_project_root_for_external_item, worktree_context,
+    };
 
     const GLOBAL_TASKS_JSON: &str = r#"[
         {
@@ -635,6 +650,39 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_invisible_directory_worktree_editor_keeps_its_worktree_context(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace, cx) = init_project_with_worktree_task(cx).await;
+        open_file_in_invisible_worktree(&project, &workspace, path!("/external"), "notes.txt", cx)
+            .await;
+
+        let editor = workspace
+            .read_with(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
+            .expect("active item should be an editor");
+
+        // Gutter tasks resolve against this context directly, without the workspace's
+        // fallback to the visible project, so it must describe the editor's own worktree.
+        let item_context = editor
+            .update_in(cx, |editor, window, cx| editor.task_context(window, cx))
+            .await
+            .expect("editor should provide a task context");
+
+        assert_eq!(
+            item_context.task_variables.get(&VariableName::RelativeFile),
+            Some("notes.txt")
+        );
+        assert_eq!(
+            item_context.task_variables.get(&VariableName::RelativeDir),
+            Some(".")
+        );
+        assert_eq!(
+            item_context.cwd.as_deref(),
+            Some(Path::new(path!("/external")))
+        );
+    }
+
+    #[gpui::test]
     async fn test_spawn_by_name_resolves_worktree_task_with_invisible_worktree_editor_active(
         cx: &mut TestAppContext,
     ) {
@@ -710,6 +758,99 @@ mod tests {
         assert_eq!(
             scheduled_task.resolved.cwd.as_deref(),
             Some(Path::new(path!("/project")))
+        );
+    }
+
+    #[test]
+    fn test_external_item_context_does_not_carry_its_worktree_environment() {
+        let project_root = Path::new(path!("/project"));
+        let project_worktree_id = WorktreeId::from_usize(1);
+
+        let mut external_item_context = TaskContext {
+            cwd: Some(PathBuf::from(path!("/zed-config"))),
+            task_variables: TaskVariables::from_iter([
+                (
+                    VariableName::File,
+                    path!("/zed-config/tasks.json").to_string(),
+                ),
+                (VariableName::Filename, "tasks.json".to_string()),
+                (VariableName::WorktreeRoot, path!("/zed-config").to_string()),
+                (VariableName::RelativeFile, "tasks.json".to_string()),
+                (VariableName::RelativeDir, ".".to_string()),
+            ]),
+            project_env: HashMap::from_iter([
+                ("SOURCE_DIRECTORY".to_string(), "zed-config".to_string()),
+                ("ZED_CONFIG_ONLY".to_string(), "1".to_string()),
+            ]),
+        };
+
+        use_project_root_for_external_item(&mut external_item_context, project_root);
+
+        let mut project_worktree_context = worktree_context(project_root);
+        project_worktree_context.project_env =
+            HashMap::from_iter([("SOURCE_DIRECTORY".to_string(), "project".to_string())]);
+
+        let task_contexts = TaskContexts {
+            active_item_context: Some((None, None, external_item_context)),
+            active_worktree_context: Some((project_worktree_id, project_worktree_context)),
+            ..TaskContexts::default()
+        };
+
+        let global_task = task_contexts
+            .resolve_task(
+                &TaskSourceKind::AbsPath {
+                    id_base: "global tasks".into(),
+                    abs_path: PathBuf::from(path!("/zed-config/tasks.json")),
+                },
+                &TaskTemplate {
+                    label: "print global task context".to_string(),
+                    command: "echo".to_string(),
+                    args: vec![
+                        "$ZED_WORKTREE_ROOT".to_string(),
+                        "$ZED_FILENAME".to_string(),
+                        "${ZED_RELATIVE_FILE:no file}".to_string(),
+                    ],
+                    ..TaskTemplate::default()
+                },
+            )
+            .expect("global task should resolve");
+
+        assert_eq!(
+            global_task.resolved.args,
+            vec![
+                path!("/project").to_string(),
+                "tasks.json".to_string(),
+                "no file".to_string()
+            ]
+        );
+        assert_eq!(global_task.resolved.cwd.as_deref(), Some(project_root));
+        assert_eq!(global_task.resolved.env.get("ZED_CONFIG_ONLY"), None);
+        assert_eq!(global_task.resolved.env.get("SOURCE_DIRECTORY"), None);
+
+        let worktree_task = task_contexts
+            .resolve_task(
+                &TaskSourceKind::Worktree {
+                    id: project_worktree_id,
+                    directory_in_worktree: rel_path(".zed").into(),
+                    id_base: "local worktree tasks".into(),
+                },
+                &TaskTemplate {
+                    label: "print worktree root".to_string(),
+                    command: "echo".to_string(),
+                    args: vec!["$ZED_WORKTREE_ROOT".to_string()],
+                    ..TaskTemplate::default()
+                },
+            )
+            .expect("worktree task should resolve");
+
+        assert_eq!(worktree_task.resolved.cwd.as_deref(), Some(project_root));
+        assert_eq!(
+            worktree_task
+                .resolved
+                .env
+                .get("SOURCE_DIRECTORY")
+                .map(String::as_str),
+            Some("project")
         );
     }
 

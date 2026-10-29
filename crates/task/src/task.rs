@@ -303,6 +303,10 @@ impl TaskVariables {
     pub fn get(&self, key: &VariableName) -> Option<&str> {
         self.0.get(key).map(|s| s.as_str())
     }
+    /// Removes the variable from the container, returning its value if it was present.
+    pub fn remove(&mut self, key: &VariableName) -> Option<String> {
+        self.0.remove(key)
+    }
     /// Clear out variables obtained from tree-sitter queries, which are prefixed with '_' character
     pub fn sweep(&mut self) {
         self.0.retain(|name, _| {
