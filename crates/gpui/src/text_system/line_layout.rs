@@ -196,6 +196,7 @@ impl LineLayout {
         text: &str,
         wrap_width: Pixels,
         max_lines: Option<usize>,
+        scratch: &mut WrapScratch,
     ) -> SmallVec<[WrapBoundary; 1]> {
         let mut boundaries = SmallVec::new();
         let mut previous_segment = None;
@@ -208,14 +209,19 @@ impl LineLayout {
         let mut last_boundary_x = px(0.);
         // Shaping can combine characters across a line break opportunity, so we ignore those
         // break opportunities that would separate them.
-        let glyph_indices: FxHashSet<_> = self
-            .runs
-            .iter()
-            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
-            .collect();
-        let break_indices: Vec<_> = LineWrapper::break_indices(text)
-            .filter(|index| glyph_indices.contains(index))
-            .collect();
+        let WrapScratch {
+            glyph_indices,
+            break_indices,
+        } = scratch;
+        glyph_indices.clear();
+        glyph_indices.extend(
+            self.runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index)),
+        );
+        break_indices.clear();
+        break_indices
+            .extend(LineWrapper::break_indices(text).filter(|index| glyph_indices.contains(index)));
         let mut glyphs = self
             .runs
             .iter()
@@ -462,11 +468,18 @@ impl WrappedLineLayout {
 
 pub(crate) struct LineLayoutCache {
     state: RefCell<LineLayoutCacheState>,
+    wrap_scratch: RefCell<WrapScratch>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
     /// Advances when [`TextSystem::add_fonts`] successfully changes the font database.
     font_generation: Arc<AtomicUsize>,
     /// Records the generation represented by both frame caches.
     cached_font_generation: AtomicUsize,
+}
+
+#[derive(Default)]
+struct WrapScratch {
+    glyph_indices: FxHashSet<usize>,
+    break_indices: Vec<usize>,
 }
 
 #[derive(Default)]
@@ -498,6 +511,7 @@ impl LineLayoutCache {
         let cached_font_generation = font_generation.load(Ordering::Acquire);
         Self {
             state: RefCell::default(),
+            wrap_scratch: RefCell::default(),
             platform_text_system,
             font_generation,
             cached_font_generation: AtomicUsize::new(cached_font_generation),
@@ -612,7 +626,12 @@ impl LineLayoutCache {
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
-                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
+                unwrapped_layout.compute_wrap_boundaries(
+                    text.as_ref(),
+                    wrap_width,
+                    max_lines,
+                    &mut self.wrap_scratch.borrow_mut(),
+                )
             } else {
                 SmallVec::new()
             };
@@ -875,7 +894,7 @@ mod tests {
         layout.len = "你好".len();
         assert_eq!(
             layout
-                .compute_wrap_boundaries("你好", px(15.), None)
+                .compute_wrap_boundaries("你好", px(15.), None, &mut WrapScratch::default())
                 .as_slice(),
             &[WrapBoundary {
                 run_ix: 0,
@@ -888,7 +907,7 @@ mod tests {
         layout.len = 1;
         assert!(
             layout
-                .compute_wrap_boundaries("a", px(10.), None)
+                .compute_wrap_boundaries("a", px(10.), None, &mut WrapScratch::default())
                 .is_empty()
         );
     }
@@ -909,7 +928,7 @@ mod tests {
             layout.width = px(indices.len() as f32 * 10.);
             layout.len = text.len();
             assert_eq!(
-                layout.compute_wrap_boundaries(text, px(40.), None),
+                layout.compute_wrap_boundaries(text, px(40.), None, &mut WrapScratch::default()),
                 expected_boundaries
                     .into_iter()
                     .map(|glyph_ix| WrapBoundary {
@@ -935,7 +954,7 @@ mod tests {
         layout.len = text.len();
         assert_eq!(
             layout
-                .compute_wrap_boundaries(text, px(60.), None)
+                .compute_wrap_boundaries(text, px(60.), None, &mut WrapScratch::default())
                 .as_slice(),
             &[WrapBoundary {
                 run_ix: 0,
