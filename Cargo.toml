@@ -650,6 +650,7 @@ http = "1.1"
 http-body = "1.0"
 httparse = "1.10"
 human_bytes = "0.4.1"
+iana-time-zone = "0.1"
 idna = "1.0"
 ignore = "0.4.22"
 # image's default features minus "avif", which only adds an encoder (rav1e);

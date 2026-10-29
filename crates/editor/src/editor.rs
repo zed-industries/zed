@@ -5044,6 +5044,38 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        let insertions = insertion_ranges
+            .iter()
+            .map(|range| (range.clone(), snippet.clone()))
+            .collect::<Vec<_>>();
+        self.insert_snippets_with_autoindent(&insertions, autoindent_mode, window, cx)
+    }
+
+    /// Inserts one snippet per range, which lets variables resolve differently for each caret.
+    /// Ranges must be sorted and non-overlapping.
+    pub fn insert_snippets(
+        &mut self,
+        insertions: &[(Range<MultiBufferOffset>, Snippet)],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.insert_snippets_with_autoindent(
+            insertions,
+            Some(AutoindentMode::Block {
+                original_indent_columns: Vec::new(),
+            }),
+            window,
+            cx,
+        )
+    }
+
+    fn insert_snippets_with_autoindent(
+        &mut self,
+        insertions: &[(Range<MultiBufferOffset>, Snippet)],
+        autoindent_mode: Option<AutoindentMode>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         struct Tabstop<T> {
             is_end_tabstop: bool,
             ranges: Vec<Range<T>>,
@@ -5051,48 +5083,64 @@ impl Editor {
         }
 
         let tabstops = self.buffer.update(cx, |buffer, cx| {
-            let snippet_text: Arc<str> = snippet.text.clone().into();
-            let edits = insertion_ranges
+            let edits = insertions
                 .iter()
-                .cloned()
-                .map(|range| (range, snippet_text.clone()));
+                .map(|(range, snippet)| (range.clone(), Arc::<str>::from(snippet.text.as_str())));
             buffer.edit(edits, autoindent_mode, cx);
 
             let snapshot = &*buffer.read(cx);
-            let snippet = &snippet;
-            snippet
-                .tabstops
-                .iter()
-                .map(|tabstop| {
-                    let is_end_tabstop = tabstop.ranges.first().is_some_and(|tabstop| {
-                        tabstop.is_empty() && tabstop.start == snippet.text.len() as isize
+            // Snippets may differ in tabstop count when a resolved variable discarded its
+            // default, so tabstops are matched by position with the final one kept last.
+            let mut regular_tabstops: Vec<Tabstop<Anchor>> = Vec::new();
+            let mut final_tabstop: Option<Tabstop<Anchor>> = None;
+            let mut delta = 0_isize;
+            for (insertion_range, snippet) in insertions {
+                let insertion_start = insertion_range.start + delta;
+                delta += snippet.text.len() as isize
+                    - (insertion_range.end - insertion_range.start) as isize;
+
+                let final_index = snippet.tabstops.len().saturating_sub(1);
+                for (index, tabstop) in snippet.tabstops.iter().enumerate() {
+                    let is_end_tabstop = tabstop.ranges.first().is_some_and(|range| {
+                        range.is_empty() && range.start == snippet.text.len() as isize
                     });
-                    let mut tabstop_ranges = tabstop
-                        .ranges
-                        .iter()
-                        .flat_map(|tabstop_range| {
-                            let mut delta = 0_isize;
-                            insertion_ranges.iter().map(move |insertion_range| {
-                                let insertion_start = insertion_range.start + delta;
-                                delta += snippet.text.len() as isize
-                                    - (insertion_range.end - insertion_range.start) as isize;
-
-                                let start =
-                                    (insertion_start + tabstop_range.start).min(snapshot.len());
-                                let end = (insertion_start + tabstop_range.end).min(snapshot.len());
-                                snapshot.anchor_before(start)..snapshot.anchor_after(end)
-                            })
+                    let slot = if index == final_index {
+                        final_tabstop.get_or_insert_with(|| Tabstop {
+                            is_end_tabstop: true,
+                            ranges: Vec::new(),
+                            choices: None,
                         })
-                        .collect::<Vec<_>>();
-                    tabstop_ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start, snapshot));
-
-                    Tabstop {
-                        is_end_tabstop,
-                        ranges: tabstop_ranges,
-                        choices: tabstop.choices.clone(),
+                    } else {
+                        while regular_tabstops.len() <= index {
+                            regular_tabstops.push(Tabstop {
+                                is_end_tabstop: true,
+                                ranges: Vec::new(),
+                                choices: None,
+                            });
+                        }
+                        &mut regular_tabstops[index]
+                    };
+                    slot.is_end_tabstop &= is_end_tabstop;
+                    if slot.choices.is_none() {
+                        slot.choices = tabstop.choices.clone();
                     }
-                })
-                .collect::<Vec<_>>()
+                    slot.ranges
+                        .extend(tabstop.ranges.iter().map(|tabstop_range| {
+                            let start = (insertion_start + tabstop_range.start).min(snapshot.len());
+                            let end = (insertion_start + tabstop_range.end).min(snapshot.len());
+                            snapshot.anchor_before(start)..snapshot.anchor_after(end)
+                        }));
+                }
+            }
+
+            let mut tabstops = regular_tabstops;
+            tabstops.extend(final_tabstop);
+            for tabstop in &mut tabstops {
+                tabstop
+                    .ranges
+                    .sort_unstable_by(|a, b| a.start.cmp(&b.start, snapshot));
+            }
+            tabstops
         });
         if let Some(tabstop) = tabstops.first() {
             self.change_selections(Default::default(), window, cx, |s| {
@@ -11686,6 +11734,83 @@ impl Editor {
     }
 }
 
+fn parse_snippet_at_selection(
+    source: &str,
+    snapshot: &MultiBufferSnapshot,
+    selection: Range<MultiBufferOffset>,
+    cx: &App,
+) -> Result<Snippet> {
+    let Some((buffer, start)) = snapshot.point_to_buffer_offset(selection.start) else {
+        return Snippet::parse(source);
+    };
+    let end = snapshot
+        .point_to_buffer_offset(selection.end)
+        .filter(|(end_buffer, _)| end_buffer.remote_id() == buffer.remote_id())
+        .map_or(start, |(_, end)| end);
+    let range = start.0..end.0;
+    Snippet::parse_with_variables(source, |name| {
+        resolve_snippet_variable(name, buffer, range.clone(), cx)
+    })
+}
+
+/// Resolves snippet variables against the buffer around `selection`. Returns
+/// `None` for names that are not snippet variables.
+fn resolve_snippet_variable(
+    name: &str,
+    buffer: &BufferSnapshot,
+    selection: Range<usize>,
+    cx: &App,
+) -> Option<String> {
+    let file = buffer.file();
+    let file_path = || {
+        let file = file?;
+        Some(
+            file.file_system_abs_path(cx)
+                .unwrap_or_else(|| file.full_path(cx)),
+        )
+    };
+    let row = buffer.offset_to_point(selection.start).row;
+
+    let value: String = match name {
+        "TM_SELECTED_TEXT" => buffer.text_for_range(selection).collect(),
+        "TM_CURRENT_LINE" => buffer
+            .text_for_range(Point::new(row, 0)..Point::new(row, buffer.line_len(row)))
+            .collect(),
+        "TM_CURRENT_WORD" => {
+            let (range, kind) = buffer.surrounding_word(selection.start, None);
+            if kind == Some(CharKind::Word) {
+                buffer.text_for_range(range).collect()
+            } else {
+                String::new()
+            }
+        }
+        "TM_LINE_INDEX" => row.to_string(),
+        "TM_LINE_NUMBER" => (row + 1).to_string(),
+        "TM_FILENAME" => file
+            .map(|file| file.file_name(cx).to_string())
+            .unwrap_or_default(),
+        "TM_FILENAME_BASE" => file
+            .and_then(|file| Path::new(file.file_name(cx)).file_stem())
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        "TM_DIRECTORY" => file_path()
+            .and_then(|path| Some(path.parent()?.to_string_lossy().into_owned()))
+            .unwrap_or_default(),
+        "TM_FILEPATH" => file_path()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        "RELATIVE_FILEPATH" => file
+            .map(|file| file.path().display(file.path_style(cx)).into_owned())
+            .unwrap_or_default(),
+        "CLIPBOARD" => cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap_or_default(),
+        _ => return snippet::resolve_builtin_variable(name),
+    };
+    Some(value)
+}
+
 fn process_completion_for_edit(
     completion: &Completion,
     intent: CompletionIntent,
@@ -11695,7 +11820,7 @@ fn process_completion_for_edit(
 ) -> CompletionEdit {
     let buffer = buffer.read(cx);
     let buffer_snapshot = buffer.snapshot();
-    let (snippet, new_text) = if completion.is_snippet() {
+    let (snippet, new_text, snippet_source) = if completion.is_snippet() {
         let mut snippet_source = completion.new_text.clone();
         // Workaround for typescript language server issues so that methods don't expand within
         // strings and functions with type expressions. The previous point is used because the query
@@ -11716,12 +11841,20 @@ fn process_completion_for_edit(
         {
             snippet_source = label;
         }
-        match Snippet::parse(&snippet_source).log_err() {
-            Some(parsed_snippet) => (Some(parsed_snippet.clone()), parsed_snippet.text),
-            None => (None, completion.new_text.clone()),
+        let cursor_offset = cursor_position.to_offset(&buffer_snapshot);
+        let parsed_snippet = Snippet::parse_with_variables(&snippet_source, |name| {
+            resolve_snippet_variable(name, &buffer_snapshot, cursor_offset..cursor_offset, &*cx)
+        });
+        match parsed_snippet.log_err() {
+            Some(parsed_snippet) => (
+                Some(parsed_snippet.clone()),
+                parsed_snippet.text,
+                Some(snippet_source),
+            ),
+            None => (None, completion.new_text.clone(), None),
         }
     } else {
-        (None, completion.new_text.clone())
+        (None, completion.new_text.clone(), None)
     };
 
     let mut range_to_replace = {
@@ -11824,6 +11957,7 @@ fn process_completion_for_edit(
         new_text,
         replace_range: range_to_replace,
         snippet,
+        snippet_source,
     }
 }
 
@@ -11831,6 +11965,8 @@ struct CompletionEdit {
     new_text: String,
     replace_range: Range<text::Anchor>,
     snippet: Option<Snippet>,
+    /// Snippet text to re-parse for each caret so variables resolve per caret.
+    snippet_source: Option<String>,
 }
 
 pub trait CollaborationHub {

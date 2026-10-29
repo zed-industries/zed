@@ -14,4 +14,8 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+chrono = { workspace = true, default-features = true }
+iana-time-zone.workspace = true
+rand = { workspace = true, features = ["thread_rng"] }
 smallvec.workspace = true
+uuid = { workspace = true, features = ["v4"] }

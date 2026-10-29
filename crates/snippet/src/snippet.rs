@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result};
+use rand::Rng as _;
 use smallvec::SmallVec;
 use std::{collections::BTreeMap, ops::Range};
 
@@ -14,12 +15,58 @@ pub struct TabStop {
     pub choices: Option<Vec<String>>,
 }
 
+/// Parsing state for `$NAME` and `${NAME:default}` variables.
+struct Variables<'a> {
+    resolve: &'a mut dyn FnMut(&str) -> Option<String>,
+    /// Variables the resolver did not know, which become placeholders once all
+    /// explicit tabstop indices are known.
+    unresolved: Vec<(String, Range<isize>)>,
+}
+
 impl Snippet {
+    /// Parses a snippet, resolving variables that don't depend on the editor
+    /// state (date, time, random values).
     pub fn parse(source: &str) -> Result<Self> {
+        Self::parse_with_variables(source, resolve_builtin_variable)
+    }
+
+    /// Parses a snippet, using `resolve` to look up variable values.
+    ///
+    /// `None` marks a variable as unknown: its default (or its name) is inserted
+    /// as a placeholder. `Some("")` marks it as known but empty: its default, if
+    /// any, is inserted.
+    pub fn parse_with_variables(
+        source: &str,
+        mut resolve: impl FnMut(&str) -> Option<String>,
+    ) -> Result<Self> {
         let mut text = String::with_capacity(source.len());
         let mut tabstops = BTreeMap::new();
-        parse_snippet(source, false, &mut text, &mut tabstops)
+        let mut variables = Variables {
+            resolve: &mut resolve,
+            unresolved: Vec::new(),
+        };
+        parse_snippet(source, false, &mut text, &mut tabstops, &mut variables)
             .context("failed to parse snippet")?;
+
+        let first_placeholder_index = tabstops.keys().next_back().map_or(1, |index| index + 1);
+        let mut placeholder_names: Vec<String> = Vec::new();
+        for (name, range) in variables.unresolved {
+            let position = match placeholder_names
+                .iter()
+                .position(|existing| *existing == name)
+            {
+                Some(position) => position,
+                None => {
+                    placeholder_names.push(name);
+                    placeholder_names.len() - 1
+                }
+            };
+            tabstops
+                .entry(first_placeholder_index + position)
+                .or_default()
+                .ranges
+                .push(range);
+        }
 
         let len = text.len() as isize;
         let final_tabstop = tabstops.remove(&0);
@@ -42,17 +89,64 @@ impl Snippet {
     }
 }
 
+/// Resolves variables that don't depend on editor state.
+pub fn resolve_builtin_variable(name: &str) -> Option<String> {
+    use chrono::Local;
+
+    let format = |format: &str| Local::now().format(format).to_string();
+    let value = match name {
+        "CURRENT_YEAR" => format("%Y"),
+        "CURRENT_YEAR_SHORT" => format("%y"),
+        "CURRENT_MONTH" => format("%m"),
+        "CURRENT_MONTH_NAME" => format("%B"),
+        "CURRENT_MONTH_NAME_SHORT" => format("%b"),
+        "CURRENT_DATE" => format("%d"),
+        "CURRENT_DAY_NAME" => format("%A"),
+        "CURRENT_DAY_NAME_SHORT" => format("%a"),
+        "CURRENT_HOUR" => format("%H"),
+        "CURRENT_MINUTE" => format("%M"),
+        "CURRENT_SECOND" => format("%S"),
+        "CURRENT_MILLISECOND" => format("%3f"),
+        "CURRENT_SECONDS_UNIX" => Local::now().timestamp().to_string(),
+        "CURRENT_MILLISECONDS_UNIX" => Local::now().timestamp_millis().to_string(),
+        "CURRENT_TIMEZONE_OFFSET" => format("%:z"),
+        "CURRENT_TIMEZONE_NAME" => iana_time_zone::get_timezone().unwrap_or_default(),
+        "RANDOM" => random_digits(10),
+        "RANDOM_HEX" => random_digits(16),
+        "UUID" => uuid::Uuid::new_v4().to_string(),
+        _ => return None,
+    };
+    Some(value)
+}
+
+fn random_digits(radix: u32) -> String {
+    let mut rng = rand::rng();
+    (0..6)
+        .filter_map(|_| char::from_digit(rng.random_range(0..radix), radix))
+        .collect()
+}
+
+fn is_variable_start(c: char) -> bool {
+    c == '_' || c.is_ascii_alphabetic()
+}
+
 fn parse_snippet<'a>(
     mut source: &'a str,
     nested: bool,
     text: &mut String,
     tabstops: &mut BTreeMap<usize, TabStop>,
+    variables: &mut Variables,
 ) -> Result<&'a str> {
     loop {
         match source.chars().next() {
             None => return Ok(""),
             Some('$') => {
-                source = parse_tabstop(&source[1..], text, tabstops)?;
+                let name_start = source[1..].strip_prefix('{').unwrap_or(&source[1..]);
+                if name_start.starts_with(is_variable_start) {
+                    source = parse_variable(&source[1..], text, tabstops, variables)?;
+                } else {
+                    source = parse_tabstop(&source[1..], text, tabstops, variables)?;
+                }
             }
             Some('\\') => {
                 // As specified in the LSP spec (`Grammar` section),
@@ -89,10 +183,67 @@ fn parse_snippet<'a>(
     }
 }
 
+fn parse_variable<'a>(
+    mut source: &'a str,
+    text: &mut String,
+    tabstops: &mut BTreeMap<usize, TabStop>,
+    variables: &mut Variables,
+) -> Result<&'a str> {
+    let braced = source.starts_with('{');
+    if braced {
+        source = &source[1..];
+    }
+
+    let name_end = source
+        .find(|c: char| c != '_' && !c.is_ascii_alphanumeric())
+        .unwrap_or(source.len());
+    let (name, rest) = source.split_at(name_end);
+    source = rest;
+
+    let start = text.len();
+    // A resolved variable discards any tabstops declared in its default.
+    let mut checkpoint = None;
+    if braced {
+        if source.starts_with(':') {
+            checkpoint = Some((tabstops.clone(), variables.unresolved.len()));
+            source = parse_snippet(&source[1..], true, text, tabstops, variables)?;
+        }
+
+        if source.starts_with('}') {
+            source = &source[1..];
+        } else {
+            anyhow::bail!("expected a closing brace");
+        }
+    }
+
+    match (variables.resolve)(name) {
+        Some(value) if !value.is_empty() => {
+            text.truncate(start);
+            if let Some((saved_tabstops, unresolved_len)) = checkpoint {
+                *tabstops = saved_tabstops;
+                variables.unresolved.truncate(unresolved_len);
+            }
+            text.push_str(&value);
+        }
+        Some(_) => {}
+        None => {
+            if text.len() == start {
+                text.push_str(name);
+            }
+            variables
+                .unresolved
+                .push((name.to_string(), start as isize..text.len() as isize));
+        }
+    }
+
+    Ok(source)
+}
+
 fn parse_tabstop<'a>(
     mut source: &'a str,
     text: &mut String,
     tabstops: &mut BTreeMap<usize, TabStop>,
+    variables: &mut Variables,
 ) -> Result<&'a str> {
     let tabstop_start = text.len();
     let tabstop_index;
@@ -108,7 +259,7 @@ fn parse_tabstop<'a>(
         }
 
         if source.starts_with(':') {
-            source = parse_snippet(&source[1..], true, text, tabstops)?;
+            source = parse_snippet(&source[1..], true, text, tabstops, variables)?;
         }
 
         if source.starts_with('}') {
@@ -348,6 +499,78 @@ mod tests {
         let snippet = Snippet::parse("one\\\\$1two").unwrap();
         assert_eq!(snippet.text, "one\\two");
         assert_eq!(tabstops(&snippet), &[vec![4..4], vec![7..7]]);
+    }
+
+    fn resolve_test_variable(name: &str) -> Option<String> {
+        match name {
+            "TM_FILENAME" => Some("main.rs".to_string()),
+            "TM_SELECTED_TEXT" => Some(String::new()),
+            _ => None,
+        }
+    }
+
+    fn parse_with_test_variables(source: &str) -> Snippet {
+        Snippet::parse_with_variables(source, resolve_test_variable).unwrap()
+    }
+
+    #[test]
+    fn test_snippet_with_variables() {
+        let snippet = parse_with_test_variables("// $TM_FILENAME and ${TM_FILENAME}!");
+        assert_eq!(snippet.text, "// main.rs and main.rs!");
+        assert_eq!(tabstops(&snippet), &[vec![23..23]]);
+
+        // Variables are delimited by non-identifier characters.
+        let snippet = parse_with_test_variables("$TM_FILENAME.bak-$TM_FILENAME_$1");
+        assert_eq!(snippet.text, "main.rs.bak-TM_FILENAME_");
+        assert_eq!(tabstops(&snippet)[0], vec![24..24]);
+    }
+
+    #[test]
+    fn test_snippet_with_variable_defaults() {
+        // A resolved, non-empty variable ignores its default and the default's tabstops.
+        let snippet = parse_with_test_variables("${TM_FILENAME:default ${1:one}}$2");
+        assert_eq!(snippet.text, "main.rs");
+        assert_eq!(tabstops(&snippet), &[vec![7..7]]);
+
+        // A known but empty variable falls back to its default.
+        let snippet = parse_with_test_variables("${TM_SELECTED_TEXT:fallback ${1:one}}");
+        assert_eq!(snippet.text, "fallback one");
+        assert_eq!(tabstops(&snippet), &[vec![9..12], vec![12..12]]);
+
+        let snippet = parse_with_test_variables("a${TM_SELECTED_TEXT}b");
+        assert_eq!(snippet.text, "ab");
+    }
+
+    #[test]
+    fn test_snippet_with_unknown_variables() {
+        // Unknown variables become placeholders after the explicit tabstops.
+        let snippet = parse_with_test_variables("$foo ${2:bar} ${foo} ${baz:qux} $0");
+        assert_eq!(snippet.text, "foo bar foo qux ");
+        assert_eq!(
+            tabstops(&snippet),
+            &[vec![4..7], vec![0..3, 8..11], vec![12..15], vec![16..16]]
+        );
+    }
+
+    #[test]
+    fn test_snippet_with_builtin_variables() {
+        let snippet =
+            Snippet::parse("$CURRENT_YEAR-$CURRENT_MONTH $RANDOM $RANDOM_HEX $UUID").unwrap();
+        let parts = snippet.text.split(' ').collect::<Vec<_>>();
+        assert_eq!(parts.len(), 4);
+        assert_eq!(parts[0].len(), 7);
+        assert_eq!(parts[1].len(), 6);
+        assert!(parts[1].chars().all(|c| c.is_ascii_digit()));
+        assert_eq!(parts[2].len(), 6);
+        assert!(parts[2].chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(parts[3].len(), 36);
+        assert_eq!(snippet.tabstops.len(), 1);
+    }
+
+    #[test]
+    fn test_snippet_with_unclosed_variable() {
+        assert!(Snippet::parse("${TM_FILENAME").is_err());
+        assert!(Snippet::parse("${TM_FILENAME:default").is_err());
     }
 
     fn tabstops(snippet: &Snippet) -> Vec<Vec<Range<isize>>> {

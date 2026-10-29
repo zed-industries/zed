@@ -1,14 +1,16 @@
+use editor::{Editor, actions::InsertSnippet};
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement, Render, Styled,
-    TaskExt, WeakEntity, Window, actions,
+    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement,
+    Render, SharedString, Styled, TaskExt, WeakEntity, Window, actions,
 };
 use language::{LanguageMatcher, LanguageName, LanguageRegistry};
 use open_path_prompt::file_finder_settings::FileFinderSettings;
 use paths::snippets_dir;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
+use snippet_provider::Snippet;
 use std::{
     borrow::{Borrow, Cow},
     collections::HashSet,
@@ -66,11 +68,87 @@ actions!(
 
 pub fn init(cx: &mut App) {
     cx.observe_new(register).detach();
+    cx.observe_new(register_insert_snippet).detach();
 }
 
 fn register(workspace: &mut Workspace, _window: Option<&mut Window>, _: &mut Context<Workspace>) {
     workspace.register_action(configure_snippets);
     workspace.register_action(open_folder);
+}
+
+// Opens a picker when `InsertSnippet` has no snippet to insert, e.g. when run from the command palette.
+fn register_insert_snippet(
+    editor: &mut Editor,
+    _window: Option<&mut Window>,
+    cx: &mut Context<Editor>,
+) {
+    let editor_handle = cx.entity().downgrade();
+    editor
+        .register_action(move |action: &InsertSnippet, window, cx| {
+            if action.name.is_some() || action.snippet.is_some() {
+                cx.propagate();
+                return;
+            }
+            let Some(editor) = editor_handle.upgrade() else {
+                return;
+            };
+            let workspace = editor
+                .read(cx)
+                .workspace()
+                .filter(|_| editor.read(cx).mode().is_full());
+            let Some(workspace) = workspace else {
+                cx.propagate();
+                return;
+            };
+
+            let snippets = snippets_for_editor(editor.read(cx), action.language.as_ref(), cx);
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, move |window, cx| {
+                    SnippetSelector::new(editor, snippets, window, cx)
+                });
+            });
+        })
+        .detach();
+}
+
+fn snippets_for_editor(editor: &Editor, language: Option<&String>, cx: &App) -> Vec<Arc<Snippet>> {
+    let Some(project) = editor.project() else {
+        return Vec::new();
+    };
+    let provider = project.read(cx).snippets().read(cx);
+
+    let scopes = if let Some(language) = language {
+        vec![Some(language.clone())]
+    } else {
+        let languages = editor
+            .buffer()
+            .read(cx)
+            .text_anchor_for_position(editor.selections.newest_anchor().head(), cx)
+            .map(|(buffer, anchor)| buffer.read(cx).languages_at(anchor))
+            .unwrap_or_default();
+        if languages.is_empty() {
+            vec![None]
+        } else {
+            languages
+                .iter()
+                .map(|language| Some(language.snippet_scope_id()))
+                .collect()
+        }
+    };
+
+    let mut snippets: Vec<Arc<Snippet>> = Vec::new();
+    for scope in scopes {
+        for snippet in provider.snippets_for(scope, cx) {
+            if !snippets
+                .iter()
+                .any(|existing| Arc::ptr_eq(existing, &snippet))
+            {
+                snippets.push(snippet);
+            }
+        }
+    }
+    snippets.sort_by_cached_key(|snippet| snippet.name.to_lowercase());
+    snippets
 }
 
 fn configure_snippets(
@@ -99,6 +177,292 @@ fn open_folder(
 
 pub struct ScopeSelector {
     picker: Entity<Picker<ScopeSelectorDelegate>>,
+}
+
+struct SnippetSelector {
+    picker: Entity<Picker<SnippetSelectorDelegate>>,
+}
+
+impl SnippetSelector {
+    fn new(
+        editor: Entity<Editor>,
+        snippets: Vec<Arc<Snippet>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let delegate =
+            SnippetSelectorDelegate::new(editor.downgrade(), cx.entity().downgrade(), snippets);
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        Self { picker }
+    }
+}
+
+impl ModalView for SnippetSelector {}
+
+impl EventEmitter<DismissEvent> for SnippetSelector {}
+
+impl Focusable for SnippetSelector {
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for SnippetSelector {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex().w(rems(34.)).child(self.picker.clone())
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum MatchedField {
+    Name,
+    Prefix,
+}
+
+struct SnippetMatch {
+    snippet_ix: usize,
+    field: MatchedField,
+    positions: Vec<usize>,
+}
+
+struct SnippetSelectorDelegate {
+    editor: WeakEntity<Editor>,
+    selector: WeakEntity<SnippetSelector>,
+    snippets: Vec<Arc<Snippet>>,
+    candidates: Vec<StringMatchCandidate>,
+    // Parallel to `candidates`: the snippet and field each candidate string came from.
+    candidate_sources: Vec<(usize, MatchedField)>,
+    matches: Vec<SnippetMatch>,
+    selected_index: usize,
+}
+
+impl SnippetSelectorDelegate {
+    fn new(
+        editor: WeakEntity<Editor>,
+        selector: WeakEntity<SnippetSelector>,
+        snippets: Vec<Arc<Snippet>>,
+    ) -> Self {
+        let mut candidates = Vec::new();
+        let mut candidate_sources = Vec::new();
+        for (snippet_ix, snippet) in snippets.iter().enumerate() {
+            candidates.push(StringMatchCandidate::new(candidates.len(), &snippet.name));
+            candidate_sources.push((snippet_ix, MatchedField::Name));
+
+            let prefix = snippet.prefix.join(", ");
+            if !prefix.is_empty() && prefix != snippet.name {
+                candidates.push(StringMatchCandidate::new(candidates.len(), &prefix));
+                candidate_sources.push((snippet_ix, MatchedField::Prefix));
+            }
+        }
+
+        Self {
+            editor,
+            selector,
+            snippets,
+            candidates,
+            candidate_sources,
+            matches: Vec::new(),
+            selected_index: 0,
+        }
+    }
+}
+
+impl PickerDelegate for SnippetSelectorDelegate {
+    type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "snippet selector"
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _: &mut App) -> Arc<str> {
+        "Select snippet to insert...".into()
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _: &mut App) -> Option<SharedString> {
+        Some(if self.snippets.is_empty() {
+            "No snippets available for this language".into()
+        } else {
+            "No matches".into()
+        })
+    }
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> gpui::Task<()> {
+        let background = cx.background_executor().clone();
+        let candidates = self.candidates.clone();
+        let candidate_sources = self.candidate_sources.clone();
+        let snippet_count = self.snippets.len();
+        cx.spawn_in(window, async move |this, cx| {
+            let matches = if query.is_empty() {
+                (0..snippet_count)
+                    .map(|snippet_ix| SnippetMatch {
+                        snippet_ix,
+                        field: MatchedField::Name,
+                        positions: Vec::new(),
+                    })
+                    .collect()
+            } else {
+                let string_matches = match_strings(
+                    &candidates,
+                    &query,
+                    false,
+                    true,
+                    100,
+                    &Default::default(),
+                    background,
+                )
+                .await;
+                let mut seen = HashSet::new();
+                string_matches
+                    .into_iter()
+                    .filter_map(|string_match| {
+                        let (snippet_ix, field) =
+                            *candidate_sources.get(string_match.candidate_id)?;
+                        seen.insert(snippet_ix).then_some(SnippetMatch {
+                            snippet_ix,
+                            field,
+                            positions: string_match.positions,
+                        })
+                    })
+                    .collect()
+            };
+
+            this.update(cx, |this, cx| {
+                let delegate = &mut this.delegate;
+                delegate.matches = matches;
+                delegate.selected_index = delegate
+                    .selected_index
+                    .min(delegate.matches.len().saturating_sub(1));
+                cx.notify();
+            })
+            .log_err();
+        })
+    }
+
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let body = self
+            .matches
+            .get(self.selected_index)
+            .and_then(|mat| self.snippets.get(mat.snippet_ix))
+            .map(|snippet| snippet.body.clone());
+        let editor = self.editor.upgrade();
+        self.dismissed(window, cx);
+
+        if let Some((body, editor)) = body.zip(editor) {
+            let action = InsertSnippet {
+                language: None,
+                name: None,
+                snippet: Some(body),
+            };
+            editor.update(cx, |editor, cx| {
+                window.focus(&editor.focus_handle(cx), cx);
+                editor.insert_snippet_at_selections(&action, window, cx);
+            });
+        }
+    }
+
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.selector.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let mat = self.matches.get(ix)?;
+        let snippet = self.snippets.get(mat.snippet_ix)?;
+        let (name_positions, prefix_positions) = match mat.field {
+            MatchedField::Name => (mat.positions.clone(), Vec::new()),
+            MatchedField::Prefix => (Vec::new(), mat.positions.clone()),
+        };
+        let prefix = snippet.prefix.join(", ");
+        let show_prefix = !prefix.is_empty() && prefix != snippet.name;
+        let description = snippet
+            .description
+            .clone()
+            .filter(|description| !description.is_empty());
+
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    v_flex()
+                        .child(
+                            h_flex()
+                                .gap_x_2()
+                                .child(HighlightedLabel::new(snippet.name.clone(), name_positions))
+                                .when(show_prefix, |row| {
+                                    row.child(
+                                        HighlightedLabel::new(prefix, prefix_positions)
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
+                                    )
+                                }),
+                        )
+                        .when_some(description, |column, description| {
+                            column.child(
+                                Label::new(description)
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                        }),
+                ),
+        )
+    }
+
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        if !self.snippets.is_empty() {
+            return None;
+        }
+
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Button::new("open-snippets-folder", "Open Snippets Folder")
+                        .full_width()
+                        .style(ButtonStyle::Outlined)
+                        .on_click(cx.listener(|picker, _, window, cx| {
+                            picker.delegate.dismissed(window, cx);
+                            window.dispatch_action(OpenFolder.boxed_clone(), cx);
+                        })),
+                )
+                .into_any_element(),
+        )
+    }
 }
 
 impl ScopeSelector {
