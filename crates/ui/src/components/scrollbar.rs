@@ -377,7 +377,7 @@ impl ReservedSpace {
     }
 
     fn needs_scroll_track(&self) -> bool {
-        matches!(self, Self::Track | Self::StableTrack)
+        matches!(self, Self::Track | Self::StableTrack | Self::Thumb)
     }
 
     fn needs_space_reserved(&self, max_offset: Pixels) -> bool {
