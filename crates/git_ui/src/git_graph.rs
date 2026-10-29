@@ -19,11 +19,11 @@ use git::{
 };
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
-    DismissEvent, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollEvent, ScrollHandle,
-    ScrollStrategy, SharedString, Subscription, Task, TextRun, TextStyleRefinement,
+    DismissEvent, Div, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle,
+    Focusable, Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollEvent,
+    ScrollHandle, ScrollStrategy, SharedString, Stateful, Subscription, Task, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
-    px, relative, uniform_list,
+    px, uniform_list,
 };
 use language::line_diff;
 use markdown::{Markdown, MarkdownElement};
@@ -72,13 +72,14 @@ const COMMIT_CIRCLE_HALO_WIDTH: Pixels = px(2.0);
 const LANE_WIDTH: Pixels = px(18.0);
 const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(2.0);
-const REF_LABEL_GUTTER_MIN_WIDTH: Pixels = px(240.0);
-const REF_LABEL_GUTTER_MAX_WIDTH: Pixels = px(280.0);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
 const COMMIT_TAG_LIST_WIDTH_IN_REMS: Rems = rems(10.);
 const TREE_INDENT: f32 = 20.0;
 const TABLE_COLUMN_COUNT: usize = 4;
+const REFS_COLUMN_INDEX: usize = 0;
+const GRAPH_COLUMN_INDEX: usize = 1;
+const GRAPH_LAYOUT_TABLE_OFFSET: usize = 2;
 const ROW_VERTICAL_PADDING: Pixels = px(4.0);
 
 struct CopiedState {
@@ -887,10 +888,6 @@ struct GraphData {
     commits: Vec<Rc<CommitEntry>>,
     max_commit_count: AllCommitCount,
     max_lanes: usize,
-    /// Tracks the longest ref label we've seen (by character count) so we don't
-    /// have to re-scan on every commit. The actual pixel width is computed
-    /// lazily in `ref_label_gutter_width`.
-    widest_ref_label: Option<(SharedString, usize)>,
     lines: Vec<Rc<CommitLine>>,
     active_commit_lines: HashMap<CommitLineKey, usize>,
     active_commit_lines_by_parent: HashMap<Oid, SmallVec<[usize; 1]>>,
@@ -907,7 +904,6 @@ impl GraphData {
             commits: Vec::default(),
             max_commit_count: AllCommitCount::NotLoaded,
             max_lanes: 0,
-            widest_ref_label: None,
             lines: Vec::default(),
             active_commit_lines: HashMap::default(),
             active_commit_lines_by_parent: HashMap::default(),
@@ -925,7 +921,6 @@ impl GraphData {
         self.next_color = BranchColor(0);
         self.max_commit_count = AllCommitCount::NotLoaded;
         self.max_lanes = 0;
-        self.widest_ref_label = None;
     }
 
     fn first_empty_lane_idx(&mut self) -> ActiveLaneIdx {
@@ -1048,17 +1043,6 @@ impl GraphData {
                 });
 
             self.max_lanes = self.max_lanes.max(self.lane_states.len());
-
-            for ref_name in commit.ref_names.iter() {
-                let char_count = ref_name.chars().count();
-                let is_wider = self
-                    .widest_ref_label
-                    .as_ref()
-                    .is_none_or(|(_, widest_count)| char_count > *widest_count);
-                if is_wider {
-                    self.widest_ref_label = Some((ref_name.clone(), char_count));
-                }
-            }
 
             self.commits.push(Rc::new(CommitEntry {
                 data: commit.clone(),
@@ -1466,6 +1450,7 @@ pub struct GitGraph {
     selected_entry_idx: Option<usize>,
     hovered_entry_idx: Option<usize>,
     graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    ref_labels_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     log_source: LogSource,
     log_order: LogOrder,
     selected_commit_diff: Option<CommitDiff>,
@@ -1528,37 +1513,38 @@ impl GitGraph {
         (LANE_WIDTH * self.graph_data.max_lanes.max(6) as f32) + LEFT_PADDING * 2.0
     }
 
-    fn ref_label_gutter_width(&self, window: &Window, cx: &App) -> Pixels {
-        let Some((widest_label, _)) = self.graph_data.widest_ref_label.as_ref() else {
-            return px(0.);
-        };
+    fn is_path_history(&self) -> bool {
+        matches!(self.log_source, LogSource::Path(_))
+    }
 
-        let text_style = window.text_style();
-        let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
-        let label_width = window
-            .text_system()
-            .layout_line(
-                widest_label,
-                font_size,
-                &[TextRun {
-                    len: widest_label.len(),
-                    font: text_style.font(),
-                    color: text_style.color,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                }],
-                None,
-            )
-            .width;
+    fn is_column_visible(&self, col_idx: usize) -> bool {
+        !self
+            .column_visibility
+            .get(col_idx)
+            .copied()
+            .unwrap_or(false)
+    }
 
-        label_width.clamp(REF_LABEL_GUTTER_MIN_WIDTH, REF_LABEL_GUTTER_MAX_WIDTH)
+    fn is_refs_column_visible(&self) -> bool {
+        !self.is_path_history() && self.is_column_visible(REFS_COLUMN_INDEX)
+    }
+
+    fn is_graph_column_visible(&self) -> bool {
+        !self.is_path_history() && self.is_column_visible(GRAPH_COLUMN_INDEX)
+    }
+
+    fn table_column_offset(&self) -> usize {
+        if self.is_path_history() {
+            0
+        } else {
+            GRAPH_LAYOUT_TABLE_OFFSET
+        }
     }
 
     /// Returns the column fractions in display order:
-    /// `[graph, description, date, author, commit]`.
-    /// For path history there is no graph column, so its fraction is 0.
-    fn preview_column_fractions(&self, window: &Window, cx: &App) -> [f32; 5] {
+    /// `[refs, graph, description, date, author, commit]`.
+    /// For path history there are no refs or graph columns, so their fractions are 0.
+    fn preview_column_fractions(&self, window: &Window, cx: &App) -> [f32; 6] {
         let raw = self
             .column_widths
             .read(cx)
@@ -1575,11 +1561,15 @@ impl GitGraph {
             }
         };
 
-        let is_path_history = matches!(self.log_source, LogSource::Path(_));
-        let graph_fraction = if is_path_history { 0.0 } else { value(0) };
-        let offset = if is_path_history { 0 } else { 1 };
+        let (refs_fraction, graph_fraction) = if self.is_path_history() {
+            (0.0, 0.0)
+        } else {
+            (value(REFS_COLUMN_INDEX), value(GRAPH_COLUMN_INDEX))
+        };
+        let offset = self.table_column_offset();
 
         [
+            refs_fraction,
             graph_fraction,
             value(offset),
             value(offset + 1),
@@ -1589,7 +1579,7 @@ impl GitGraph {
     }
 
     fn table_column_width_config(&self, window: &Window, cx: &App) -> ColumnWidthConfig {
-        let [_, description, date, author, commit] = self.preview_column_fractions(window, cx);
+        let [_, _, description, date, author, commit] = self.preview_column_fractions(window, cx);
         let table_total = description + date + author + commit;
 
         let widths = if table_total > 0.0 {
@@ -1663,15 +1653,19 @@ impl GitGraph {
         } else {
             cx.new(|_cx| {
                 RedistributableColumnsState::new(
-                    5,
+                    GRAPH_LAYOUT_TABLE_OFFSET + TABLE_COLUMN_COUNT,
                     vec![
-                        DefiniteLength::Fraction(0.30),
-                        DefiniteLength::Fraction(0.37),
+                        DefiniteLength::Fraction(0.18),
+                        DefiniteLength::Fraction(0.14),
+                        DefiniteLength::Fraction(0.35),
                         DefiniteLength::Fraction(0.13),
                         DefiniteLength::Fraction(0.11),
                         DefiniteLength::Fraction(0.09),
                     ],
-                    vec![TableResizeBehavior::Resizable; 5],
+                    vec![
+                        TableResizeBehavior::Resizable;
+                        GRAPH_LAYOUT_TABLE_OFFSET + TABLE_COLUMN_COUNT
+                    ],
                 )
             })
         };
@@ -1680,7 +1674,7 @@ impl GitGraph {
             if matches!(log_source, LogSource::Path(_)) {
                 TABLE_COLUMN_COUNT
             } else {
-                TABLE_COLUMN_COUNT + 1
+                GRAPH_LAYOUT_TABLE_OFFSET + TABLE_COLUMN_COUNT
             },
         );
         let mut row_height = Self::row_height(window, cx);
@@ -1720,6 +1714,7 @@ impl GitGraph {
             selected_entry_idx: None,
             hovered_entry_idx: None,
             graph_canvas_bounds: Rc::new(Cell::new(None)),
+            ref_labels_bounds: Rc::new(Cell::new(None)),
             selected_commit_diff: None,
             selected_commit_diff_stats: None,
             selected_commit_message: None,
@@ -1974,7 +1969,7 @@ impl GitGraph {
     }
 
     /// A horizontal dashed line that grows to fill the space between a ref badge
-    /// and the right edge of the gutter, visually connecting the badge to its
+    /// and the right edge of the refs column, visually connecting the badge to its
     /// commit node (the canvas paints the rest of the connector up to the node).
     fn render_dashed_connector(color: Hsla) -> AnyElement {
         gpui::canvas(
@@ -2811,7 +2806,7 @@ impl GitGraph {
         let columns: &[&str] = if is_path_history {
             &["Description", "Date", "Author", "Commit"]
         } else {
-            &["Graph", "Description", "Date", "Author", "Commit"]
+            &["Refs", "Graph", "Description", "Date", "Author", "Commit"]
         };
 
         let filter = self.column_visibility.clone();
@@ -3591,6 +3586,7 @@ impl GitGraph {
             .and_then(|menu| menu.target_entry_index);
         let is_focused = self.focus_handle.is_focused(window);
         let graph_canvas_bounds = self.graph_canvas_bounds.clone();
+        let paint_ref_connectors = self.is_refs_column_visible();
 
         gpui::canvas(
             move |_bounds, _window, _cx| {},
@@ -3811,7 +3807,7 @@ impl GitGraph {
 
                         let commit_x = lane_center_x(bounds, row.lane as f32);
 
-                        if !row.data.ref_names.is_empty() {
+                        if paint_ref_connectors && !row.data.ref_names.is_empty() {
                             paint_dashed_connector(
                                 bounds.origin.x,
                                 commit_x - COMMIT_CIRCLE_RADIUS,
@@ -3849,9 +3845,8 @@ impl GitGraph {
         .h_full()
     }
 
-    /// Renders the branch/tag ref labels as an overlay anchored to the left of
-    /// the graph column, positioned at the row of the commit each ref points to
-    /// (i.e. just before that commit's node). This mirrors the scroll math used
+    /// Renders the branch/tag ref labels for the refs column, positioned at the
+    /// row of the commit each ref points to. This mirrors the scroll math used
     /// by `render_graph_canvas` so the labels stay in sync as the graph scrolls.
     fn render_graph_ref_labels(
         &self,
@@ -3887,6 +3882,7 @@ impl GitGraph {
                 .map(|branch| SharedString::from(branch.name().to_string()))
         });
 
+        let show_connector = self.is_graph_column_visible();
         let theme = cx.theme();
         let accent_colors = theme.accents().clone();
         let background = theme.colors().editor_background;
@@ -3998,16 +3994,27 @@ impl GitGraph {
                             .pl_1p5()
                             .child(primary_chip)
                             .children(count_chip)
-                            .child(Self::render_dashed_connector(accent_color.opacity(0.5))),
+                            .when(show_connector, |this| {
+                                this.child(Self::render_dashed_connector(accent_color.opacity(0.5)))
+                            }),
                     )
                     .into_any_element(),
             );
         }
 
+        let ref_labels_bounds = self.ref_labels_bounds.clone();
         div()
             .absolute()
             .inset_0()
             .overflow_hidden()
+            .child(
+                gpui::canvas(
+                    move |bounds, _window, _cx| ref_labels_bounds.set(Some(bounds)),
+                    |_bounds, _, _window, _cx| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
             .children(elements)
     }
 
@@ -4017,7 +4024,11 @@ impl GitGraph {
         window: &Window,
         cx: &Context<Self>,
     ) -> Option<usize> {
-        let canvas_bounds = self.graph_canvas_bounds.get()?;
+        let canvas_bounds = if self.is_graph_column_visible() {
+            self.graph_canvas_bounds.get()?
+        } else {
+            self.ref_labels_bounds.get()?
+        };
         let table_state = self.table_interaction_state.read(cx);
         let scroll_offset_y = -table_state.scroll_offset().y;
 
@@ -4111,6 +4122,28 @@ impl GitGraph {
         };
 
         self.handle_entry_secondary_mouse_down(row, event, window, cx);
+    }
+
+    fn with_graph_row_interactions(
+        &self,
+        column: Stateful<Div>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        column
+            .cursor_pointer()
+            .on_scroll(cx.listener(Self::handle_graph_scroll))
+            .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
+            .on_click(cx.listener(Self::handle_graph_click))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(Self::handle_graph_secondary_mouse_down),
+            )
+            .on_hover(cx.listener(|this, &is_hovered: &bool, _, cx| {
+                if !is_hovered && this.hovered_entry_idx.is_some() {
+                    this.hovered_entry_idx = None;
+                    cx.notify();
+                }
+            }))
     }
 
     fn handle_graph_scroll(
@@ -4341,18 +4374,18 @@ impl Render for GitGraph {
                     this.child(self.render_loading_spinner(cx))
                 })
         } else {
-            let is_path_history = matches!(self.log_source, LogSource::Path(_));
+            let is_path_history = self.is_path_history();
             let header_resize_info =
                 HeaderResizeInfo::from_redistributable(&self.column_widths, cx);
 
             let column_filter = self.column_visibility.clone();
 
-            // The graph column (index 0) only exists in the non-path-history layout and is
-            // rendered as a separate canvas outside the table.
-            let graph_visible =
-                is_path_history || !column_filter.get(0usize).copied().unwrap_or(false);
+            // The refs and graph columns only exist in the non-path-history layout and are
+            // rendered outside the table, in sync with its scroll position.
+            let refs_visible = self.is_refs_column_visible();
+            let graph_visible = self.is_graph_column_visible();
 
-            let table_offset = if is_path_history { 0 } else { 1 };
+            let table_offset = self.table_column_offset();
             let table_filter = column_filter
                 .as_slice()
                 .get(table_offset..table_offset + TABLE_COLUMN_COUNT)
@@ -4366,6 +4399,7 @@ impl Render for GitGraph {
                 .with_column_filter(Some(column_filter));
 
             let [
+                refs_fraction,
                 graph_fraction,
                 description_fraction,
                 date_fraction,
@@ -4378,7 +4412,6 @@ impl Render for GitGraph {
 
             let table_collapsed = table_fraction <= f32::EPSILON;
             let graph_content_width = self.graph_canvas_content_width();
-            let gutter_width = self.ref_label_gutter_width(window, cx);
 
             h_flex()
                 .size_full()
@@ -4402,6 +4435,10 @@ impl Render for GitGraph {
                                     if !is_path_history {
                                         TableRow::from_vec(
                                             vec![
+                                                Label::new("Refs")
+                                                    .color(Color::Muted)
+                                                    .truncate()
+                                                    .into_any_element(),
                                                 Label::new("Graph")
                                                     .color(Color::Muted)
                                                     .truncate()
@@ -4419,7 +4456,7 @@ impl Render for GitGraph {
                                                     .color(Color::Muted)
                                                     .into_any_element(),
                                             ],
-                                            5,
+                                            GRAPH_LAYOUT_TABLE_OFFSET + TABLE_COLUMN_COUNT,
                                         )
                                     } else {
                                         TableRow::from_vec(
@@ -4561,76 +4598,40 @@ impl Render for GitGraph {
                                     .child(
                                         h_flex()
                                             .size_full()
-                                            .when(!is_path_history && graph_visible, |this| {
+                                            .when(refs_visible, |this| {
                                                 this.child(
-                                                    h_flex()
-                                                        .id("graph-column")
-                                                        .map(|this| {
-                                                            if table_collapsed {
-                                                                this.w(graph_content_width)
-                                                            } else {
-                                                                this.w(DefiniteLength::Fraction(
-                                                                    graph_fraction,
-                                                                ))
-                                                            }
-                                                        })
-                                                        .h_full()
-                                                        .min_w_0()
-                                                        .overflow_hidden()
-                                                        .cursor_pointer()
-                                                        .on_scroll(
-                                                            cx.listener(Self::handle_graph_scroll),
-                                                        )
-                                                        .on_mouse_move(cx.listener(
-                                                            Self::handle_graph_mouse_move,
-                                                        ))
-                                                        .on_click(
-                                                            cx.listener(Self::handle_graph_click),
-                                                        )
-                                                        .on_mouse_down(
-                                                            MouseButton::Right,
-                                                            cx.listener(
-                                                                Self::handle_graph_secondary_mouse_down,
-                                                            ),
-                                                        )
-                                                        .on_hover(cx.listener(
-                                                            |this, &is_hovered: &bool, _, cx| {
-                                                                if !is_hovered
-                                                                    && this
-                                                                        .hovered_entry_idx
-                                                                        .is_some()
-                                                                {
-                                                                    this.hovered_entry_idx = None;
-                                                                    cx.notify();
-                                                                }
-                                                            },
-                                                        ))
-                                                        .when(
-                                                            gutter_width > px(0.),
-                                                            |this| {
-                                                                this.child(
-                                                                    div()
-                                                                        .relative()
-                                                                        .h_full()
-                                                                        .w(gutter_width)
-                                                                        .max_w(relative(0.5))
-                                                                        .flex_shrink_0()
-                                                                        .overflow_hidden()
-                                                                        .child(
-                                                                            self.render_graph_ref_labels(window, cx),
-                                                                        ),
-                                                                )
-                                                            },
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .relative()
-                                                                .flex_1()
-                                                                .h_full()
-                                                                .min_w_0()
-                                                                .overflow_hidden()
-                                                                .child(graph_canvas),
-                                                        ),
+                                                    self.with_graph_row_interactions(
+                                                        div().id("refs-column"),
+                                                        cx,
+                                                    )
+                                                    .relative()
+                                                    .w(DefiniteLength::Fraction(refs_fraction))
+                                                    .h_full()
+                                                    .min_w_0()
+                                                    .overflow_hidden()
+                                                    .child(self.render_graph_ref_labels(window, cx)),
+                                                )
+                                            })
+                                            .when(graph_visible, |this| {
+                                                this.child(
+                                                    self.with_graph_row_interactions(
+                                                        div().id("graph-column"),
+                                                        cx,
+                                                    )
+                                                    .map(|this| {
+                                                        if table_collapsed {
+                                                            this.w(graph_content_width)
+                                                        } else {
+                                                            this.w(DefiniteLength::Fraction(
+                                                                graph_fraction,
+                                                            ))
+                                                        }
+                                                    })
+                                                    .relative()
+                                                    .h_full()
+                                                    .min_w_0()
+                                                    .overflow_hidden()
+                                                    .child(graph_canvas),
                                                 )
                                             })
                                             .child(
@@ -4924,7 +4925,10 @@ impl workspace::SerializableItem for GitGraph {
                 git_graph.update(cx, |graph, cx| {
                     if let Some(bits) = state.hidden_columns {
                         let cols = graph.column_visibility.cols();
-                        let mask = persistence::deserialize_hidden_columns(bits, cols);
+                        let mask = persistence::deserialize_hidden_columns(
+                            bits,
+                            persistence::hidden_column_bits(&graph.log_source),
+                        );
                         // Never restore an all-hidden mask (e.g. from corrupt data); the UI
                         // guarantees at least one column stays visible.
                         if mask.iter().any(|is_hidden| !is_hidden) {
@@ -4985,6 +4989,7 @@ impl workspace::SerializableItem for GitGraph {
         let search_case_sensitive = Some(self.search_state.case_sensitive);
         let hidden_columns = Some(persistence::serialize_hidden_columns(
             self.column_visibility.as_slice(),
+            persistence::hidden_column_bits(&self.log_source),
         ));
 
         let db = persistence::GitGraphsDb::global(cx);
@@ -5134,21 +5139,34 @@ mod persistence {
         }
     }
 
-    /// Packs the per-column visibility mask into a bitmask (bit `i` set means column `i` is
-    /// hidden), so it fits in a single integer database column regardless of column count.
-    pub fn serialize_hidden_columns(hidden: &[bool]) -> i32 {
-        hidden.iter().enumerate().fold(
+    /// The bit each display column's hidden flag is stored in, indexed by display column.
+    /// The refs column uses bit 5 for backward compatibility with previously saved masks.
+    pub fn hidden_column_bits(log_source: &LogSource) -> &'static [usize] {
+        match log_source {
+            LogSource::Path(_) => &[0, 1, 2, 3],
+            _ => &[5, 0, 1, 2, 3, 4],
+        }
+    }
+
+    /// Packs the per-column visibility mask (in display order) into a bitmask using
+    /// `column_bits` from [`hidden_column_bits`], so it fits in a single integer database
+    /// column regardless of column count.
+    pub fn serialize_hidden_columns(hidden: &[bool], column_bits: &[usize]) -> i32 {
+        hidden.iter().zip(column_bits).fold(
             0,
-            |bits, (idx, &is_hidden)| {
-                if is_hidden { bits | (1 << idx) } else { bits }
+            |bits, (&is_hidden, &bit)| {
+                if is_hidden { bits | (1 << bit) } else { bits }
             },
         )
     }
 
-    /// Inverse of [`serialize_hidden_columns`]. Bits beyond `cols` are ignored, and missing
-    /// bits default to visible, so a mask saved with a different column count degrades safely.
-    pub fn deserialize_hidden_columns(bits: i32, cols: usize) -> Vec<bool> {
-        (0..cols).map(|idx| bits & (1 << idx) != 0).collect()
+    /// Inverse of [`serialize_hidden_columns`]. Bits not listed in `column_bits` are ignored,
+    /// and unset bits default to visible, so a mask saved before a column existed shows it.
+    pub fn deserialize_hidden_columns(bits: i32, column_bits: &[usize]) -> Vec<bool> {
+        column_bits
+            .iter()
+            .map(|&bit| bits & (1 << bit) != 0)
+            .collect()
     }
 
     #[derive(Debug, Default, Clone)]
@@ -6636,29 +6654,40 @@ mod tests {
 
     #[gpui::test]
     fn test_hidden_columns_bitmask_roundtrip(_cx: &mut TestAppContext) {
-        let mask = [false, true, false, true, false];
-        let bits = persistence::serialize_hidden_columns(&mask);
+        let graph_bits = persistence::hidden_column_bits(&LogSource::All);
+        let path_bits =
+            persistence::hidden_column_bits(&LogSource::Path(RepoPath::new(&"file.txt").unwrap()));
+
+        let mask = [true, false, true, false, true, false];
+        let bits = persistence::serialize_hidden_columns(&mask, graph_bits);
         assert_eq!(
-            persistence::deserialize_hidden_columns(bits, mask.len()),
+            persistence::deserialize_hidden_columns(bits, graph_bits),
             mask.to_vec()
         );
 
-        assert_eq!(persistence::serialize_hidden_columns(&[false; 5]), 0);
+        let mask = [false, true, false, true];
+        let bits = persistence::serialize_hidden_columns(&mask, path_bits);
         assert_eq!(
-            persistence::deserialize_hidden_columns(0, 4),
+            persistence::deserialize_hidden_columns(bits, path_bits),
+            mask.to_vec()
+        );
+
+        assert_eq!(
+            persistence::serialize_hidden_columns(&[false; 6], graph_bits),
+            0
+        );
+        assert_eq!(
+            persistence::deserialize_hidden_columns(0, path_bits),
             vec![false; 4]
         );
 
-        // A mask saved with more columns than we restore with is truncated safely, and one
-        // saved with fewer columns defaults the extra columns to visible.
-        let bits = persistence::serialize_hidden_columns(&[true, false, true, false, true]);
+        // Masks saved before the refs column existed stored
+        // `[graph, description, date, author, commit]` in bits 0-4. They must keep hiding the
+        // same columns, and the refs column defaults to visible.
+        let legacy_bits_hiding_graph_and_date = 0b00101;
         assert_eq!(
-            persistence::deserialize_hidden_columns(bits, 4),
-            vec![true, false, true, false]
-        );
-        assert_eq!(
-            persistence::deserialize_hidden_columns(bits, 6),
-            vec![true, false, true, false, true, false]
+            persistence::deserialize_hidden_columns(legacy_bits_hiding_graph_and_date, graph_bits),
+            vec![false, true, false, true, false, false]
         );
     }
 
@@ -6737,9 +6766,11 @@ mod tests {
             .await
             .expect("should create workspace id");
         let db = cx.read(|cx| persistence::GitGraphsDb::global(cx));
-        // Hide the "Date" column (index 2 in the non-path-history layout).
-        let hidden_columns =
-            persistence::serialize_hidden_columns(&[false, false, true, false, false]);
+        // Hide the "Refs" and "Date" columns.
+        let hidden_columns = persistence::serialize_hidden_columns(
+            &[true, false, false, true, false, false],
+            persistence::hidden_column_bits(&LogSource::All),
+        );
         db.save_git_graph(
             item_id,
             workspace_id,
@@ -6807,7 +6838,7 @@ mod tests {
 
             assert_eq!(
                 graph.column_visibility.as_slice(),
-                &[false, false, true, false, false],
+                &[true, false, false, true, false, false],
                 "hidden columns should be restored"
             );
         });
@@ -7253,6 +7284,20 @@ mod tests {
                 absolute_calc_row,
                 Some(1),
                 "Row calculation should yield absolute row exactly"
+            );
+
+            // With the graph hidden its canvas isn't painted, so its bounds go stale. Hit
+            // testing on the refs column must use the refs column's own bounds instead.
+            graph.toggle_column_visibility(GRAPH_COLUMN_INDEX, cx);
+            graph.graph_canvas_bounds.set(None);
+            graph.ref_labels_bounds.set(Some(Bounds {
+                origin: point(px(0.0), origin_y),
+                size: gpui::size(px(100.0), row_height * 50.0),
+            }));
+            assert_eq!(
+                graph.row_at_position(pos_y, window, cx),
+                Some(1),
+                "Row calculation should use the refs column when the graph is hidden"
             );
         });
     }

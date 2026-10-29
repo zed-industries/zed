@@ -6156,11 +6156,10 @@ impl RepositorySnapshot {
 
     /// The path that anchors a linked worktree's location: the main worktree
     /// when one exists, otherwise the repository's identity path (relevant for
-    /// bare repositories), falling back to the common Git directory.
-    fn linked_worktree_anchor_path(&self) -> &Path {
+    /// bare repositories).
+    pub fn linked_worktree_anchor_path(&self) -> &Path {
         self.main_worktree_abs_path()
-            .or_else(|| repo_identity_path_if_local(&self.common_dir_abs_path, self.path_style))
-            .unwrap_or(self.common_dir_abs_path.as_ref())
+            .unwrap_or_else(|| repo_identity_path(&self.common_dir_abs_path, self.path_style))
     }
 
     /// Computes the path where a new linked worktree for this repository
@@ -10821,14 +10820,6 @@ pub fn repo_identity_path(common_dir: &Path, path_style: PathStyle) -> &Path {
     }
 }
 
-/// Returns the repository identity only when `std::path` can interpret the path correctly.
-///
-/// Callers whose downstream path operations are not yet `PathStyle`-aware use this to preserve
-/// their existing behavior for foreign path styles.
-pub fn repo_identity_path_if_local(common_dir: &Path, path_style: PathStyle) -> Option<&Path> {
-    (path_style == PathStyle::local()).then(|| repo_identity_path(common_dir, path_style))
-}
-
 /// Returns true if `git_dir` is a Git submodule's git directory.
 ///
 /// Submodules store their git directory inside the superproject at
@@ -12470,6 +12461,102 @@ mod tests {
                 .unwrap(),
             PathBuf::from("/home/user/dev/worktrees/lsp-tests/feature/nested/lsp-tests")
         );
+    }
+
+    #[test]
+    fn test_linked_worktree_anchor_path() {
+        let cases = [
+            // Normal clone (`.git`): the main worktree's checkout is the anchor.
+            (
+                "/worktrees/zed/feature/zed",
+                "/repos/zed/.git/worktrees/feature",
+                "/worktrees/zed/feature/zed/.git",
+                "/repos/zed/.git",
+                PathStyle::Unix,
+                Some("/repos/zed"),
+                "/repos/zed",
+            ),
+            (
+                r"C:\worktrees\zed\feature\zed",
+                r"C:\repos\zed\.git\worktrees\feature",
+                r"C:\worktrees\zed\feature\zed\.git",
+                r"C:\repos\zed\.git",
+                PathStyle::Windows,
+                Some(r"C:\repos\zed"),
+                r"C:\repos\zed",
+            ),
+            // Bare clone stored in `.bare`: there is no main worktree, so the parent
+            // of `.bare` is the anchor.
+            (
+                "/worktrees/zed/plum-warbler/zed",
+                "/repos/zed/.bare/worktrees/plum-warbler",
+                "/worktrees/zed/plum-warbler/zed/.git",
+                "/repos/zed/.bare",
+                PathStyle::Unix,
+                None,
+                "/repos/zed",
+            ),
+            (
+                r"C:\worktrees\zed\plum-warbler\zed",
+                r"C:\repos\zed\.bare\worktrees\plum-warbler",
+                r"C:\worktrees\zed\plum-warbler\zed\.git",
+                r"C:\repos\zed\.bare",
+                PathStyle::Windows,
+                None,
+                r"C:\repos\zed",
+            ),
+            // Bare clone named `repo.git`: there is no main worktree and no parent to
+            // strip, so the common directory itself is the anchor.
+            (
+                "/worktrees/zed.git/plum-warbler/zed.git",
+                "/repos/zed.git/worktrees/plum-warbler",
+                "/worktrees/zed.git/plum-warbler/zed.git/.git",
+                "/repos/zed.git",
+                PathStyle::Unix,
+                None,
+                "/repos/zed.git",
+            ),
+            (
+                r"C:\worktrees\zed.git\plum-warbler\zed.git",
+                r"C:\repos\zed.git\worktrees\plum-warbler",
+                r"C:\worktrees\zed.git\plum-warbler\zed.git\.git",
+                r"C:\repos\zed.git",
+                PathStyle::Windows,
+                None,
+                r"C:\repos\zed.git",
+            ),
+        ];
+
+        for (
+            work_directory,
+            repository_dir,
+            dot_git,
+            common_dir,
+            path_style,
+            expected_main_worktree,
+            expected_anchor,
+        ) in cases
+        {
+            let snapshot = RepositorySnapshot::empty(
+                RepositoryId(0),
+                Path::new(work_directory).into(),
+                Some(Path::new(repository_dir).into()),
+                Some(Path::new(dot_git).into()),
+                Some(Path::new(common_dir).into()),
+                path_style,
+            );
+
+            assert_eq!(
+                snapshot.main_worktree_abs_path(),
+                expected_main_worktree.map(Path::new),
+                "main worktree for {work_directory:?} with {path_style:?}",
+            );
+            assert_eq!(
+                snapshot.linked_worktree_anchor_path(),
+                Path::new(expected_anchor),
+                "anchor for {work_directory:?} with {path_style:?}",
+            );
+        }
     }
 
     fn verify_invariants(repository: &Repository) -> anyhow::Result<()> {
