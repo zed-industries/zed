@@ -18,7 +18,10 @@ use gpui::{
 };
 use menu::{Cancel, Confirm};
 use notifications::status_toast::StatusToast;
-use project::git_store::{Repository, diff_buffer_list::DiffBase};
+use project::git_store::{
+    Repository,
+    diff_buffer_list::{DiffBase, DiffBufferList},
+};
 use project_diff::ProjectDiff;
 use time::OffsetDateTime;
 use ui::{ButtonLike, ContextMenu, ElevationIndex, PopoverMenuHandle, TintColor, prelude::*};
@@ -337,12 +340,13 @@ pub fn init(cx: &mut App) {
         workspace.register_action_renderer(|div, workspace, _window, cx| {
             div.when_some(
                 file_diff_entry(workspace, cx),
-                |div, (entry, repository)| {
+                |div, (entry, repository, diff_base)| {
                     let workspace = workspace.weak_handle();
                     div.on_action(move |_: &git::OpenFileDiff, window, cx| {
                         open_file_diff(
                             entry.clone(),
                             repository.clone(),
+                            diff_base.clone(),
                             workspace.clone(),
                             window,
                             cx,
@@ -375,27 +379,21 @@ pub fn init(cx: &mut App) {
 fn open_file_diff(
     entry: GitStatusEntry,
     repository: Entity<Repository>,
+    diff_base: DiffBase,
     workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) {
     window.defer(cx, move |window, cx| {
-        SoloDiffView::open_or_focus(
-            entry,
-            repository,
-            DiffBase::Head,
-            workspace.clone(),
-            window,
-            cx,
-        )
-        .detach_and_notify_err(workspace, window, cx);
+        SoloDiffView::open_or_focus(entry, repository, diff_base, workspace.clone(), window, cx)
+            .detach_and_notify_err(workspace, window, cx);
     });
 }
 
 fn file_diff_entry(
     workspace: &Workspace,
     cx: &App,
-) -> Option<(GitStatusEntry, Entity<Repository>)> {
+) -> Option<(GitStatusEntry, Entity<Repository>, DiffBase)> {
     let project_path = workspace.active_item(cx)?.project_path(cx)?;
 
     workspace
@@ -408,6 +406,35 @@ fn file_diff_entry(
                 .read(cx)
                 .project_path_to_repo_path(&project_path, cx)?;
             let status_entry = repository.read(cx).status_for_path(&repo_path)?;
+            // Panel selection can point at a different section after switching
+            // diff tabs, so prefer the active view's base.
+            let diff_base = workspace
+                .active_item_as::<SoloDiffView>(cx)
+                .and_then(|solo_diff| {
+                    solo_diff
+                        .read(cx)
+                        .diff_base_for_repo_path(repository, &repo_path, cx)
+                })
+                .or_else(|| {
+                    let diff_list = workspace.active_item_as::<DiffBufferList>(cx)?;
+                    let diff_list = diff_list.read(cx);
+                    match diff_list.diff_base() {
+                        diff_base @ (DiffBase::Head | DiffBase::Index | DiffBase::Staged) => {
+                            Some(diff_base.clone())
+                        }
+                        // SoloDiffView does not load merge-base diffs.
+                        DiffBase::Merge { .. } => None,
+                    }
+                })
+                .unwrap_or_else(|| {
+                    workspace
+                        .panel::<git_panel::GitPanel>(cx)
+                        .map_or(DiffBase::Head, |panel| {
+                            panel
+                                .read(cx)
+                                .diff_base_for_repo_path(repository, &repo_path, cx)
+                        })
+                });
             Some((
                 GitStatusEntry {
                     repo_path,
@@ -416,6 +443,7 @@ fn file_diff_entry(
                     diff_stat: status_entry.diff_stat,
                 },
                 repository.clone(),
+                diff_base,
             ))
         })
 }

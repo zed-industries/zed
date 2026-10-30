@@ -2631,14 +2631,10 @@ impl GitPanel {
         let Some(repository) = self.active_repository.clone() else {
             return;
         };
-        let diff_base = match self
-            .selected_entry
-            .and_then(|index| self.section_for_entry_index(index))
-        {
-            Some(Section::Staged) => DiffBase::Staged,
-            Some(Section::Unstaged) => DiffBase::Index,
-            _ => DiffBase::Head,
-        };
+        let diff_base = Self::diff_base_for_section(
+            self.selected_entry
+                .and_then(|index| self.section_for_entry_index(index)),
+        );
         for entry in self.effective_status_entries() {
             SoloDiffView::open_or_focus(
                 entry,
@@ -2650,6 +2646,32 @@ impl GitPanel {
             )
             .detach_and_notify_err(self.workspace.clone(), window, cx);
         }
+    }
+
+    pub fn diff_base_for_repo_path(
+        &self,
+        repository: &Entity<Repository>,
+        repo_path: &RepoPath,
+        cx: &App,
+    ) -> DiffBase {
+        let Some(selected_index) = self.selected_entry else {
+            return DiffBase::Head;
+        };
+        let Some(active_repository) = self.active_repository.as_ref() else {
+            return DiffBase::Head;
+        };
+        if active_repository.read(cx).id != repository.read(cx).id {
+            return DiffBase::Head;
+        }
+        let selected_path_matches = match self.entries.get(selected_index) {
+            Some(GitListEntry::Status(entry)) => &entry.repo_path == repo_path,
+            Some(GitListEntry::TreeStatus(entry)) => &entry.entry.repo_path == repo_path,
+            _ => false,
+        };
+        if !selected_path_matches {
+            return DiffBase::Head;
+        }
+        Self::diff_base_for_section(self.section_for_entry_index(selected_index))
     }
 
     fn view_file(&mut self, _: &ViewFile, window: &mut Window, cx: &mut Context<Self>) {
@@ -5980,6 +6002,14 @@ impl GitPanel {
             Some(Section::Staged) => DiffTarget::Staged,
             Some(Section::Unstaged) => DiffTarget::Unstaged,
             _ => DiffTarget::Uncommitted,
+        }
+    }
+
+    fn diff_base_for_section(section: Option<Section>) -> DiffBase {
+        match section {
+            Some(Section::Staged) => DiffBase::Staged,
+            Some(Section::Unstaged) => DiffBase::Index,
+            _ => DiffBase::Head,
         }
     }
 
@@ -11993,6 +12023,290 @@ mod tests {
             let staged_staging = staging_for(panel, &repo_path("src/staged.rs"));
             assert_eq!(partial_staging, StageStatus::Unstaged);
             assert_eq!(staged_staging, StageStatus::Unstaged);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_diff_base_for_repo_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        let (fs, project, _workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "partial.rs": "partial content",
+                "staged.rs": "staged content",
+                "unstaged.rs": "unstaged content",
+            }),
+            &[],
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                (
+                    "partial.rs",
+                    TrackedStatus {
+                        index_status: StatusCode::Modified,
+                        worktree_status: StatusCode::Modified,
+                    }
+                    .into(),
+                ),
+                ("staged.rs", FileStatus::index(StatusCode::Modified)),
+                ("unstaged.rs", StatusCode::Modified.worktree()),
+            ],
+        );
+        settle_git_panel(&project, &panel, &mut cx).await;
+
+        let repository = panel.read_with(&cx, |panel, _| {
+            panel
+                .active_repository
+                .clone()
+                .expect("repository should exist")
+        });
+
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            let partial_path = repo_path("partial.rs");
+            let staged_path = repo_path("staged.rs");
+            let unstaged_path = repo_path("unstaged.rs");
+
+            panel.selected_entry = None;
+
+            // Without a selection the base falls back to Head.
+            assert_eq!(
+                panel.diff_base_for_repo_path(&repository, &partial_path, cx),
+                DiffBase::Head
+            );
+
+            // A file selected in the Staged section yields the staged base,
+            // and the same file selected in the Unstaged section yields the
+            // index base.
+            panel.selected_entry = panel.entry_by_path_in_section(&partial_path, Section::Staged);
+            assert_eq!(
+                panel.diff_base_for_repo_path(&repository, &partial_path, cx),
+                DiffBase::Staged
+            );
+            panel.selected_entry = panel.entry_by_path_in_section(&partial_path, Section::Unstaged);
+            assert_eq!(
+                panel.diff_base_for_repo_path(&repository, &partial_path, cx),
+                DiffBase::Index
+            );
+
+            panel.selected_entry = panel.entry_by_path_in_section(&staged_path, Section::Staged);
+            assert_eq!(
+                panel.diff_base_for_repo_path(&repository, &staged_path, cx),
+                DiffBase::Staged
+            );
+
+            panel.selected_entry =
+                panel.entry_by_path_in_section(&unstaged_path, Section::Unstaged);
+            assert_eq!(
+                panel.diff_base_for_repo_path(&repository, &unstaged_path, cx),
+                DiffBase::Index
+            );
+
+            // Querying a path other than the selected entry falls back to Head.
+            panel.selected_entry = panel.entry_by_path_in_section(&staged_path, Section::Staged);
+            assert_eq!(
+                panel.diff_base_for_repo_path(&repository, &partial_path, cx),
+                DiffBase::Head
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_file_diff_reuses_staged_and_unstaged_tabs(cx: &mut TestAppContext) {
+        use workspace::Item as _;
+
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        let (fs, project, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "partial.rs": "worktree content\n",
+            }),
+            &[],
+        )
+        .await;
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[(
+                "partial.rs",
+                TrackedStatus {
+                    index_status: StatusCode::Modified,
+                    worktree_status: StatusCode::Modified,
+                }
+                .into(),
+            )],
+        );
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state
+                .head_contents
+                .insert(repo_path("partial.rs"), "head content\n".into());
+            state
+                .index_contents
+                .insert(repo_path("partial.rs"), "index content\n".into());
+        })
+        .expect("fake repository should exist");
+        settle_git_panel(&project, &panel, &mut cx).await;
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+        });
+
+        let mut opened_views = HashMap::default();
+        for (section, title) in [
+            (Section::Staged, "partial.rs (Staged)"),
+            (Section::Unstaged, "partial.rs (Unstaged)"),
+            (Section::Staged, "partial.rs (Staged)"),
+            (Section::Unstaged, "partial.rs (Unstaged)"),
+        ] {
+            panel.update_in(&mut cx, |panel, window, cx| {
+                panel.selected_entry =
+                    panel.entry_by_path_in_section(&repo_path("partial.rs"), section);
+                panel.open_diff(&menu::Confirm, window, cx);
+            });
+            cx.run_until_parked();
+            cx.dispatch_action(git::OpenFileDiff);
+            cx.run_until_parked();
+
+            let view = workspace.read_with(&cx, |workspace, cx| {
+                workspace
+                    .active_item_as::<SoloDiffView>(cx)
+                    .expect("OpenFileDiff should activate a solo diff")
+            });
+            view.read_with(&cx, |view, cx| {
+                assert_eq!(view.tab_content_text(0, cx), title);
+            });
+            if let Some(existing) = opened_views.get(title) {
+                assert_eq!(&view, existing);
+            } else {
+                opened_views.insert(title, view);
+            }
+            workspace.read_with(&cx, |workspace, cx| {
+                assert_eq!(
+                    workspace.items_of_type::<SoloDiffView>(cx).count(),
+                    opened_views.len()
+                );
+            });
+        }
+        assert_eq!(opened_views.len(), 2);
+
+        for (title, view) in &opened_views {
+            workspace.update_in(&mut cx, |workspace, window, cx| {
+                workspace.activate_item(view, true, true, window, cx);
+            });
+            cx.run_until_parked();
+            workspace.read_with(&cx, |workspace, cx| {
+                assert_eq!(
+                    workspace.active_item_as::<SoloDiffView>(cx).as_ref(),
+                    Some(view)
+                );
+                assert_eq!(view.read(cx).tab_content_text(0, cx), *title);
+                assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 2);
+            });
+
+            // With a solo diff tab active, OpenFileDiff must keep reusing that
+            // tab even when the panel selection points at the other section.
+            cx.dispatch_action(git::OpenFileDiff);
+            cx.run_until_parked();
+            workspace.read_with(&cx, |workspace, cx| {
+                assert_eq!(
+                    workspace.active_item_as::<SoloDiffView>(cx).as_ref(),
+                    Some(view)
+                );
+                assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 2);
+            });
+        }
+
+        let diff_views = workspace.read_with(&cx, |workspace, cx| {
+            let staged_diff = workspace
+                .item_of_type::<StagedDiff>(cx)
+                .expect("StagedDiff should exist");
+            let unstaged_diff = workspace
+                .item_of_type::<UnstagedDiff>(cx)
+                .expect("UnstagedDiff should exist");
+            [
+                (
+                    Box::new(staged_diff) as Box<dyn workspace::ItemHandle>,
+                    Section::Unstaged,
+                    "partial.rs (Staged)",
+                ),
+                (
+                    Box::new(unstaged_diff) as Box<dyn workspace::ItemHandle>,
+                    Section::Staged,
+                    "partial.rs (Unstaged)",
+                ),
+            ]
+        });
+        for (diff_view, panel_section, title) in diff_views {
+            panel.update_in(&mut cx, |panel, _window, cx| {
+                let selected_index = panel
+                    .entry_by_path_in_section(&repo_path("partial.rs"), panel_section)
+                    .expect("partial.rs should exist in both sections");
+                panel.clear_marks_and_select(selected_index, cx);
+            });
+            workspace.update_in(&mut cx, |workspace, window, cx| {
+                assert!(workspace.activate_item(diff_view.as_ref(), true, true, window, cx));
+            });
+            cx.run_until_parked();
+            panel.read_with(&cx, |panel, _| {
+                assert_eq!(
+                    panel
+                        .selected_entry
+                        .and_then(|index| panel.section_for_entry_index(index)),
+                    Some(panel_section)
+                );
+            });
+
+            cx.dispatch_action(git::OpenFileDiff);
+            cx.run_until_parked();
+            workspace.read_with(&cx, |workspace, cx| {
+                assert_eq!(
+                    workspace.active_item_as::<SoloDiffView>(cx).as_ref(),
+                    opened_views.get(title),
+                    "OpenFileDiff should preserve the active diff's base: {title}"
+                );
+                assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 2);
+            });
+        }
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, window, cx);
+        });
+        cx.run_until_parked();
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            let selected_index = panel
+                .entry_by_path_in_section(&repo_path("partial.rs"), Section::Staged)
+                .expect("partial.rs should have staged changes");
+            panel.clear_marks_and_select(selected_index, cx);
+        });
+        cx.dispatch_action(git::OpenFileDiff);
+        cx.run_until_parked();
+        workspace.read_with(&cx, |workspace, cx| {
+            let view = workspace
+                .active_item_as::<SoloDiffView>(cx)
+                .expect("OpenFileDiff should activate a solo diff");
+            assert_eq!(view.read(cx).tab_content_text(0, cx), "partial.rs");
+            assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 3);
         });
     }
 
