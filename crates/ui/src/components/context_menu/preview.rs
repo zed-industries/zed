@@ -1,4 +1,4 @@
-use gpui::{Anchor, DismissEvent, Entity, FocusHandle, Subscription};
+use gpui::{Anchor, Entity, FocusHandle};
 
 use crate::{ListItemSpacing, PopoverMenu, prelude::*, right_click_menu};
 
@@ -44,43 +44,6 @@ impl Example {
             Self::Placement => "Placement and right-click menus",
         }
     }
-
-    fn instructions(self) -> (&'static str, &'static str) {
-        match self {
-            Self::Standard => (
-                "Use Up/Down, Home/End, and Enter. Try the disabled rows, an ordinary submenu, Escape, and clicking outside.",
-                "Navigation skips non-selectable rows. A command runs once and dismisses the whole menu; canceling runs nothing. Disabled rows do nothing.",
-            ),
-            Self::Persistent => (
-                "Toggle archived items, activate the custom row, then toggle again using Enter.",
-                "The checkmark, count, and enabled state refresh without closing. Escape or clicking outside still dismisses.",
-            ),
-            Self::Submenu => (
-                "Open Filters with the pointer or Right arrow. Toggle with the mouse and Enter, then press Escape or Left.",
-                "Both menus stay open during updates. Returning from the child leaves the parent open and keyboard navigation usable.",
-            ),
-            Self::Removal => (
-                "Open Active filters. Remove the last row first using the keyboard, then remove every remaining filter. Reset values to repeat.",
-                "Selection moves to a nearby row. With no selectable entries left, only the child closes and focus returns to its parent trigger.",
-            ),
-            Self::ParentRefresh => (
-                "Open Filters, toggle a value, and move the trigger. Then disable the trigger. Reset and repeat with Remove trigger.",
-                "The parent's count and position update without replacing the open child. Disabling or removing the trigger closes the child and selects the nearest enabled parent row.",
-            ),
-            Self::Nested => (
-                "Open Filters → Status. Compare mouse clicks with Enter at the deepest level, then use Left or Escape to return one level at a time.",
-                "Updates should keep the entire chain open. Known issue: a deepest-level mouse click can dismiss the root; this preview intentionally leaves that bug visible.",
-            ),
-            Self::Content => (
-                "Compare the three sizes. Hover or select documentation rows, activate the custom row, and click the end-slot buttons. Try a narrow window too.",
-                "Icons, toggles, custom content, and documentation remain readable. End-slot buttons run their own handler without dismissing; normal rows dismiss.",
-            ),
-            Self::Placement => (
-                "Open either edge trigger or right-click different points in the surface. Resize the window and open the submenu near an edge.",
-                "Menus stay within the window, and submenus flip sides when needed. Moving between the trigger and child should not dismiss the menu.",
-            ),
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -97,7 +60,6 @@ struct ExampleValues {
     filters: Vec<&'static str>,
     trigger_moved: bool,
     trigger_state: TriggerState,
-    last_action: SharedString,
 }
 
 impl Default for ExampleValues {
@@ -108,7 +70,6 @@ impl Default for ExampleValues {
             filters: vec!["Assigned to me", "In progress", "Updated today"],
             trigger_moved: false,
             trigger_state: TriggerState::Enabled,
-            last_action: "None".into(),
         }
     }
 }
@@ -116,10 +77,7 @@ impl Default for ExampleValues {
 struct MenuPreview {
     example: Example,
     values: ExampleValues,
-    opens: usize,
-    dismissals: usize,
     focus_handle: FocusHandle,
-    _dismiss_subscription: Option<Subscription>,
 }
 
 impl MenuPreview {
@@ -127,25 +85,19 @@ impl MenuPreview {
         Self {
             example,
             values: ExampleValues::default(),
-            opens: 0,
-            dismissals: 0,
             focus_handle: cx.focus_handle(),
-            _dismiss_subscription: None,
         }
     }
 
     fn handler(
         preview: &Entity<Self>,
-        label: impl Into<SharedString>,
         update: impl Fn(&mut ExampleValues) + 'static,
     ) -> impl Fn(&mut Window, &mut App) + 'static {
         let preview = preview.clone();
-        let label = label.into();
         move |_, cx| {
             preview.update(cx, |this, cx| {
                 update(&mut this.values);
                 this.values.confirmations += 1;
-                this.values.last_action = label.clone();
                 cx.notify();
             });
         }
@@ -167,21 +119,11 @@ impl MenuPreview {
                     .when_some(width, |menu, width| menu.fixed_width(width.into()))
             }
         };
-        let menu = if matches!(example, Example::Persistent | Example::ParentRefresh) {
+        if matches!(example, Example::Persistent | Example::ParentRefresh) {
             ContextMenu::build_persistent(window, cx, builder)
         } else {
             ContextMenu::build(window, cx, builder)
-        };
-        preview.update(cx, |this, cx| {
-            this.opens += 1;
-            this._dismiss_subscription =
-                Some(cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
-                    this.dismissals += 1;
-                    cx.notify();
-                }));
-            cx.notify();
-        });
-        menu
+        }
     }
 
     fn filter_entries(menu: ContextMenu, preview: &Entity<Self>, cx: &App) -> ContextMenu {
@@ -192,14 +134,14 @@ impl MenuPreview {
             .item(
                 ContextMenuEntry::new("Include archived")
                     .toggleable(IconPosition::Start, values.archived)
-                    .handler(Self::handler(preview, "Toggle archived", |values| {
+                    .handler(Self::handler(preview, |values| {
                         values.archived = !values.archived;
                     })),
             )
             .item(
                 ContextMenuEntry::new("Archived-only option")
                     .disabled(!values.archived)
-                    .handler(Self::handler(preview, "Archived-only option", |_| {})),
+                    .handler(Self::handler(preview, |_| {})),
             )
             .separator()
             .custom_entry(
@@ -212,7 +154,7 @@ impl MenuPreview {
                         .child(Label::new(confirmations.to_string()).color(Color::Muted))
                         .into_any_element()
                 },
-                Self::handler(preview, "Custom counter row", |_| {}),
+                Self::handler(preview, |_| {}),
             )
     }
 
@@ -226,22 +168,14 @@ impl MenuPreview {
                 .item(
                     ContextMenuEntry::new("Disabled command")
                         .disabled(true)
-                        .handler(Self::handler(
-                            preview,
-                            "Unexpected disabled command",
-                            |_| {},
-                        )),
+                        .handler(Self::handler(preview, |_| {})),
                 )
                 .label("This label is not selectable")
                 .separator()
                 .submenu("Ordinary submenu", {
                     let preview = preview.clone();
                     move |menu, _, _| {
-                        menu.entry(
-                            "Run child command",
-                            None,
-                            Self::handler(&preview, "Child command", |_| {}),
-                        )
+                        menu.entry("Run child command", None, Self::handler(&preview, |_| {}))
                     }
                 })
                 .item(
@@ -250,22 +184,14 @@ impl MenuPreview {
                     })
                     .disabled(true),
                 )
-                .entry(
-                    "Last command",
-                    None,
-                    Self::handler(preview, "Last command", |_| {}),
-                ),
+                .entry("Last command", None, Self::handler(preview, |_| {})),
             Example::Persistent => Self::filter_entries(menu, preview, cx),
             Example::Submenu => menu
                 .submenu_with_icon("Filters", IconName::Filter, {
                     let preview = preview.clone();
                     move |menu, _, cx| Self::filter_entries(menu, &preview, cx)
                 })
-                .entry(
-                    "Parent command",
-                    None,
-                    Self::handler(preview, "Parent command", |_| {}),
-                ),
+                .entry("Parent command", None, Self::handler(preview, |_| {})),
             Example::Removal => menu
                 .submenu("Active filters", {
                     let preview = preview.clone();
@@ -277,35 +203,19 @@ impl MenuPreview {
                             .extend(values.filters.iter().map(|&filter| {
                                 ContextMenuEntry::new(filter)
                                     .toggleable(IconPosition::End, true)
-                                    .handler(Self::handler(
-                                        &preview,
-                                        format!("Removed {filter}"),
-                                        move |values| {
-                                            values.filters.retain(|value| *value != filter)
-                                        },
-                                    ))
+                                    .handler(Self::handler(&preview, move |values| {
+                                        values.filters.retain(|value| *value != filter)
+                                    }))
                             }))
                     }
                 })
-                .entry(
-                    "Parent command",
-                    None,
-                    Self::handler(preview, "Parent command", |_| {}),
-                ),
+                .entry("Parent command", None, Self::handler(preview, |_| {})),
             Example::ParentRefresh => {
                 let values = &this.values;
                 menu.keep_open_on_confirm(false)
-                    .entry(
-                        "Before filters",
-                        None,
-                        Self::handler(preview, "Before filters", |_| {}),
-                    )
+                    .entry("Before filters", None, Self::handler(preview, |_| {}))
                     .when(values.trigger_moved, |menu| {
-                        menu.entry(
-                            "Inserted neighbor",
-                            None,
-                            Self::handler(preview, "Inserted neighbor", |_| {}),
-                        )
+                        menu.entry("Inserted neighbor", None, Self::handler(preview, |_| {}))
                     })
                     .when(values.trigger_state != TriggerState::Removed, |menu| {
                         menu.item(
@@ -320,38 +230,23 @@ impl MenuPreview {
                                             .entry(
                                                 "Move trigger",
                                                 None,
-                                                Self::handler(
-                                                    &preview,
-                                                    "Moved trigger",
-                                                    |values| {
-                                                        values.trigger_moved =
-                                                            !values.trigger_moved;
-                                                    },
-                                                ),
+                                                Self::handler(&preview, |values| {
+                                                    values.trigger_moved = !values.trigger_moved;
+                                                }),
                                             )
                                             .entry(
                                                 "Disable trigger",
                                                 None,
-                                                Self::handler(
-                                                    &preview,
-                                                    "Disabled trigger",
-                                                    |values| {
-                                                        values.trigger_state =
-                                                            TriggerState::Disabled;
-                                                    },
-                                                ),
+                                                Self::handler(&preview, |values| {
+                                                    values.trigger_state = TriggerState::Disabled;
+                                                }),
                                             )
                                             .entry(
                                                 "Remove trigger",
                                                 None,
-                                                Self::handler(
-                                                    &preview,
-                                                    "Removed trigger",
-                                                    |values| {
-                                                        values.trigger_state =
-                                                            TriggerState::Removed;
-                                                    },
-                                                ),
+                                                Self::handler(&preview, |values| {
+                                                    values.trigger_state = TriggerState::Removed;
+                                                }),
                                             )
                                     }
                                 },
@@ -361,11 +256,7 @@ impl MenuPreview {
                             .disabled(values.trigger_state == TriggerState::Disabled),
                         )
                     })
-                    .entry(
-                        "After filters",
-                        None,
-                        Self::handler(preview, "After filters", |_| {}),
-                    )
+                    .entry("After filters", None, Self::handler(preview, |_| {}))
             }
             Example::Nested => menu.submenu("Filters", {
                 let preview = preview.clone();
@@ -377,7 +268,7 @@ impl MenuPreview {
                     .entry(
                         "Intermediate command",
                         None,
-                        Self::handler(&preview, "Intermediate command", |_| {}),
+                        Self::handler(&preview, |_| {}),
                     )
                 }
             }),
@@ -387,20 +278,20 @@ impl MenuPreview {
                     ContextMenuEntry::new("Leading colored icon")
                         .icon(IconName::Filter)
                         .icon_color(Color::Accent)
-                        .handler(Self::handler(preview, "Leading icon", |_| {})),
+                        .handler(Self::handler(preview, |_| {})),
                 )
                 .item(
                     ContextMenuEntry::new("Trailing icon")
                         .icon(IconName::ArrowUpRight)
                         .icon_position(IconPosition::End)
-                        .handler(Self::handler(preview, "Trailing icon", |_| {})),
+                        .handler(Self::handler(preview, |_| {})),
                 )
                 .toggleable_entry(
                     "Checked option",
                     true,
                     IconPosition::End,
                     None,
-                    Self::handler(preview, "Checked option", |_| {}),
+                    Self::handler(preview, |_| {}),
                 )
                 .separator()
                 .item(
@@ -416,7 +307,7 @@ impl MenuPreview {
                                 )
                                 .into_any_element()
                         })
-                        .handler(Self::handler(preview, "Documentation row", |_| {})),
+                        .handler(Self::handler(preview, |_| {})),
                 )
                 .item(
                     ContextMenuEntry::new("Disabled with documentation")
@@ -442,53 +333,41 @@ impl MenuPreview {
                             .child(Label::new("Selectable custom row"))
                             .into_any_element()
                     },
-                    Self::handler(preview, "Selectable custom row", |_| {}),
+                    Self::handler(preview, |_| {}),
                 )
                 .separator()
                 .end_slot_action(Box::new(PreviewAction))
                 .entry_with_end_slot(
                     "Always-visible end slot",
                     None,
-                    Self::handler(preview, "Primary row action", |_| {}),
+                    Self::handler(preview, |_| {}),
                     IconName::Settings,
                     "Secondary action".into(),
-                    Self::handler(preview, "Always-visible end slot", |_| {}),
+                    Self::handler(preview, |_| {}),
                 )
                 .entry_with_end_slot_on_hover(
                     "Hover-only end slot",
                     None,
-                    Self::handler(preview, "Primary row action", |_| {}),
+                    Self::handler(preview, |_| {}),
                     IconName::Settings,
                     "Secondary action".into(),
-                    Self::handler(preview, "Hover-only end slot", |_| {}),
+                    Self::handler(preview, |_| {}),
                 ),
             Example::Placement => menu
                 .header("Window edges")
-                .entry(
-                    "First command",
-                    None,
-                    Self::handler(preview, "First command", |_| {}),
-                )
+                .entry("First command", None, Self::handler(preview, |_| {}))
                 .submenu("Open toward available space", {
                     let preview = preview.clone();
                     move |menu, _, _| {
-                        menu.entry(
-                            "Submenu command",
-                            None,
-                            Self::handler(&preview, "Submenu command", |_| {}),
-                        )
-                        .entry(
-                            "Another submenu command",
-                            None,
-                            Self::handler(&preview, "Another submenu command", |_| {}),
-                        )
+                        menu.entry("Submenu command", None, Self::handler(&preview, |_| {}))
+                            .entry(
+                                "Another submenu command",
+                                None,
+                                Self::handler(&preview, |_| {}),
+                            )
                     }
                 })
-                .entry(
-                    "Last command",
-                    None,
-                    Self::handler(preview, "Last command", |_| {}),
-                ),
+                .entry("Last command", None, Self::handler(preview, |_| {})),
         }
     }
 
@@ -521,7 +400,6 @@ impl MenuPreview {
 
 impl Render for MenuPreview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (instructions, expectation) = self.example.instructions();
         let controls = match self.example {
             Example::Content => h_flex()
                 .flex_wrap()
@@ -582,10 +460,7 @@ impl Render for MenuPreview {
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
                                     .rounded_md()
-                                    .child(
-                                        Label::new("Right-click anywhere in this surface")
-                                            .color(Color::Muted),
-                                    )
+                                    .child(Label::new("Right-click menu").color(Color::Muted))
                             })
                             .menu(move |window, cx| {
                                 Self::open_menu(&preview, ListItemSpacing::Dense, None, window, cx)
@@ -608,75 +483,10 @@ impl Render for MenuPreview {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &PreviewAction, _, cx| {
                 this.values.confirmations += 1;
-                this.values.last_action = "Dispatched preview action".into();
                 cx.notify();
             }))
             .w_full()
-            .gap_3()
-            .child(div().text_sm().child(format!("Try: {instructions}")))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().colors().text_muted)
-                    .child(format!("Expected: {expectation}")),
-            )
             .child(controls)
-            .child(
-                h_flex()
-                    .gap_2()
-                    .flex_wrap()
-                    .child(Button::new("reset", "Reset values").on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.values = ExampleValues::default();
-                            cx.notify();
-                        },
-                    )))
-                    .child(
-                        Label::new(format!(
-                            "Opens: {} · Root dismissals: {}",
-                            self.opens, self.dismissals
-                        ))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                    ),
-            )
-            .child(
-                Label::new(format!(
-                    "Last action: {} · Confirmations: {}",
-                    self.values.last_action, self.values.confirmations
-                ))
-                .size(LabelSize::Small),
-            )
-            .when(
-                matches!(
-                    self.example,
-                    Example::Persistent
-                        | Example::Submenu
-                        | Example::ParentRefresh
-                        | Example::Nested
-                ),
-                |this| {
-                    this.child(
-                        Label::new(format!("Include archived: {}", self.values.archived))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                },
-            )
-            .when(self.example == Example::Removal, |this| {
-                this.child(
-                    Label::new(format!(
-                        "Remaining: {}",
-                        if self.values.filters.is_empty() {
-                            "none".to_string()
-                        } else {
-                            self.values.filters.join(", ")
-                        }
-                    ))
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-            })
     }
 }
 
@@ -686,32 +496,27 @@ impl Component for ContextMenu {
     }
 
     fn description() -> &'static str {
-        "Interactive checks for menu confirmation, persistence, refresh, selection, focus, and placement."
+        ""
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> AnyElement {
-        v_flex()
-            .w_full()
-            .gap_4()
-            .child(
-                div()
-                    .text_sm()
-                    .child("Use mouse and keyboard for each example. Right enters a submenu; Left returns to its parent. Activity counts are cumulative; Reset values restores only the example data. All actions are local to this preview."),
-            )
-            .child(example_group(
-                Example::ALL
-                    .into_iter()
-                    .map(|example| {
-                        let preview = window.use_keyed_state(
-                            (ElementId::Name("context-menu-preview".into()), example.title()),
-                            cx,
-                            |_, cx| MenuPreview::new(example, cx),
-                        );
-                        single_example(example.title(), preview.into_any_element())
-                    })
-                    .collect(),
-            ))
-            .into_any_element()
+        example_group(
+            Example::ALL
+                .into_iter()
+                .map(|example| {
+                    let preview = window.use_keyed_state(
+                        (
+                            ElementId::Name("context-menu-preview".into()),
+                            example.title(),
+                        ),
+                        cx,
+                        |_, cx| MenuPreview::new(example, cx),
+                    );
+                    single_example(example.title(), preview.into_any_element())
+                })
+                .collect(),
+        )
+        .into_any_element()
     }
 }
 
@@ -735,7 +540,12 @@ mod tests {
             });
             let preview = window.root(cx).expect("preview");
             let mut visual = VisualTestContext::from_window(window.into(), cx);
-            visual.update(|window, cx| window.draw(cx).clear(cx));
+            let focus_handle = visual.update(|window, cx| {
+                let focus_handle = preview.read(cx).focus_handle.clone();
+                window.focus(&focus_handle, cx);
+                window.draw(cx).clear(cx);
+                focus_handle
+            });
             let trigger = match example {
                 Example::Content => "Dense · automatic width",
                 Example::Placement => "Left edge",
@@ -752,8 +562,8 @@ mod tests {
                         window.draw(cx).clear(cx);
                     });
                 }
-                preview.read_with(&visual, |preview, _| {
-                    assert_eq!(preview.opens, open_count, "{}", example.title());
+                visual.update(|window, _| {
+                    assert!(!focus_handle.is_focused(window), "{}", example.title());
                 });
 
                 if matches!(example, Example::Standard | Example::Persistent) {
@@ -769,14 +579,11 @@ mod tests {
                         );
                         if example == Example::Persistent {
                             assert_eq!(preview.values.archived, open_count % 2 != 0);
-                            assert_eq!(preview.dismissals, open_count - 1);
-                        } else {
-                            assert_eq!(
-                                preview.values.last_action.as_ref(),
-                                "Dispatched preview action"
-                            );
                         }
                     });
+                    if example == Example::Persistent {
+                        visual.update(|window, _| assert!(!focus_handle.is_focused(window)));
+                    }
                 }
 
                 if example != Example::Standard {
@@ -784,8 +591,8 @@ mod tests {
                 }
                 visual.run_until_parked();
                 visual.update(|window, cx| window.draw(cx).clear(cx));
-                preview.read_with(&visual, |preview, _| {
-                    assert_eq!(preview.dismissals, open_count, "{}", example.title());
+                visual.update(|window, _| {
+                    assert!(focus_handle.is_focused(window), "{}", example.title());
                 });
             }
         }
