@@ -3,7 +3,6 @@
 use std::{
     borrow::Cow,
     cmp::{self, Reverse},
-    collections::hash_map,
     path::PathBuf,
     sync::Arc,
 };
@@ -21,8 +20,8 @@ use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
-    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskHook, TaskId, TaskTemplate,
-    TaskTemplates, TaskVariables, VariableName,
+    DebugScenario, ResolvedTask, SharedTaskContext, SpawnInTerminal, TaskContext, TaskHook, TaskId,
+    TaskTemplate, TaskTemplates, TaskVariables, VariableName,
 };
 use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, post_inc, rel_path::RelPath};
@@ -505,7 +504,8 @@ impl Inventory {
             .map(|(id, _)| *id)
             .collect();
 
-        let mut task_labels_to_ids = HashMap::<String, HashSet<TaskId>>::default();
+        let mut seen_tasks_by_label =
+            HashMap::<String, Vec<(TaskSourceKind, SpawnInTerminal)>>::default();
         let mut lru_score = 0_u32;
         let previously_spawned_tasks = self
             .last_scheduled_tasks
@@ -535,17 +535,8 @@ impl Inventory {
                 };
                 (task_source_kind.clone(), task)
             })
-            .filter(|(_, resolved_task)| {
-                match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
-                    hash_map::Entry::Occupied(mut o) => {
-                        // Allow distinct re-resolved tasks that share a label but differ by context.
-                        o.get_mut().insert(resolved_task.id.clone())
-                    }
-                    hash_map::Entry::Vacant(v) => {
-                        v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
-                        true
-                    }
-                }
+            .filter(|(kind, resolved_task)| {
+                is_distinct_task(&mut seen_tasks_by_label, kind, resolved_task)
             })
             .map(|(kind, task)| (kind, task, post_inc(&mut lru_score)))
             .sorted_unstable_by(task_lru_comparator)
@@ -637,17 +628,8 @@ impl Inventory {
                     .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
                     .map(move |resolved_task| (kind.clone(), resolved_task, not_used_score))
                 })
-                .filter(|(_, resolved_task, _)| {
-                    match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
-                        hash_map::Entry::Occupied(mut o) => {
-                            // Allow new tasks with the same label, if their context is different
-                            o.get_mut().insert(resolved_task.id.clone())
-                        }
-                        hash_map::Entry::Vacant(v) => {
-                            v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
-                            true
-                        }
-                    }
+                .filter(|(kind, resolved_task, _)| {
+                    is_distinct_task(&mut seen_tasks_by_label, kind, resolved_task)
                 })
                 .sorted_unstable_by(task_lru_comparator)
                 .map(|(kind, task, _)| (kind, task))
@@ -955,6 +937,34 @@ impl Inventory {
 
         Ok(())
     }
+}
+
+/// Different templates resolve into tasks with different ids, even if they spawn the same process:
+/// e.g. a package.json script listed by its name and the same script resolved from the runnable under the cursor.
+/// Such tasks from the same source are indistinguishable in the task list, so only the first one of them is kept.
+fn is_distinct_task(
+    seen_tasks_by_label: &mut HashMap<String, Vec<(TaskSourceKind, SpawnInTerminal)>>,
+    kind: &TaskSourceKind,
+    task: &ResolvedTask,
+) -> bool {
+    let seen_tasks = seen_tasks_by_label
+        .entry(task.resolved_label.clone())
+        .or_default();
+    let is_distinct = seen_tasks.iter().all(|(seen_kind, seen_task)| {
+        seen_task.id != task.id
+            && (seen_kind != kind || !spawns_same_process(seen_task, &task.resolved))
+    });
+    if is_distinct {
+        seen_tasks.push((kind.clone(), task.resolved.clone()));
+    }
+    is_distinct
+}
+
+fn spawns_same_process(a: &SpawnInTerminal, b: &SpawnInTerminal) -> bool {
+    SpawnInTerminal {
+        id: b.id.clone(),
+        ..a.clone()
+    } == *b
 }
 
 fn task_lru_comparator(

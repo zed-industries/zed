@@ -82,14 +82,17 @@ impl ContextProvider for JsonTaskProvider {
                     .scripts
                     .into_iter()
                     .map(|(_, key)| TaskTemplate {
-                        label: format!("run {key}"),
+                        label: format!("package.json > {key}"),
                         command: command.clone(),
                         args: vec!["run".into(), key],
                         cwd: Some(VariableName::Dirname.template_value()),
                         ..TaskTemplate::default()
                     })
                     .chain([TaskTemplate {
-                        label: "package script $ZED_CUSTOM_script".to_owned(),
+                        label: format!(
+                            "package.json > {}",
+                            VariableName::Custom("script".into()).template_value()
+                        ),
                         command: command.clone(),
                         args: vec![
                             "run".into(),
@@ -107,13 +110,16 @@ impl ContextProvider for JsonTaskProvider {
                     .as_object()?
                     .keys()
                     .map(|key| TaskTemplate {
-                        label: format!("run {key}"),
+                        label: format!("composer.json > {key}"),
                         command: "composer".to_owned(),
                         args: vec!["-d".into(), "$ZED_DIRNAME".into(), key.into()],
                         ..TaskTemplate::default()
                     })
                     .chain([TaskTemplate {
-                        label: "composer script $ZED_CUSTOM_script".to_owned(),
+                        label: format!(
+                            "composer.json > {}",
+                            VariableName::Custom("script".into()).template_value()
+                        ),
                         command: "composer".to_owned(),
                         args: vec![
                             "-d".into(),
