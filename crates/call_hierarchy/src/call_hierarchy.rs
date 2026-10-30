@@ -845,19 +845,11 @@ impl Render for CallSignatureTooltip {
                         .gap_1()
                         .flex_wrap()
                         .text_size(buffer_font_size)
-                        .debug_selector(|| "call-hierarchy-tooltip-row".to_string())
-                        .child(
-                            div()
-                                .min_w_0()
-                                .max_w(max_width)
-                                .child(signature),
-                        )
-                        .children(detail_styled.map(|detail| {
-                            div()
-                                .min_w_0()
-                                .max_w(max_width)
-                                .child(detail)
-                        })),
+                        .child(div().min_w_0().max_w(max_width).child(signature))
+                        .children(
+                            detail_styled
+                                .map(|detail| div().min_w_0().max_w(max_width).child(detail)),
+                        ),
                 )
                 .children(
                     path.map(|path| Label::new(path).size(LabelSize::Small).color(Color::Muted)),
@@ -981,22 +973,37 @@ async fn load_and_apply_calls(
             let buffer_font_size = settings.buffer_font_size(cx);
             let path_font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
             for call in calls.iter_mut() {
-                let signature = if let Some(label_text) = &call.display.label_text {
-                    match &call.display.detail {
-                        Some(detail) if !label_carries_detail(call.label.as_deref()) => {
-                            SharedString::from(format!("{label_text} {detail}"))
-                        }
-                        _ => label_text.clone(),
-                    }
+                let name_text = call
+                    .display
+                    .label_text
+                    .as_ref()
+                    .unwrap_or(&call.display.name);
+                let detail_text = if call.label_includes_detail {
+                    None
                 } else {
-                    call.display.full_signature.clone()
+                    call.display.detail.as_ref()
                 };
-                let signature_width = shaped_width(
-                    signature,
+
+                let gap = rems(0.25).to_pixels(window.rem_size());
+                let name_width = shaped_width(
+                    name_text.clone(),
                     settings.buffer_font.clone(),
                     buffer_font_size,
                     window,
                 );
+                let detail_width = match detail_text {
+                    Some(detail) => {
+                        shaped_width(
+                            detail.clone(),
+                            settings.buffer_font.clone(),
+                            buffer_font_size,
+                            window,
+                        ) + gap
+                    }
+                    None => px(0.),
+                };
+                let signature_width = name_width + detail_width;
+
                 let path_width = call
                     .display
                     .path
@@ -1223,10 +1230,6 @@ fn shaped_width(
         .text_system()
         .shape_line(text, font_size, &[run], None)
         .width
-}
-
-fn label_carries_detail(label: Option<&CodeLabel>) -> bool {
-    label.is_some_and(|label| detail_from_label_suffix(label).is_some())
 }
 
 fn render_item(
