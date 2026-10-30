@@ -11088,10 +11088,16 @@ mod tests {
         );
     }
 
+    struct HistoryPanelTest {
+        workspace: Entity<Workspace>,
+        panel: Entity<GitPanel>,
+        cx: VisualTestContext,
+    }
+
     async fn history_panel_for_project(
         fs: Arc<FakeFs>,
         cx: &mut TestAppContext,
-    ) -> (Entity<Workspace>, Entity<GitPanel>, VisualTestContext) {
+    ) -> HistoryPanelTest {
         let project = Project::test(fs, [Path::new(path!("/root/project"))], cx).await;
         let window_handle =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -11119,7 +11125,11 @@ mod tests {
             panel.activate_history_tab(&ActivateHistoryTab, window, cx);
         });
         cx.run_until_parked();
-        (workspace, panel, cx)
+        HistoryPanelTest {
+            workspace,
+            panel,
+            cx,
+        }
     }
 
     async fn wait_for_commit_history_to_settle(panel: &Entity<GitPanel>, cx: &mut TestAppContext) {
@@ -11144,7 +11154,7 @@ mod tests {
         })
         .unwrap();
 
-        let (_, panel, _) = history_panel_for_project(fs.clone(), cx).await;
+        let panel = history_panel_for_project(fs.clone(), cx).await.panel;
 
         wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
@@ -11173,7 +11183,7 @@ mod tests {
         })
         .unwrap();
 
-        let (_, panel, _) = history_panel_for_project(fs.clone(), cx).await;
+        let panel = history_panel_for_project(fs.clone(), cx).await.panel;
 
         wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
@@ -11209,7 +11219,7 @@ mod tests {
         .unwrap();
         fs.set_graph_error(dot_git, Some("simulated git log failure".into()));
 
-        let (_, panel, _) = history_panel_for_project(fs.clone(), cx).await;
+        let panel = history_panel_for_project(fs.clone(), cx).await.panel;
 
         wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
@@ -11224,7 +11234,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree("/root", json!({ "project": {} })).await;
 
-        let (_, panel, _) = history_panel_for_project(fs.clone(), cx).await;
+        let panel = history_panel_for_project(fs.clone(), cx).await.panel;
 
         panel.read_with(cx, |panel, _| {
             assert_eq!(panel.commit_history, CommitHistory::Loading);
@@ -11263,14 +11273,7 @@ mod tests {
     }
 
     /// Opens a History tab over three commits, returned newest first.
-    async fn history_panel_with_commits(
-        cx: &mut TestAppContext,
-    ) -> (
-        Entity<Workspace>,
-        Entity<GitPanel>,
-        [Oid; 3],
-        VisualTestContext,
-    ) {
+    async fn history_panel_with_commits(cx: &mut TestAppContext) -> (HistoryPanelTest, [Oid; 3]) {
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree("/root", json!({ "project": { ".git": {} } }))
             .await;
@@ -11292,109 +11295,109 @@ mod tests {
         })
         .unwrap();
 
-        let (workspace, panel, mut cx) = history_panel_for_project(fs, cx).await;
-        wait_for_commit_history_to_settle(&panel, &mut cx).await;
+        let mut test = history_panel_for_project(fs, cx).await;
+        wait_for_commit_history_to_settle(&test.panel, &mut test.cx).await;
 
-        (workspace, panel, shas, cx)
+        (test, shas)
     }
 
-    fn history_state(
-        panel: &Entity<GitPanel>,
-        cx: &mut VisualTestContext,
-    ) -> (Option<Oid>, Option<usize>) {
-        panel.read_with(cx, |panel, _| {
-            (panel.active_history_sha, panel.focused_history_entry)
-        })
-    }
+    impl HistoryPanelTest {
+        fn history_state(&self) -> (Option<Oid>, Option<usize>) {
+            self.panel.read_with(&self.cx, |panel, _| {
+                (panel.active_history_sha, panel.focused_history_entry)
+            })
+        }
 
-    fn open_history_commit(
-        sha: Oid,
-        workspace: &Entity<Workspace>,
-        panel: &Entity<GitPanel>,
-        cx: &mut VisualTestContext,
-    ) {
-        let repository = panel.read_with(cx, |panel, _| panel.active_repository.clone().unwrap());
-        cx.update(|window, cx| {
-            CommitView::open(
-                sha.to_string(),
-                repository.downgrade(),
-                workspace.downgrade(),
-                None,
-                None,
-                window,
-                cx,
-            );
-        });
-        cx.run_until_parked();
+        fn open_commit(&mut self, sha: Oid) {
+            let repository = self.panel.read_with(&self.cx, |panel, _| {
+                panel.active_repository.clone().unwrap()
+            });
+            let workspace = self.workspace.downgrade();
+            self.cx.update(|window, cx| {
+                CommitView::open(
+                    sha.to_string(),
+                    repository.downgrade(),
+                    workspace,
+                    None,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            self.cx.run_until_parked();
+        }
     }
 
     #[gpui::test]
     async fn test_history_tab_highlights_opened_commit_view(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (workspace, panel, [_, middle_sha, _], mut cx) = history_panel_with_commits(cx).await;
+        let (mut test, [_, middle_sha, _]) = history_panel_with_commits(cx).await;
 
         assert_eq!(
-            history_state(&panel, &mut cx),
+            test.history_state(),
             (None, None),
             "no commit should be highlighted or focused before one is opened"
         );
 
-        open_history_commit(middle_sha, &workspace, &panel, &mut cx);
-        assert_eq!(history_state(&panel, &mut cx), (Some(middle_sha), Some(1)));
+        test.open_commit(middle_sha);
+        assert_eq!(test.history_state(), (Some(middle_sha), Some(1)));
     }
 
     #[gpui::test]
     async fn test_history_tab_clears_highlight_for_non_commit_tab(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (workspace, panel, [_, middle_sha, _], mut cx) = history_panel_with_commits(cx).await;
-        open_history_commit(middle_sha, &workspace, &panel, &mut cx);
-        let commit_view = workspace
-            .read_with(&cx, |workspace, cx| {
+        let (mut test, [_, middle_sha, _]) = history_panel_with_commits(cx).await;
+        test.open_commit(middle_sha);
+        let commit_view = test
+            .workspace
+            .read_with(&test.cx, |workspace, cx| {
                 workspace.active_item_as::<CommitView>(cx)
             })
             .unwrap();
 
-        workspace.update_in(&mut cx, |workspace, window, cx| {
-            let test_item = cx.new(TestItem::new);
-            workspace.add_item_to_active_pane(Box::new(test_item), None, true, window, cx);
-        });
-        cx.run_until_parked();
+        test.workspace
+            .update_in(&mut test.cx, |workspace, window, cx| {
+                let test_item = cx.new(TestItem::new);
+                workspace.add_item_to_active_pane(Box::new(test_item), None, true, window, cx);
+            });
+        test.cx.run_until_parked();
         assert_eq!(
-            history_state(&panel, &mut cx),
+            test.history_state(),
             (None, Some(1)),
             "switching to a non-commit tab should clear the highlight but keep the cursor"
         );
 
-        workspace.update_in(&mut cx, |workspace, window, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
-                let index = pane.index_for_item(&commit_view).unwrap();
-                pane.activate_item(index, true, true, window, cx);
+        test.workspace
+            .update_in(&mut test.cx, |workspace, window, cx| {
+                workspace.active_pane().update(cx, |pane, cx| {
+                    let index = pane.index_for_item(&commit_view).unwrap();
+                    pane.activate_item(index, true, true, window, cx);
+                });
             });
-        });
-        cx.run_until_parked();
-        assert_eq!(history_state(&panel, &mut cx), (Some(middle_sha), Some(1)));
+        test.cx.run_until_parked();
+        assert_eq!(test.history_state(), (Some(middle_sha), Some(1)));
     }
 
     #[gpui::test]
     async fn test_history_tab_focuses_active_commit_after_reload(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (workspace, panel, [_, _, oldest_sha], mut cx) = history_panel_with_commits(cx).await;
-        open_history_commit(oldest_sha, &workspace, &panel, &mut cx);
+        let (mut test, [_, _, oldest_sha]) = history_panel_with_commits(cx).await;
+        test.open_commit(oldest_sha);
 
-        panel.update_in(&mut cx, |panel, window, cx| {
+        test.panel.update_in(&mut test.cx, |panel, window, cx| {
             panel.activate_changes_tab(&ActivateChangesTab, window, cx);
         });
-        assert_eq!(history_state(&panel, &mut cx), (Some(oldest_sha), None));
+        assert_eq!(test.history_state(), (Some(oldest_sha), None));
 
-        panel.update_in(&mut cx, |panel, window, cx| {
+        test.panel.update_in(&mut test.cx, |panel, window, cx| {
             panel.activate_history_tab(&ActivateHistoryTab, window, cx);
         });
-        wait_for_commit_history_to_settle(&panel, &mut cx).await;
+        wait_for_commit_history_to_settle(&test.panel, &mut test.cx).await;
         assert_eq!(
-            history_state(&panel, &mut cx),
+            test.history_state(),
             (Some(oldest_sha), Some(2)),
             "reloading the history should place the cursor on the active commit"
         );
@@ -11404,14 +11407,13 @@ mod tests {
     async fn test_history_tab_highlights_next_commit_view_after_close(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (workspace, panel, [_, middle_sha, oldest_sha], mut cx) =
-            history_panel_with_commits(cx).await;
-        open_history_commit(middle_sha, &workspace, &panel, &mut cx);
-        open_history_commit(oldest_sha, &workspace, &panel, &mut cx);
-        assert_eq!(history_state(&panel, &mut cx), (Some(oldest_sha), Some(2)));
+        let (mut test, [_, middle_sha, oldest_sha]) = history_panel_with_commits(cx).await;
+        test.open_commit(middle_sha);
+        test.open_commit(oldest_sha);
+        assert_eq!(test.history_state(), (Some(oldest_sha), Some(2)));
 
-        workspace
-            .update_in(&mut cx, |workspace, window, cx| {
+        test.workspace
+            .update_in(&mut test.cx, |workspace, window, cx| {
                 workspace.active_pane().update(cx, |pane, cx| {
                     let item_id = pane.active_item().unwrap().item_id();
                     pane.close_item_by_id(item_id, workspace::SaveIntent::Skip, window, cx)
@@ -11419,9 +11421,9 @@ mod tests {
             })
             .await
             .unwrap();
-        cx.run_until_parked();
+        test.cx.run_until_parked();
         assert_eq!(
-            history_state(&panel, &mut cx),
+            test.history_state(),
             (Some(middle_sha), Some(1)),
             "closing the active commit view should highlight the commit view activated next"
         );
@@ -11431,19 +11433,22 @@ mod tests {
     async fn test_history_tab_focus_border_only_for_keyboard_focus(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (workspace, panel, [_, middle_sha, _], mut cx) = history_panel_with_commits(cx).await;
-        workspace.update_in(&mut cx, |workspace, window, cx| {
-            workspace.add_panel(panel.clone(), window, cx);
-            workspace.open_panel::<GitPanel>(window, cx);
-        });
-        open_history_commit(middle_sha, &workspace, &panel, &mut cx);
-        let commit_view = workspace
-            .read_with(&cx, |workspace, cx| {
+        let (mut test, [_, middle_sha, _]) = history_panel_with_commits(cx).await;
+        test.workspace
+            .update_in(&mut test.cx, |workspace, window, cx| {
+                workspace.add_panel(test.panel.clone(), window, cx);
+                workspace.open_panel::<GitPanel>(window, cx);
+            });
+        test.open_commit(middle_sha);
+        let commit_view = test
+            .workspace
+            .read_with(&test.cx, |workspace, cx| {
                 workspace.active_item_as::<CommitView>(cx)
             })
             .unwrap();
         let focus_panel = |cx: &mut VisualTestContext| {
-            panel.update_in(cx, |panel, window, cx| panel.focus_handle.focus(window, cx));
+            test.panel
+                .update_in(cx, |panel, window, cx| panel.focus_handle.focus(window, cx));
             cx.run_until_parked();
         };
         let focus_commit_view = |cx: &mut VisualTestContext| {
@@ -11453,19 +11458,23 @@ mod tests {
             cx.run_until_parked();
         };
 
-        focus_commit_view(&mut cx);
-        cx.simulate_mouse_move(gpui::point(px(1.), px(1.)), None, Modifiers::none());
-        focus_panel(&mut cx);
+        focus_commit_view(&mut test.cx);
+        test.cx
+            .simulate_mouse_move(gpui::point(px(1.), px(1.)), None, Modifiers::none());
+        focus_panel(&mut test.cx);
         assert!(
-            !panel.read_with(&cx, |panel, _| panel.history_keyboard_nav),
+            !test
+                .panel
+                .read_with(&test.cx, |panel, _| panel.history_keyboard_nav),
             "focusing the panel after mouse input shouldn't show the focus border"
         );
 
-        focus_commit_view(&mut cx);
-        cx.simulate_keystrokes("f19");
-        focus_panel(&mut cx);
+        focus_commit_view(&mut test.cx);
+        test.cx.simulate_keystrokes("f19");
+        focus_panel(&mut test.cx);
         assert!(
-            panel.read_with(&cx, |panel, _| panel.history_keyboard_nav),
+            test.panel
+                .read_with(&test.cx, |panel, _| panel.history_keyboard_nav),
             "focusing the panel after keyboard input should show the focus border"
         );
     }
