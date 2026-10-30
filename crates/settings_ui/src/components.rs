@@ -12,7 +12,7 @@ pub use dropdown::*;
 pub use font_picker::font_picker;
 pub use icon_theme_picker::icon_theme_picker;
 pub use input_field::*;
-pub use language_model_picker::render_language_model_picker;
+pub use language_model_picker::{PickerModel, render_language_model_picker};
 pub use number_field::*;
 pub use ollama_model_picker::render_ollama_model_picker;
 pub use section_items::*;
