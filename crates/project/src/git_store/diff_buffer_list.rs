@@ -45,6 +45,7 @@ pub struct DiffBufferList {
     tree_diff: Option<TreeDiff>,
     statuses_by_path: Option<SumTree<StatusEntry>>,
     tree_diff_base_task: Option<Task<()>>,
+    tree_diff_error: Option<SharedString>,
     _subscription: Subscription,
     update_needed: postage::watch::Sender<()>,
     _task: Task<()>,
@@ -105,6 +106,7 @@ impl DiffBufferList {
             tree_diff: None,
             statuses_by_path: None,
             tree_diff_base_task: None,
+            tree_diff_error: None,
             _subscription: git_store_subscription,
             _task: worker,
             update_needed: send,
@@ -130,6 +132,7 @@ impl DiffBufferList {
         self.tree_diff = None;
         self.statuses_by_path = None;
         self.tree_diff_base_task = None;
+        self.tree_diff_error = None;
         cx.emit(BranchDiffEvent::FileListChanged);
         *self.update_needed.borrow_mut() = ();
     }
@@ -144,6 +147,7 @@ impl DiffBufferList {
         self.tree_diff = None;
         self.statuses_by_path = None;
         self.tree_diff_base_task = None;
+        self.tree_diff_error = None;
         self.diff_base = diff_base;
 
         cx.emit(BranchDiffEvent::DiffBaseChanged);
@@ -230,7 +234,17 @@ impl DiffBufferList {
         }
 
         let task = cx.spawn(async move |this, cx| {
-            Self::reload_tree_diff(this, cx).await.log_err();
+            if let Err(error) = Self::reload_tree_diff(this.clone(), cx).await {
+                // Keep the error visible in the diff view instead of silently
+                // presenting a failed computation as "No changes".
+                this.update(cx, |this, cx| {
+                    this.tree_diff_error = Some(error.to_string().into());
+                    cx.emit(BranchDiffEvent::FileListChanged);
+                    cx.notify();
+                })
+                .log_err();
+                log::error!("failed to load branch diff: {error:#}");
+            }
         });
 
         self.tree_diff_base_task = Some(task);
@@ -278,6 +292,7 @@ impl DiffBufferList {
             let statuses_by_path = this.repo.as_ref().map(|repo| {
                 build_statuses(&repo.read(cx).snapshot, &committed_tree_diff, &tree_diff)
             });
+            this.tree_diff_error = None;
             this.committed_tree_diff = Some(committed_tree_diff);
             this.tree_diff = Some(tree_diff);
             this.statuses_by_path = statuses_by_path;
@@ -288,6 +303,12 @@ impl DiffBufferList {
 
     pub fn repo(&self) -> Option<&Entity<Repository>> {
         self.repo.as_ref()
+    }
+
+    /// The error from the last tree diff reload, if it failed. An empty diff
+    /// and a failed one look identical otherwise.
+    pub fn tree_diff_error(&self) -> Option<&SharedString> {
+        self.tree_diff_error.as_ref()
     }
 
     #[instrument(skip_all)]
