@@ -141,8 +141,6 @@
   name: (identifier) @variable.parameter)
 
 ; Special identifiers
-(type_annotation) @type
-
 (type_identifier) @type
 
 (predefined_type) @type.builtin
