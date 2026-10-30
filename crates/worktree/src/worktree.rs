@@ -3588,6 +3588,9 @@ impl BackgroundScannerState {
         };
 
         let dot_git_abs_path = Arc::from(self.snapshot.absolutize(&dot_git_path).as_ref());
+        if !git_directory_has_head(&dot_git_abs_path, fs).await {
+            return;
+        }
 
         self.insert_git_repository_for_path(
             WorkDirectory::InProject {
@@ -5479,6 +5482,7 @@ impl BackgroundScanner {
 
         if let Some(path) = child_paths.first()
             && path.ends_with(DOT_GIT)
+            && git_directory_has_head(path, self.fs.as_ref()).await
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
             ignore_stack.global_ignore_root = Some(job.abs_path.clone());
@@ -6376,6 +6380,9 @@ async fn discover_ancestor_git_repo(
                 ancestor_dot_git.clone()
             };
             let dot_git_abs_path: Arc<Path> = dot_git_abs_path.as_path().into();
+            if !git_directory_has_head(&dot_git_abs_path, fs.as_ref()).await {
+                continue;
+            }
             let (_, common_dir_abs_path) = discover_git_paths(&dot_git_abs_path, fs.as_ref()).await;
 
             let repo_exclude_abs_path = common_dir_abs_path.join(REPO_EXCLUDE);
@@ -7219,9 +7226,23 @@ async fn discover_root_repo_metadata(
         return None;
     }
     let dot_git_path: Arc<Path> = root_dot_git.into();
+    if !git_directory_has_head(&dot_git_path, fs).await {
+        return None;
+    }
     let (repository_dir, common_dir) = discover_git_paths(&dot_git_path, fs).await;
     let is_linked_worktree = repository_dir != common_dir;
     Some((common_dir, is_linked_worktree))
+}
+
+async fn git_directory_has_head(dot_git_abs_path: &Path, fs: &dyn Fs) -> bool {
+    if !fs.is_dir(dot_git_abs_path).await {
+        return true;
+    }
+    fs.metadata(&dot_git_abs_path.join("HEAD"))
+        .await
+        .log_err()
+        .flatten()
+        .is_some()
 }
 
 async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, Arc<Path>) {
