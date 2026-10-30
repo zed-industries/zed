@@ -500,6 +500,12 @@ pub enum AutoindentMode {
     },
 }
 
+struct Autoindent {
+    indent_size: IndentSize,
+    is_block_mode: bool,
+    ignore_empty_lines: bool,
+}
+
 #[derive(Clone)]
 struct AutoindentRequest {
     before_edit: BufferSnapshot,
@@ -2132,7 +2138,7 @@ impl Buffer {
 
     fn compute_autoindents(
         &self,
-    ) -> Option<impl Future<Output = BTreeMap<u32, IndentSize>> + use<>> {
+    ) -> Option<impl Future<Output = BTreeMap<u32, Autoindent>> + use<>> {
         let max_rows_between_yields = 100;
         let snapshot = self.snapshot();
         if snapshot.syntax.is_empty() || self.autoindent_requests.is_empty() {
@@ -2141,7 +2147,7 @@ impl Buffer {
 
         let autoindent_requests = self.autoindent_requests.clone();
         Some(async move {
-            let mut indent_sizes = BTreeMap::<u32, (IndentSize, bool)>::new();
+            let mut indent_sizes = BTreeMap::<u32, Autoindent>::new();
             for request in autoindent_requests {
                 // Resolve each edited range to its row in the current buffer and in the
                 // buffer before this batch of edits.
@@ -2237,8 +2243,7 @@ impl Buffer {
 
                             let suggested_indent = indent_sizes
                                 .get(&suggestion.basis_row)
-                                .copied()
-                                .map(|e| e.0)
+                                .map(|autoindent| autoindent.indent_size)
                                 .unwrap_or_else(|| {
                                     snapshot.logical_indent_size_for_line(suggestion.basis_row)
                                 })
@@ -2253,7 +2258,11 @@ impl Buffer {
                             {
                                 indent_sizes.insert(
                                     new_row,
-                                    (suggested_indent, request.ignore_empty_lines),
+                                    Autoindent {
+                                        indent_size: suggested_indent,
+                                        is_block_mode: request.is_block_mode,
+                                        ignore_empty_lines: request.ignore_empty_lines,
+                                    },
                                 );
                             }
                         }
@@ -2263,8 +2272,8 @@ impl Buffer {
                         (request.is_block_mode, original_indent_column)
                     {
                         let new_indent =
-                            if let Some((indent, _)) = indent_sizes.get(&row_range.start) {
-                                *indent
+                            if let Some(autoindent) = indent_sizes.get(&row_range.start) {
+                                autoindent.indent_size
                             } else {
                                 snapshot.indent_size_for_line(row_range.start)
                             };
@@ -2287,7 +2296,11 @@ impl Buffer {
                                             Ordering::Equal => {}
                                         }
                                     }
-                                    (size, request.ignore_empty_lines)
+                                    Autoindent {
+                                        indent_size: size,
+                                        is_block_mode: request.is_block_mode,
+                                        ignore_empty_lines: request.ignore_empty_lines,
+                                    }
                                 });
                             }
                         }
@@ -2299,12 +2312,8 @@ impl Buffer {
 
             indent_sizes
                 .into_iter()
-                .filter_map(|(row, (indent, ignore_empty_lines))| {
-                    if ignore_empty_lines && snapshot.line_len(row) == 0 {
-                        None
-                    } else {
-                        Some((row, indent))
-                    }
+                .filter(|(row, autoindent)| {
+                    !autoindent.ignore_empty_lines || snapshot.line_len(*row) != 0
                 })
                 .collect()
         })
@@ -2312,7 +2321,7 @@ impl Buffer {
 
     fn apply_autoindents(
         &mut self,
-        indent_sizes: BTreeMap<u32, IndentSize>,
+        indent_sizes: BTreeMap<u32, Autoindent>,
         cx: &mut Context<Self>,
     ) {
         self.autoindent_requests.clear();
@@ -2320,9 +2329,29 @@ impl Buffer {
 
         let edits: Vec<_> = indent_sizes
             .into_iter()
-            .filter_map(|(row, indent_size)| {
+            .filter_map(|(row, autoindent)| {
+                let Autoindent {
+                    indent_size,
+                    is_block_mode,
+                    ..
+                } = autoindent;
                 let current_size = indent_size_for_line(self, row);
-                Self::edit_for_indent_size_adjustment(row, current_size, indent_size)
+                if current_size == indent_size {
+                    return None;
+                }
+                if !is_block_mode
+                    && self
+                        .chars_at(Point::new(row, 0))
+                        .take(current_size.len as usize)
+                        .any(|character| character != current_size.char())
+                {
+                    Some((
+                        Point::new(row, 0)..Point::new(row, current_size.len),
+                        indent_size.chars().collect(),
+                    ))
+                } else {
+                    Self::edit_for_indent_size_adjustment(row, current_size, indent_size)
+                }
             })
             .collect();
 
@@ -3742,6 +3771,13 @@ impl BufferSnapshot {
     /// containing the delimiter to end there, so that a line which merely looks
     /// like a closing delimiter is not mistaken for one.
     pub fn block_comment_closing_indent(&self, position: Point) -> Option<IndentSize> {
+        self.block_comment_opening_row(position)
+            .map(|row| self.indent_size_for_line(row))
+    }
+
+    /// The opening row of the multi-line block comment closed at `position`.
+    /// See [`Self::block_comment_closing_indent`] for the closing-line checks.
+    pub fn block_comment_opening_row(&self, position: Point) -> Option<u32> {
         let row = position.row;
         let indent_len = self.indent_size_for_line(row).len;
         let delimiter_start = Point::new(row, indent_len);
@@ -3784,7 +3820,7 @@ impl BufferSnapshot {
             return None;
         }
         let opening_row = Point::from_ts_point(node.start_position()).row;
-        (opening_row < row).then(|| self.indent_size_for_line(opening_row))
+        (opening_row < row).then_some(opening_row)
     }
 
     /// Like [`Self::indent_size_for_line`], but reports the indentation a row
