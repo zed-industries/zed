@@ -734,6 +734,7 @@ impl MetalRenderer {
 
     /// Renders a scene into a new offscreen texture of `size` and reads it
     /// back, without presenting anything.
+    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
     fn render_offscreen(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<RgbaImage> {
         let texture_descriptor = MTLTextureDescriptor::new();
         unsafe {
