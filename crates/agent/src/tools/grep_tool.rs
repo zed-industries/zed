@@ -1,3 +1,4 @@
+use super::{LINE_TRUNCATION_MARKER, MAX_LINE_LEN, append_line_segment};
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use acp_thread::MentionUri;
 use agent_client_protocol::schema::v2 as acp;
@@ -32,6 +33,7 @@ pub const fn default_context_lines() -> u32 {
 /// - Never use this tool to search for paths. Only search file contents with this tool.
 /// - Use this tool when you need to find files containing specific patterns
 /// - Results are paginated with 20 matches per page. Use the optional 'offset' parameter to request subsequent pages.
+/// - Lines longer than 2000 characters are truncated with `... (line truncated to 2000 chars)`.
 /// - DO NOT use HTML entities solely to escape characters in the tool parameters.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GrepToolInput {
@@ -84,6 +86,51 @@ impl GrepToolInput {
 }
 
 const RESULTS_PER_PAGE: u32 = 20;
+/// Maximum total output bytes across all matches in a single page to prevent context window overflow.
+const MAX_OUTPUT_BYTES: usize = 64 * 1024;
+
+/// Streams a grep match snippet directly from an iterator of string slices,
+/// truncating any line longer than [`MAX_LINE_LEN`] characters with [`LINE_TRUNCATION_MARKER`].
+fn format_snippet<'a>(chunks: impl IntoIterator<Item = &'a str>) -> String {
+    let mut output = String::new();
+    let mut current_line_chars = 0;
+    let mut line_truncated = false;
+
+    for chunk in chunks {
+        let mut rest = chunk;
+        while !rest.is_empty() {
+            match rest.find('\n') {
+                Some(nl) => {
+                    let head = &rest[..nl];
+                    let tail = &rest[nl + 1..];
+
+                    append_line_segment(
+                        &mut output,
+                        head,
+                        &mut current_line_chars,
+                        &mut line_truncated,
+                    );
+                    output.push('\n');
+
+                    current_line_chars = 0;
+                    line_truncated = false;
+                    rest = tail;
+                }
+                None => {
+                    append_line_segment(
+                        &mut output,
+                        rest,
+                        &mut current_line_chars,
+                        &mut line_truncated,
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    output
+}
 
 pub struct GrepTool {
     project: Entity<Project>,
@@ -337,7 +384,7 @@ impl AgentTool for GrepTool {
                     };
                     writeln!(output, "{line_label}").ok();
 
-                    let snippet: String = snapshot.text_for_range(range.clone()).collect();
+                    let snippet = format_snippet(snapshot.text_for_range(range.clone()));
                     output.push_str("```\n");
                     output.push_str(&snippet);
                     output.push_str("\n```\n");
@@ -380,6 +427,12 @@ impl AgentTool for GrepTool {
                         }
 
                     matches_found += 1;
+
+                    if output.len() >= MAX_OUTPUT_BYTES {
+                        output.push_str("\n... [Output limit reached. Refine include_pattern or regex for more results]\n");
+                        has_more_matches = true;
+                        break 'outer;
+                    }
                 }
             }
 
@@ -1538,6 +1591,140 @@ mod tests {
         assert!(
             paths.iter().all(|p| !p.contains("worktree2")),
             "Should not find any matches in worktree2"
+        );
+    }
+
+    #[test]
+    fn test_format_snippet_keeps_short_lines() {
+        assert_eq!(
+            format_snippet(["first line\nsecond line"]),
+            "first line\nsecond line"
+        );
+    }
+
+    #[test]
+    fn test_format_snippet_truncates_long_line() {
+        let long_line = format!("prefix {}\nsuffix", "a".repeat(2500));
+        assert_eq!(
+            format_snippet([long_line.as_str()]),
+            format!(
+                "prefix {}{}\nsuffix",
+                "a".repeat(MAX_LINE_LEN - "prefix ".len()),
+                LINE_TRUNCATION_MARKER
+            )
+        );
+    }
+
+    #[test]
+    fn test_format_snippet_truncates_line_across_chunks() {
+        let chunk = "b".repeat(1200);
+        assert_eq!(
+            format_snippet([chunk.as_str(), chunk.as_str(), "\ntail"]),
+            format!(
+                "{}{}\ntail",
+                "b".repeat(MAX_LINE_LEN),
+                LINE_TRUNCATION_MARKER
+            )
+        );
+    }
+
+    #[test]
+    fn test_format_snippet_counts_chars_not_bytes() {
+        let exact_line = "あ".repeat(MAX_LINE_LEN);
+        assert_eq!(format_snippet([exact_line.as_str()]), exact_line);
+
+        let long_line = "あ".repeat(MAX_LINE_LEN + 10);
+        assert_eq!(
+            format_snippet([long_line.as_str()]),
+            format!("{}{}", "あ".repeat(MAX_LINE_LEN), LINE_TRUNCATION_MARKER)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_grep_tool_truncates_long_lines(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        let long_line = format!("prefix needle {}", "x".repeat(2500));
+        fs.insert_tree(
+            path!("/root"),
+            serde_json::json!({
+                "minified.js": long_line,
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let input = GrepToolInput {
+            regex: "needle".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
+        };
+
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        assert!(
+            result.contains("prefix needle"),
+            "Should contain match prefix"
+        );
+        assert!(
+            result.contains(LINE_TRUNCATION_MARKER),
+            "Should contain truncation notice"
+        );
+        assert!(
+            !result.contains(&"x".repeat(2500)),
+            "Output should not contain untruncated line"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_grep_tool_caps_output_bytes(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        let mut sections = Vec::new();
+        for i in 0..20 {
+            sections.push(format!(
+                "match {i} needle {}\n{}\n{}\n{}\n\n\n",
+                "a".repeat(1500),
+                "b".repeat(1500),
+                "c".repeat(1500),
+                "d".repeat(1500),
+            ));
+        }
+        fs.insert_tree(
+            path!("/root"),
+            serde_json::json!({
+                "large.txt": sections.join("\n"),
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let input = GrepToolInput {
+            regex: "needle".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+            max_ancestor_lines: default_max_ancestor_lines(),
+            context_lines: default_context_lines(),
+        };
+
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        assert!(
+            result.contains("Output limit reached"),
+            "Should contain output limit notice, got: {result}"
+        );
+        assert!(
+            result.len() <= MAX_OUTPUT_BYTES + 8192,
+            "Output size should be capped near MAX_OUTPUT_BYTES, got {}",
+            result.len()
         );
     }
 
