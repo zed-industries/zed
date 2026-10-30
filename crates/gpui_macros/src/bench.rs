@@ -177,13 +177,7 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
         let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
             gpui::bench_platform(
                 Some(Box::new(|| {
-                    // CPU comparisons still shape/rasterize text and finish the scene,
-                    // but exclude driver work and asynchronous GPU queue backpressure.
-                    if std::env::var("GPUI_BENCH_NO_GPU").as_deref() == Ok("1") {
-                        Ok(None)
-                    } else {
-                        gpui_platform::current_headless_renderer()
-                    }
+                    gpui_platform::current_headless_renderer()
                 })),
                 gpui_platform::bench_text_system(),
             ),

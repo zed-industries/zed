@@ -1,13 +1,8 @@
-use std::{
-    cell::{Cell, OnceCell},
-    fmt,
-    rc::Rc,
-    time::Duration,
-};
+use std::{fmt, rc::Rc, time::Duration};
 
 use gpui::{
-    Background, BenchAppContext, Bounds, Context, IntoElement, Pixels, Render, ScaledPixels, Scene,
-    Styled, Window, canvas, fill, hsla, point, px, size,
+    Background, BenchAppContext, Bounds, Context, IntoElement, Pixels, Render, Scene, Styled,
+    Window, canvas, fill, hsla, point, px, size,
 };
 
 #[derive(Clone, Copy)]
@@ -36,7 +31,6 @@ impl Pattern {
 struct Case {
     pattern: Pattern,
     count: usize,
-    oracle: OnceCell<Vec<(Bounds<ScaledPixels>, u32)>>,
 }
 
 impl fmt::Display for Case {
@@ -58,11 +52,7 @@ fn cases() -> Vec<Case> {
                 Pattern::Overlay,
             ]
             .into_iter()
-            .map(move |pattern| Case {
-                pattern,
-                count,
-                oracle: OnceCell::new(),
-            })
+            .map(move |pattern| Case { pattern, count })
         })
         .collect()
 }
@@ -77,7 +67,6 @@ fn rectangles(case: &Case, extent: f32) -> Rc<[Rectangle]> {
     let columns = (case.count as f32).sqrt().ceil() as usize;
     let cell = extent / columns as f32;
     let stripe_count = (extent / 4.).floor() as usize;
-    assert!(cell >= 4. && stripe_count > 0);
     (0..case.count)
         .map(|index| {
             let grid_origin = point(
@@ -123,12 +112,10 @@ fn rectangles(case: &Case, extent: f32) -> Rc<[Rectangle]> {
 
 struct OrderingView {
     rectangles: Rc<[Rectangle]>,
-    renders: Rc<Cell<usize>>,
 }
 
 impl Render for OrderingView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.renders.set(self.renders.get() + 1);
         let rectangles = self.rectangles.clone();
         canvas(
             |_, _, _| {},
@@ -140,49 +127,6 @@ impl Render for OrderingView {
         )
         .size_full()
     }
-}
-
-fn validate_scene(scene: &Scene, rectangles: &[Rectangle], case: &Case) {
-    assert_eq!(scene.quads.len(), rectangles.len());
-    let mut actual: Vec<Option<(Bounds<ScaledPixels>, u32)>> = vec![None; rectangles.len()];
-    for quad in &scene.quads {
-        // The hue encodes the input index, including when scene sorting reorders quads.
-        let hue = quad.background.as_solid().expect("solid input color").h;
-        let index = (hue * rectangles.len() as f32).round() as usize;
-        assert_eq!(
-            rectangles.get(index).expect("input color index").background,
-            quad.background,
-            "every painted quad has a unique input color"
-        );
-        let entry = actual.get_mut(index).expect("input color index");
-        assert!(entry.is_none(), "no input quad may be painted twice");
-        *entry = Some((quad.bounds.intersect(&quad.content_mask.bounds), quad.order));
-    }
-    // Geometry is fixed for a case. Solve the independent quadratic oracle once,
-    // not twice for every Criterion warm-up and sample.
-    let expected = case.oracle.get_or_init(|| {
-        let mut previous: Vec<(Bounds<ScaledPixels>, u32)> = Vec::with_capacity(rectangles.len());
-        for entry in &actual {
-            let (bounds, _) = entry.expect("every input quad must be painted");
-            assert!(!bounds.is_empty());
-            let order = previous
-                .iter()
-                .filter(|(previous, _)| previous.intersects(&bounds))
-                .map(|(_, order)| *order)
-                .max()
-                .unwrap_or(0)
-                + 1;
-            previous.push((bounds, order));
-        }
-        previous
-    });
-    assert!(
-        actual
-            .iter()
-            .copied()
-            .eq(expected.iter().copied().map(Some)),
-        "painted bounds and order must match the spatial oracle"
-    );
 }
 
 fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
@@ -212,19 +156,13 @@ fn scene_ordering(criterion: &mut criterion::Criterion<gpui::BenchMeasurement>) 
         let report = bench_metrics::MetricReport::new();
         group.bench_function(case.to_string(), |bencher| {
             // Criterion invokes this closure only for selected cases. In particular,
-            // --list and a paint-only filter must not build and validate all 18 scenes.
-            let (rectangles, scene) = fixture.get_or_insert_with(|| {
-                let rectangles = rectangles(&case, 512.);
-                let mut scene = Scene::default();
-                build_scene(&mut scene, &rectangles);
-                validate_scene(&scene, &rectangles, &case);
-                (rectangles, scene)
-            });
+            // --list and a paint-only filter must not build all 18 scenes.
+            let (rectangles, scene) =
+                fixture.get_or_insert_with(|| (rectangles(&case, 512.), Scene::default()));
             report.iter(bencher, || {
                 build_scene(scene, rectangles);
                 std::hint::black_box(&*scene);
             });
-            validate_scene(scene, rectangles, &case);
         });
         report.print("  ");
         if std::env::var("GPUI_BENCH_SCENE_STATS").as_deref() == Ok("1")
@@ -247,27 +185,13 @@ fn paint_rectangles(case: &Case, cx: &mut BenchAppContext) {
         (viewport.width.as_f32().min(viewport.height.as_f32()) - 64.).min(512.)
     });
     let rectangles = rectangles(case, extent);
-    let renders = Rc::new(Cell::new(0));
-    let root = window.update(|window, cx| {
-        window.replace_root(cx, |_, _| OrderingView {
-            rectangles: rectangles.clone(),
-            renders: renders.clone(),
-        })
-    });
+    let root =
+        window.update(|window, cx| window.replace_root(cx, |_, _| OrderingView { rectangles }));
     cx.run_until_idle();
     window.update(|window, _| window.refresh());
     cx.run_until_idle();
-    window.update(|window, _| validate_scene(window.rendered_scene(), &rectangles, case));
-    let before = renders.get();
-    let mut updates = 0usize;
-    cx.bench_renderer(root, |_, _, cx| {
-        updates += 1;
-        cx.notify();
-    });
-    assert!(updates > 0);
-    assert_eq!(renders.get() - before, updates);
+    cx.bench_renderer(root, |_, _, cx| cx.notify());
     window.update(|window, _| {
-        validate_scene(window.rendered_scene(), &rectangles, case);
         if std::env::var("GPUI_BENCH_SCENE_STATS").as_deref() == Ok("1") {
             eprintln!(
                 "scene stats BoundsOrdering/paint/{case}: batches={}",

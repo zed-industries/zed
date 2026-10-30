@@ -3,7 +3,6 @@
 
 Usage: script/gpui-bench-compare BASELINE CANDIDATE
        script/gpui-bench-compare BASELINE CANDIDATE --filter 'TextPanels/'
-       script/gpui-bench-compare BASELINE CANDIDATE --renderer gpu
 
 The invoking checkout's three benchmark files, randomized tree fixture and bench
 macro are used for BOTH revisions, so both revisions must provide the GPUI
@@ -11,22 +10,19 @@ benchmark APIs they call. Sources, build artifacts, binaries, raw logs, Criterio
 samples and summary.json persist under target/gpui-bench-compare. Nothing
 switches the invoking checkout or publishes a branch.
 
-The default core suite keeps five full-refresh tree shapes, leaf style, warm
-installed-font text, text first frame, three scrolling workloads, six bounds
-patterns and two inspector workloads. --full selects every variant; --slow
-restores the benchmarks' own Criterion settings (including inspector's
-five-second measurement). --repetitions controls independent runs, not random
-seeds. Use --seed to compare another fixed tree.
+The default core suite keeps five full-refresh tree shapes, leaf style, cached
+leaf style, warm installed-font text, text first frame, three scrolling
+workloads, six bounds patterns and two inspector workloads. --full selects every
+variant; --slow restores the benchmarks' own Criterion settings (including
+inspector's five-second measurement). --repetitions controls independent runs,
+not random seeds. Use --seed to compare another fixed tree.
 
 Foreground retired instructions are primary. Linux needs perf access
-(CAP_PERFMON or perf_event_paranoid <= 2); macOS needs Apple Silicon. CPU mode
-is the default: production layout, prepaint, paint, Scene::finish sorting and
-batching, platform text shaping and glyph rasterization, with a memory-only atlas
-instead of GPU upload and submission. --renderer gpu includes headless GPU
-submission where supported, but driver queue backpressure can cause
-instruction-count drift even on an unchanged binary. Wall-time medians include
-calibration samples; raw logs retain frame metrics. CPU and GPU results must not
-be compared to one another. Spread is the full range of independent run medians
+(CAP_PERFMON or perf_event_paranoid <= 2); macOS needs Apple Silicon. Frames run
+the production pipeline through the platform's headless GPU renderer, so they
+include scene encoding and GPU submission; GPU execution itself runs on other
+threads and isn't counted. Wall-time medians include calibration samples; raw
+logs retain frame metrics. Spread is the full range of independent run medians
 divided by their median, not a confidence interval. Warnings also flag wide
 within-run sample ranges; even slow settings can drift, so inspect raw samples
 before judging small changes. Do not run competing benchmarks on the same machine.
@@ -60,6 +56,7 @@ CORE = {
     "randomized_element_tree": (
         r"^(RandomizedTree/full refresh/tree/|"
         r"RandomizedTree/leaf style/tree/mixed/|"
+        r"CachedTree/leaf style/tree/mixed/|"
         r"Scroll/workload/|"
         r"TextPanels/installed font two updates/panels/32$|"
         r"TextPanels/first populated installed font/panels/32$)"
@@ -222,7 +219,6 @@ def main():
     parser.add_argument("--filter", help="Criterion regex, applied to all three binaries")
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--slow", action="store_true")
-    parser.add_argument("--renderer", choices=("cpu", "gpu"), default="cpu")
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--seed", type=int, default=0)
     # Text benchmarks need the platform's real text system: x11 on Linux, font-kit on macOS.
@@ -251,17 +247,8 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     environment = dict(os.environ, BENCH_MEASUREMENT="foreground-instructions",
                        SEED=str(args.seed), ITERATIONS="1")
-    environment["GPUI_BENCH_NO_GPU"] = "1" if args.renderer == "cpu" else "0"
     environment["PATH"] = str(Path.home() / ".cargo/bin") + os.pathsep + environment["PATH"]
     revisions = []
-    if args.renderer == "cpu":
-        print("Renderer: CPU render pipeline through Scene::finish; real text shaping/rasterization; "
-              "memory-only atlas, no GPU upload/submission.", flush=True)
-    else:
-        print("Renderer: platform headless GPU renderer.", flush=True)
-        print("WARNING: GPU driver queue backpressure can cause instruction-count drift even "
-              "on an unchanged binary; do not interpret small differences as GPUI CPU regressions.",
-              flush=True)
     for revision in [args.baseline, args.candidate]:
         print(f"Building {revision} (once)...", flush=True)
         revisions.append(prepare(root, cache, revision, args.features, args.timeout, environment))
@@ -342,8 +329,8 @@ def main():
                 "results": results,
                 "cases": cases,
                 "environment": {name: value for name, value in environment.items()
-                                if name in ("BENCH_MEASUREMENT", "GPUI_BENCH_NO_GPU",
-                                            "SEED", "ITERATIONS", "RUSTFLAGS")},
+                                if name in ("BENCH_MEASUREMENT", "SEED", "ITERATIONS",
+                                            "RUSTFLAGS")},
             }
             (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
     for index, revision in enumerate(revisions):

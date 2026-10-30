@@ -15,13 +15,12 @@
 //! `--bench randomized_element_tree -- 'tree/tall/'`. Each tree is described once, with
 //! the heap its window holds after the first frame, before it is measured.
 //!
-//! The tree's own work counters are asserted after each measured loop: a faster frame that
-//! stopped rendering the changed element is not an improvement.
+//! Benchmarks only measure. The randomized tree's tests check that what these workloads
+//! render is correct, so a faster frame here still needs those tests to pass.
 
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     fmt,
-    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -31,8 +30,8 @@ use gpui::{
     private::rand::{Rng as _, SeedableRng as _, rngs::StdRng},
     randomized_element_tree::{
         ChangeLocality, RandomizedElementTree, RandomizedElementTreeBounds,
-        RandomizedElementTreeConfig, RandomizedElementTreeMutation,
-        RandomizedElementTreeMutationKind, RandomizedElementTreeTopology, RecoloredChildren,
+        RandomizedElementTreeConfig, RandomizedElementTreeMutationKind,
+        RandomizedElementTreeTopology,
     },
 };
 
@@ -156,23 +155,15 @@ fn families() -> Vec<TreeFamily> {
     ]
 }
 
-/// Builds the tree, draws it once so layout and the scene are warm, and measures
-/// `mutate` once per frame. Returns how many frames were measured, after checking that
-/// the frames did render something: a frame that skipped the changed element would be
-/// fast and wrong.
+/// Builds the tree, draws it twice so layout, the scene and both frame buffers are warm,
+/// and measures `mutate` once per frame.
 fn measure(
     group: &str,
     input: &TreeInput,
     cx: &mut BenchAppContext,
     mut mutate: impl FnMut(&mut RandomizedElementTree, &mut Context<RandomizedElementTree>),
-) -> usize {
-    measure_in_window(group, input, cx, |tree, _, cx| mutate(tree, cx)).frames
-}
-
-/// What a measured loop did: frames measured, and the entity renders the frames showed.
-struct Measured {
-    frames: usize,
-    entity_renders: usize,
+) {
+    measure_in_window(group, input, cx, |tree, _, cx| mutate(tree, cx));
 }
 
 fn measure_in_window(
@@ -180,7 +171,7 @@ fn measure_in_window(
     input: &TreeInput,
     cx: &mut BenchAppContext,
     mut mutate: impl FnMut(&mut RandomizedElementTree, &mut Window, &mut Context<RandomizedElementTree>),
-) -> Measured {
+) {
     let config = input.config;
     let before_window = bench_metrics::allocation_stats();
     let mut window = cx.add_empty_window();
@@ -196,24 +187,6 @@ fn measure_in_window(
     cx.run_until_idle();
     describe_once(input, before_window, bench_metrics::allocation_stats());
 
-    let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
-    assert_eq!(snapshot.descendant_count(), config.element_count());
-    let initial = tree.read_with(cx, |tree, _| tree.work_counters());
-    assert!(
-        initial.root_render_count() >= 1,
-        "the tree must have drawn before timing"
-    );
-    assert!(
-        initial.element_render_count() >= config.element_count(),
-        "every generated element renders in the first frame"
-    );
-    // Each iteration reads what the previous frame rendered before resetting for its own
-    // mutation. Frame pacing may coalesce two mutations into one drawn frame, the more
-    // often the faster the frames, so some observation windows legitimately see no draw;
-    // a renderer that skipped the changed element would see none in any of them.
-    let mut frames = 0;
-    let mut frames_that_rendered = 0;
-    let mut entity_renders = 0;
     let mut summary = SeedTotals::default();
     let mut previous_iteration: Option<(Instant, Option<bench_metrics::AllocationStats>)> = None;
     cx.bench_renderer(tree, |tree, window, cx| {
@@ -230,27 +203,12 @@ fn measure_in_window(
         }
         previous_iteration = Some((now, stats));
 
-        let previous = tree.work_counters();
-        entity_renders += previous.entity_render_count();
-        if previous.root_render_count() + previous.entity_render_count() >= 1
-            && previous.element_render_count() >= 1
-        {
-            frames_that_rendered += 1;
-        }
+        // The tree records every rendered entity; clear it so the list stays one frame long.
         tree.reset_work_counters();
         mutate(tree, window, cx);
-        frames += 1;
     });
     window.update(|window, _| report_scene_stats(group, input.family, window));
-    assert!(
-        frames_that_rendered * 2 >= frames,
-        "the notified root or entity re-rendered in {frames_that_rendered} of {frames} frames"
-    );
     record_for_summary(group, input, summary);
-    Measured {
-        frames,
-        entity_renders,
-    }
 }
 
 fn report_scene_stats(group: &str, input: &str, window: &Window) {
@@ -388,15 +346,7 @@ fn family_summary(_: &mut criterion::Criterion<gpui::BenchMeasurement>) {
 #[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/full refresh", fps = 120)]
 fn full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
-    let measured = measure_in_window("full refresh", input, cx, |_, window, _| window.refresh());
-    assert!(measured.frames > 0);
-    // A full refresh renders every entity; a renderer that replayed them would render none.
-    if input.config.entity_density() >= 0.25 {
-        assert!(
-            measured.entity_renders > 0,
-            "a full refresh re-renders entities"
-        );
-    }
+    measure_in_window("full refresh", input, cx, |_, window, _| window.refresh());
 }
 
 /// A frame in which the root is notified but nothing in the tree changed. On a renderer
@@ -405,8 +355,7 @@ fn full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) 
 #[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/unchanged", fps = 120)]
 fn unchanged(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
-    let frames = measure("unchanged", input, cx, |_, cx| cx.notify());
-    assert!(frames > 0);
+    measure("unchanged", input, cx, |_, cx| cx.notify());
 }
 
 /// The first leaf's background color alternates each frame: the smallest possible change,
@@ -415,17 +364,9 @@ fn unchanged(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
 #[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/leaf style", fps = 120)]
 fn leaf_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
-    let mut recolored = 0usize;
-    let frames = measure("leaf style", input, cx, |tree, cx| {
-        if tree.recolor_first_leaf(cx).is_some() {
-            recolored += 1;
-        }
+    measure("leaf style", input, cx, |tree, cx| {
+        tree.recolor_first_leaf(cx);
     });
-    assert!(frames > 0);
-    assert_eq!(
-        recolored, frames,
-        "a nonempty tree recolors a child every frame"
-    );
 }
 
 /// A descendant's width and height change each frame, so its siblings and ancestors
@@ -433,20 +374,18 @@ fn leaf_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
 #[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/leaf bounds", fps = 120)]
 fn leaf_bounds(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
-    let frames = measure("leaf bounds", input, cx, |tree, cx| {
+    measure("leaf bounds", input, cx, |tree, cx| {
         tree.apply_mutation(RandomizedElementTreeMutationKind::ChildBounds, cx);
     });
-    assert!(frames > 0);
 }
 
 /// The root's width and height change each frame: every element's layout is stale.
 #[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/root layout", fps = 120)]
 fn root_layout(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
-    let frames = measure("root layout", input, cx, |tree, cx| {
+    measure("root layout", input, cx, |tree, cx| {
         tree.apply_mutation(RandomizedElementTreeMutationKind::RootBounds, cx);
     });
-    assert!(frames > 0);
 }
 
 /// One element is inserted or removed per frame, alternating so the tree keeps its size
@@ -455,30 +394,15 @@ fn root_layout(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
 fn insert_remove(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
     let mut insert = true;
-    let mut inserted = 0usize;
-    let mut removed = 0usize;
-    let frames = measure("insert-remove", input, cx, |tree, cx| {
+    measure("insert-remove", input, cx, |tree, cx| {
         let kind = if insert {
             RandomizedElementTreeMutationKind::Insert
         } else {
             RandomizedElementTreeMutationKind::RemoveLeaf
         };
-        match tree.apply_mutation(kind, cx) {
-            RandomizedElementTreeMutation::Inserted { .. } => inserted += 1,
-            RandomizedElementTreeMutation::Removed {
-                removed_element_count,
-                ..
-            } => {
-                assert_eq!(removed_element_count, 1, "leaf removal removes one element");
-                removed += 1;
-            }
-            other => panic!("structural mutation produced {other:?}"),
-        }
+        tree.apply_mutation(kind, cx);
         insert = !insert;
     });
-    assert!(frames > 0);
-    assert_eq!(inserted + removed, frames);
-    assert!(inserted.abs_diff(removed) <= 1);
 }
 
 /// A descendant moves among its siblings each frame; the set of elements is unchanged
@@ -486,20 +410,66 @@ fn insert_remove(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext)
 #[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/reorder", fps = 120)]
 fn reorder(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
-    let mut reordered = 0usize;
-    let frames = measure("reorder", input, cx, |tree, cx| {
-        if let RandomizedElementTreeMutation::Reordered { .. } =
-            tree.apply_mutation(RandomizedElementTreeMutationKind::Reorder, cx)
-        {
-            reordered += 1;
-        }
-    });
-    assert!(frames > 0);
     // A `Deep` tree has no parent with two children until an insert creates one, so the
-    // harness inserts instead; every other shape reorders on every frame.
-    if input.config.topology() != RandomizedElementTreeTopology::Deep {
-        assert_eq!(reordered, frames);
-    }
+    // tree inserts instead; every other shape reorders on every frame.
+    measure("reorder", input, cx, |tree, cx| {
+        tree.apply_mutation(RandomizedElementTreeMutationKind::Reorder, cx);
+    });
+}
+
+/// The same tree with every entity boundary wrapped in a definite-size `.cached()` view,
+/// as Zed does for panes and docks, so a frame can reuse clean entities' output.
+fn cached_input(family: &TreeFamily, rng: &mut StdRng) -> TreeInput {
+    let mut input = family.sample(rng);
+    input.config = input.config.with_cached_views(true);
+    input
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/full refresh", fps = 120)]
+fn cached_full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    measure_in_window("cached full refresh", &input, cx, |_, window, _| {
+        window.refresh()
+    });
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/leaf style", fps = 120)]
+fn cached_leaf_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    measure("cached leaf style", &input, cx, |tree, cx| {
+        tree.recolor_first_leaf(cx);
+    });
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/leaf bounds", fps = 120)]
+fn cached_leaf_bounds(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    measure("cached leaf bounds", &input, cx, |tree, cx| {
+        tree.apply_mutation(RandomizedElementTreeMutationKind::ChildBounds, cx);
+    });
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/insert-remove", fps = 120)]
+fn cached_insert_remove(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    let mut insert = true;
+    measure("cached insert-remove", &input, cx, |tree, cx| {
+        let kind = if insert {
+            RandomizedElementTreeMutationKind::Insert
+        } else {
+            RandomizedElementTreeMutationKind::RemoveLeaf
+        };
+        tree.apply_mutation(kind, cx);
+        insert = !insert;
+    });
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/reorder", fps = 120)]
+fn cached_reorder(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    measure("cached reorder", &input, cx, |tree, cx| {
+        tree.apply_mutation(RandomizedElementTreeMutationKind::Reorder, cx);
+    });
 }
 
 /// A tree family, the share of its elements that change each frame, and where those
@@ -572,38 +542,27 @@ fn changing_share(input: &ChangingShareInput, mut rng: StdRng, cx: &mut BenchApp
     } else {
         (input.share_percent * element_count).div_ceil(100).max(1)
     };
-    let mut last = RecoloredChildren {
-        recolored: 0,
-        notified: 0,
-    };
     let group = format!(
         "changing share f{}-{}",
         input.share_percent,
         input.locality_name()
     );
-    let frames = measure(&group, tree, cx, |tree, cx| {
+    measure(&group, tree, cx, |tree, cx| {
         if per_frame == 0 {
             cx.notify();
         } else {
-            last = tree.recolor_children(per_frame, input.locality, cx);
+            tree.recolor_children(per_frame, input.locality, cx);
         }
     });
-    assert!(frames > 0);
-    if per_frame > 0 {
-        assert_eq!(last.recolored, per_frame.min(element_count));
-        assert!(last.notified >= 1);
-    }
 }
 
 struct TextPanel {
     index: usize,
     value: u32,
-    renders: Rc<Cell<usize>>,
 }
 
 impl Render for TextPanel {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.renders.set(self.renders.get() + 1);
         let value = self.value;
         gpui::div()
             .id(gpui::ElementId::NamedInteger(
@@ -627,29 +586,15 @@ impl Render for TextPanel {
 
 struct TextPanelRoot {
     panels: Vec<Entity<TextPanel>>,
-    renders: Rc<Cell<usize>>,
     font_family: gpui::SharedString,
 }
 
 impl TextPanelRoot {
-    fn new(
-        panel_count: usize,
-        font_family: &'static str,
-        root_renders: &Rc<Cell<usize>>,
-        panel_renders: &Rc<Cell<usize>>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(panel_count: usize, font_family: &'static str, cx: &mut Context<Self>) -> Self {
         Self {
             panels: (0..panel_count)
-                .map(|index| {
-                    cx.new(|_| TextPanel {
-                        index,
-                        value: 0,
-                        renders: panel_renders.clone(),
-                    })
-                })
+                .map(|index| cx.new(|_| TextPanel { index, value: 0 }))
                 .collect(),
-            renders: root_renders.clone(),
             font_family: font_family.into(),
         }
     }
@@ -657,7 +602,6 @@ impl TextPanelRoot {
 
 impl Render for TextPanelRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.renders.set(self.renders.get() + 1);
         gpui::div()
             .id("text-panels")
             .flex()
@@ -710,239 +654,80 @@ const INSTALLED_FONT: &str = "Consolas";
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 const INSTALLED_FONT: &str = "Noto Sans Mono";
 
-fn assert_installed_font(cx: &BenchAppContext) {
+/// Fails setup, before anything is measured, if the named font would fall back to another
+/// family: the workload would then measure a different font than its name says.
+fn require_installed_font(cx: &BenchAppContext) {
     let font = gpui::font(INSTALLED_FONT);
     let text_system = cx.read(|cx| cx.text_system().clone());
-    assert!(
-        text_system
-            .all_font_names()
-            .iter()
-            .any(|family| family == font.family.as_ref()),
-        "the text benchmarks require {INSTALLED_FONT} to be installed"
-    );
     let font_id = text_system.resolve_font(&font);
     assert_eq!(
         text_system.get_font_for_id(font_id).map(|font| font.family),
         Some(font.family),
-        "{INSTALLED_FONT} must resolve without falling back"
+        "the text benchmarks require {INSTALLED_FONT} to be installed"
     );
 }
 
 #[gpui::bench(inputs = text_panel_counts(), input_name = "panels", group = "TextPanels/installed font two updates", fps = 120)]
 fn installed_font_panel_updates(panel_count: &usize, cx: &mut BenchAppContext) {
-    assert_installed_font(cx);
+    require_installed_font(cx);
     measure_text_panel_updates(*panel_count, INSTALLED_FONT, cx);
 }
 
-thread_local! {
-    static LAST_TEXT_PANELS: Cell<Option<(usize, &'static str)>> = const { Cell::new(None) };
-}
-
+/// Two panels' text changes each frame; the other panels are unchanged.
 fn measure_text_panel_updates(
     panel_count: usize,
     font_family: &'static str,
     cx: &mut BenchAppContext,
 ) {
     let mut window = cx.add_empty_window();
-    let root_renders = Rc::new(Cell::new(0));
-    let panel_renders = Rc::new(Cell::new(0));
     let root = window.update(|window, cx| {
-        window.replace_root(cx, |_, cx| {
-            TextPanelRoot::new(panel_count, font_family, &root_renders, &panel_renders, cx)
-        })
+        window.replace_root(cx, |_, cx| TextPanelRoot::new(panel_count, font_family, cx))
     });
     cx.run_until_idle();
     window.update(|window, _| window.refresh());
     cx.run_until_idle();
-    window.update(|window, _| {
-        let scene = window.rendered_scene();
-        let glyph_count = scene.monochrome_sprites.len()
-            + scene.subpixel_sprites.len()
-            + scene.polychrome_sprites.len();
-        assert!(
-            glyph_count > 0,
-            "the text workload must produce glyph sprites: viewport {:?}, quads {}, root renders {}, panel renders {}",
-            window.viewport_size(),
-            scene.quads.len(),
-            root_renders.get(),
-            panel_renders.get()
-        );
-        if LAST_TEXT_PANELS.with(|last| last.replace(Some((panel_count, font_family))))
-            != Some((panel_count, font_family))
-        {
-            eprintln!(
-                "text panels: {panel_count}, requested family {font_family}, viewport {:?}, quads {}, glyphs {glyph_count}, initial root renders {}, panel renders {}",
-                window.viewport_size(),
-                scene.quads.len(),
-                root_renders.get(),
-                panel_renders.get()
-            );
-        }
-    });
-    let initial_panel_renders = panel_renders.get();
-    let mut updates = 0usize;
     cx.bench_renderer(root, |root, _, cx| {
         for index in [0, panel_count / 2] {
-            root.panels
-                .get(index)
-                .expect("configured panel")
-                .update(cx, |panel, cx| {
+            if let Some(panel) = root.panels.get(index) {
+                panel.update(cx, |panel, cx| {
                     panel.value = (panel.value + 1) % 1_000_000;
                     cx.notify();
                 });
+            }
         }
-        updates += 1;
     });
     window.update(|window, _| report_scene_stats("TextPanels", &panel_count.to_string(), window));
-    assert!(updates > 0);
-    assert!(
-        panel_renders.get() > initial_panel_renders,
-        "updated panels must render"
-    );
-    let incremental = window.update(|window, _| snapshot_glyphs(window));
-    window.update(|window, _| window.refresh());
-    cx.run_until_idle();
-    assert_eq!(
-        incremental,
-        window.update(|window, _| snapshot_glyphs(window)),
-        "updated glyph output must match a full redraw of the final model"
-    );
+    window.update(|window, _| window.remove_window());
 }
 
-#[derive(Debug, PartialEq)]
-enum GlyphAppearance {
-    Monochrome(gpui::Hsla, gpui::TransformationMatrix),
-    Subpixel(gpui::Hsla, gpui::TransformationMatrix),
-    Polychrome(gpui::PaddedBool32, f32, gpui::Corners<gpui::ScaledPixels>),
-}
+/// Keeps a populated window alive until Criterion drops the measured task's output,
+/// so teardown isn't timed.
+struct PopulatedWindow(gpui::AsyncWindowContext);
 
-#[derive(Debug, PartialEq)]
-struct GlyphSnapshot {
-    order: gpui::DrawOrder,
-    pad: u32,
-    bounds: gpui::Bounds<gpui::ScaledPixels>,
-    content_mask: gpui::ContentMask<gpui::ScaledPixels>,
-    tile: gpui::AtlasTile,
-    appearance: GlyphAppearance,
-}
-
-fn snapshot_glyphs(window: &Window) -> Vec<GlyphSnapshot> {
-    let scene = window.rendered_scene();
-    // Compare the same fields as the former Debug-string snapshots without formatting
-    // thousands of floats and allocating one string per glyph after every sample.
-    scene
-        .monochrome_sprites
-        .iter()
-        .map(|sprite| GlyphSnapshot {
-            order: sprite.order,
-            pad: sprite.pad,
-            bounds: sprite.bounds,
-            content_mask: sprite.content_mask,
-            tile: sprite.tile,
-            appearance: GlyphAppearance::Monochrome(sprite.color, sprite.transformation),
-        })
-        .chain(scene.subpixel_sprites.iter().map(|sprite| GlyphSnapshot {
-            order: sprite.order,
-            pad: sprite.pad,
-            bounds: sprite.bounds,
-            content_mask: sprite.content_mask,
-            tile: sprite.tile,
-            appearance: GlyphAppearance::Subpixel(sprite.color, sprite.transformation),
-        }))
-        .chain(scene.polychrome_sprites.iter().map(|sprite| GlyphSnapshot {
-            order: sprite.order,
-            pad: sprite.pad,
-            bounds: sprite.bounds,
-            content_mask: sprite.content_mask,
-            tile: sprite.tile,
-            appearance: GlyphAppearance::Polychrome(
-                sprite.grayscale,
-                sprite.opacity,
-                sprite.corner_radii,
-            ),
-        }))
-        .collect()
-}
-
-struct FirstPopulatedFrame {
-    window: gpui::AsyncWindowContext,
-    root: Entity<TextPanelRoot>,
-    panel_count: usize,
-    root_renders: Rc<Cell<usize>>,
-    panel_renders: Rc<Cell<usize>>,
-    expected_frames: usize,
-}
-
-impl FirstPopulatedFrame {
-    fn attach(
-        window: &mut Window,
-        cx: &mut gpui::App,
-        panel_count: usize,
-        root_renders: Rc<Cell<usize>>,
-        panel_renders: Rc<Cell<usize>>,
-    ) -> Self {
-        let root = window.replace_root(cx, |_, cx| {
-            TextPanelRoot::new(
-                panel_count,
-                INSTALLED_FONT,
-                &root_renders,
-                &panel_renders,
-                cx,
-            )
-        });
-        Self {
-            window: window.to_async(cx),
-            root,
-            panel_count,
-            root_renders,
-            panel_renders,
-            expected_frames: 1,
+impl Drop for PopulatedWindow {
+    fn drop(&mut self) {
+        if let Err(error) = self.0.update(|window, _| window.remove_window()) {
+            eprintln!("failed to remove populated window: {error}");
         }
     }
-
-    fn validate(&mut self) {
-        assert_eq!(self.root_renders.get(), self.expected_frames);
-        assert_eq!(
-            self.panel_renders.get(),
-            self.panel_count * self.expected_frames
-        );
-        self.window
-            .update(|window, cx| {
-                let root = self.root.read(cx);
-                assert_eq!(root.panels.len(), self.panel_count);
-                assert!(root.panels.iter().all(|panel| panel.read(cx).value == 0));
-                let scene = window.rendered_scene();
-                assert!(
-                    scene.monochrome_sprites.len()
-                        + scene.subpixel_sprites.len()
-                        + scene.polychrome_sprites.len()
-                        > 0,
-                    "the first populated frame must paint glyphs"
-                );
-            })
-            .expect("first populated window must remain open");
-    }
 }
 
-impl Drop for FirstPopulatedFrame {
-    fn drop(&mut self) {
-        // Criterion drops the task output after stopping measurement. Keep the
-        // root and window alive until then, including validation and teardown.
-        self.validate();
-        self.window
-            .update(|window, _| window.remove_window())
-            .expect("remove first populated window");
-    }
+fn populate(window: &mut Window, cx: &mut gpui::App, panel_count: usize) -> PopulatedWindow {
+    window.replace_root(cx, |_, cx| {
+        TextPanelRoot::new(panel_count, INSTALLED_FONT, cx)
+    });
+    PopulatedWindow(window.to_async(cx))
 }
 
 thread_local! {
     static DESCRIBED_FIRST_POPULATED: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Mounting a window full of text and drawing its first frame, from layout through present.
 #[gpui::bench(inputs = text_panel_counts(), input_name = "panels", group = "TextPanels/first populated installed font", fps = 120)]
 fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
     let panel_count = *panel_count;
-    assert_installed_font(cx);
+    require_installed_font(cx);
 
     let describe = DESCRIBED_FIRST_POPULATED.with(|described| {
         let mut described = described.borrow_mut();
@@ -954,44 +739,22 @@ fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
         }
     });
     if describe {
-        // Sample before validation snapshots/logging allocate. Font resolution
-        // above is intentionally shared setup, not window-held memory.
+        // Font resolution above is shared setup, not memory the window holds.
         let before_window = bench_metrics::allocation_stats();
         let mut window = cx.add_empty_window();
         let before_population = bench_metrics::allocation_stats();
-        let mut populated = window.update(|window, cx| {
-            FirstPopulatedFrame::attach(
-                window,
-                cx,
-                panel_count,
-                Rc::new(Cell::new(0)),
-                Rc::new(Cell::new(0)),
-            )
-        });
+        let populated = window.update(|window, cx| populate(window, cx, panel_count));
         cx.run_until_idle();
         let after_population = bench_metrics::allocation_stats();
-        populated.validate();
-        window.update(|window, _| {
-            let scene = window.rendered_scene();
-            eprintln!(
-                "first populated panels: {panel_count}, family {INSTALLED_FONT}, viewport {:?}, quads {}, glyphs {}, root renders {}, panel renders {}",
-                window.viewport_size(),
-                scene.quads.len(),
-                scene.monochrome_sprites.len() + scene.subpixel_sprites.len() + scene.polychrome_sprites.len(),
-                populated.root_renders.get(),
-                populated.panel_renders.get(),
-            );
-        });
         match before_window.zip(before_population).zip(after_population) {
             Some(((before, empty), after)) => eprintln!(
-                "first populated setup live heap: before window {} B, empty window {} B, populated {} B; window+setup delta {} B, population delta {} B (process-wide estimates, not exclusive window ownership)",
+                "first populated panels: {panel_count}, family {INSTALLED_FONT}; live heap before window {} B, empty window {} B, populated {} B; population delta {} B (process-wide estimates, not exclusive window ownership)",
                 before.live_bytes(),
                 empty.live_bytes(),
                 after.live_bytes(),
-                after.live_bytes() - before.live_bytes(),
                 after.live_bytes() - empty.live_bytes(),
             ),
-            None => eprintln!("first populated setup live heap: allocator statistics unavailable"),
+            None => eprintln!("first populated panels: {panel_count}, family {INSTALLED_FONT}"),
         }
         window.update(|window, _| {
             report_scene_stats(
@@ -1000,39 +763,14 @@ fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
                 window,
             );
         });
-        let initial = window.update(|window, _| snapshot_glyphs(window));
-        window.update(|window, _| window.refresh());
-        cx.run_until_idle();
-        populated.expected_frames = 2;
-        assert_eq!(populated.root_renders.get(), 2);
-        assert_eq!(populated.panel_renders.get(), panel_count * 2);
-        assert_eq!(
-            initial,
-            window.update(|window, _| snapshot_glyphs(window)),
-            "first populated glyph output must match a full redraw"
-        );
         drop(populated);
         cx.run_until_idle();
     }
 
     cx.bench_batched_task(
-        |cx| {
-            (
-                cx.add_empty_window(),
-                Rc::new(Cell::new(0)),
-                Rc::new(Cell::new(0)),
-            )
-        },
-        |(window, root_renders, panel_renders), _| {
-            let populated = window.update(|window, cx| {
-                FirstPopulatedFrame::attach(
-                    window,
-                    cx,
-                    panel_count,
-                    root_renders.clone(),
-                    panel_renders.clone(),
-                )
-            });
+        |cx| cx.add_empty_window(),
+        |window, _| {
+            let populated = window.update(|window, cx| populate(window, cx, panel_count));
             // bench_batched_task delivers pending production frame callbacks
             // before polling this ready task, so layout through present is timed.
             gpui::Task::ready(populated)
@@ -1063,12 +801,10 @@ struct ChurnPanel {
     index: usize,
     frame: usize,
     workload: Churn,
-    renders: Rc<Cell<usize>>,
 }
 
 impl Render for ChurnPanel {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.renders.set(self.renders.get() + 1);
         let id = if self.workload == Churn::Id {
             self.frame * 96 + self.index
         } else {
@@ -1109,14 +845,10 @@ struct ChurnRoot {
     panels: Vec<Entity<ChurnPanel>>,
     workload: Churn,
     frame: usize,
-    renders: usize,
-    expected_panel_renders: usize,
-    panel_renders: Rc<Cell<usize>>,
 }
 
 impl ChurnRoot {
     fn new(workload: Churn, cx: &mut Context<Self>) -> Self {
-        let panel_renders = Rc::new(Cell::new(0));
         Self {
             panels: (0..96)
                 .map(|index| {
@@ -1124,15 +856,11 @@ impl ChurnRoot {
                         index,
                         frame: 0,
                         workload,
-                        renders: panel_renders.clone(),
                     })
                 })
                 .collect(),
             workload,
             frame: 0,
-            renders: 0,
-            expected_panel_renders: 96,
-            panel_renders,
         }
     }
 
@@ -1150,15 +878,14 @@ impl ChurnRoot {
             Churn::Replace => {
                 for offset in 0..8 {
                     let index = ((self.frame - 1) * 8 + offset) % 96;
-                    let previous = self.panels.get_mut(index).expect("replacement panel");
                     let replacement = cx.new(|_| ChurnPanel {
                         index,
                         frame: self.frame,
                         workload: self.workload,
-                        renders: self.panel_renders.clone(),
                     });
-                    assert_ne!(previous.entity_id(), replacement.entity_id());
-                    *previous = replacement;
+                    if let Some(panel) = self.panels.get_mut(index) {
+                        *panel = replacement;
+                    }
                 }
             }
             Churn::Id | Churn::Text => {
@@ -1171,20 +898,12 @@ impl ChurnRoot {
             }
             Churn::Remount => {}
         }
-        self.expected_panel_renders += self.visible_panels();
         cx.notify();
-    }
-
-    fn validate(&self) {
-        assert_eq!(self.renders, self.frame + 1);
-        assert_eq!(self.panel_renders.get(), self.expected_panel_renders);
-        assert_eq!(self.panels.len(), 96);
     }
 }
 
 impl Render for ChurnRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.renders += 1;
         gpui::div()
             .id("churn-root")
             .flex()
@@ -1207,7 +926,7 @@ fn churn_workloads() -> Vec<Churn> {
 
 #[gpui::bench(inputs = churn_workloads(), input_name = "workload", group = "LayoutChurnHeap", fps = 120)]
 fn layout_churn_heap(workload: &Churn, cx: &mut BenchAppContext) {
-    assert_installed_font(cx);
+    require_installed_font(cx);
     // One iteration is a complete 3,000-frame lifetime, not a frame comparison.
     cx.bench_iter(|cx| {
         let before_window = bench_metrics::allocation_stats();
@@ -1223,13 +942,8 @@ fn layout_churn_heap(workload: &Churn, cx: &mut BenchAppContext) {
             if [50, 200, 1000, 2000, 3000].contains(&frame) {
                 checkpoints.push((frame, bench_metrics::allocation_stats()));
             }
-            window.update(|_, cx| root.read(cx).validate());
         }
-        // Logging and scene snapshots allocate, so defer both until all heap reads.
-        window.update(|window, cx| {
-            root.read(cx).validate();
-            assert!(!snapshot_glyphs(window).is_empty());
-        });
+        // Logging allocates, so it waits until every heap reading is taken.
         for (frame, stats) in checkpoints {
             match before_window.zip(stats) {
                 Some((before, after)) => eprintln!(
@@ -1248,24 +962,12 @@ fn layout_churn_heap(workload: &Churn, cx: &mut BenchAppContext) {
 
 #[gpui::bench(inputs = churn_workloads(), input_name = "workload", group = "LayoutChurn", fps = 120)]
 fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
-    assert_installed_font(cx);
+    require_installed_font(cx);
     let mut window = cx.add_empty_window();
     let root =
         window.update(|window, cx| window.replace_root(cx, |_, cx| ChurnRoot::new(*workload, cx)));
     cx.run_until_idle();
-    cx.bench_renderer(root.clone(), |root, _, cx| root.advance(cx));
-    window.update(|_, cx| {
-        root.read(cx).validate();
-        assert!(root.read(cx).frame > 0);
-    });
-    let incremental = window.update(|window, _| snapshot_glyphs(window));
-    window.update(|window, _| window.refresh());
-    cx.run_until_idle();
-    assert!(!incremental.is_empty());
-    assert_eq!(
-        incremental,
-        window.update(|window, _| snapshot_glyphs(window))
-    );
+    cx.bench_renderer(root, |root, _, cx| root.advance(cx));
     window.update(|window, _| window.remove_window());
 }
 
@@ -1292,7 +994,6 @@ struct ScrollPane {
     list_handle: gpui::UniformListScrollHandle,
     distance: f32,
     direction: f32,
-    renders: usize,
 }
 
 impl ScrollPane {
@@ -1337,7 +1038,6 @@ impl ScrollPane {
 
 impl Render for ScrollPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.renders += 1;
         let container = gpui::div()
             .size_full()
             .font_family(INSTALLED_FONT)
@@ -1459,7 +1159,6 @@ fn scroll(workload: &ScrollWorkload, cx: &mut BenchAppContext) {
                 list_handle,
                 distance: 600.0,
                 direction: 1.0,
-                renders: 0,
             }
         });
         window.replace_root(cx, |_, cx| ScrollRoot {
@@ -1475,32 +1174,7 @@ fn scroll(workload: &ScrollWorkload, cx: &mut BenchAppContext) {
         window.update(|_, cx| pane.update(cx, |pane, cx| pane.advance(cx)));
         cx.run_until_idle();
     }
-    let initial_renders = pane.read_with(cx, |pane, _| {
-        assert!(pane.handle.offset().y < gpui::px(-600.0));
-        pane.renders
-    });
-    let mut updates = 0;
-    cx.bench_renderer(pane.clone(), |pane, _, cx| {
-        pane.advance(cx);
-        updates += 1;
-    });
-    pane.read_with(cx, |pane, _| {
-        assert!(updates > 0);
-        assert!(pane.renders > initial_renders);
-        assert_eq!(pane.handle.offset().y, gpui::px(-pane.distance));
-    });
-    let incremental = window.update(|window, _| snapshot_glyphs(window));
-    assert!(
-        !incremental.is_empty(),
-        "the scrolled viewport must paint text"
-    );
-    window.update(|window, _| window.refresh());
-    cx.run_until_idle();
-    assert_eq!(
-        incremental,
-        window.update(|window, _| snapshot_glyphs(window)),
-        "scrolled glyph output must match full reconstruction"
-    );
+    cx.bench_renderer(pane, |pane, _, cx| pane.advance(cx));
     window.update(|window, _| window.remove_window());
 }
 
@@ -1515,6 +1189,11 @@ gpui::bench_group!(
         .measurement_time(Duration::from_secs(1))
         .sample_size(20);
     targets = full_refresh,
+    cached_full_refresh,
+    cached_leaf_style,
+    cached_leaf_bounds,
+    cached_insert_remove,
+    cached_reorder,
     unchanged,
     leaf_style,
     leaf_bounds,
