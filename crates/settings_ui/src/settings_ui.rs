@@ -59,8 +59,8 @@ use crate::components::{
     text_field_a11y_state, theme_picker,
 };
 use crate::pages::{
-    CustomAgentForm, LlmProviderForm, McpServerForm, render_input_audio_device_dropdown,
-    render_output_audio_device_dropdown,
+    AgentProfileForm, AgentProfilePageState, CustomAgentForm, LlmProviderForm, McpServerForm,
+    render_input_audio_device_dropdown, render_output_audio_device_dropdown,
 };
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
@@ -1013,6 +1013,10 @@ pub struct SettingsWindow {
     /// mouse, where `focus_visible` styling would otherwise be suppressed).
     pub(crate) external_agent_add_focus_handle: FocusHandle,
     skill_creator_page: Option<(Entity<pages::SkillCreatorPage>, Subscription)>,
+    /// State for the active agent profile detail sub-page, if open.
+    pub(crate) agent_profile_page: Option<AgentProfilePageState>,
+    /// State for the active add/fork agent profile form sub-page, if open.
+    pub(crate) agent_profile_form: Option<AgentProfileForm>,
 }
 
 struct SearchDocument {
@@ -1817,6 +1821,7 @@ impl SettingsWindow {
         let mut ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
             this.fetch_files(window, cx);
+            pages::sync_agent_profile_page_state(this, window, cx);
 
             // Whenever settings are changed, it's possible that the changed
             // settings affects the rendering of the `SettingsWindow`, like is
@@ -2035,6 +2040,8 @@ impl SettingsWindow {
             custom_agent_form: None,
             external_agent_add_focus_handle: cx.focus_handle(),
             skill_creator_page: None,
+            agent_profile_page: None,
+            agent_profile_form: None,
         };
 
         this.fetch_files(window, cx);
@@ -3825,6 +3832,11 @@ impl SettingsWindow {
                 && current_sub_page.link.title.as_ref() == "LLM Providers";
             let is_external_agents_page = current_sub_page.link.json_path == Some("agent_servers");
             let is_mcp_servers_page = current_sub_page.link.json_path == Some("context_servers");
+            // The dynamic profile detail page shares the json path; a profile
+            // may even be named "Agent Profiles". Only the registered list
+            // page (which carries a description) shows the Add button.
+            let is_agent_profiles_page = current_sub_page.link.json_path == Some("agent.profiles")
+                && current_sub_page.link.description.is_some();
 
             page_header = h_flex()
                 .w_full()
@@ -3846,8 +3858,9 @@ impl SettingsWindow {
                         .child(self.render_sub_page_breadcrumbs(window, cx)),
                 )
                 .child(
-                    div()
+                    h_flex()
                         .flex_shrink_0()
+                        .gap_2()
                         .when(current_sub_page.link.in_json, |this| {
                             this.child(
                                 Button::new("open-in-settings-file", "Edit in settings.json")
@@ -3885,6 +3898,21 @@ impl SettingsWindow {
                         })
                         .when(is_mcp_servers_page, |this| {
                             this.child(pages::render_add_server_popover(self, window, cx))
+                        })
+                        .when(is_agent_profiles_page, |this| {
+                            this.child(
+                                Button::new("agent-profile-add", "Add Profile")
+                                    .tab_index(0_isize)
+                                    .style(ButtonStyle::OutlinedGhost)
+                                    .start_icon(
+                                        Icon::new(IconName::Plus)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        pages::open_agent_profile_form(this, None, window, cx);
+                                    })),
+                            )
                         }),
                 )
                 .into_any_element();
@@ -5507,6 +5535,8 @@ pub mod test {
                 custom_agent_form: None,
                 external_agent_add_focus_handle: cx.focus_handle(),
                 skill_creator_page: None,
+                agent_profile_page: None,
+                agent_profile_form: None,
             }
         }
     }
@@ -5647,6 +5677,8 @@ pub mod test {
             custom_agent_form: None,
             external_agent_add_focus_handle: cx.focus_handle(),
             skill_creator_page: None,
+            agent_profile_page: None,
+            agent_profile_form: None,
         };
 
         settings_window.build_filter_table();

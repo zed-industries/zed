@@ -21,9 +21,9 @@ Zed includes three built-in profiles:
 
 Open the profile selector in the [Agent Panel](./agent-panel.md), then click `Configure`.
 
-You can also run {#action agent::ManageProfiles} from the command palette.
+You can also run {#action agent::ManageProfiles} from the command palette, or open the Settings Editor (`Cmd+,` / `Ctrl+,`) and go to `AI` → `Agent Configuration` → `Agent Profiles`.
 
-From the profile modal, you can:
+From the profile modal or the Agent Profiles settings page, you can:
 
 - create a custom profile
 - fork an existing profile

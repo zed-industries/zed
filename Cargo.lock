@@ -16399,6 +16399,7 @@ dependencies = [
  "collections",
  "component",
  "context_server",
+ "convert_case 0.11.0",
  "copilot",
  "copilot_ui",
  "cpal",

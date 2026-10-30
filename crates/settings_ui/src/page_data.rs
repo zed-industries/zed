@@ -13,9 +13,9 @@ use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
     pages::{
-        open_audio_test_window, render_edit_prediction_setup_page, render_external_agents_page,
-        render_llm_providers_page, render_mcp_servers_page, render_sandbox_settings_page,
-        render_skills_setup_page, render_tool_permissions_setup_page,
+        open_audio_test_window, render_agent_profiles_page, render_edit_prediction_setup_page,
+        render_external_agents_page, render_llm_providers_page, render_mcp_servers_page,
+        render_sandbox_settings_page, render_skills_setup_page, render_tool_permissions_setup_page,
     },
 };
 
@@ -9027,6 +9027,26 @@ fn ai_page(cx: &App) -> SettingsPage {
                 in_json: true,
                 files: USER,
                 render: render_tool_permissions_setup_page,
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Agent Profiles".into(),
+                r#type: Default::default(),
+                json_path: Some("agent.profiles"),
+                description: Some(
+                    "Create and configure agent profiles: which tools, MCP servers, and default model each profile can use."
+                        .into(),
+                ),
+                search_aliases: &[
+                    "agent profile",
+                    "agent profiles",
+                    "profile",
+                    "profiles",
+                    "mcp tools",
+                    "default model",
+                ],
+                in_json: true,
+                files: USER,
+                render: render_agent_profiles_page,
             }),
         ]);
 
