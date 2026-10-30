@@ -4751,6 +4751,7 @@ List of `integer` column numbers
     "copy_on_select": false,
     "keep_selection_on_copy": true,
     "open_links_in_mouse_mode": true,
+    "confirm_on_kill": true,
     "dock": "bottom",
     "starts_open": false,
     "default_width": 640,
@@ -4980,6 +4981,26 @@ List of `integer` column numbers
 {
   "terminal": {
     "open_links_in_mouse_mode": false
+  }
+}
+```
+
+### Terminal: Confirm On Kill
+
+- Description: Whether to ask before closing a terminal that still has a process running in it.
+- Setting: `confirm_on_kill`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+**Example**
+
+```json [settings]
+{
+  "terminal": {
+    "confirm_on_kill": false
   }
 }
 ```

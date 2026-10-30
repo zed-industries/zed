@@ -30,6 +30,12 @@ Create additional terminals with `Cmd+N` (macOS) or `Ctrl+N` (Linux/Windows) whi
 
 Split terminals horizontally with `Cmd+D` (macOS) or `Ctrl+Shift+5` (Linux/Windows).
 
+## Closing Terminals
+
+Closing a terminal terminates whatever is running in it. When a terminal still has a process running, closing it asks first and lists the affected terminals; `terminal.confirm_on_kill` set to `false` turns that question off.
+
+A local terminal is inspected on this machine. A terminal in a remote project runs its shell over SSH, so the remote server answers, and the question appears once the answer arrives.
+
 ## Configuring the Shell
 
 By default, Zed uses your system's default shell (from `/etc/passwd` on Unix systems). To use a different shell:

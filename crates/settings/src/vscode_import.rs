@@ -956,6 +956,11 @@ impl VsCodeSettings {
             font_weight: None,
             keep_selection_on_copy: None,
             open_links_in_mouse_mode: None,
+            confirm_on_kill: self.read_enum("terminal.integrated.confirmOnKill", |s| match s {
+                "never" => Some(false),
+                "editor" | "panel" | "always" => Some(true),
+                _ => None,
+            }),
             line_height: self
                 .read_f32("terminal.integrated.lineHeight")
                 .map(|lh| TerminalLineHeight::Custom(lh)),
