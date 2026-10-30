@@ -81,3 +81,95 @@ unchanged.
 - Prettier check on `docs/src/ai/agent-profiles.md` — clean.
 
 **Upstream revision last verified:** `83323324a4`.
+
+## External-agent model catalog (`project` + `agent_ui`)
+
+**Purpose.** Per-project, in-memory catalog of the models exposed by each
+installed external agent. `project` owns the dependency-free contract so
+consumers such as `settings_ui` never depend on `agent_ui`; `agent_ui`
+registers a source that populates the catalog from open `AgentPanel`
+sessions or short-lived probe sessions.
+
+**Touched symbols.**
+
+- `crates/project/src/external_agent_models.rs` — `ExternalAgentModel`,
+  `ExternalAgentModelsState`, `ExternalAgentModelCatalog`
+  (`state`/`set_state`/`set_task`/`clear`),
+  `set_external_agent_model_source`, `external_agent_model_catalog`,
+  `refresh_external_agent_models`; a private `GlobalExternalAgentModelCatalogs`
+  keyed by `EntityId` that drops entries whose project weak ref no longer
+  upgrades.
+- `crates/agent_ui/src/external_agent_models.rs` — `init` (one call from
+  `agent_ui::init`), the source `refresh`, `find_agent_panel`
+  (`workspace::AppState` workspace scan), `probe_agent`/`run_probe`/
+  `run_probe_session`/`read_models`/`close_probe_session` helpers, and the
+  `CatalogTestConnection`/`CatalogTestConfigOptions`/`CatalogTestModelSelector`/
+  `CatalogTestSessionList` test types.
+
+**Upstream behaviors preserved.**
+
+- Connections are only ever obtained through the panel's
+  `AgentConnectionStore::request_connection`; no external-agent process is
+  spawned independently, and `Agent::server`/`CustomAgentServer` keep owning
+  command construction.
+- `AgentServersUpdated` still owns agent lifecycle: the catalog subscribes to
+  it and clears all states and pending probe tasks rather than duplicating
+  the update logic.
+- `AuthRequired::from_error` remains the single classifier for auth errors;
+  the probe never calls `authenticate`.
+
+**Intentional divergences.**
+
+- Probing an agent with no open session creates a throwaway ACP session
+  (no `ConversationView`, sidebar entry, or `ThreadMetadataStore` row) to
+  read its model list. The whole probe — the pending connection wait plus
+  `new_session` — is bounded by one 30s executor-timer timeout; a
+  late-resolving session is closed but its result is discarded, and a
+  timed-out `Failed` entry is retried on the next refresh against the same
+  pending `AgentConnectionStore` entry.
+- Probe sessions are torn down via `close_session` (when
+  `supports_close_session`) and `delete_session` (when the agent's session
+  list supports deletion). **Approved limitation:** when an agent supports
+  neither, the probe session may remain visible in that agent's
+  history/import listings until the agent removes it.
+- **Approved limitation:** cataloged external models are not yet applied
+  to external sessions. Prompt 2b will persist the selection through the
+  existing `LanguageModelSelection` `default_model` profile field with
+  `provider = <AgentId>`; nothing reads that field for external agents
+  today.
+- States `Ready`/`AuthRequired`/`Loading` are not reprobed on subsequent
+  refreshes; `Failed` is retried.
+
+**Upstream code to re-check on upstream updates.**
+
+- `AgentConnectionStore::request_connection` /
+  `AgentConnectionStore::handle_agent_servers_updated` — the catalog relies
+  on pending-entry reuse and on server updates clearing stale entries.
+- `ConversationView::initial_state` — `is_via_collab` gating,
+  `default_path_list` work dirs, and `AuthRequired::from_error`
+  classification must keep matching how sessions are normally opened.
+- The config-option vs `model_selector` precedence in `ConversationView`
+  (around `:1636-1712`).
+- `config_options.rs` — how the `Model` category `Select` option is
+  located (`first_config_option_id_matching`).
+- `AgentModelList` / `AgentModelInfo.disabled` semantics.
+- `AgentConnection::close_session` / `AgentSessionList::delete_session`
+  capability checks.
+- `thread_import.rs` — where leftover probe sessions appear in
+  history/import listings.
+- Emitters of `AgentServersUpdated` — catalog invalidation depends on it
+  firing whenever the installed-agent set changes.
+
+**Verification.**
+
+- `cargo test -p project external_agent_models` — 4 tests (no source,
+  single source call + notifications, `AgentServersUpdated` clear,
+  released-project purge).
+- `cargo test -p agent_ui external_agent_models` — 16 tests (config-option
+  extraction, selector fallback, auth, connect/session timeout + late
+  cleanup, `AgentServersUpdated` mid-probe discard, loading-skip,
+  open-session reuse, retry rules, close/delete, no side effects, collab +
+  missing-panel messages).
+- `./script/clippy` — clean.
+
+**Upstream revision last verified:** `83323324a4`.
