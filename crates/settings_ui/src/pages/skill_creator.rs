@@ -1,7 +1,8 @@
 use agent_skills::{
-    MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE, SKILL_FILE_NAME, SkillMetadata,
-    SkillsUpdatedHook, global_skills_dir, parse_skill_file_content, project_skills_relative_path,
-    slugify_skill_name, validate_description, validate_name,
+    MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE, SKILL_FILE_NAME, SkillsUpdatedHook,
+    existing_skill_path_error, format_skill_file, global_skills_dir, parse_skill_file_content,
+    project_skills_relative_path, slugify_skill_name, validate_description, validate_name,
+    write_skill_to_disk,
 };
 use anyhow::{Context as _, Result, anyhow};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
@@ -1184,48 +1185,6 @@ fn truncate_description(description: &str) -> String {
         .to_string()
 }
 
-/// Serialize the SKILL.md file to disk at `<skills_dir>/<name>/SKILL.md`.
-///
-/// Refuses to overwrite an existing directory at `<skills_dir>/<name>`. The
-/// caller surfaces the resulting error to the user, who picks a different
-/// name.
-async fn write_skill_to_disk(
-    fs: &dyn Fs,
-    skills_dir: &std::path::Path,
-    name: &str,
-    description: &str,
-    body: &str,
-    disable_model_invocation: bool,
-) -> Result<PathBuf> {
-    let skill_dir = skills_dir.join(name);
-    match fs.metadata(&skill_dir).await {
-        Ok(Some(metadata)) => {
-            return Err(existing_skill_path_error(name, &skill_dir, metadata.is_dir));
-        }
-        Ok(None) => {}
-        Err(err) => {
-            return Err(err).with_context(|| {
-                format!(
-                    "failed to check whether {} already exists",
-                    skill_dir.display()
-                )
-            });
-        }
-    }
-
-    let content = format_skill_file(name, description, body, disable_model_invocation)?;
-
-    fs.create_dir(&skill_dir)
-        .await
-        .with_context(|| format!("failed to create skill directory {}", skill_dir.display()))?;
-    let skill_file_path = skill_dir.join(SKILL_FILE_NAME);
-    fs.write(&skill_file_path, content.as_bytes())
-        .await
-        .with_context(|| format!("failed to write {}", skill_file_path.display()))?;
-
-    Ok(skill_file_path)
-}
-
 async fn write_skill_to_worktree(
     project: &Entity<Project>,
     worktree: &Entity<Worktree>,
@@ -1271,53 +1230,6 @@ async fn write_skill_to_worktree(
         .with_context(|| format!("failed to write {}", skill_file_abs_path.display()))?;
 
     Ok(skill_file_abs_path)
-}
-
-fn existing_skill_path_error(
-    name: &str,
-    skill_dir: &std::path::Path,
-    is_dir: bool,
-) -> anyhow::Error {
-    if is_dir {
-        anyhow!(
-            "A skill named \"{name}\" already exists at {}. Pick a different name.",
-            skill_dir.display()
-        )
-    } else {
-        // Without this check, creating the directory fails with a vague "File exists" error.
-        anyhow!(
-            "A file (not a skill directory) already exists at {}. \
-             Delete it or pick a different skill name.",
-            skill_dir.display()
-        )
-    }
-}
-
-fn format_skill_file(
-    name: &str,
-    description: &str,
-    body: &str,
-    disable_model_invocation: bool,
-) -> Result<String> {
-    let metadata = SkillMetadata {
-        name: name.to_string(),
-        description: description.to_string(),
-        disable_model_invocation,
-    };
-    let frontmatter = serde_yaml_ng::to_string(&metadata)
-        .context("failed to serialize skill frontmatter as YAML")?;
-
-    let mut content = String::with_capacity(frontmatter.len() + body.len() + 16);
-    content.push_str("---\n");
-    content.push_str(&frontmatter);
-    content.push_str("---\n");
-    let trimmed_body = body.trim();
-    if !trimmed_body.is_empty() {
-        content.push('\n');
-        content.push_str(trimmed_body);
-        content.push('\n');
-    }
-    Ok(content)
 }
 
 #[cfg(test)]
