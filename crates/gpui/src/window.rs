@@ -5317,7 +5317,12 @@ impl Window {
 
     /// Panics with a description of `layout_id` and its use if it wasn't issued
     /// by this window during the current frame.
-    pub(crate) fn check_layout_id(&self, layout_id: LayoutId, describe_use: impl FnOnce() -> String) {
+    #[cfg(feature = "layout-id-debug")]
+    pub(crate) fn check_layout_id(
+        &self,
+        layout_id: LayoutId,
+        describe_use: impl FnOnce() -> String,
+    ) {
         // The engine is only absent while computing layout, when no element
         // requests layout.
         if let Some(layout_engine) = self.layout_engine.as_ref() {
