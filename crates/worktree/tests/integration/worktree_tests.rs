@@ -797,6 +797,89 @@ async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_symlinks_sharing_a_target_are_scanned_once(cx: &mut TestAppContext) {
+    init_test(cx);
+    // Repositories ignore file_scan_depth, so lift the limit to show the fan-out.
+    set_file_scan_depth(cx, Some(u32::MAX));
+
+    // d0..d10, where each d{i} holds two links to d{i+1}. Following every link
+    // eagerly reaches the last directory through 2^10 distinct paths.
+    const DEPTH: usize = 10;
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let mut tree_json = serde_json::Map::new();
+    for level in 0..=DEPTH {
+        tree_json.insert(format!("d{level}"), json!({ "file.txt": "" }));
+    }
+    fs.insert_tree("/root", serde_json::Value::Object(tree_json))
+        .await;
+    for level in 0..DEPTH {
+        for link in ["l1", "l2"] {
+            fs.create_symlink(
+                format!("/root/d{level}/{link}").as_ref(),
+                format!("../d{}", level + 1).into(),
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        let entry_count = tree.entries(true, 0).count();
+        assert!(
+            entry_count < 20 * DEPTH,
+            "expected linear growth, got {entry_count} entries"
+        );
+        for level in 0..=DEPTH {
+            assert!(
+                tree.entry_for_path(rel_path(&format!("d{level}/file.txt")))
+                    .is_some()
+            );
+        }
+        let kinds = ["l1", "l2"].map(|link| {
+            tree.entry_for_path(rel_path(&format!("d0/{link}")))
+                .unwrap()
+                .kind
+        });
+        assert!(kinds.contains(&EntryKind::UnloadedDir), "{kinds:?}");
+    });
+
+    let deferred_link = tree.read_with(cx, |tree, _| {
+        ["l1", "l2"]
+            .into_iter()
+            .map(|link| rel_path(&format!("d0/{link}")).into_arc())
+            .find(|path| tree.entry_for_path(path).unwrap().kind == EntryKind::UnloadedDir)
+            .unwrap()
+    });
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![deferred_link.clone()])
+    })
+    .recv()
+    .await;
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(&deferred_link.join(rel_path("file.txt")))
+                .is_some()
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_scan_symlinks_always(cx: &mut TestAppContext) {
     init_test(cx);
 
