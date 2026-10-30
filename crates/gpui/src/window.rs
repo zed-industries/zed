@@ -5315,6 +5315,16 @@ impl Window {
             .request_measured_layout(style, rem_size, scale_factor, measure)
     }
 
+    /// Panics with a description of `layout_id` and its use if it wasn't issued
+    /// by this window during the current frame.
+    pub(crate) fn check_layout_id(&self, layout_id: LayoutId, describe_use: impl FnOnce() -> String) {
+        // The engine is only absent while computing layout, when no element
+        // requests layout.
+        if let Some(layout_engine) = self.layout_engine.as_ref() {
+            layout_engine.node_id(layout_id, describe_use);
+        }
+    }
+
     /// Compute the layout for the given id within the given available space.
     /// This method is called for its side effect, typically by the framework prior to painting.
     /// After calling it, you can request the bounds of the given layout node id or any descendant.

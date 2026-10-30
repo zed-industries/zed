@@ -390,6 +390,11 @@ impl<E: Element> Drawable<E> {
                 if global_id.is_some() {
                     window.element_id_stack.pop();
                 }
+                // Checked here as well as where the ID is used, so an invalid ID
+                // names the element that produced it.
+                window.check_layout_id(layout_id, || {
+                    format!("returned by {}::request_layout", std::any::type_name::<E>())
+                });
 
                 self.phase = ElementDrawPhase::RequestLayout {
                     layout_id,

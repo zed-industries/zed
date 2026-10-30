@@ -7,7 +7,11 @@ use crate::{
     },
 };
 use collections::{FxHashMap, FxHashSet};
-use std::{fmt::Debug, ops::Range};
+use std::{
+    fmt::Debug,
+    ops::Range,
+    sync::atomic::{AtomicU32, Ordering},
+};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
@@ -28,8 +32,20 @@ type NodeMeasureFn = StackSafe<Box<MeasureFn>>;
 struct NodeContext {
     measure: NodeMeasureFn,
 }
+
+/// Issues [`TaffyLayoutEngine`] identities. Zero is never issued, so a zeroed
+/// [`LayoutId`] can't match any engine.
+static NEXT_ENGINE_ID: AtomicU32 = AtomicU32::new(1);
+
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
+    /// Tags every [`LayoutId`] this engine issues, so IDs from another
+    /// window's engine are rejected rather than resolving to an unrelated node.
+    engine_id: u32,
+    /// Incremented by [`Self::clear`], so IDs from earlier frames are rejected.
+    /// Starts at 1 so that a zeroed [`LayoutId`] never matches.
+    frame: u32,
+    child_node_ids: Vec<NodeId>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
     absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
@@ -45,6 +61,9 @@ impl TaffyLayoutEngine {
         taffy.disable_rounding();
         TaffyLayoutEngine {
             taffy,
+            engine_id: NEXT_ENGINE_ID.fetch_add(1, Ordering::Relaxed),
+            frame: 1,
+            child_node_ids: Vec::new(),
             absolute_layout_bounds: FxHashMap::default(),
             absolute_outer_origins: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
@@ -53,6 +72,7 @@ impl TaffyLayoutEngine {
     }
 
     pub fn clear(&mut self) {
+        self.frame = self.frame.wrapping_add(1).max(1);
         self.taffy.clear();
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
@@ -68,18 +88,24 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
 
-        if children.is_empty() {
-            self.taffy
-                .new_leaf(taffy_style)
-                .expect(EXPECT_MESSAGE)
-                .into()
+        let node = if children.is_empty() {
+            self.taffy.new_leaf(taffy_style).expect(EXPECT_MESSAGE)
         } else {
+            self.child_node_ids.clear();
+            for (index, child) in children.iter().enumerate() {
+                let node = self.node_id(*child, || {
+                    format!(
+                        "child {index} of {} passed to request_layout",
+                        children.len()
+                    )
+                });
+                self.child_node_ids.push(node);
+            }
             self.taffy
-                // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
-                .new_with_children(taffy_style, LayoutId::to_taffy_slice(children))
+                .new_with_children(taffy_style, &self.child_node_ids)
                 .expect(EXPECT_MESSAGE)
-                .into()
-        }
+        };
+        self.layout_id(node)
     }
 
     pub fn request_measured_layout(
@@ -100,10 +126,73 @@ impl TaffyLayoutEngine {
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
 
-        self.taffy
+        let node = self
+            .taffy
             .new_leaf_with_context(taffy_style, NodeContext { measure })
-            .expect(EXPECT_MESSAGE)
-            .into()
+            .expect(EXPECT_MESSAGE);
+        self.layout_id(node)
+    }
+
+    fn layout_id(&self, node: NodeId) -> LayoutId {
+        LayoutId {
+            node,
+            engine_id: self.engine_id,
+            frame: self.frame,
+        }
+    }
+
+    /// Returns the Taffy node for `id`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` wasn't issued by this engine during the current frame, or
+    /// if its node can't be a slotmap key, naming what kind of invalid ID it is
+    /// and where it was used. Taffy would otherwise panic with an uninformative
+    /// slotmap error, or silently resolve a foreign ID to an unrelated node.
+    #[inline]
+    pub(crate) fn node_id(&self, id: LayoutId, describe_use: impl FnOnce() -> String) -> NodeId {
+        if id.engine_id != self.engine_id
+            || id.frame != self.frame
+            || malformed_node_reason(id.node).is_some()
+        {
+            self.invalid_layout_id(id, &describe_use());
+        }
+        id.node
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn invalid_layout_id(&self, id: LayoutId, use_description: &str) -> ! {
+        panic!(
+            "invalid LayoutId ({}): {use_description}; id node {:#018x} engine {} frame {}, current engine {} frame {}",
+            self.classify_invalid_layout_id(id),
+            u64::from(id.node),
+            id.engine_id,
+            id.frame,
+            self.engine_id,
+            self.frame,
+        )
+    }
+
+    fn classify_invalid_layout_id(&self, id: LayoutId) -> String {
+        if u64::from(id.node) == 0 && id.engine_id == 0 && id.frame == 0 {
+            "zeroed".into()
+        } else if id.engine_id == 0
+            || id.frame == 0
+            || id.engine_id >= NEXT_ENGINE_ID.load(Ordering::Relaxed)
+        {
+            "corrupt: never issued".into()
+        } else if id.engine_id != self.engine_id {
+            "foreign: issued by another window's layout engine".into()
+        } else if id.frame < self.frame {
+            format!("stale: issued {} frames ago", self.frame - id.frame)
+        } else if id.frame > self.frame {
+            "corrupt: issued in a future frame".into()
+        } else if let Some(reason) = malformed_node_reason(id.node) {
+            format!("malformed node: {reason}")
+        } else {
+            unreachable!("classified a valid LayoutId")
+        }
     }
 
     /// Treats any `auto` dimension of the given node's style as filling `size`.
@@ -118,7 +207,8 @@ impl TaffyLayoutEngine {
         size: Size<Pixels>,
         scale_factor: f32,
     ) {
-        let style = self.taffy.style(id.0).expect(EXPECT_MESSAGE);
+        let node = self.node_id(id, || "passed to stretch_auto_size_to_fill".into());
+        let style = self.taffy.style(node).expect(EXPECT_MESSAGE);
         let stretch_width = style.size.width.is_auto();
         let stretch_height = style.size.height.is_auto();
         if !stretch_width && !stretch_height {
@@ -133,7 +223,7 @@ impl TaffyLayoutEngine {
             style.size.height =
                 taffy::style::Dimension::length(round_to_device_pixel(size.height.0, scale_factor));
         }
-        self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
+        self.taffy.set_style(node, style).expect(EXPECT_MESSAGE);
     }
 
     // Used to understand performance
@@ -141,12 +231,12 @@ impl TaffyLayoutEngine {
     fn count_all_children(&self, parent: LayoutId) -> anyhow::Result<u32> {
         let mut count = 0;
 
-        for child in self.taffy.children(parent.0)? {
+        for child in self.taffy.children(parent.node)? {
             // Count this child.
             count += 1;
 
             // Count all of this child's children.
-            count += self.count_all_children(LayoutId(child))?
+            count += self.count_all_children(self.layout_id(child))?
         }
 
         Ok(count)
@@ -157,13 +247,14 @@ impl TaffyLayoutEngine {
     fn max_depth(&self, depth: u32, parent: LayoutId) -> anyhow::Result<u32> {
         println!(
             "{parent:?} at depth {depth} has {} children",
-            self.taffy.child_count(parent.0)
+            self.taffy.child_count(parent.node)
         );
 
         let mut max_child_depth = 0;
 
-        for child in self.taffy.children(parent.0)? {
-            max_child_depth = std::cmp::max(max_child_depth, self.max_depth(0, LayoutId(child))?);
+        for child in self.taffy.children(parent.node)? {
+            max_child_depth =
+                std::cmp::max(max_child_depth, self.max_depth(0, self.layout_id(child))?);
         }
 
         Ok(depth + 1 + max_child_depth)
@@ -174,10 +265,10 @@ impl TaffyLayoutEngine {
     fn get_edges(&self, parent: LayoutId) -> anyhow::Result<Vec<(LayoutId, LayoutId)>> {
         let mut edges = Vec::new();
 
-        for child in self.taffy.children(parent.0)? {
-            edges.push((parent, LayoutId(child)));
+        for child in self.taffy.children(parent.node)? {
+            edges.push((parent, self.layout_id(child)));
 
-            edges.extend(self.get_edges(LayoutId(child))?);
+            edges.extend(self.get_edges(self.layout_id(child))?);
         }
 
         Ok(edges)
@@ -202,7 +293,9 @@ impl TaffyLayoutEngine {
         // }
         //
 
+        let node = self.node_id(id, || "passed to compute_layout".into());
         if !self.computed_layouts.insert(id) {
+            let (engine_id, frame) = (self.engine_id, self.frame);
             let stack = &mut self.layout_bounds_scratch_space;
             stack.push(id);
             while let Some(id) = stack.pop() {
@@ -210,10 +303,14 @@ impl TaffyLayoutEngine {
                 self.absolute_outer_origins.remove(&id);
                 stack.extend(
                     self.taffy
-                        .children(id.into())
+                        .children(id.node)
                         .expect(EXPECT_MESSAGE)
                         .into_iter()
-                        .map(LayoutId::from),
+                        .map(|node| LayoutId {
+                            node,
+                            engine_id,
+                            frame,
+                        }),
                 );
             }
         }
@@ -234,7 +331,7 @@ impl TaffyLayoutEngine {
 
         self.taffy
             .compute_layout_with_measure(
-                id.into(),
+                node,
                 available_space.into(),
                 |input, _id, node_context, style| {
                     taffy::compute_leaf_layout(
@@ -354,18 +451,19 @@ impl TaffyLayoutEngine {
     // 1dp residual into descendants.
 
     pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
+        let node = self.node_id(id, || "passed to layout_bounds".into());
         if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
             return layout;
         }
 
-        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+        let layout = self.taffy.layout(node).expect(EXPECT_MESSAGE);
         let layout_location = layout.location;
         let layout_size = layout.size;
-        let parent = self.taffy.parent(id.0);
+        let parent = self.taffy.parent(node);
 
         let absolute_outer_origin = match parent {
             Some(parent_id) => {
-                let parent_id = LayoutId::from(parent_id);
+                let parent_id = self.layout_id(parent_id);
                 self.layout_bounds(parent_id, scale_factor);
                 let parent_origin = *self
                     .absolute_outer_origins
@@ -390,33 +488,37 @@ impl TaffyLayoutEngine {
     }
 }
 
-/// A unique identifier for a layout node, generated when requesting a layout from Taffy
+/// A unique identifier for a layout node, generated when requesting a layout from Taffy.
+///
+/// It is only valid in the window and frame that requested it.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-#[repr(transparent)]
-pub struct LayoutId(NodeId);
-
-impl LayoutId {
-    fn to_taffy_slice(node_ids: &[Self]) -> &[taffy::NodeId] {
-        // SAFETY: LayoutId is repr(transparent) to taffy::tree::NodeId.
-        unsafe { std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(node_ids) }
-    }
+pub struct LayoutId {
+    node: NodeId,
+    engine_id: u32,
+    frame: u32,
 }
 
 impl std::hash::Hash for LayoutId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        u64::from(self.0).hash(state);
+        // IDs stored together always share an engine and frame.
+        u64::from(self.node).hash(state);
     }
 }
 
-impl From<NodeId> for LayoutId {
-    fn from(node_id: NodeId) -> Self {
-        Self(node_id)
-    }
-}
-
-impl From<LayoutId> for NodeId {
-    fn from(layout_id: LayoutId) -> NodeId {
-        layout_id.0
+/// Returns why `node` can't be a key into Taffy's slotmaps, if it can't.
+///
+/// A [`NodeId`] stores the slotmap version in its high 32 bits and the slot
+/// index in its low 32 bits. Slotmap reserves index 0 as a sentinel and gives
+/// occupied slots odd versions, so other patterns can only come from corrupted
+/// memory.
+fn malformed_node_reason(node: NodeId) -> Option<&'static str> {
+    let bits = u64::from(node);
+    if bits as u32 == 0 {
+        Some("slot index 0")
+    } else if (bits >> 32) % 2 == 0 {
+        Some("even slot version")
+    } else {
+        None
     }
 }
 
@@ -758,6 +860,57 @@ mod tests {
     use super::*;
 
     #[test]
+    #[should_panic(expected = "invalid LayoutId (stale: issued 1 frames ago): passed to layout_bounds")]
+    fn layout_id_from_previous_frame_is_reported_as_stale() {
+        let mut engine = TaffyLayoutEngine::new();
+        let id = request_leaf(&mut engine);
+        engine.clear();
+        engine.layout_bounds(id, 1.0);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "invalid LayoutId (foreign: issued by another window's layout engine): child 0 of 1 passed to request_layout"
+    )]
+    fn layout_id_from_another_engine_is_reported_as_foreign() {
+        let mut other_engine = TaffyLayoutEngine::new();
+        let foreign_id = request_leaf(&mut other_engine);
+        let mut engine = TaffyLayoutEngine::new();
+        engine.request_layout(Style::default(), Pixels(16.0), 1.0, &[foreign_id]);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid LayoutId (malformed node: slot index 0): passed to layout_bounds")]
+    fn layout_id_with_zeroed_node_is_reported_as_malformed() {
+        let mut engine = TaffyLayoutEngine::new();
+        let mut id = request_leaf(&mut engine);
+        id.node = NodeId::from(0_u64);
+        engine.layout_bounds(id, 1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid LayoutId (malformed node: even slot version): passed to layout_bounds")]
+    fn layout_id_with_even_node_version_is_reported_as_malformed() {
+        let mut engine = TaffyLayoutEngine::new();
+        let mut id = request_leaf(&mut engine);
+        id.node = NodeId::from(u64::from(id.node) + (1 << 32));
+        engine.layout_bounds(id, 1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid LayoutId (zeroed): child 1 of 2 passed to request_layout")]
+    fn zeroed_layout_id_is_reported_as_zeroed() {
+        let mut engine = TaffyLayoutEngine::new();
+        let valid_id = request_leaf(&mut engine);
+        let zeroed_id = LayoutId {
+            node: NodeId::from(0_u64),
+            engine_id: 0,
+            frame: 0,
+        };
+        engine.request_layout(Style::default(), Pixels(16.0), 1.0, &[valid_id, zeroed_id]);
+    }
+
+    #[test]
     fn border_widths_to_taffy_use_stroke_snapping() {
         let border_widths = Edges {
             top: Pixels(0.0).into(),
@@ -783,5 +936,9 @@ mod tests {
             taffy_border.left,
             taffy::style::LengthPercentage::length(2.0)
         );
+    }
+
+    fn request_leaf(engine: &mut TaffyLayoutEngine) -> LayoutId {
+        engine.request_layout(Style::default(), Pixels(16.0), 1.0, &[])
     }
 }
