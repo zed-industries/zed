@@ -148,5 +148,4 @@ mod tests {
             assert_eq!(redact_command(input), expected, "input: {input}");
         }
     }
-
 }
