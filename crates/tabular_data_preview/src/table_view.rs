@@ -9,6 +9,7 @@
 
 use std::{
     collections::HashMap,
+    ops::RangeInclusive,
     time::{Duration, Instant},
 };
 
@@ -21,7 +22,7 @@ use ui::{
 };
 
 use crate::{
-    MoveFocusedCell, NavigationDirection,
+    ClearSelection, ExtendSelection, MoveFocusedCell, MoveUnit, NavigationDirection,
     settings::TableViewSettings,
     table_data_engine::{DisplayToDataMapping, TableDataEngine},
     types::{AnyColumn, DataCellId, DisplayRow, TableLikeContent},
@@ -50,6 +51,20 @@ impl CellSelection {
 
     pub fn is_single_cell(&self) -> bool {
         self.anchor == self.focus
+    }
+
+    /// Returns display-space bounding box `(min_display_row..=max_display_row, min_col..=max_col)` if both anchor and focus are visible.
+    pub fn display_bounds(
+        &self,
+        d2d: &DisplayToDataMapping,
+    ) -> Option<(RangeInclusive<usize>, RangeInclusive<usize>)> {
+        let anchor_row = d2d.get_display_row(self.anchor.row)?.0;
+        let focus_row = d2d.get_display_row(self.focus.row)?.0;
+        let min_row = anchor_row.min(focus_row);
+        let max_row = anchor_row.max(focus_row);
+        let min_col = self.anchor.col.0.min(self.focus.col.0);
+        let max_col = self.anchor.col.0.max(self.focus.col.0);
+        Some((min_row..=max_row, min_col..=max_col))
     }
 }
 
@@ -249,6 +264,26 @@ impl TableView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.navigate(action.direction, action.unit, false, window, cx);
+    }
+
+    pub(crate) fn extend_selection(
+        &mut self,
+        action: &ExtendSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate(action.direction, action.unit, true, window, cx);
+    }
+
+    fn navigate(
+        &mut self,
+        direction: NavigationDirection,
+        unit: MoveUnit,
+        extend: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.is_selection_enabled() {
             return;
         }
@@ -260,27 +295,63 @@ impl TableView {
             return;
         }
 
-        let current_pos = self.selection.as_ref().and_then(|selection| {
-            self.engine
-                .d2d_mapping()
-                .get_display_row(selection.focus.row)
-                .map(|r| (r.0, selection.focus.col.0))
-        });
+        let (anchor, (current_row, current_col)) = match self.selection.as_ref() {
+            Some(selection) => {
+                let focus_pos = self
+                    .engine
+                    .d2d_mapping()
+                    .get_display_row(selection.focus.row)
+                    .map(|r| (r.0, selection.focus.col.0))
+                    .unwrap_or((0, 0));
+                (selection.anchor, focus_pos)
+            }
+            None => {
+                let Some(initial_row) = self.engine.d2d_mapping().get_data_row(DisplayRow(0))
+                else {
+                    return;
+                };
+                let initial_cell = DataCellId::new(initial_row, AnyColumn(0));
+                (initial_cell, (0, 0))
+            }
+        };
 
-        let (new_row, new_column) = match current_pos {
-            Some(pos) => self.compute_move(pos, action.direction),
-            None => (0, 0),
+        let (new_row, new_column) = if self.selection.is_none() && !extend && unit == MoveUnit::Cell
+        {
+            // First single-cell move initializes focus at (0, 0) without skipping
+            (0, 0)
+        } else {
+            self.compute_move((current_row, current_col), direction, unit, cx)
         };
 
         let Some(new_data_row) = self.engine.d2d_mapping().get_data_row(DisplayRow(new_row)) else {
             return;
         };
         let new_cell = DataCellId::new(new_data_row, AnyColumn(new_column));
-        self.selection = Some(CellSelection::single_cell(new_cell));
 
-        self.scroll_to_reveal_row(new_row, action.direction);
+        self.selection = Some(if extend {
+            CellSelection::new(anchor, new_cell)
+        } else {
+            CellSelection::single_cell(new_cell)
+        });
+
+        self.scroll_to_reveal_row(new_row, direction);
         self.scroll_to_reveal_column(new_column, window, cx);
         cx.notify();
+    }
+
+    pub fn clear_selection(
+        &mut self,
+        _: &ClearSelection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.is_selection_enabled() {
+            return;
+        }
+
+        if self.selection.take().is_some() {
+            cx.notify();
+        }
     }
 
     pub(crate) fn scroll_to_reveal_row(&self, row: usize, direction: NavigationDirection) {
@@ -311,16 +382,55 @@ impl TableView {
         &self,
         current: (usize, usize),
         direction: NavigationDirection,
+        unit: MoveUnit,
+        _cx: &App,
     ) -> (usize, usize) {
         let row_count = self.engine.d2d_mapping().visible_row_count();
         let column_count = self.engine.contents.number_of_cols;
         let (row, column) = current;
 
+        let item_height = self.row_height + px(1.0);
+        let viewport_height = self.list_state.viewport_bounds().size.height;
+        let visible_rows = if item_height > px(0.) && viewport_height > px(0.) {
+            (viewport_height / item_height).floor() as usize
+        } else {
+            1
+        };
+        // 1 row of context overlap: moving by (visible_rows - 2) ensures that
+        // jumping from an edge leaves exactly 1 row of context, perfectly matching the 1-row reveal cushion.
+        let page_rows = visible_rows.saturating_sub(2).max(1);
+
         match direction {
-            NavigationDirection::Up => (row.saturating_sub(1), column),
-            NavigationDirection::Down => ((row + 1).min(row_count.saturating_sub(1)), column),
-            NavigationDirection::Left => (row, column.saturating_sub(1)),
-            NavigationDirection::Right => (row, (column + 1).min(column_count.saturating_sub(1))),
+            NavigationDirection::Up => {
+                let delta = match unit {
+                    MoveUnit::Cell => 1,
+                    MoveUnit::Page => page_rows,
+                    MoveUnit::Edge => row,
+                };
+                (row.saturating_sub(delta), column)
+            }
+            NavigationDirection::Down => {
+                let delta = match unit {
+                    MoveUnit::Cell => 1,
+                    MoveUnit::Page => page_rows,
+                    MoveUnit::Edge => row_count.saturating_sub(1).saturating_sub(row),
+                };
+                ((row + delta).min(row_count.saturating_sub(1)), column)
+            }
+            NavigationDirection::Left => {
+                let delta = match unit {
+                    MoveUnit::Cell | MoveUnit::Page => 1,
+                    MoveUnit::Edge => column,
+                };
+                (row, column.saturating_sub(delta))
+            }
+            NavigationDirection::Right => {
+                let delta = match unit {
+                    MoveUnit::Cell | MoveUnit::Page => 1,
+                    MoveUnit::Edge => column_count.saturating_sub(1).saturating_sub(column),
+                };
+                (row, (column + delta).min(column_count.saturating_sub(1)))
+            }
         }
     }
 
@@ -365,6 +475,8 @@ impl Focusable for TableView {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use gpui::{Action, TestAppContext, VisualTestContext};
 
     use super::*;
@@ -415,6 +527,17 @@ mod tests {
         });
     }
 
+    fn selection_bounds(
+        view: &Entity<TableView>,
+        cx: &VisualTestContext,
+    ) -> Option<(RangeInclusive<usize>, RangeInclusive<usize>)> {
+        view.read_with(cx, |this, _| {
+            this.selection
+                .as_ref()?
+                .display_bounds(this.engine.d2d_mapping())
+        })
+    }
+
     fn selection_cells(
         view: &Entity<TableView>,
         cx: &VisualTestContext,
@@ -425,32 +548,55 @@ mod tests {
         })
     }
 
+    #[test]
+    fn test_cell_selection_display_bounds() {
+        let mut d2d = DisplayToDataMapping::default();
+        d2d.mapping = Arc::new(HashMap::from([
+            (DisplayRow(0), DataRow(5)),
+            (DisplayRow(1), DataRow(2)),
+            (DisplayRow(2), DataRow(8)),
+        ]));
+
+        let selection = CellSelection::new(
+            DataCellId::new(DataRow(5), AnyColumn(1)),
+            DataCellId::new(DataRow(8), AnyColumn(3)),
+        );
+
+        assert_eq!(selection.display_bounds(&d2d), Some((0..=2, 1..=3)));
+    }
+
     #[gpui::test]
-    fn test_compute_move_directions(cx: &mut TestAppContext) {
+    fn test_compute_move_directions_and_edges(cx: &mut TestAppContext) {
         let (view, cx) = setup_test_view(cx, 10, 5);
 
-        use NavigationDirection as Nav;
-        view.read_with(cx, |this, _| {
-            assert_eq!(this.compute_move((0, 0), Nav::Down), (1, 0));
-            assert_eq!(this.compute_move((0, 0), Nav::Right), (0, 1));
-            assert_eq!(this.compute_move((0, 0), Nav::Up), (0, 0));
-            assert_eq!(this.compute_move((0, 0), Nav::Left), (0, 0));
-            assert_eq!(this.compute_move((9, 4), Nav::Down), (9, 4));
-            assert_eq!(this.compute_move((9, 4), Nav::Right), (9, 4));
+        view.read_with(cx, |this, cx| {
+            use MoveUnit as U;
+            use NavigationDirection as N;
+            assert_eq!(this.compute_move((0, 0), N::Down, U::Cell, cx), (1, 0));
+            assert_eq!(this.compute_move((0, 0), N::Right, U::Cell, cx), (0, 1));
+            assert_eq!(this.compute_move((0, 0), N::Up, U::Cell, cx), (0, 0));
+            assert_eq!(this.compute_move((0, 0), N::Left, U::Cell, cx), (0, 0));
+            assert_eq!(this.compute_move((9, 4), N::Down, U::Cell, cx), (9, 4));
+            assert_eq!(this.compute_move((9, 4), N::Right, U::Cell, cx), (9, 4));
+            assert_eq!(this.compute_move((3, 2), N::Up, U::Edge, cx), (0, 2));
+            assert_eq!(this.compute_move((3, 2), N::Down, U::Edge, cx), (9, 2));
+            assert_eq!(this.compute_move((3, 2), N::Left, U::Edge, cx), (3, 0));
+            assert_eq!(this.compute_move((3, 2), N::Right, U::Edge, cx), (3, 4));
         });
     }
 
     #[gpui::test]
-    fn test_move_focused_cell_action(cx: &mut TestAppContext) {
+    fn test_navigation_and_selection_actions(cx: &mut TestAppContext) {
         let (view, cx) = setup_test_view(cx, 10, 5);
+
         let cell = |row, column| DataCellId::new(DataRow(row), AnyColumn(column));
+        let move_focus = |direction, unit| MoveFocusedCell { direction, unit };
+        let extend = |direction, unit| ExtendSelection { direction, unit };
 
         // 1. First move initializes focus at (0, 0)
         dispatch(
             &view,
-            &MoveFocusedCell {
-                direction: NavigationDirection::Down,
-            },
+            &move_focus(NavigationDirection::Down, MoveUnit::Cell),
             cx,
         );
         assert_eq!(selection_cells(&view, cx), Some((cell(0, 0), cell(0, 0))));
@@ -458,18 +604,41 @@ mod tests {
         // 2. Step Down and Right -> single cell focus at (1, 1)
         dispatch(
             &view,
-            &MoveFocusedCell {
-                direction: NavigationDirection::Down,
-            },
+            &move_focus(NavigationDirection::Down, MoveUnit::Cell),
             cx,
         );
         dispatch(
             &view,
-            &MoveFocusedCell {
-                direction: NavigationDirection::Right,
-            },
+            &move_focus(NavigationDirection::Right, MoveUnit::Cell),
             cx,
         );
         assert_eq!(selection_cells(&view, cx), Some((cell(1, 1), cell(1, 1))));
+
+        // 3. Extend selection Down and Right -> bounding box (1..=2, 1..=2)
+        dispatch(
+            &view,
+            &extend(NavigationDirection::Down, MoveUnit::Cell),
+            cx,
+        );
+        dispatch(
+            &view,
+            &extend(NavigationDirection::Right, MoveUnit::Cell),
+            cx,
+        );
+        assert_eq!(selection_cells(&view, cx), Some((cell(1, 1), cell(2, 2))));
+        assert_eq!(selection_bounds(&view, cx), Some((1..=2, 1..=2)));
+
+        // 4. Extend to bottom edge -> bounding box (1..=9, 1..=2)
+        dispatch(
+            &view,
+            &extend(NavigationDirection::Down, MoveUnit::Edge),
+            cx,
+        );
+        assert_eq!(selection_cells(&view, cx), Some((cell(1, 1), cell(9, 2))));
+        assert_eq!(selection_bounds(&view, cx), Some((1..=9, 1..=2)));
+
+        // 5. Clear selection
+        dispatch(&view, &ClearSelection, cx);
+        assert_eq!(selection_bounds(&view, cx), None);
     }
 }
