@@ -76,6 +76,37 @@ to show its numbers and prove it's correct.
   tool. The patches are in `target/zed-real-compare/patches/` of the
   comparison worktree. Each stage should be checked with it, because
   microbenchmark wins didn't predict real-Zed results.
+- **GPU statistics in the benchmark report** (not started; follow-up to
+  #66316). Since #66316 removed `GPUI_BENCH_NO_GPU`, every benchmark frame goes
+  through the headless GPU renderer, but only CPU instructions are measured.
+  Report these next to instructions, in the bench output and in
+  `script/gpui-bench-compare`:
+  - **Plumbing:** a bench-support-only method on `PlatformHeadlessRenderer`
+    that returns per-frame statistics. GPU results arrive asynchronously, from
+    command-buffer completion handlers or query readbacks, so the bench
+    context drains them after the measured loop, waits for the GPU outside
+    timing, and reports medians.
+  - **GPU time:** on Metal, the command buffer's `gpuStartTime` and
+    `gpuEndTime`, with per-pass times from `MTLCounterSampleBuffer` at stage
+    boundaries on Apple Silicon. On wgpu, `TIMESTAMP_QUERY` (and
+    `TIMESTAMP_QUERY_INSIDE_PASSES` per pass) where the adapter supports it.
+  - **Memory:** on Metal, `MTLDevice.currentAllocatedSize` plus
+    `allocatedSize` per resource (atlas textures, instance buffers, path
+    textures). On wgpu, `Device::generate_allocator_report()` where available,
+    plus our own accounting of the buffers and textures we create. Track peak
+    and growth, so buffer reallocations and atlas growth show up.
+  - **Bandwidth:** no portable API reports DRAM bandwidth. Measure the bytes
+    uploaded per frame exactly (instance and uniform writes, atlas uploads),
+    and estimate render-target traffic from overdraw: fragment invocations
+    (Metal's statistic counters, wgpu's `PIPELINE_STATISTICS_QUERY`) divided
+    by pixels. Hardware counters stay an opt-in profiling mode: `xctrace` with
+    Metal System Trace or GPU Counters on macOS, vendor tools on Linux.
+  - **Other cheap stats:** draw calls, pipeline switches and instances per
+    primitive kind; atlas uploads and occupancy; instance buffer size and
+    reallocations; vertex and fragment invocations.
+  - **Coordination:** this touches `metal_renderer.rs` and `wgpu_renderer.rs`,
+    which John's renderer stack also changes. Check his rebased stack first,
+    and keep the hooks in bench-support-only code.
 
 ## Stage 2: identity and layout (fresh path, no retention)
 
