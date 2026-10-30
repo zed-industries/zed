@@ -228,19 +228,14 @@ pub struct TaskListConfig {
     pub continuation: Arc<str>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, Default, JsonSchema, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LanguageMatcher {
     /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
     #[serde(default)]
-    pub path_suffixes: Vec<SharedString>,
+    pub path_suffixes: Vec<PathSuffix>,
     /// A regex pattern that determines whether the language should be assigned to a file or not.
-    #[serde(
-        default,
-        serialize_with = "serialize_regex",
-        deserialize_with = "deserialize_regex"
-    )]
-    #[schemars(schema_with = "regex_json_schema")]
-    pub first_line_pattern: Option<Regex>,
+    #[serde(default)]
+    pub first_line_pattern: Option<FirstLinePattern>,
     /// Alternative names for this language used in vim/emacs modelines.
     /// These are matched case-insensitively against the `mode` (emacs) or
     /// `filetype`/`ft` (vim) specified in the modeline.
@@ -248,34 +243,180 @@ pub struct LanguageMatcher {
     pub modeline_aliases: Vec<SharedString>,
 }
 
-impl Ord for LanguageMatcher {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.path_suffixes
-            .cmp(&other.path_suffixes)
-            .then_with(|| {
-                self.first_line_pattern
-                    .as_ref()
-                    .map(Regex::as_str)
-                    .cmp(&other.first_line_pattern.as_ref().map(Regex::as_str))
-            })
-            .then_with(|| self.modeline_aliases.cmp(&other.modeline_aliases))
+/// A literal path suffix, such as `rs` or `Cargo.lock`, that associates files with a language.
+///
+/// A path matches the suffix if the file's extension, file name, or full path
+/// is equal to the suffix or ends with `.` followed by the suffix.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PathSuffix {
+    suffix: SharedString,
+    /// `suffix` escaped into a glob pattern matching every path that ends with it.
+    /// Computed once here so that rebuilding the language detection index does not
+    /// need to re-escape every registered suffix.
+    glob_pattern: String,
+}
+
+impl PathSuffix {
+    pub fn new(suffix: impl Into<SharedString>) -> Self {
+        let suffix = suffix.into();
+        let mut glob_pattern = String::with_capacity(suffix.len() + 1);
+        glob_pattern.push('*');
+        for character in suffix.chars() {
+            // Paths are matched with `/` separators on Windows, too.
+            let character = if cfg!(windows) && character == '\\' {
+                '/'
+            } else {
+                character
+            };
+            if matches!(character, '\\' | '*' | '?' | '[' | ']' | '{' | '}') {
+                glob_pattern.push('\\');
+            }
+            glob_pattern.push(character);
+        }
+        Self {
+            suffix,
+            glob_pattern,
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.suffix
+    }
+
+    pub fn as_shared_string(&self) -> &SharedString {
+        &self.suffix
+    }
+
+    /// Builds a glob that matches every path ending with this suffix.
+    ///
+    /// The glob does not check that the suffix starts at a `.` boundary, so matches
+    /// still need to be verified against the literal suffix.
+    pub fn glob(&self) -> Result<globset::Glob, globset::Error> {
+        globset::GlobBuilder::new(&self.glob_pattern)
+            .backslash_escape(true)
+            .literal_separator(false)
+            .build()
     }
 }
 
-impl PartialOrd for LanguageMatcher {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
+impl std::ops::Deref for PathSuffix {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.suffix
     }
 }
 
-impl Eq for LanguageMatcher {}
+impl AsRef<str> for PathSuffix {
+    fn as_ref(&self) -> &str {
+        &self.suffix
+    }
+}
 
-impl PartialEq for LanguageMatcher {
-    fn eq(&self, other: &Self) -> bool {
-        self.path_suffixes == other.path_suffixes
-            && self.first_line_pattern.as_ref().map(Regex::as_str)
-                == other.first_line_pattern.as_ref().map(Regex::as_str)
-            && self.modeline_aliases == other.modeline_aliases
+impl std::fmt::Display for PathSuffix {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.suffix)
+    }
+}
+
+impl PartialEq<str> for PathSuffix {
+    fn eq(&self, other: &str) -> bool {
+        self.suffix == other
+    }
+}
+
+impl PartialEq<&str> for PathSuffix {
+    fn eq(&self, other: &&str) -> bool {
+        self.suffix == *other
+    }
+}
+
+impl PartialEq<String> for PathSuffix {
+    fn eq(&self, other: &String) -> bool {
+        self.suffix == *other
+    }
+}
+
+impl From<&str> for PathSuffix {
+    fn from(suffix: &str) -> Self {
+        Self::new(suffix)
+    }
+}
+
+impl From<String> for PathSuffix {
+    fn from(suffix: String) -> Self {
+        Self::new(suffix)
+    }
+}
+
+impl From<SharedString> for PathSuffix {
+    fn from(suffix: SharedString) -> Self {
+        Self::new(suffix)
+    }
+}
+
+impl From<PathSuffix> for SharedString {
+    fn from(path_suffix: PathSuffix) -> Self {
+        path_suffix.suffix
+    }
+}
+
+impl Serialize for PathSuffix {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.suffix)
+    }
+}
+
+impl<'de> Deserialize<'de> for PathSuffix {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let path_suffix = Self::new(SharedString::deserialize(deserializer)?);
+        path_suffix.glob().map_err(|error| {
+            de::Error::custom(format!(
+                "invalid path suffix {:?}: {error}",
+                path_suffix.suffix
+            ))
+        })?;
+        Ok(path_suffix)
+    }
+}
+
+impl JsonSchema for PathSuffix {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        String::schema_name()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> schemars::Schema {
+        String::json_schema(generator)
+    }
+}
+
+/// The source of a regex that is known to compile.
+///
+/// Only the source is stored, as patterns of all languages are compiled together
+/// into a single [`regex::RegexSet`] for language detection.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub struct FirstLinePattern(String);
+
+impl FirstLinePattern {
+    pub fn new(source: impl Into<String>) -> Result<Self, regex::Error> {
+        let source = source.into();
+        Regex::new(&source)?;
+        Ok(Self(source))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for FirstLinePattern {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::new(String::deserialize(deserializer)?).map_err(de::Error::custom)
     }
 }
 
