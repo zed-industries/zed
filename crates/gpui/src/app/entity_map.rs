@@ -214,8 +214,7 @@ impl EntityMap {
         );
     }
 
-    /// Clears the accessed entities and ends any scope left open, for example
-    /// by a draw that panicked.
+    /// Clears the accessed entities and ends any scope left open.
     pub fn clear_accessed(&mut self) {
         let accessed_entities = self.accessed_entities.get_mut();
         accessed_entities.scopes.clear();
