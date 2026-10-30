@@ -47,6 +47,11 @@ name = "randomized_element_tree"
 harness = false
 required-features = ["bench-support"]
 
+[[bench]]
+name = "bounds_ordering"
+harness = false
+required-features = ["bench-support"]
+
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true

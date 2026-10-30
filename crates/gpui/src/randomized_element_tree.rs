@@ -617,6 +617,33 @@ impl RandomizedElementTree {
         applied.mutation
     }
 
+    /// Alternates the first leaf in depth-first order between two colors without changing
+    /// the tree's shape, notifying its nearest persistent entity boundary.
+    ///
+    /// Recoloring a randomly sampled descendant instead changes which subtree re-renders
+    /// from frame to frame, so short and long benchmark samples would measure different
+    /// workloads. Returns the recolored element's ID, or `None` if the tree is empty.
+    pub fn recolor_first_leaf(&mut self, cx: &mut Context<Self>) -> Option<u64> {
+        let (element_id, owner) = {
+            let mut snapshot = self.snapshot.borrow_mut();
+            let path = node_paths(&snapshot.children).into_iter().find(|path| {
+                node_at_path(&snapshot.children, path).is_some_and(|node| node.children.is_empty())
+            })?;
+            let owner = nearest_entity_id(&snapshot.children, &path);
+            let node = node_at_path_mut(&mut snapshot.children, &path)?;
+            let first = crate::hsla(0., 1., 0.5, 1.);
+            let second = crate::hsla(0.5, 1., 0.5, 1.);
+            node.style.background = if node.style.background == first {
+                second
+            } else {
+                first
+            };
+            (node.id, owner)
+        };
+        self.notify_owner(owner, cx);
+        Some(element_id)
+    }
+
     /// Generates and inserts an element below a seeded random parent.
     ///
     /// This does not synchronize or notify persistent child entities. Entity-aware callers should

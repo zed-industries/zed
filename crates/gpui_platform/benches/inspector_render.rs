@@ -147,6 +147,8 @@ fn measure_closed_inspector<V: Render + 'static>(
         window
     });
     cx.run_until_idle();
+    window.update(|window, _| window.refresh());
+    cx.run_until_idle();
     let other_frames_before = other_window.as_mut().map(|window| {
         window.update(|window, _| {
             window
@@ -173,6 +175,12 @@ fn measure_closed_inspector<V: Render + 'static>(
     });
     let frames_after = window.update(|window, cx| {
         assert!(!window.is_inspector_picking(cx));
+        if std::env::var("GPUI_BENCH_SCENE_STATS").as_deref() == Ok("1") {
+            eprintln!(
+                "scene stats inspector/{input}: batches={}",
+                window.rendered_scene().batches().count(),
+            );
+        }
         window.frame_duration_snapshot()
     });
 
