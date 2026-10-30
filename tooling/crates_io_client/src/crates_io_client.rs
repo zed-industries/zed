@@ -19,6 +19,16 @@ pub type Result<T, E = CratesIoError> = std::result::Result<T, E>;
 #[async_trait]
 pub trait CratesIoClient: Send + Sync {
     async fn get_site_metadata(&self) -> Result<SiteMetadata>;
+
+    /// Lists every crate matching the query, requesting one page of 100 crates
+    /// per second.
+    async fn list_crates(&self, query: &CrateListQuery) -> Result<Vec<Crate>>;
+
+    async fn get_crate(&self, name: &CrateName) -> Result<CrateDetails>;
+
+    /// Requires a token with the `trusted-publishing` endpoint scope that
+    /// belongs to an owner of the crate.
+    async fn update_crate(&self, name: &CrateName, update: &CrateUpdate) -> Result<Crate>;
 }
 
 #[derive(Debug, thiserror::Error)]
