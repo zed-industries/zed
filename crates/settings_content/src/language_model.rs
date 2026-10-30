@@ -122,6 +122,11 @@ pub struct AmazonBedrockSettingsContent {
     pub mantle_available_models: Option<Vec<BedrockMantleAvailableModel>>,
     pub custom_headers: Option<HashMap<String, String>>,
     pub endpoint_url: Option<String>,
+    /// Base URL for the `bedrock-mantle` OpenAI-compatible endpoint. Independent
+    /// of `endpoint_url`, which only applies to the Converse API: the two are
+    /// separate services with different request shapes, so a proxy that exposes
+    /// one does not necessarily expose the other.
+    pub mantle_endpoint_url: Option<String>,
     pub region: Option<String>,
     pub profile: Option<String>,
     pub authentication_method: Option<BedrockAuthMethodContent>,
