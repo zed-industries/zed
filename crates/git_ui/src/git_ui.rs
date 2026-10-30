@@ -426,15 +426,7 @@ fn file_diff_entry(
                         DiffBase::Merge { .. } => None,
                     }
                 })
-                .unwrap_or_else(|| {
-                    workspace
-                        .panel::<git_panel::GitPanel>(cx)
-                        .map_or(DiffBase::Head, |panel| {
-                            panel
-                                .read(cx)
-                                .diff_base_for_repo_path(repository, &repo_path, cx)
-                        })
-                });
+                .unwrap_or(DiffBase::Head);
             Some((
                 GitStatusEntry {
                     repo_path,
