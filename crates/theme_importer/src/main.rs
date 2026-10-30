@@ -17,7 +17,7 @@ use theme::{Appearance, AppearanceContent};
 use crate::vscode::VsCodeTheme;
 use crate::vscode::VsCodeThemeConverter;
 
-const ZED_THEME_SCHEMA_URL: &str = "https://zed.dev/schema/themes/v0.2.0.json";
+const ZED_THEME_SCHEMA_URL: &str = "https://zed.dev/schema/themes/v0.2.1.json";
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
