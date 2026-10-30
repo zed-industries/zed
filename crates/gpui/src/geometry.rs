@@ -2803,7 +2803,8 @@ impl Pixels {
         self.0
     }
 
-    #[expect(missing_docs)]
+    /// Converts to `i32`, truncating toward zero.
+    /// Out-of-range values saturate, and NaN becomes zero.
     pub fn to_i32(self) -> i32 {
         self.0 as i32
     }
