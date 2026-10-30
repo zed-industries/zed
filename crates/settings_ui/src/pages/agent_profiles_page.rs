@@ -14,6 +14,8 @@ use gpui::{
     Window, prelude::*,
 };
 use language_model::{LanguageModel, LanguageModelProviderId, LanguageModelRegistry};
+use project::external_agent_models::{ExternalAgentModelsState, external_agent_model_catalog};
+use project::{AgentId, Project};
 use settings::{
     AgentProfileContent, LanguageModelProviderSetting, LanguageModelSelection, Settings as _,
     update_settings_file,
@@ -22,7 +24,7 @@ use ui::{Divider, SwitchField, ToggleState, prelude::*};
 use util::ResultExt as _;
 
 use crate::SettingsWindow;
-use crate::components::{SettingsSectionHeader, render_language_model_picker};
+use crate::components::{PickerModel, SettingsSectionHeader, render_language_model_picker};
 
 pub(crate) const AGENT_PROFILES_JSON_PATH: &str = "agent.profiles";
 #[cfg(test)]
@@ -447,8 +449,42 @@ fn find_selected_model(selection: &LanguageModelSelection, cx: &App) -> Option<L
         .find(|model| model.id().0 == selection.model.as_str())
 }
 
+/// The trigger label for a stored external-agent model selection, when the
+/// provider string is an `AgentId` of an installed agent on the active
+/// project: `<agent display name>/<model name>` once the catalog has the
+/// model `Ready`, `<agent display name>/<model id>` before then. Returns
+/// `None` when the provider isn't an installed agent — the caller falls
+/// back to `<provider>/<model>`. Reads the catalog through
+/// `external_agent_model_catalog` only: rendering must never trigger a probe.
+fn external_default_model_label(
+    project: &Entity<Project>,
+    selection: &LanguageModelSelection,
+    cx: &App,
+) -> Option<SharedString> {
+    let agent_id = AgentId::new(selection.provider.0.clone());
+    let store = project.read(cx).agent_server_store().clone();
+    let store = store.read(cx);
+    if !store.external_agents().any(|id| id == &agent_id) {
+        return None;
+    }
+    let agent_name = store
+        .agent_display_name(&agent_id)
+        .unwrap_or_else(|| agent_id.0.clone());
+    let model_name = external_agent_model_catalog(project, cx).and_then(|catalog| {
+        match catalog.read(cx).state(&agent_id) {
+            Some(ExternalAgentModelsState::Ready(models)) => models
+                .iter()
+                .find(|model| model.id.as_str() == selection.model)
+                .map(|model| model.name.clone()),
+            _ => None,
+        }
+    });
+    let model_part = model_name.unwrap_or_else(|| selection.model.clone().into());
+    Some(format!("{agent_name}/{model_part}").into())
+}
+
 fn render_default_model_section(
-    _settings_window: &SettingsWindow,
+    settings_window: &SettingsWindow,
     profile_id: &AgentProfileId,
     profile: Option<&AgentProfileSettings>,
     controls_disabled: bool,
@@ -459,9 +495,13 @@ fn render_default_model_section(
     let current_model = selection
         .as_ref()
         .and_then(|selection| find_selected_model(selection, cx));
+    let project = settings_window.active_project(cx);
     let trigger_label: SharedString = match (&selection, &current_model) {
         (Some(_), Some(model)) => model.name().0,
-        (Some(selection), None) => format!("{}/{}", selection.provider.0, selection.model).into(),
+        (Some(selection), None) => project
+            .as_ref()
+            .and_then(|project| external_default_model_label(project, selection, cx))
+            .unwrap_or_else(|| format!("{}/{}", selection.provider.0, selection.model).into()),
         (None, _) => "Select a model…".into(),
     };
 
@@ -469,16 +509,36 @@ fn render_default_model_section(
     let select_profile_id = profile_id.clone();
     let model_picker = render_language_model_picker(
         trigger_label,
-        current_model,
+        selection,
+        project,
         controls_disabled,
-        move |model, cx| {
-            settings_window
-                .update(cx, |this, cx| {
-                    mark_default_model_configured(this, &select_profile_id);
-                    let fs = <dyn Fs>::global(cx);
-                    set_profile_default_model(fs, select_profile_id.clone(), model.clone(), cx);
-                })
-                .log_err();
+        move |model, cx| match model {
+            PickerModel::Zed(model) => {
+                settings_window
+                    .update(cx, |this, cx| {
+                        mark_default_model_configured(this, &select_profile_id);
+                        let fs = <dyn Fs>::global(cx);
+                        set_profile_default_model(fs, select_profile_id.clone(), model.clone(), cx);
+                    })
+                    .log_err();
+            }
+            PickerModel::External {
+                agent_id, model, ..
+            } => {
+                settings_window
+                    .update(cx, |this, cx| {
+                        mark_default_model_configured(this, &select_profile_id);
+                        let fs = <dyn Fs>::global(cx);
+                        set_profile_external_default_model(
+                            fs,
+                            select_profile_id.clone(),
+                            agent_id.clone(),
+                            model.id.clone(),
+                            cx,
+                        );
+                    })
+                    .log_err();
+            }
         },
         window,
         cx,
@@ -1063,6 +1123,29 @@ fn set_profile_default_model(
     });
 }
 
+/// Writes an external agent's model as the profile default (AD-11): the
+/// `provider` field carries the `AgentId`, `model` the agent's value id.
+/// No provider is registered under that id, so the native agent's lookup
+/// silently skips it — same materialize/telemetry path as a Zed model.
+fn set_profile_external_default_model(
+    fs: Arc<dyn Fs>,
+    profile_id: AgentProfileId,
+    agent_id: AgentId,
+    model_id: SharedString,
+    cx: &App,
+) {
+    let selection = LanguageModelSelection {
+        provider: LanguageModelProviderSetting(agent_id.0.to_string()),
+        model: model_id.to_string(),
+        enable_thinking: false,
+        effort: None,
+        speed: None,
+    };
+    write_profile(fs, profile_id, cx, move |profile| {
+        profile.default_model = Some(selection);
+    });
+}
+
 fn clear_profile_default_model(fs: Arc<dyn Fs>, profile_id: AgentProfileId, cx: &App) {
     write_profile(fs, profile_id, cx, move |profile| {
         profile.default_model = None;
@@ -1145,12 +1228,21 @@ fn mark_default_model_configured(
 mod tests {
     use super::*;
 
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use feature_flags::FeatureFlagAppExt as _;
     use fs::FakeFs;
-    use gpui::{TestAppContext, UpdateGlobal as _};
+    use gpui::{AsyncApp, TestAppContext, UpdateGlobal as _};
     use language_model::{LanguageModelId, LanguageModelName, LanguageModelProviderName};
     use project::DisableAiSettings;
+    use project::ExternalAgentSource;
+    use project::agent_server_store::{
+        AgentServerCommand, ExternalAgentEntry, ExternalAgentServer,
+    };
     use project::context_server_store::ContextServerStore;
+    use project::external_agent_models::{
+        ExternalAgentModel, refresh_external_agent_models, set_external_agent_model_source,
+    };
     use project::worktree_store::{WorktreeIdCounter, WorktreeStore};
     use settings::SettingsStore;
 
@@ -1799,6 +1891,151 @@ mod tests {
         settings_window.update_in(cx, |this, _window, _cx| {
             let state = this.agent_profile_page.as_ref().expect("page state");
             assert!(state.creation_failed);
+        });
+    }
+
+    /// A `get_command` stub for directly inserted store entries — the label
+    /// path only ever reads ids and display names, so the server is never run.
+    struct StubAgentServer;
+
+    impl ExternalAgentServer for StubAgentServer {
+        fn get_command(
+            &mut self,
+            _extra_args: Vec<String>,
+            _extra_env: collections::HashMap<String, String>,
+            _cx: &mut AsyncApp,
+        ) -> Task<anyhow::Result<AgentServerCommand>> {
+            Task::ready(Err(anyhow::anyhow!("stub server is never launched")))
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+    }
+
+    async fn init_external_model_page_test(
+        cx: &mut TestAppContext,
+        agent_id: &str,
+        display_name: &str,
+    ) -> (Arc<FakeFs>, Entity<Project>) {
+        let fs = init_agent_profile_test(cx, "{}").await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let store = project.read_with(cx, |project, _cx| project.agent_server_store().clone());
+        store.update(cx, |store, _cx| {
+            store.external_agents.insert(
+                AgentId::new(agent_id),
+                ExternalAgentEntry::new(
+                    Box::new(StubAgentServer),
+                    ExternalAgentSource::Custom,
+                    None,
+                    Some(display_name.into()),
+                ),
+            );
+        });
+        (fs, project)
+    }
+
+    fn external_selection(provider: &str, model: &str) -> LanguageModelSelection {
+        LanguageModelSelection {
+            provider: LanguageModelProviderSetting(provider.to_string()),
+            model: model.to_string(),
+            enable_thinking: false,
+            effort: None,
+            speed: None,
+        }
+    }
+
+    #[gpui::test]
+    async fn external_default_model_writes_agent_id_provider(cx: &mut TestAppContext) {
+        let fs = init_agent_profile_test(cx, "{}").await;
+
+        cx.update(|cx| {
+            set_profile_external_default_model(
+                fs.clone(),
+                profile_id("write"),
+                AgentId::new("claude-acp"),
+                "claude-opus-4-1".into(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let json = settings_file_json(&fs).await;
+        let profile = &json["agent"]["profiles"]["write"];
+        // The built-in profile is materialized by the write, as for Zed models.
+        assert_eq!(profile["name"], "Write");
+        // `effort`/`speed` stay absent — the agent id goes into `provider`.
+        assert_eq!(
+            profile["default_model"],
+            serde_json::json!({
+                "provider": "claude-acp",
+                "model": "claude-opus-4-1",
+                "enable_thinking": false,
+            })
+        );
+    }
+
+    #[gpui::test]
+    async fn external_default_model_label_reads_catalog_without_probing(cx: &mut TestAppContext) {
+        let (_fs, project) = init_external_model_page_test(cx, "ext-agent", "External Agent").await;
+
+        let probe_calls = Arc::new(AtomicUsize::new(0));
+        cx.update(|cx| {
+            set_external_agent_model_source(
+                {
+                    let probe_calls = probe_calls.clone();
+                    move |_project, _catalog, _cx| {
+                        probe_calls.fetch_add(1, Ordering::SeqCst);
+                    }
+                },
+                cx,
+            );
+        });
+
+        let selection = external_selection("ext-agent", "m1");
+
+        // No catalog exists yet: the label falls back to the model id, and
+        // producing it must not touch the model source.
+        cx.update(|cx| {
+            assert_eq!(
+                external_default_model_label(&project, &selection, cx).as_deref(),
+                Some("External Agent/m1"),
+            );
+        });
+        assert_eq!(probe_calls.load(Ordering::SeqCst), 0);
+
+        // A probe-created catalog with the model Ready switches the label to
+        // the model's display name; the label itself still does not probe.
+        let catalog = cx
+            .update(|cx| refresh_external_agent_models(&project, cx))
+            .expect("catalog");
+        assert_eq!(probe_calls.load(Ordering::SeqCst), 1);
+        cx.update(|cx| {
+            catalog.update(cx, |catalog, cx| {
+                catalog.set_state(
+                    AgentId::new("ext-agent"),
+                    ExternalAgentModelsState::Ready(vec![ExternalAgentModel {
+                        id: "m1".into(),
+                        name: "Model One".into(),
+                        group: None,
+                    }]),
+                    cx,
+                );
+            });
+            assert_eq!(
+                external_default_model_label(&project, &selection, cx).as_deref(),
+                Some("External Agent/Model One"),
+            );
+        });
+        assert_eq!(probe_calls.load(Ordering::SeqCst), 1);
+
+        // A provider that is not an installed agent returns `None`, so the
+        // trigger renders the plain `<provider>/<model>` fallback.
+        let not_an_agent = external_selection("not-an-agent", "m1");
+        cx.update(|cx| {
+            assert!(external_default_model_label(&project, &not_an_agent, cx).is_none());
         });
     }
 }

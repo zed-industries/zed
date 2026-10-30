@@ -15,11 +15,14 @@ unchanged.
   `sync_agent_profile_page_state`, write helpers (`write_profile`,
   `set_builtin_tool_enabled`, `set_context_server_tool_enabled`,
   `set_enable_all_context_servers`, `set_profile_default_model`,
-  `clear_profile_default_model`, `delete_agent_profile`), telemetry guards
+  `set_profile_external_default_model`, `clear_profile_default_model`,
+  `delete_agent_profile`), `external_default_model_label`, telemetry guards
   (`mark_*_configured`).
 - `crates/settings_ui/src/components/language_model_picker.rs` —
-  `render_language_model_picker` and `LanguageModelPickerDelegate` (sources
-  mirror `agent_ui`'s `LanguageModelSelector::all_models`/`update_matches`).
+  `render_language_model_picker`, `PickerModel`, and
+  `LanguageModelPickerDelegate` (Zed sources mirror `agent_ui`'s
+  `LanguageModelSelector::all_models`/`update_matches`; the external section
+  reads `project::external_agent_models`).
 - `crates/settings_ui/src/page_data.rs` — `Agent Profiles` `SubPageLink` after
   `Tool Permissions` in `agent_configuration_section`.
 - `crates/settings_ui/src/settings_ui.rs` — `agent_profile_page` /
@@ -70,13 +73,41 @@ unchanged.
   provider-unsupported tools and this page shows them.
 - The built-in one-line descriptions duplicate `ProfileSelector::
   documentation` to keep `settings_ui` independent of `agent_ui`.
+- D7: the Default Model picker also lists models of installed external
+  agents (after the Zed models, agents sorted by display name
+  case-insensitively). `render_language_model_picker` takes a
+  `current_selection: Option<LanguageModelSelection>` plus the active
+  `project: Option<Entity<Project>>`, and its callback is
+  `Fn(PickerModel, &mut App)` — `PickerModel::Zed(LanguageModel)` keeps the
+  old write path; `PickerModel::External { agent_id, agent_name, model }`
+  writes `provider = <AgentId>`, `model = <value id>`,
+  `enable_thinking = false` with no `effort`/`speed` (AD-11). No provider is
+  registered under an `AgentId`, so native `resolve_model_from_selection`
+  skips the value and the native thread keeps its model.
+- Agents whose `AgentId` collides with a registered provider id (e.g.
+  `zed.dev`, `anthropic`) are not listed; `Loading`, `Not signed in`
+  (`AuthRequired`) and `Couldn't load models` (`Failed`) render as
+  non-selectable status rows, and `Ready(vec![])` renders nothing.
+- The catalog is refreshed only when the picker opens
+  (`refresh_external_agent_models` inside the delegate); the trigger label
+  and page renders read `external_agent_model_catalog` only and never
+  probe. Reopening the picker re-highlights the row matching
+  `current_selection` even when the model arrives after the picker is
+  open.
+- `ZED_AGENT_ONLY` is kept deliberately: external `default_model` values
+  are persisted but nothing applies them to external sessions yet, so the
+  note stays accurate (DESIGN §5).
 
 **Verification.**
 
-- `cargo test -p settings_ui` — 86 tests incl. 10 new in
-  `pages::agent_profiles_page::tests` (create/fork/delete JSON shape,
-  materialization, MCP explicit `false`, model select+clear, name validation,
-  external-delete pop, awaiting-creation stability).
+- `cargo test -p settings_ui` — 100 tests: the original
+  `pages::agent_profiles_page::tests` plus 7 new picker tests in
+  `components::language_model_picker::tests` (display-name ordering,
+  `Ready(vec![])`/no-state rows, provider-id collision, non-selectable
+  status rows + no dismiss on confirm, query preserved across catalog
+  changes, late-arriving selection highlight, no-source/no-project
+  Zed-only) and 2 new page tests (external JSON write shape,
+  trigger-label catalog read without probing).
 - `./script/clippy` — clean.
 - Prettier check on `docs/src/ai/agent-profiles.md` — clean.
 
@@ -132,11 +163,11 @@ sessions or short-lived probe sessions.
   list supports deletion). **Approved limitation:** when an agent supports
   neither, the probe session may remain visible in that agent's
   history/import listings until the agent removes it.
-- **Approved limitation:** cataloged external models are not yet applied
-  to external sessions. Prompt 2b will persist the selection through the
-  existing `LanguageModelSelection` `default_model` profile field with
-  `provider = <AgentId>`; nothing reads that field for external agents
-  today.
+- **Approved limitation:** cataloged external models are not applied to
+  external sessions. The Agent Profiles settings page persists the
+  selection through the existing `LanguageModelSelection` `default_model`
+  profile field with `provider = <AgentId>`; nothing reads that field for
+  external agents yet.
 - States `Ready`/`AuthRequired`/`Loading` are not reprobed on subsequent
   refreshes; `Failed` is retried.
 
