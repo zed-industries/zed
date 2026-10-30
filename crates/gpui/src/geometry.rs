@@ -2803,6 +2803,11 @@ impl Pixels {
         self.0
     }
 
+    #[expect(missing_docs)]
+    pub fn to_i32(self) -> i32 {
+        self.0 as i32
+    }
+
     /// Floors the `Pixels` value to the nearest whole number.
     ///
     /// # Returns
@@ -2945,12 +2950,6 @@ impl From<Pixels> for u32 {
 impl From<&Pixels> for u32 {
     fn from(pixels: &Pixels) -> Self {
         pixels.0 as u32
-    }
-}
-
-impl From<Pixels> for i32 {
-    fn from(pixels: Pixels) -> Self {
-        pixels.0 as i32
     }
 }
 
@@ -3989,6 +3988,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_pixels_to_i32() {
+        for (value, expected) in [
+            (12.9, 12),
+            (-12.9, -12),
+            (f32::MAX, i32::MAX),
+            (f32::MIN, i32::MIN),
+            (f32::INFINITY, i32::MAX),
+            (f32::NEG_INFINITY, i32::MIN),
+            (f32::NAN, 0),
+        ] {
+            assert_eq!(px(value).to_i32(), expected);
+        }
+    }
 
     #[test]
     fn test_bounds_intersects() {

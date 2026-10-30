@@ -2319,7 +2319,8 @@ fn add_rounded_rect(
     }
 
     let clamp_radius = |radius: Pixels| {
-        i32::from(radius)
+        radius
+            .to_i32()
             .max(0)
             .min(area.size.width / 2)
             .min(area.size.height / 2)
@@ -2448,7 +2449,7 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         state.inset(),
         state.tiling,
     )
-    .map(|value| i32::from(value))
+    .map(|value| value.to_i32())
     .map_size(|value| value.max(0));
 
     let region = state
