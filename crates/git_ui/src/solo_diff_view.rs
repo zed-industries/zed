@@ -319,6 +319,30 @@ impl SoloDiffView {
             && &self.diff_base == diff_base
     }
 
+    /// Returns the diff base this view shows for `repo_path` in `repository`,
+    /// if it is displaying that file.
+    pub fn diff_base_for_repo_path(
+        &self,
+        repository: &Entity<Repository>,
+        repo_path: &RepoPath,
+        cx: &App,
+    ) -> Option<DiffBase> {
+        if self.repository_id == repository.read(cx).id && &self.repo_path == repo_path {
+            Some(self.diff_base.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Returns the project path of the buffer's file, if it has one. Unlike
+    /// `Buffer::file` + `File::as_local`, this also works for remote files.
+    fn buffer_project_path(buffer: &Entity<Buffer>, cx: &App) -> Option<ProjectPath> {
+        buffer.read(cx).file().map(|file| ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        })
+    }
+
     fn button_states(&self, cx: &App) -> SoloDiffButtonStates {
         let editor = self.editor.read(cx).rhs_editor().read(cx);
         let multibuffer = editor.buffer().read(cx);
@@ -522,7 +546,12 @@ impl Item for SoloDiffView {
     }
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
-        self.editor.read(cx).active_project_path(cx)
+        // The index buffer's historic file is excluded from editor project paths,
+        // so staged views need the worktree buffer's path instead.
+        self.editor
+            .read(cx)
+            .active_project_path(cx)
+            .or_else(|| Self::buffer_project_path(&self.buffer, cx))
     }
 
     fn set_nav_history(
@@ -966,6 +995,40 @@ mod tests {
             );
             assert!(view.editor.read(cx).rhs_editor().read(cx).read_only(cx));
             assert!(!view.button_states(cx).restore);
+        });
+
+        let project_path = project.read_with(cx, |project, cx| {
+            project
+                .find_project_path(path!("/project/partial.rs"), cx)
+                .expect("partial.rs should have a project path")
+        });
+        staged_view.read_with(cx, |view, cx| {
+            assert!(view.editor.read(cx).active_project_path(cx).is_none());
+            assert_eq!(view.active_project_path(cx), Some(project_path.clone()));
+        });
+
+        let buffer = staged_view.read_with(cx, |view, _| view.buffer.clone());
+        buffer.update(cx, |buffer, cx| {
+            let mut file = project::File::from_dyn(buffer.file())
+                .expect("worktree buffer should have a project file")
+                .clone();
+            file.is_local = false;
+            buffer.file_updated(Arc::new(file), cx);
+        });
+
+        staged_view.read_with(cx, |view, cx| {
+            assert!(
+                view.buffer
+                    .read(cx)
+                    .file()
+                    .expect("file should exist")
+                    .as_local()
+                    .is_none()
+            );
+            assert_eq!(view.active_project_path(cx), Some(project_path));
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(crate::file_diff_entry(workspace, cx).is_some());
         });
     }
 }
