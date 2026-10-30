@@ -5,7 +5,7 @@ use acp_thread::{
     PermissionPattern, PermissionRequest, PermissionRequestId, ProtocolErrorInfo, RetryStatus,
     SelectedPermissionOutcome, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
 };
-use acp_thread::{AgentConnection, Plan};
+use acp_thread::{AgentConnection, Plan, PlanContent};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
 use agent::{NativeAgentServer, NoModelConfiguredError, ThreadStore};
 use agent_client_protocol::schema::v2 as acp_v2;
@@ -9588,7 +9588,7 @@ pub(crate) mod tests {
                 .read(cx)
                 .plan()
                 .expect("active plan")
-                .entries
+                .entries()
                 .first()
                 .expect("active plan entry")
                 .content
@@ -9624,7 +9624,7 @@ pub(crate) mod tests {
                 thread
                     .plan()
                     .expect("completed plan")
-                    .entries
+                    .entries()
                     .first()
                     .expect("completed plan entry")
                     .content,
@@ -9650,7 +9650,7 @@ pub(crate) mod tests {
             let entry = thread
                 .plan()
                 .expect("reopened plan")
-                .entries
+                .entries()
                 .first()
                 .expect("reopened plan entry");
             assert_eq!(entry.content, plan_content);
@@ -9699,7 +9699,12 @@ pub(crate) mod tests {
         cx.run_until_parked();
         active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
             assert_thread_list_item_count_matches_entries(view, cx);
-            assert!(view.thread.read(cx).plan().is_none_or(Plan::is_empty));
+            assert!(
+                view.thread
+                    .read(cx)
+                    .plan()
+                    .is_none_or(|plan| plan.is_empty(cx))
+            );
         });
         connection.end_turn(session_id, acp_v1::StopReason::EndTurn);
         cx.run_until_parked();
@@ -9730,7 +9735,7 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
         let markdown = thread.read_with(cx, |thread, _| {
-            thread.plan().expect("visible plan").entries[0]
+            thread.plan().expect("visible plan").entries()[0]
                 .content
                 .clone()
         });
@@ -9805,7 +9810,7 @@ pub(crate) mod tests {
             assert!(cx.debug_bounds(row).is_some(), "{row}");
             thread.read_with(cx, |thread, cx| {
                 assert_eq!(
-                    thread.plan().expect("visible plan").entries[0].content,
+                    thread.plan().expect("visible plan").entries()[0].content,
                     markdown
                 );
                 assert_eq!(markdown.read(cx).source(), "Unchanged task");
@@ -9835,7 +9840,13 @@ pub(crate) mod tests {
         assert!(cx.debug_bounds("plan-status-All Done").is_none());
         thread.update(cx, |thread, cx| {
             thread.upsert_plan_items(acp_v2::PlanItems::new("status-plan", vec![]), None, cx);
-            assert!(thread.plan().expect("empty selected plan").is_empty());
+            assert!(
+                thread
+                    .plan()
+                    .expect("empty selected plan")
+                    .entries()
+                    .is_empty()
+            );
             assert!(thread.entries().is_empty());
         });
         cx.run_until_parked();

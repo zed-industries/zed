@@ -3970,7 +3970,7 @@ impl ThreadView {
         let action_log = thread.action_log();
         let telemetry = ActionLogTelemetry::from(thread);
         let changed_buffers = action_log.read(cx).changed_buffers(cx).collect::<Vec<_>>();
-        let plan = thread.plan().filter(|plan| !plan.is_empty());
+        let plan = thread.plan().filter(|plan| !plan.is_empty(cx));
         let has_plan = plan.is_some();
         let queue_is_empty = !self.has_queued_messages();
 
@@ -4042,7 +4042,7 @@ impl ThreadView {
                     .when_some(plan, |this, plan| {
                         this.child(self.render_plan_summary(plan, window, cx))
                             .when(plan_expanded, |parent| {
-                                parent.child(self.render_plan_entries(plan, window, cx))
+                                parent.children(self.render_plan_body(plan, window, cx))
                             })
                     })
                     .when(has_plan && !changed_buffers.is_empty(), |this| {
@@ -4826,9 +4826,93 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let plan_expanded = self.plan_expanded;
+        let file_uri = match &plan.content {
+            PlanContent::File { uri } => Some(uri.clone()),
+            PlanContent::Items(_) | PlanContent::Markdown(_) => None,
+        };
+
+        let title = match &plan.content {
+            PlanContent::Items(_) => self.render_plan_items_title(plan, window, cx),
+            PlanContent::Markdown(markdown) => {
+                let heading = markdown_plan_heading(markdown.read(cx).source());
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_1()
+                    .child(
+                        Label::new("Plan")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .when_some(heading, |this, heading| {
+                        this.child(
+                            Label::new(heading.to_owned())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .truncate(),
+                        )
+                    })
+            }
+            PlanContent::File { uri } => h_flex()
+                .w_full()
+                .min_w_0()
+                .gap_1()
+                .child(
+                    Label::new("Plan")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    Label::new(plan_file_label(uri))
+                        .size(LabelSize::Small)
+                        .truncate(),
+                )
+                .child(
+                    Icon::new(IconName::ArrowUpRight)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                ),
+        };
+
+        h_flex()
+            .id("plan_summary")
+            .debug_selector(|| "plan_summary".into())
+            .p_1()
+            .w_full()
+            .gap_1()
+            .when(plan_expanded && file_uri.is_none(), |this| {
+                this.border_b_1().border_color(cx.theme().colors().border)
+            })
+            .when(file_uri.is_none(), |this| {
+                this.child(Disclosure::new("plan_disclosure", plan_expanded))
+            })
+            .child(title.flex_1())
+            .child(
+                IconButton::new("dismiss-plan", IconName::Close)
+                    .icon_size(IconSize::XSmall)
+                    .shape(ui::IconButtonShape::Square)
+                    .tooltip(Tooltip::text("Clear Plan"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.thread.update(cx, |thread, cx| thread.clear_plan(cx));
+                        cx.stop_propagation();
+                    })),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if let Some(uri) = &file_uri {
+                    open_link(uri.clone(), &this.workspace, window, cx);
+                } else {
+                    this.plan_expanded = !this.plan_expanded;
+                    cx.notify();
+                }
+            }))
+            .into_any_element()
+    }
+
+    fn render_plan_items_title(&self, plan: &Plan, window: &mut Window, cx: &Context<Self>) -> Div {
+        let plan_expanded = self.plan_expanded;
         let stats = plan.stats();
 
-        let title = if let Some(entry) = stats.in_progress_entry
+        if let Some(entry) = stats.in_progress_entry
             && !plan_expanded
         {
             h_flex()
@@ -4874,7 +4958,7 @@ impl ThreadView {
                     )
                 })
         } else {
-            let status_label = plan_summary_label(&stats, plan.entries.len());
+            let status_label = plan_summary_label(&stats, plan.entries().len());
 
             h_flex()
                 .debug_selector(|| format!("plan-status-{status_label}"))
@@ -4892,39 +4976,42 @@ impl ThreadView {
                         .color(Color::Muted)
                         .mr_1(),
                 )
-        };
+        }
+    }
 
-        h_flex()
-            .id("plan_summary")
-            .debug_selector(|| "plan_summary".into())
-            .p_1()
-            .w_full()
-            .gap_1()
-            .when(plan_expanded, |this| {
-                this.border_b_1().border_color(cx.theme().colors().border)
-            })
-            .child(Disclosure::new("plan_disclosure", plan_expanded))
-            .child(title.flex_1())
-            .child(
-                IconButton::new("dismiss-plan", IconName::Close)
-                    .icon_size(IconSize::XSmall)
-                    .shape(ui::IconButtonShape::Square)
-                    .tooltip(Tooltip::text("Clear Plan"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.thread.update(cx, |thread, cx| thread.clear_plan(cx));
-                        cx.stop_propagation();
-                    })),
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.plan_expanded = !this.plan_expanded;
-                cx.notify();
-            }))
-            .into_any_element()
+    fn render_plan_body(
+        &self,
+        plan: &Plan,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        match &plan.content {
+            PlanContent::Items(entries) => Some(
+                self.render_plan_entries(entries, window, cx)
+                    .into_any_element(),
+            ),
+            PlanContent::Markdown(markdown) => Some(
+                v_flex()
+                    .id("plan_markdown")
+                    .max_h_64()
+                    .overflow_y_scroll()
+                    .px_2()
+                    .py_1()
+                    .bg(cx.theme().colors().editor_background)
+                    .text_xs()
+                    .child(MarkdownElement::new(
+                        markdown.clone(),
+                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                    ))
+                    .into_any_element(),
+            ),
+            PlanContent::File { .. } => None,
+        }
     }
 
     fn render_plan_entries(
         &self,
-        plan: &Plan,
+        entries: &[acp_thread::PlanEntry],
         window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -4933,7 +5020,7 @@ impl ThreadView {
             .max_h_40()
             .overflow_y_scroll()
             .child(
-                v_flex().children(plan.entries.iter().enumerate().flat_map(|(index, entry)| {
+                v_flex().children(entries.iter().enumerate().flat_map(|(index, entry)| {
                     let entry_bg = cx.theme().colors().editor_background;
                     let tooltip_text: SharedString =
                         entry.content.read(cx).source().to_string().into();
@@ -4965,7 +5052,7 @@ impl ThreadView {
                             .justify_between()
                             .relative()
                             .bg(entry_bg)
-                            .when(index < plan.entries.len() - 1, |parent| {
+                            .when(index < entries.len() - 1, |parent| {
                                 parent.border_color(cx.theme().colors().border).border_b_1()
                             })
                             .overflow_hidden()
@@ -14333,6 +14420,28 @@ pub(crate) fn open_link(
             workspace.open_url_or_file(&url, None, window, cx);
         });
     }
+}
+
+/// The first markdown heading, used as the collapsed summary of a markdown plan.
+fn markdown_plan_heading(source: &str) -> Option<&str> {
+    source.lines().find_map(|line| {
+        let line = line.trim_start();
+        let heading = line.trim_start_matches('#');
+        let level = line.len() - heading.len();
+        let heading = heading.trim();
+        ((1..=6).contains(&level)
+            && line[level..].starts_with(char::is_whitespace)
+            && !heading.is_empty())
+        .then_some(heading)
+    })
+}
+
+fn plan_file_label(uri: &str) -> String {
+    Url::parse(uri)
+        .ok()
+        .and_then(|url| url.to_file_path().ok())
+        .and_then(|path| Some(path.file_name()?.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| uri.to_owned())
 }
 
 fn file_link_parts(input: &str, path_style: PathStyle) -> Option<(&str, Option<&str>)> {

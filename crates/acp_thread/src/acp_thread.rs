@@ -3431,9 +3431,31 @@ enum PlanIdentity {
 
 #[derive(Debug, Default)]
 pub struct Plan {
-    pub entries: Vec<PlanEntry>,
+    pub content: PlanContent,
     pub meta: Option<acp_v2::Meta>,
     pub update_meta: Option<acp_v2::Meta>,
+    /// Orders plans by their last meaningful change, so removing the visible plan can
+    /// fall back to the next most recently changed one.
+    last_changed: u64,
+}
+
+#[derive(Debug)]
+pub enum PlanContent {
+    Items(Vec<PlanEntry>),
+    Markdown(Entity<Markdown>),
+    File { uri: SharedString },
+}
+
+impl Default for PlanContent {
+    fn default() -> Self {
+        Self::Items(Vec::new())
+    }
+}
+
+enum PlanContentUpdate {
+    Items(Vec<acp_v2::PlanEntry>),
+    Markdown(String),
+    File(String),
 }
 
 #[derive(Debug)]
@@ -3445,8 +3467,20 @@ pub struct PlanStats<'a> {
 }
 
 impl Plan {
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+    pub fn is_empty(&self, cx: &App) -> bool {
+        match &self.content {
+            PlanContent::Items(entries) => entries.is_empty(),
+            PlanContent::Markdown(markdown) => markdown.read(cx).source().trim().is_empty(),
+            PlanContent::File { uri } => uri.is_empty(),
+        }
+    }
+
+    /// Structured entries for item-based plans. Markdown and file plans have none.
+    pub fn entries(&self) -> &[PlanEntry] {
+        match &self.content {
+            PlanContent::Items(entries) => entries,
+            PlanContent::Markdown(_) | PlanContent::File { .. } => &[],
+        }
     }
 
     pub fn stats(&self) -> PlanStats<'_> {
@@ -3457,7 +3491,7 @@ impl Plan {
             cancelled: 0,
         };
 
-        for entry in &self.entries {
+        for entry in self.entries() {
             match &entry.source.status {
                 acp_v2::PlanEntryStatus::InProgress => {
                     stats.in_progress_entry = stats.in_progress_entry.or(Some(entry));
@@ -3478,32 +3512,74 @@ impl Plan {
 
     fn replace(
         &mut self,
-        entries: Vec<acp_v2::PlanEntry>,
+        update: PlanContentUpdate,
         meta: Option<acp_v2::Meta>,
         update_meta: Option<acp_v2::Meta>,
         cx: &mut App,
     ) -> bool {
-        let changed = self.entries.len() != entries.len()
-            || self.entries.iter().zip(&entries).any(|(old, new)| {
-                old.source.content != new.content
-                    || old.source.priority != new.priority
-                    || old.source.status != new.status
-            });
-        let new_length = entries.len();
-        let mut entries = entries.into_iter();
-        for (old, new) in self.entries.iter_mut().zip(entries.by_ref()) {
-            if old.source.content != new.content {
-                update_markdown_in_place(&old.content, &new.content, cx);
+        let changed = match (&mut self.content, update) {
+            (PlanContent::Items(old_entries), PlanContentUpdate::Items(entries)) => {
+                replace_plan_entries(old_entries, entries, cx)
             }
-            old.source = new;
-        }
-        self.entries
-            .extend(entries.map(|source| PlanEntry::new(source, cx)));
-        self.entries.truncate(new_length);
+            (PlanContent::Markdown(markdown), PlanContentUpdate::Markdown(text)) => {
+                let changed = markdown.read(cx).source() != text.as_str();
+                if changed {
+                    update_markdown_in_place(markdown, &text, cx);
+                }
+                changed
+            }
+            (PlanContent::File { uri }, PlanContentUpdate::File(new_uri)) => {
+                let changed = uri.as_ref() != new_uri.as_str();
+                *uri = new_uri.into();
+                changed
+            }
+            (_, PlanContentUpdate::Items(entries)) => {
+                self.content = PlanContent::Items(
+                    entries
+                        .into_iter()
+                        .map(|source| PlanEntry::new(source, cx))
+                        .collect(),
+                );
+                true
+            }
+            (_, PlanContentUpdate::Markdown(text)) => {
+                self.content =
+                    PlanContent::Markdown(cx.new(|cx| Markdown::new(text.into(), None, None, cx)));
+                true
+            }
+            (_, PlanContentUpdate::File(uri)) => {
+                self.content = PlanContent::File { uri: uri.into() };
+                true
+            }
+        };
         self.meta = meta;
         self.update_meta = update_meta;
         changed
     }
+}
+
+fn replace_plan_entries(
+    old_entries: &mut Vec<PlanEntry>,
+    entries: Vec<acp_v2::PlanEntry>,
+    cx: &mut App,
+) -> bool {
+    let changed = old_entries.len() != entries.len()
+        || old_entries.iter().zip(&entries).any(|(old, new)| {
+            old.source.content != new.content
+                || old.source.priority != new.priority
+                || old.source.status != new.status
+        });
+    let new_length = entries.len();
+    let mut entries = entries.into_iter();
+    for (old, new) in old_entries.iter_mut().zip(entries.by_ref()) {
+        if old.source.content != new.content {
+            update_markdown_in_place(&old.content, &new.content, cx);
+        }
+        old.source = new;
+    }
+    old_entries.extend(entries.map(|source| PlanEntry::new(source, cx)));
+    old_entries.truncate(new_length);
+    changed
 }
 
 #[derive(Debug)]
@@ -3519,6 +3595,10 @@ impl PlanEntry {
             source,
         }
     }
+}
+
+fn plan_id_from_v1(plan_id: acp_v1::PlanId) -> acp_v2::PlanId {
+    acp_v2::PlanId::new(plan_id.0)
 }
 
 fn plan_entry_from_v1(entry: acp_v1::PlanEntry) -> Result<acp_v2::PlanEntry> {
@@ -3643,6 +3723,7 @@ pub struct AcpThread {
     permission_requests: IndexMap<PermissionRequestId, PermissionRequest>,
     plans: HashMap<PlanIdentity, Plan>,
     visible_plan: Option<PlanIdentity>,
+    plan_change_count: u64,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
@@ -4006,6 +4087,7 @@ impl AcpThread {
             subagent_association: None,
             plans: HashMap::default(),
             visible_plan: None,
+            plan_change_count: 0,
             provisional_title: None,
             project,
             running_turn: None,
@@ -4954,6 +5036,13 @@ impl AcpThread {
             }
             acp_v1::SessionUpdate::Plan(plan) => {
                 self.update_plan(plan, cx).map_err(acp_v1::Error::from)?;
+            }
+            acp_v1::SessionUpdate::PlanUpdate(update) => {
+                self.apply_v1_plan_update(update, cx)
+                    .map_err(acp_v1::Error::from)?;
+            }
+            acp_v1::SessionUpdate::PlanRemoved(removed) => {
+                self.remove_plan(plan_id_from_v1(removed.plan_id), cx);
             }
             acp_v1::SessionUpdate::Notice(notice) => {
                 self.push_notice(notices::from_v1(notice).map_err(acp_v1::Error::from)?, cx);
@@ -7052,7 +7141,48 @@ impl AcpThread {
             .into_iter()
             .map(plan_entry_from_v1)
             .collect::<Result<_>>()?;
-        self.replace_plan(PlanIdentity::Legacy, entries, request.meta, None, cx);
+        self.replace_plan(
+            PlanIdentity::Legacy,
+            PlanContentUpdate::Items(entries),
+            request.meta,
+            None,
+            cx,
+        );
+        Ok(())
+    }
+
+    fn apply_v1_plan_update(
+        &mut self,
+        update: acp_v1::PlanUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let update_meta = update.meta;
+        match update.plan {
+            acp_v1::PlanUpdateContent::Items(plan) => {
+                let entries = plan
+                    .entries
+                    .into_iter()
+                    .map(plan_entry_from_v1)
+                    .collect::<Result<_>>()?;
+                self.upsert_plan_items(
+                    acp_v2::PlanItems::new(plan_id_from_v1(plan.plan_id), entries).meta(plan.meta),
+                    update_meta,
+                    cx,
+                );
+            }
+            acp_v1::PlanUpdateContent::Markdown(plan) => self.upsert_plan_markdown(
+                acp_v2::PlanMarkdown::new(plan_id_from_v1(plan.plan_id), plan.content)
+                    .meta(plan.meta),
+                update_meta,
+                cx,
+            ),
+            acp_v1::PlanUpdateContent::File(plan) => self.upsert_plan_file(
+                acp_v2::PlanFile::new(plan_id_from_v1(plan.plan_id), plan.uri).meta(plan.meta),
+                update_meta,
+                cx,
+            ),
+            other => anyhow::bail!("unsupported plan update content: {other:?}"),
+        }
         Ok(())
     }
 
@@ -7064,28 +7194,76 @@ impl AcpThread {
     ) {
         self.replace_plan(
             PlanIdentity::Keyed(plan.plan_id),
-            plan.entries,
+            PlanContentUpdate::Items(plan.entries),
             plan.meta,
             update_meta,
             cx,
         );
     }
 
+    pub fn upsert_plan_markdown(
+        &mut self,
+        plan: acp_v2::PlanMarkdown,
+        update_meta: Option<acp_v2::Meta>,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_plan(
+            PlanIdentity::Keyed(plan.plan_id),
+            PlanContentUpdate::Markdown(plan.content),
+            plan.meta,
+            update_meta,
+            cx,
+        );
+    }
+
+    pub fn upsert_plan_file(
+        &mut self,
+        plan: acp_v2::PlanFile,
+        update_meta: Option<acp_v2::Meta>,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_plan(
+            PlanIdentity::Keyed(plan.plan_id),
+            PlanContentUpdate::File(plan.uri),
+            plan.meta,
+            update_meta,
+            cx,
+        );
+    }
+
+    pub fn remove_plan(&mut self, plan_id: acp_v2::PlanId, cx: &mut Context<Self>) {
+        let identity = PlanIdentity::Keyed(plan_id);
+        if self.plans.remove(&identity).is_none() {
+            return;
+        }
+        // A user dismissal (no visible plan) stays in effect; only an agent removing the
+        // plan on screen moves the panel to the next most recently changed plan. Empty plans
+        // are skipped because the panel hides them, which would mask a non-empty one.
+        if self.visible_plan.as_ref() == Some(&identity) {
+            self.visible_plan = self
+                .plans
+                .iter()
+                .filter(|(_, plan)| !plan.is_empty(cx))
+                .max_by_key(|(_, plan)| plan.last_changed)
+                .map(|(identity, _)| identity.clone());
+        }
+        cx.notify();
+    }
+
     fn replace_plan(
         &mut self,
         identity: PlanIdentity,
-        entries: Vec<acp_v2::PlanEntry>,
+        update: PlanContentUpdate,
         meta: Option<acp_v2::Meta>,
         update_meta: Option<acp_v2::Meta>,
         cx: &mut Context<Self>,
     ) {
         let is_new = !self.plans.contains_key(&identity);
-        let changed =
-            self.plans
-                .entry(identity.clone())
-                .or_default()
-                .replace(entries, meta, update_meta, cx);
+        let plan = self.plans.entry(identity.clone()).or_default();
+        let changed = plan.replace(update, meta, update_meta, cx);
         if is_new || changed || identity == PlanIdentity::Legacy {
+            self.plan_change_count += 1;
+            plan.last_changed = self.plan_change_count;
             self.visible_plan = Some(identity);
         }
         cx.notify();
@@ -7093,8 +7271,12 @@ impl AcpThread {
 
     fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
         // V1's next-turn cleanup is a compatibility policy, not authority to alter keyed plans.
-        if let Some(plan) = self.plans.get_mut(&PlanIdentity::Legacy) {
-            plan.entries
+        if let Some(Plan {
+            content: PlanContent::Items(entries),
+            ..
+        }) = self.plans.get_mut(&PlanIdentity::Legacy)
+        {
+            entries
                 .retain(|entry| !matches!(entry.source.status, acp_v2::PlanEntryStatus::Completed));
         }
         cx.notify();
@@ -8736,11 +8918,11 @@ mod tests {
             let plan = thread.plan().expect("visible plan");
             assert_eq!(plan.meta, items.meta);
             assert_eq!(plan.update_meta, update_meta);
-            for (entry, source) in plan.entries.iter().zip(&items.entries) {
+            for (entry, source) in plan.entries().iter().zip(&items.entries) {
                 assert_eq!(&entry.source, source);
                 assert_eq!(entry.content.read(cx).source().as_ref(), source.content);
             }
-            let markdown = plan.entries[0].content.clone();
+            let markdown = plan.entries()[0].content.clone();
             let stats = plan.stats();
             assert_eq!((stats.pending, stats.completed, stats.cancelled), (1, 1, 1));
             assert!(stats.in_progress_entry.is_none());
@@ -8754,20 +8936,20 @@ mod tests {
             let plan = thread.plan_by_id(&id).expect("retained hidden plan");
             assert_eq!(plan.meta, Some(acp_v2::Meta::new()));
             assert_eq!(plan.update_meta, Some(acp_v2::Meta::new()));
-            assert_eq!(plan.entries[0].source.meta, Some(acp_v2::Meta::new()));
-            assert_eq!(plan.entries[0].content, markdown);
+            assert_eq!(plan.entries()[0].source.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(plan.entries()[0].content, markdown);
             items.meta = None;
             items.entries[0].meta = None;
             thread.upsert_plan_items(items.clone(), None, cx);
             let plan = thread.plan_by_id(&id).expect("retained plan");
             assert_eq!(plan.meta, None);
             assert_eq!(plan.update_meta, None);
-            assert_eq!(plan.entries[0].source.meta, None);
+            assert_eq!(plan.entries()[0].source.meta, None);
             assert!(thread.plan().is_none(), "absent metadata replaces, but does not show the plan");
             items.entries[0].status = acp_v2::PlanEntryStatus::Other("_waiting".into());
             thread.upsert_plan_items(items, None, cx);
             let plan = thread.plan().expect("changed unknown status reopens the plan");
-            assert_eq!(plan.entries[0].content, markdown);
+            assert_eq!(plan.entries()[0].content, markdown);
             assert_eq!(plan.stats().pending, 1);
             assert!(thread.entries().is_empty(), "plans never become transcript entries");
         });
@@ -8818,18 +9000,18 @@ mod tests {
                     None,
                     cx,
                 );
-                let markdown = thread.plan_by_id(&"plan".into()).expect("plan").entries[0]
+                let markdown = thread.plan_by_id(&"plan".into()).expect("plan").entries()[0]
                     .content
                     .clone();
                 thread.clear_plan(cx);
                 thread.upsert_plan_items(acp_v2::PlanItems::new("plan", updated.clone()), None, cx);
                 let plan = thread.plan().expect("meaningful changes select the plan");
-                assert_eq!(plan.entries.len(), updated.len());
-                for (entry, source) in plan.entries.iter().zip(&updated) {
+                assert_eq!(plan.entries().len(), updated.len());
+                for (entry, source) in plan.entries().iter().zip(&updated) {
                     assert_eq!(&entry.source, source);
                     assert_eq!(entry.content.read(cx).source().as_ref(), source.content);
                 }
-                if let Some(first) = plan.entries.first() {
+                if let Some(first) = plan.entries().first() {
                     assert_eq!(first.content, markdown);
                 }
             }
@@ -8847,12 +9029,12 @@ mod tests {
                 acp_v2::PlanEntryStatus::Pending,
             )];
             thread.upsert_plan_items(acp_v2::PlanItems::new("a", entries.clone()), None, cx);
-            let first_markdown = thread.plan().expect("A").entries[0].content.clone();
+            let first_markdown = thread.plan().expect("A").entries()[0].content.clone();
             thread.upsert_plan_items(acp_v2::PlanItems::new("b", entries.clone()), None, cx);
             let second_markdown = thread
                 .plan()
                 .expect("new B selects despite identical contents")
-                .entries[0]
+                .entries()[0]
                 .content
                 .clone();
             assert_ne!(
@@ -8866,7 +9048,13 @@ mod tests {
             );
             assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("b".into())));
             thread.upsert_plan_items(acp_v2::PlanItems::new("empty", vec![]), None, cx);
-            assert!(thread.plan().expect("selected empty plan").is_empty());
+            assert!(
+                thread
+                    .plan()
+                    .expect("selected empty plan")
+                    .entries()
+                    .is_empty()
+            );
             thread.upsert_plan_items(acp_v2::PlanItems::new("a", entries.clone()), None, cx);
             assert_eq!(
                 thread.visible_plan,
@@ -8877,7 +9065,7 @@ mod tests {
             thread.upsert_plan_items(acp_v2::PlanItems::new("a", changed), None, cx);
             assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("a".into())));
             assert_eq!(
-                thread.plan().expect("A reopens").entries[0].content,
+                thread.plan().expect("A reopens").entries()[0].content,
                 first_markdown
             );
             thread.upsert_plan_items(acp_v2::PlanItems::new("b", vec![]), None, cx);
@@ -8886,17 +9074,131 @@ mod tests {
                 thread
                     .plan()
                     .expect("clearing older B selects empty B")
+                    .entries()
                     .is_empty()
             );
             assert_eq!(
                 thread
                     .plan_by_id(&"a".into())
                     .expect("A retained")
-                    .entries
+                    .entries()
                     .len(),
                 1
             );
             assert!(thread.entries().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_keyed_plan_content_types_and_removal(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let entries = vec![acp_v2::PlanEntry::new(
+                "Task",
+                acp_v2::PlanEntryPriority::Medium,
+                acp_v2::PlanEntryStatus::Pending,
+            )];
+            thread.upsert_plan_items(acp_v2::PlanItems::new("items", entries), None, cx);
+            thread.upsert_plan_markdown(
+                acp_v2::PlanMarkdown::new("doc", "# Design\n- step"),
+                None,
+                cx,
+            );
+            let PlanContent::Markdown(markdown) = &thread.plan().expect("markdown plan").content
+            else {
+                panic!("markdown plan is visible");
+            };
+            let markdown = markdown.clone();
+            assert_eq!(markdown.read(cx).source(), "# Design\n- step");
+
+            thread.clear_plan(cx);
+            thread.upsert_plan_markdown(
+                acp_v2::PlanMarkdown::new("doc", "# Design\n- step"),
+                None,
+                cx,
+            );
+            assert!(thread.plan().is_none(), "identical markdown keeps dismissal");
+            thread.upsert_plan_markdown(
+                acp_v2::PlanMarkdown::new("doc", "# Design\n- step\n- another"),
+                None,
+                cx,
+            );
+            let PlanContent::Markdown(updated) = &thread.plan().expect("changed markdown").content
+            else {
+                panic!("markdown plan is visible");
+            };
+            assert_eq!(updated, &markdown, "markdown is updated in place");
+
+            thread.upsert_plan_file(acp_v2::PlanFile::new("doc", "file:///tmp/plan.md"), None, cx);
+            let plan = thread.plan().expect("file plan");
+            assert!(
+                matches!(&plan.content, PlanContent::File { uri } if uri.as_ref() == "file:///tmp/plan.md")
+            );
+            assert!(plan.entries().is_empty());
+            assert!(!plan.is_empty(cx));
+
+            thread.remove_plan("doc".into(), cx);
+            assert!(thread.plan_by_id(&"doc".into()).is_none());
+            assert_eq!(
+                thread.visible_plan,
+                Some(PlanIdentity::Keyed("items".into())),
+                "removing the visible plan falls back to the most recently changed plan"
+            );
+
+            thread.upsert_plan_items(acp_v2::PlanItems::new("empty", vec![]), None, cx);
+            thread.upsert_plan_markdown(acp_v2::PlanMarkdown::new("other", "Other"), None, cx);
+            thread.remove_plan("other".into(), cx);
+            assert_eq!(
+                thread.visible_plan,
+                Some(PlanIdentity::Keyed("items".into())),
+                "fallback skips empty plans"
+            );
+
+            thread.upsert_plan_markdown(acp_v2::PlanMarkdown::new("other", "Other"), None, cx);
+            thread.clear_plan(cx);
+            thread.remove_plan("other".into(), cx);
+            assert!(thread.plan().is_none(), "removal does not undo dismissal");
+
+            thread.remove_plan("missing".into(), cx);
+            assert!(thread.plan_by_id(&"items".into()).is_some());
+            assert!(thread.entries().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_v1_plan_update_and_removal(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            for update in [
+                json!({"sessionUpdate": "plan_update", "plan": {"type": "items", "planId": "a",
+                    "entries": [{"content": "Step", "priority": "high", "status": "in_progress"}]}}),
+                json!({"sessionUpdate": "plan_update", "plan": {"type": "markdown", "planId": "b",
+                    "content": "Notes"}, "_meta": {"scope": "update"}}),
+            ] {
+                thread
+                    .handle_session_update(serde_json::from_value(update).expect("v1 update"), cx)
+                    .expect("plan update applies");
+            }
+            let items = thread.plan_by_id(&"a".into()).expect("items plan");
+            assert_eq!(items.stats().pending, 1);
+            let markdown = thread.plan().expect("markdown plan is visible");
+            assert!(matches!(markdown.content, PlanContent::Markdown(_)));
+            assert_eq!(
+                markdown.update_meta,
+                Some(acp_v2::Meta::from_iter([("scope".into(), json!("update"))]))
+            );
+
+            thread
+                .handle_session_update(
+                    serde_json::from_value(json!({"sessionUpdate": "plan_removed", "planId": "b"}))
+                        .expect("v1 removal"),
+                    cx,
+                )
+                .expect("plan removal applies");
+            assert!(thread.plan_by_id(&"b".into()).is_none());
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("a".into())));
         });
     }
 
@@ -8941,7 +9243,7 @@ mod tests {
             assert_eq!(thread.plan().expect("legacy plan").meta, legacy.meta);
             assert_eq!(thread.plan().expect("legacy plan").update_meta, None);
             assert_eq!(
-                thread.plan().expect("legacy plan").entries[1].source.meta,
+                thread.plan().expect("legacy plan").entries()[1].source.meta,
                 Some(acp_v2::Meta::new())
             );
             thread.clear_plan(cx);
@@ -8950,7 +9252,7 @@ mod tests {
                 .update_plan(legacy, cx)
                 .expect("identical legacy update restores the panel");
             assert_eq!(
-                thread.plan().expect("legacy compatibility").entries.len(),
+                thread.plan().expect("legacy compatibility").entries().len(),
                 2
             );
             thread.upsert_plan_items(keyed.clone(), None, cx);
@@ -8965,16 +9267,16 @@ mod tests {
             );
             let retained = thread.plan_by_id(&keyed.plan_id).expect("keyed plan");
             assert_eq!(retained.meta, keyed.meta);
-            assert_eq!(retained.entries.len(), keyed.entries.len());
-            for (entry, expected) in retained.entries.iter().zip(&keyed.entries) {
+            assert_eq!(retained.entries().len(), keyed.entries.len());
+            for (entry, expected) in retained.entries().iter().zip(&keyed.entries) {
                 assert_eq!(&entry.source, expected);
             }
             let legacy = thread
                 .plans
                 .get(&PlanIdentity::Legacy)
                 .expect("legacy record");
-            assert_eq!(legacy.entries.len(), 1);
-            assert_eq!(legacy.entries[0].source.content, "Pending");
+            assert_eq!(legacy.entries().len(), 1);
+            assert_eq!(legacy.entries()[0].source.content, "Pending");
         });
         complete
             .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
