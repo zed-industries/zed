@@ -52,7 +52,6 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::u64;
 use std::{
     any::Any,
     collections::hash_map::Entry,
@@ -701,7 +700,7 @@ pub struct Session {
     child_session_ids: HashSet<SessionId>,
     parent_session: Option<Entity<Session>>,
     output_token: OutputToken,
-    output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
+    output: VecDeque<dap::OutputEvent>,
     watchers: HashMap<SharedString, Watcher>,
     is_session_terminated: bool,
     requests: TypeIdHashMap<HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
@@ -875,7 +874,7 @@ impl Session {
                 capabilities: Capabilities::default(),
                 watchers: HashMap::default(),
                 output_token: OutputToken(0),
-                output: circular_buffer::CircularBuffer::boxed(),
+                output: VecDeque::with_capacity(MAX_TRACKED_OUTPUT_EVENTS),
                 requests: Default::default(),
                 background_tasks: Vec::default(),
                 restart_task: None,
@@ -1358,7 +1357,7 @@ impl Session {
                 cx.spawn(async move |this, cx| {
                     task.await;
                     this.update(cx, |this, cx| {
-                        this.continue_thread(active_thread_id, cx);
+                        this.continue_program(active_thread_id, cx);
                     })
                 })
                 .detach();
@@ -1527,7 +1526,8 @@ impl Session {
             }
             Events::Stopped(event) => self.handle_stopped_event(event, cx),
             Events::Continued(event) => {
-                if event.all_threads_continued.unwrap_or_default() {
+                // DAP defines an omitted `allThreadsContinued` as `true`.
+                if event.all_threads_continued.unwrap_or(true) {
                     self.active_snapshot.thread_states.continue_all_threads();
                     self.breakpoint_store.update(cx, |store, cx| {
                         store.remove_active_position(Some(self.session_id()), cx)
@@ -1786,6 +1786,9 @@ impl Session {
     }
 
     fn push_output(&mut self, event: OutputEvent) {
+        if self.output.len() == MAX_TRACKED_OUTPUT_EVENTS {
+            self.output.pop_front();
+        }
         self.output.push_back(event);
         self.output_token.0 += 1;
     }
@@ -2142,6 +2145,38 @@ impl Session {
         }
     }
 
+    fn on_continue_response(
+        thread_id: ThreadId,
+    ) -> impl FnOnce(
+        &mut Self,
+        Result<dap::ContinueResponse>,
+        &mut Context<Self>,
+    ) -> Option<dap::ContinueResponse>
+    + 'static {
+        move |this, response, cx| match response.log_err() {
+            Some(response) => {
+                if response.all_threads_continued.unwrap_or(true) {
+                    this.active_snapshot.thread_states.continue_all_threads();
+                } else {
+                    this.active_snapshot
+                        .thread_states
+                        .continue_thread(thread_id);
+                }
+                this.breakpoint_store.update(cx, |store, cx| {
+                    store.remove_active_position(Some(this.session_id()), cx)
+                });
+                this.invalidate_generic();
+                cx.notify();
+                Some(response)
+            }
+            None => {
+                this.active_snapshot.thread_states.stop_thread(thread_id);
+                cx.notify();
+                None
+            }
+        }
+    }
+
     fn clear_active_debug_line_response(
         &mut self,
         response: Result<()>,
@@ -2280,11 +2315,30 @@ impl Session {
         })
     }
 
+    pub fn continue_program(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        self.continue_execution(thread_id, None, cx);
+    }
+
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        if !self
+            .capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default()
+        {
+            return;
+        }
+
+        self.continue_execution(thread_id, Some(true), cx);
+    }
+
+    fn continue_execution(
+        &mut self,
+        thread_id: ThreadId,
+        single_thread: Option<bool>,
+        cx: &mut Context<Self>,
+    ) {
         self.select_historic_snapshot(None, cx);
 
-        let supports_single_thread_execution_requests =
-            self.capabilities.supports_single_thread_execution_requests;
         self.active_snapshot
             .thread_states
             .continue_thread(thread_id);
@@ -2292,10 +2346,10 @@ impl Session {
             ContinueCommand {
                 args: ContinueArguments {
                     thread_id: thread_id.0,
-                    single_thread: supports_single_thread_execution_requests,
+                    single_thread,
                 },
             },
-            Self::on_step_response::<ContinueCommand>(thread_id),
+            Self::on_continue_response(thread_id),
             cx,
         )
         .detach();
@@ -2534,8 +2588,8 @@ impl Session {
                         return
                     };
 
-                    for scope in scopes.iter() {
-                        this.variables(scope.variables_reference, cx);
+                    for scope in scopes.iter().filter(|scope| !scope.expensive) {
+                            this.variables(scope.variables_reference, cx);
                     }
 
                     let entry = this
@@ -2623,6 +2677,117 @@ impl Session {
         })
     }
 
+    pub fn evaluate_hover_expression(
+        &self,
+        stack_frame_id: StackFrameId,
+        expression: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<dap::EvaluateResponse>> {
+        cx.spawn(async move |session, cx| {
+            let hover_eval_task = session.read_with(cx, |session, _| {
+                session.state.request_dap(EvaluateCommand {
+                    expression: expression.clone(),
+                    frame_id: Some(stack_frame_id),
+                    source: None,
+                    context: Some(EvaluateArgumentsContext::Hover),
+                })
+            }).ok()?;
+
+            match hover_eval_task.await {
+                Ok(response) => Some(response),
+                Err(error) => {
+                    log::debug!(
+                        "Falling back to EvaluateArgumentsContext::Variables after hover evaluation failed: {error:#}"
+                    );
+
+                    let variables_eval_task = session.read_with(cx, |session, _| {
+                        session.state.request_dap(EvaluateCommand {
+                            expression,
+                            frame_id: Some(stack_frame_id),
+                            source: None,
+                            context: Some(EvaluateArgumentsContext::Variables),
+                        })
+                    }).ok()?;
+
+                    variables_eval_task.await.log_err()
+                }
+            }
+        })
+    }
+
+    pub fn load_hover_children(
+        &self,
+        variables_reference: VariableReference,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<dap::Variable>>> {
+        if let Some(cached_variables) = self
+            .session_state()
+            .variables
+            .get(&variables_reference)
+            .cloned()
+        {
+            return Task::ready(Ok(cached_variables));
+        }
+
+        cx.spawn(async move |session, cx| {
+            let request = session.read_with(cx, |session, _| {
+                session.state.request_dap(VariablesCommand {
+                    variables_reference,
+                    filter: None,
+                    start: None,
+                    count: None,
+                    format: None,
+                })
+            })?;
+
+            let mut variables = request.await?;
+
+            session.update(cx, |session, cx| {
+                session.normalize_variables(&mut variables);
+                session
+                    .active_snapshot
+                    .variables
+                    .insert(variables_reference, variables.clone());
+                cx.emit(SessionEvent::Variables);
+                cx.emit(SessionEvent::InvalidateInlineValue);
+            })?;
+
+            Ok(variables)
+        })
+    }
+
+    fn normalize_variables(&self, variables: &mut [dap::Variable]) {
+        if self.adapter.0.as_ref() == "Debugpy" {
+            for variable in variables.iter_mut() {
+                if variable.type_ == Some("str".into()) {
+                    // Debugpy returns Python repr() escaping for string variables.
+                    let mut unescaped = String::with_capacity(variable.value.len());
+                    let mut chars = variable.value.chars();
+                    while let Some(character) = chars.next() {
+                        if character != '\\' {
+                            unescaped.push(character);
+                        } else {
+                            match chars.next() {
+                                Some('\\') => unescaped.push('\\'),
+                                Some('n') => unescaped.push('\n'),
+                                Some('t') => unescaped.push('\t'),
+                                Some('r') => unescaped.push('\r'),
+                                Some('\'') => unescaped.push('\''),
+                                Some('"') => unescaped.push('"'),
+                                Some(character) => {
+                                    unescaped.push('\\');
+                                    unescaped.push(character);
+                                }
+                                None => {}
+                            }
+                        }
+                    }
+                    variable.value = unescaped;
+                }
+            }
+        }
+    }
+
     pub fn refresh_watchers(&mut self, frame_id: u64, cx: &mut Context<Self>) {
         let watches = self.watchers.clone();
         for (_, watch) in watches.into_iter() {
@@ -2655,35 +2820,7 @@ impl Session {
                     return;
                 };
 
-                if this.adapter.0.as_ref() == "Debugpy" {
-                    for variable in variables.iter_mut() {
-                        if variable.type_ == Some("str".into()) {
-                            // reverse Python repr() escaping
-                            let mut unescaped = String::with_capacity(variable.value.len());
-                            let mut chars = variable.value.chars();
-                            while let Some(c) = chars.next() {
-                                if c != '\\' {
-                                    unescaped.push(c);
-                                } else {
-                                    match chars.next() {
-                                        Some('\\') => unescaped.push('\\'),
-                                        Some('n') => unescaped.push('\n'),
-                                        Some('t') => unescaped.push('\t'),
-                                        Some('r') => unescaped.push('\r'),
-                                        Some('\'') => unescaped.push('\''),
-                                        Some('"') => unescaped.push('"'),
-                                        Some(c) => {
-                                            unescaped.push('\\');
-                                            unescaped.push(c);
-                                        }
-                                        None => {}
-                                    }
-                                }
-                            }
-                            variable.value = unescaped;
-                        }
-                    }
-                }
+                this.normalize_variables(&mut variables);
 
                 this.active_snapshot
                     .variables
@@ -2780,7 +2917,7 @@ impl Session {
                     Ok(response) => {
                         let event = dap::OutputEvent {
                             category: None,
-                            output: format!("< {}", &response.result),
+                            output: format!("< {}", response.result),
                             group: None,
                             variables_reference: Some(response.variables_reference),
                             source: None,
@@ -2809,6 +2946,38 @@ impl Session {
                 cx.notify();
             })
             .ok();
+        })
+    }
+
+    /// Evaluates an expression to obtain its full value for copying.
+    pub fn evaluate_variable_value(
+        &mut self,
+        expression: String,
+        frame_id: Option<u64>,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<String>> {
+        let context = if self
+            .capabilities
+            .supports_clipboard_context
+            .unwrap_or_default()
+        {
+            EvaluateArgumentsContext::Clipboard
+        } else {
+            EvaluateArgumentsContext::Variables
+        };
+        let request = self.request(
+            EvaluateCommand {
+                expression,
+                frame_id,
+                context: Some(context),
+                source: None,
+            },
+            |_, response, _| response.ok(),
+            cx,
+        );
+        cx.background_spawn(async move {
+            let response = request.await?;
+            Some(response.result)
         })
     }
 

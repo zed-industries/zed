@@ -11,7 +11,7 @@ use project::{
     git_store::{Repository, resolve_git_worktree_to_main_repo, worktrees_directory_for_repo},
     project_settings::ProjectSettings,
 };
-use remote::{RemoteConnectionOptions, same_remote_connection_identity};
+use remote::RemoteConnectionOptions;
 use settings::Settings;
 use util::{ResultExt, paths::PathStyle};
 use workspace::{AppState, MultiWorkspace, Workspace};
@@ -117,18 +117,13 @@ pub fn build_root_plan(
 ) -> Option<RootPlan> {
     let path = path.to_path_buf();
 
-    let matches_target_connection = |project: &Entity<Project>, cx: &App| {
-        same_remote_connection_identity(
-            project.read(cx).remote_connection_options(cx).as_ref(),
-            remote_connection,
-        )
-    };
-
     let affected_projects = workspaces
         .iter()
         .filter_map(|workspace| {
             let project = workspace.read(cx).project().clone();
-            if !matches_target_connection(&project, cx) {
+            if project.read(cx).remote_connection_identity(cx)
+                != remote_connection.map(|o| o.identity())
+            {
                 return None;
             }
             let worktree = project
@@ -149,7 +144,14 @@ pub fn build_root_plan(
 
     let linked_repo = workspaces
         .iter()
-        .filter(|workspace| matches_target_connection(workspace.read(cx).project(), cx))
+        .filter(|workspace| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .remote_connection_identity(cx)
+                == remote_connection.map(|o| o.identity())
+        })
         .flat_map(|workspace| {
             workspace
                 .read(cx)
@@ -187,7 +189,7 @@ pub fn build_root_plan(
     // is re-verified against the filesystem in [`remove_root`] before
     // anything is deleted.
     let recorded_created_at =
-        git_ui::created_worktrees::recorded_created_at(&path, remote_connection, cx)?;
+        git_ui_core::created_worktrees::recorded_created_at(&path, remote_connection, cx)?;
 
     let branch_name = linked_snapshot
         .branch
@@ -240,7 +242,7 @@ pub async fn remove_root(root: RootPlan, cx: &mut AsyncApp) -> Result<()> {
     // leftover record would only be saved by the creation time check, so
     // remove it eagerly.
     cx.update(|cx| {
-        git_ui::created_worktrees::forget_created_worktree(
+        git_ui_core::created_worktrees::forget_created_worktree(
             &root.root_path,
             root.remote_connection.as_ref(),
             cx,
@@ -285,7 +287,7 @@ async fn verify_created_by_zed(root: &RootPlan, cx: &mut AsyncApp) -> Result<()>
         Some(created_at) if created_at == root.recorded_created_at => Ok(()),
         Some(_) => {
             cx.update(|cx| {
-                git_ui::created_worktrees::forget_created_worktree(
+                git_ui_core::created_worktrees::forget_created_worktree(
                     &root.root_path,
                     root.remote_connection.as_ref(),
                     cx,
@@ -369,13 +371,12 @@ async fn find_or_create_repository(
             .into_iter()
             .filter_map(|workspace| {
                 let project = workspace.read(cx).project().clone();
-                let project_connection = project.read(cx).remote_connection_options(cx);
-                if !same_remote_connection_identity(
-                    project_connection.as_ref(),
-                    remote_connection_owned.as_ref(),
-                ) {
+                if project.read(cx).remote_connection_identity(cx)
+                    != remote_connection_owned.as_ref().map(|o| o.identity())
+                {
                     return None;
                 }
+
                 Some((
                     project
                         .read(cx)
@@ -792,7 +793,7 @@ pub async fn restore_worktree_via_git(
     if created_new_worktree {
         // Re-register the restored worktree as Zed-created so it can be
         // archived again later.
-        git_ui::created_worktrees::record_created_worktree_for_repo(
+        git_ui_core::created_worktrees::record_created_worktree_for_repo(
             &wt_repo,
             worktree_path,
             remote_connection,
@@ -1573,7 +1574,7 @@ mod tests {
         let worktree_path = Path::new("/worktrees/project/feature/project");
         let actual_created_at = fake_worktree_created_at(&fs, worktree_path).await;
         cx.update(|cx| {
-            git_ui::created_worktrees::record_created_worktree(
+            git_ui_core::created_worktrees::record_created_worktree(
                 worktree_path,
                 None,
                 actual_created_at + Duration::from_secs(1),
@@ -1637,7 +1638,8 @@ mod tests {
         // attempts skip the worktree entirely.
         workspace.read_with(cx, |_workspace, cx| {
             assert!(
-                git_ui::created_worktrees::recorded_created_at(worktree_path, None, cx).is_none(),
+                git_ui_core::created_worktrees::recorded_created_at(worktree_path, None, cx)
+                    .is_none(),
                 "stale created-worktree record should be removed"
             );
             let plan = build_root_plan(worktree_path, None, std::slice::from_ref(&workspace), cx);

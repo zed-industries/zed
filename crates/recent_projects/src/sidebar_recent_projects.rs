@@ -12,7 +12,6 @@ use picker::{
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 use ui::{ButtonLike, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
-use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     MultiWorkspace, OpenMode, OpenOptions, ProjectGroupKey, RecentWorkspace,
@@ -144,22 +143,6 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         "Search projects…".into()
     }
 
-    fn render_editor(
-        &self,
-        editor: &Arc<dyn ErasedEditor>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Div {
-        h_flex()
-            .flex_none()
-            .h_9()
-            .px_2p5()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(editor.render(window, cx))
-    }
-
     fn match_count(&self) -> usize {
         self.filtered_workspaces.len()
     }
@@ -201,7 +184,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     && !self
                         .window_project_groups
                         .iter()
-                        .any(|key| key.matches(&workspace.project_group_key()))
+                        .any(|key| key.matches_identity(&workspace.project_group_key()))
             })
             .map(|(id, workspace)| {
                 let combined_string = workspace

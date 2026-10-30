@@ -4,7 +4,7 @@ use anyhow::Result;
 use collections::HashSet;
 use gpui::{AppContext, AsyncWindowContext, Context, Entity, Task, TaskExt, WeakEntity};
 use language::Buffer;
-use project::{TaskSourceKind, WorktreeId};
+use project::{TaskSourceKind, WorktreeId, trusted_worktrees::TrustedWorktrees};
 use remote::ConnectionState;
 use task::{
     DebugScenario, ResolvedTask, SaveStrategy, SharedTaskContext, SpawnInTerminal, TaskContext,
@@ -14,6 +14,16 @@ use ui::Window;
 use util::TryFutureExt;
 
 use crate::{SaveIntent, Toast, Workspace, notifications::NotificationId};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScheduledTaskResult {
+    Success,
+    Failure,
+    SpawnFailed,
+    Cancelled,
+}
+
+type TaskCompletionHandler = Box<dyn FnOnce(ScheduledTaskResult, &mut AsyncWindowContext)>;
 
 impl Workspace {
     pub fn schedule_task(
@@ -59,6 +69,44 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        self.schedule_resolved_task_internal(
+            task_source_kind,
+            resolved_task,
+            omit_history,
+            None,
+            window,
+            cx,
+        );
+    }
+
+    pub fn schedule_resolved_task_with_completion(
+        self: &mut Workspace,
+        task_source_kind: TaskSourceKind,
+        resolved_task: ResolvedTask,
+        omit_history: bool,
+        on_complete: impl FnOnce(ScheduledTaskResult, &mut AsyncWindowContext) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        self.schedule_resolved_task_internal(
+            task_source_kind,
+            resolved_task,
+            omit_history,
+            Some(Box::new(on_complete)),
+            window,
+            cx,
+        );
+    }
+
+    fn schedule_resolved_task_internal(
+        self: &mut Workspace,
+        task_source_kind: TaskSourceKind,
+        resolved_task: ResolvedTask,
+        omit_history: bool,
+        on_complete: Option<TaskCompletionHandler>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
         let spawn_in_terminal = resolved_task.resolved.clone();
         if !omit_history {
             if let Some(debugger_provider) = self.debugger_provider.as_ref() {
@@ -90,12 +138,14 @@ impl Workspace {
                 });
                 if let Some(spawn_task) = spawn_task.ok().flatten() {
                     let res = cx.background_spawn(spawn_task).await;
-                    match res {
+                    let result = match res {
                         Some(Ok(status)) => {
                             if status.success() {
                                 log::debug!("Task spawn succeeded");
+                                ScheduledTaskResult::Success
                             } else {
                                 log::debug!("Task spawn failed, code: {:?}", status.code());
+                                ScheduledTaskResult::Failure
                             }
                         }
                         Some(Err(e)) => {
@@ -103,10 +153,19 @@ impl Workspace {
                             _ = workspace.update(cx, |w, cx| {
                                 let id = NotificationId::unique::<ResolvedTask>();
                                 w.show_toast(Toast::new(id, format!("Task spawn failed: {e}")), cx);
-                            })
+                            });
+                            ScheduledTaskResult::SpawnFailed
                         }
-                        None => log::debug!("Task spawn got cancelled"),
+                        None => {
+                            log::debug!("Task spawn got cancelled");
+                            ScheduledTaskResult::Cancelled
+                        }
                     };
+                    if let Some(on_complete) = on_complete {
+                        on_complete(result, cx);
+                    }
+                } else if let Some(on_complete) = on_complete {
+                    on_complete(ScheduledTaskResult::Cancelled, cx);
                 }
             });
             self.scheduled_tasks.push(task);
@@ -176,6 +235,16 @@ impl Workspace {
     pub fn run_create_worktree_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let project = self.project().clone();
         let hooks = HashSet::from_iter([TaskHook::CreateWorktree]);
+        let worktree_store = project.read(cx).worktree_store();
+        let mut worktrees: Vec<_> = project.read(cx).worktrees(cx).collect();
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            worktrees.retain(|worktree| {
+                let worktree_id = worktree.read(cx).id();
+                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.can_trust(&worktree_store, worktree_id, cx)
+                })
+            });
+        }
 
         let worktree_tasks: Vec<(WorktreeId, TaskContext, Vec<TaskTemplate>)> = {
             let project = project.read(cx);
@@ -187,7 +256,7 @@ impl Workspace {
             let git_store = project.git_store().read(cx);
 
             let mut worktree_tasks = Vec::new();
-            for worktree in project.worktrees(cx) {
+            for worktree in worktrees {
                 let worktree = worktree.read(cx);
                 let worktree_id = worktree.id();
                 let worktree_abs_path = worktree.abs_path();
@@ -358,6 +427,30 @@ mod tests {
 
         assert_eq!(*fixture.dirty_before_spawn.lock(), Some(true));
         assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
+    }
+
+    #[gpui::test]
+    async fn test_schedule_resolved_task_with_completion_reports_success(cx: &mut TestAppContext) {
+        let (fixture, cx) = create_fixture(cx, SaveStrategy::None).await;
+        let task_result = Arc::new(Mutex::new(None));
+        fixture.workspace.update_in(cx, |workspace, window, cx| {
+            workspace.schedule_resolved_task_with_completion(
+                TaskSourceKind::UserInput,
+                fixture.task,
+                false,
+                {
+                    let task_result = task_result.clone();
+                    move |result, _| {
+                        *task_result.lock() = Some(result);
+                    }
+                },
+                window,
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        assert_eq!(*task_result.lock(), Some(ScheduledTaskResult::Success));
     }
 
     async fn create_fixture(

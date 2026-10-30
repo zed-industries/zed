@@ -99,6 +99,10 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: true
     pub show_branch_name: Option<bool>,
+    /// Whether to show the worktree name button in the titlebar.
+    ///
+    /// Default: true
+    pub show_worktree_name: Option<bool>,
     /// Whether to show the project host and name in the titlebar.
     ///
     /// Default: true
@@ -115,6 +119,10 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: false
     pub show_menus: Option<bool>,
+    /// Whether to automatically open the menus in the title bar on hover.
+    ///
+    /// Default: false
+    pub open_menus_on_hover: Option<bool>,
     /// The layout of window control buttons in the title bar (Linux only).
     ///
     /// This can be set to "platform_default" to follow the system configuration, or

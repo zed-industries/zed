@@ -36,6 +36,9 @@ Clone the [Zed repository](https://github.com/zed-industries/zed).
   brew install cmake
   ```
 
+Release bundling with `script/bundle-mac` requires the macOS 26 SDK or newer, provided by Xcode 26 or newer.
+The bundled app requires macOS 12.0 (Monterey) or later.
+
 ## Building Zed from Source
 
 Once you have the dependencies installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
@@ -74,7 +77,7 @@ You must grant Screen Recording permission to your terminal:
 ### Running Visual Tests
 
 ```sh
-cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+cargo run -p zed --bin zed-visual-test-runner --features visual-tests
 ```
 
 ### Baseline Images
@@ -89,7 +92,7 @@ Before making any UI changes, generate baseline images from a known-good state:
 
 ```sh
 git checkout origin/main
-UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+UPDATE_BASELINE=1 cargo run -p zed --bin zed-visual-test-runner --features visual-tests
 git checkout -
 ```
 
@@ -100,11 +103,45 @@ This creates baselines that reflect the current expected UI.
 When UI changes are intentional, update the baseline images after your changes:
 
 ```sh
-UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+UPDATE_BASELINE=1 cargo run -p zed --bin zed-visual-test-runner --features visual-tests
 ```
 
 > **Note:** In the future, baselines may be stored externally. For now, they
 > remain local-only to keep the git repository lightweight.
+
+## Sampling released builds
+
+How to get a symbolicated CPU profile from a released (non-dev) Zed instance.
+Use this when Zed is using a lot of CPU.
+
+Released macOS binaries are stripped of local symbols, so `sample` and Instruments show raw addresses for most frames.
+The debug symbols for every release are archived: `script/bundle-mac` uploads `zed.dwarf` to Sentry before stripping.
+
+### During the incident
+
+- Run `sample Zed 10 -f zed-sample.txt` (adjust the process name for Preview or Nightly).
+- Get the exact build: type {#action zed::About} in the command palette and copy the version and commit.
+
+The `zed-sample.txt` file can be sent to Zed together with the exact version.
+
+### Later
+
+This can be done by Zed staff.
+
+- Find the binary UUID in the `Binary Images` section at the bottom of the sample output.
+- Download the matching `zed.dwarf` from the Sentry project's Debug Files page by searching for that UUID.
+- Resolve the addresses:
+  `atos -o zed.dwarf -l <load address> <address...>`
+  Each unresolved frame in the sample output prints its `load address` and absolute address.
+
+To profile a released build on your own machine with full symbols, download the matching `zed.dwarf`, convert it into a `.dSYM` bundle Spotlight can index, and re-run `sample`:
+
+```sh
+mkdir -p Zed.dSYM/Contents/Resources/DWARF
+cp zed.dwarf Zed.dSYM/Contents/Resources/DWARF/zed
+```
+
+Frames then resolve automatically, including file and line information.
 
 ## Troubleshooting
 

@@ -32,6 +32,7 @@ collections.workspace = true
 dap-types.workspace = true
 fs.workspace = true
 futures.workspace = true
+github_releases.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 language.workspace = true
@@ -49,9 +50,6 @@ smol.workspace = true
 task.workspace = true
 telemetry.workspace = true
 util.workspace = true
-
-[target.'cfg(not(windows))'.dependencies]
-libc.workspace = true
 
 [dev-dependencies]
 async-pipe.workspace = true

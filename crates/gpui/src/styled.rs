@@ -1,8 +1,8 @@
 use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
-    FontWeight, GridPlacement, GridTemplate, Hsla, JustifyContent, Length, SharedString,
-    StrikethroughStyle, StyleRefinement, TemplateColumnMinSize, TextAlign, TextOverflow,
+    FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla, JustifyContent, Length,
+    SharedString, StrikethroughStyle, StyleRefinement, TextAlign, TextOverflow,
     TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
 pub use gpui_macros::{
@@ -120,30 +120,30 @@ pub trait Styled: Sized {
     }
 
     /// Sets the text alignment to left
-    fn text_left(mut self) -> Self {
+    fn text_left(self) -> Self {
         self.text_align(TextAlign::Left)
     }
 
     /// Sets the text alignment to center
-    fn text_center(mut self) -> Self {
+    fn text_center(self) -> Self {
         self.text_align(TextAlign::Center)
     }
 
     /// Sets the text alignment to right
-    fn text_right(mut self) -> Self {
+    fn text_right(self) -> Self {
         self.text_align(TextAlign::Right)
     }
 
     /// Sets the truncate to prevent text from wrapping and truncate overflowing text with an ellipsis (…) if needed.
     /// [Docs](https://tailwindcss.com/docs/text-overflow#truncate)
-    fn truncate(mut self) -> Self {
+    fn truncate(self) -> Self {
         self.overflow_hidden().whitespace_nowrap().text_ellipsis()
     }
 
     /// Sets number of lines to show before truncating the text.
     /// [Docs](https://tailwindcss.com/docs/line-clamp)
     fn line_clamp(mut self, lines: usize) -> Self {
-        let mut text_style = self.text_style();
+        let text_style = self.text_style();
         text_style.line_clamp = Some(lines);
         self.overflow_hidden()
     }
@@ -752,7 +752,7 @@ pub trait Styled: Sized {
     fn grid_cols(mut self, cols: u16) -> Self {
         self.style().grid_cols = Some(GridTemplate {
             repeat: cols,
-            min_size: TemplateColumnMinSize::Zero,
+            min_size: GridTemplateMinSize::Zero,
         });
         self
     }
@@ -762,7 +762,7 @@ pub trait Styled: Sized {
     fn grid_cols_min_content(mut self, cols: u16) -> Self {
         self.style().grid_cols = Some(GridTemplate {
             repeat: cols,
-            min_size: TemplateColumnMinSize::MinContent,
+            min_size: GridTemplateMinSize::MinContent,
         });
         self
     }
@@ -771,7 +771,7 @@ pub trait Styled: Sized {
     fn grid_cols_max_content(mut self, cols: u16) -> Self {
         self.style().grid_cols = Some(GridTemplate {
             repeat: cols,
-            min_size: TemplateColumnMinSize::MaxContent,
+            min_size: GridTemplateMinSize::MaxContent,
         });
         self
     }
@@ -780,7 +780,26 @@ pub trait Styled: Sized {
     fn grid_rows(mut self, rows: u16) -> Self {
         self.style().grid_rows = Some(GridTemplate {
             repeat: rows,
-            min_size: TemplateColumnMinSize::Zero,
+            min_size: GridTemplateMinSize::Zero,
+        });
+        self
+    }
+
+    /// Sets the grid rows with min-content minimum sizing.
+    /// Unlike grid_rows, it won't shrink to height 0 in AvailableSpace::MinContent constraints.
+    fn grid_rows_min_content(mut self, rows: u16) -> Self {
+        self.style().grid_rows = Some(GridTemplate {
+            repeat: rows,
+            min_size: GridTemplateMinSize::MinContent,
+        });
+        self
+    }
+
+    /// Sets the grid rows with max-content maximum sizing for content-based row heights.
+    fn grid_rows_max_content(mut self, rows: u16) -> Self {
+        self.style().grid_rows = Some(GridTemplate {
+            repeat: rows,
+            min_size: GridTemplateMinSize::MaxContent,
         });
         self
     }

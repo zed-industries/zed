@@ -18,7 +18,7 @@ Remote development requires two computers, your local machine that runs the Zed 
 
 On your local machine, Zed runs its UI, talks to language models, uses Tree-sitter to parse and syntax-highlight code, and stores unsaved changes and recent projects. The source code, language servers, tasks, and the terminal all run on the remote server. [AI features](./ai/overview.md) work in remote sessions, including the Agent Panel and Inline Assistant.
 
-> **Note:** The original version of remote development sent traffic via Zed's servers. As of Zed v0.157 you can no-longer use that mode.
+> **Note:** The original version of remote development sent traffic via Zed's servers. As of Zed v0.157 you can no longer use that mode.
 
 ## Setup
 
@@ -35,9 +35,9 @@ For simple cases where you don't need any SSH arguments, you can run `zed ssh://
 
 The remote machine must be able to run Zed's server. The following platforms should work, though note that we have not exhaustively tested every Linux distribution:
 
-- macOS Catalina or later (Intel or Apple Silicon)
+- macOS 12.0 (Monterey) or later (Intel or Apple Silicon)
 - Linux (x86_64 or arm64, we do not yet support 32-bit platforms)
-- Windows is not yet supported as a remote server, but Windows can be used as a local machine to connect to remote servers.
+- Windows (x86_64 or arm64)
 
 ## Configuration
 
@@ -111,11 +111,11 @@ Zed supports opening folders inside of WSL natively on Windows.
 
 ### Opening a local folder in WSL
 
-To open a local folder inside a WSL container, use the `projects: open in wsl` action and select the folder you want to open. You will be presented with a list of available WSL distributions to open the folder in.
+To open a local folder inside a WSL container, use the {#action projects::OpenFolderInWsl} action and select the folder you want to open. You will be presented with a list of available WSL distributions to open the folder in.
 
 ### Opening a folder already in WSL
 
-To open a folder that's already located inside of a WSL container, use the `projects: open wsl` action and select the WSL distribution. The distribution will be added to the `Remote Projects` window where you will be able to open the folder.
+To open a folder that's already located inside of a WSL container, use the {#action projects::OpenWsl} action and select the WSL distribution. The distribution will be added to the `Remote Projects` window where you will be able to open the folder.
 
 ## Port forwarding
 
@@ -180,7 +180,14 @@ When opening a remote project there are three relevant settings locations:
 - The server Zed settings (in the same place) on the remote server.
 - The project settings (in `.zed/settings.json` or `.editorconfig` of your project)
 
-Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main settings file.
+Both the local Zed and the server Zed read supported project settings. Zed forwards
+your local user settings to the server, where server settings override them.
+
+Git auto-fetch runs on the server and sends updated branch information to your
+local Zed window. Enable `git.auto_fetch` in your user settings or the server's
+settings. Git settings are not read from project `.zed/settings.json` files. See
+[Auto Fetch](./reference/all-settings.md#auto-fetch) for configuration and credential
+requirements.
 
 Which settings file you should use depends on the kind of setting you want to make:
 
@@ -228,7 +235,7 @@ If you'd like to maintain the server binary yourself you can. You can either dow
 
 ```bash
 cargo build --release --package remote_server
-llvm-objcopy --strip-debug target/release/remote_server
+llvm-objcopy --strip-debug target/release/remote-server
 ```
 
 Stripping debug symbols matches the packaging step in [`script/bundle-linux`](https://github.com/zed-industries/zed/blob/main/script/bundle-linux) and keeps the binary closer to the size of Zed's prebuilt downloads. Prefer `llvm-objcopy` because GNU `objcopy` may not understand newer LLVM-emitted CREL sections.
@@ -237,14 +244,14 @@ The official Linux release builds a musl/static remote server. If you need that,
 
 ```bash
 RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --package remote_server --target x86_64-unknown-linux-musl
-llvm-objcopy --strip-debug target/x86_64-unknown-linux-musl/release/remote_server
+llvm-objcopy --strip-debug target/x86_64-unknown-linux-musl/release/remote-server
 ```
 
 If you do this, you must upload it to `~/.zed_server/zed-remote-server-{RELEASE_CHANNEL}-{VERSION}` on the server, for example `~/.zed_server/zed-remote-server-stable-0.217.3+stable.105.80433cb239e868271457ac376673a5f75bc4adb1`. The version must exactly match the version of Zed itself you are using.
 
 ## Maintaining the SSH connection
 
-Once the server is initialized. Zed will create new SSH connections (reusing the existing ControlMaster) to run the remote development server.
+Once the server is initialized, Zed will create new SSH connections (reusing the existing ControlMaster) to run the remote development server.
 
 Each connection tries to run the development server in proxy mode. This mode will start the daemon if it is not running, and reconnect to it if it is. This way when your connection drops and is restarted, you can continue to work without interruption.
 

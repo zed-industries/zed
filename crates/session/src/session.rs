@@ -70,8 +70,7 @@ impl AppSession {
     pub fn new(session: Session, cx: &Context<Self>) -> Self {
         let _subscriptions = vec![cx.on_app_quit(Self::app_will_quit)];
 
-        #[cfg(not(any(test, feature = "test-support")))]
-        let _serialization_task = {
+        let _serialization_task = if cfg!(not(any(test, feature = "test-support"))) {
             let db = KeyValueStore::global(cx);
             cx.spawn(async move |_, cx| {
                 // Disabled in tests: the infinite loop bypasses "parking forbidden" checks,
@@ -80,6 +79,7 @@ impl AppSession {
                     let mut current_window_stack = Vec::new();
                     loop {
                         if let Some(windows) = cx.update(|cx| window_stack(cx))
+                            && !windows.is_empty()
                             && windows != current_window_stack
                         {
                             store_window_stack(db.clone(), &windows).await;
@@ -92,10 +92,9 @@ impl AppSession {
                     }
                 }
             })
+        } else {
+            Task::ready(())
         };
-
-        #[cfg(any(test, feature = "test-support"))]
-        let _serialization_task = Task::ready(());
 
         Self {
             session,
@@ -105,7 +104,9 @@ impl AppSession {
     }
 
     fn app_will_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        if let Some(window_stack) = window_stack(cx) {
+        if let Some(window_stack) = window_stack(cx)
+            && !window_stack.is_empty()
+        {
             let db = KeyValueStore::global(cx);
             cx.background_spawn(async move { store_window_stack(db, &window_stack).await })
         } else {

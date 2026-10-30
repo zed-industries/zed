@@ -20,6 +20,7 @@ use std::{
         Arc,
         atomic::{self, AtomicUsize},
     },
+    time::Duration,
 };
 use text::{Point, ToOffset};
 use ui::prelude::*;
@@ -773,7 +774,12 @@ async fn test_edit_prediction_preview_does_not_hide_code_actions_on_modifier_pre
 
     let provider = cx.new(|_| FakeEditPredictionDelegate::default());
     cx.update_editor(|editor, window, cx| {
-        editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
+        editor.set_edit_prediction_provider(
+            Some(provider.clone()),
+            EditPredictionRequestTrigger::EditorCreated,
+            window,
+            cx,
+        );
     });
 
     let snapshot = cx.buffer_snapshot();
@@ -1634,7 +1640,12 @@ fn assign_editor_completion_provider(
     cx: &mut EditorTestContext,
 ) {
     cx.update_editor(|editor, window, cx| {
-        editor.set_edit_prediction_provider(Some(provider), window, cx);
+        editor.set_edit_prediction_provider(
+            Some(provider),
+            EditPredictionRequestTrigger::EditorCreated,
+            window,
+            cx,
+        );
     })
 }
 
@@ -1672,7 +1683,12 @@ fn assign_editor_completion_provider_non_zed(
     cx: &mut EditorTestContext,
 ) {
     cx.update_editor(|editor, window, cx| {
-        editor.set_edit_prediction_provider(Some(provider), window, cx);
+        editor.set_edit_prediction_provider(
+            Some(provider),
+            EditPredictionRequestTrigger::EditorCreated,
+            window,
+            cx,
+        );
     })
 }
 
@@ -1782,7 +1798,7 @@ impl EditPredictionDelegate for FakeEditPredictionDelegate {
         &mut self,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        _debounce: bool,
+        _debounce_duration: Duration,
         _trigger: edit_prediction_types::EditPredictionRequestTrigger,
         _cx: &mut gpui::Context<Self>,
     ) {
@@ -1861,7 +1877,7 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
         &mut self,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        _debounce: bool,
+        _debounce_duration: Duration,
         _trigger: edit_prediction_types::EditPredictionRequestTrigger,
         _cx: &mut gpui::Context<Self>,
     ) {

@@ -47,13 +47,13 @@ pub struct TerminalOutput {
 
 /// Returns the default text style for the terminal output.
 pub fn text_style(window: &mut Window, cx: &App) -> TextStyle {
-    let settings = ThemeSettings::get_global(cx).clone();
+    let settings = ThemeSettings::get_global(cx);
 
     let font_size = settings.buffer_font_size(cx).into();
-    let font_family = settings.buffer_font.family;
-    let font_features = settings.buffer_font.features;
+    let font_family = settings.buffer_font.family.clone();
+    let font_features = settings.buffer_font.features.clone();
     let font_weight = settings.buffer_font.weight;
-    let font_fallbacks = settings.buffer_font.fallbacks;
+    let font_fallbacks = settings.buffer_font.fallbacks.clone();
 
     let theme = cx.theme();
 
@@ -362,15 +362,17 @@ impl Render for TerminalOutput {
 
         let text_style = text_style(window, cx);
         let minimum_contrast = TerminalSettings::get_global(cx).minimum_contrast;
-        let (rects, batched_text_runs) = terminal.read(cx).with_renderable_cells(|cells| {
-            TerminalElement::layout_grid(cells, 0, &text_style, None, minimum_contrast, cx)
-        });
+        let (rects, batched_text_runs, block_element_rects) =
+            terminal.read(cx).with_renderable_cells(|cells| {
+                TerminalElement::layout_grid(cells, 0, &text_style, None, minimum_contrast, cx)
+            });
 
         // lines are 0-indexed, so we must add 1 to get the number of lines
         let text_line_height = text_style.line_height_in_pixels(window.rem_size());
         let num_lines = batched_text_runs
             .iter()
             .map(|b| b.start_point.line())
+            .chain(block_element_rects.iter().map(|rect| rect.line()))
             .max()
             .unwrap_or(0)
             + 1;
@@ -412,6 +414,18 @@ impl Render for TerminalOutput {
                         },
                         window,
                         cx,
+                    );
+                }
+
+                for block_element_rect in block_element_rects {
+                    block_element_rect.paint(
+                        bounds.origin,
+                        &terminal::TerminalBounds {
+                            cell_width,
+                            line_height: text_line_height,
+                            bounds,
+                        },
+                        window,
                     );
                 }
             },

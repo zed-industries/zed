@@ -131,6 +131,11 @@ pub enum PredictEditsRequestTrigger {
     LSPCompletionAccepted,
     PredictionAccepted,
     PredictionPartiallyAccepted,
+    EditorCreated,
+    ProviderChanged,
+    UserInfoChanged,
+    VimModeChanged,
+    SettingsChanged,
     #[default]
     Other,
 }
@@ -196,6 +201,10 @@ pub enum EditPredictionRejectReason {
     Empty,
     /// Edits returned, but none remained after interpolation
     InterpolatedEmpty,
+    /// Edits returned, but could not be interpolated after buffer changes
+    InterpolateFailed,
+    /// A patch was returned, but could not be applied to the buffer
+    PatchApplyFailed,
     /// The new prediction was preferred over the current one
     Replaced,
     /// The current prediction was preferred over the new one
@@ -328,6 +337,10 @@ pub struct SupportedEffortLevel {
     pub value: Arc<str>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_default: Option<bool>,
+    /// Overrides the model-level `supports_disabling_thinking` capability for
+    /// this effort level when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_disabling_thinking: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -368,5 +381,24 @@ mod tests {
             let limit = UsageLimit::from_str(value);
             assert!(limit.is_err());
         }
+    }
+
+    #[test]
+    fn test_supported_effort_level_deserializes_disabling_thinking_support() {
+        let effort_level = serde_json::from_value::<SupportedEffortLevel>(serde_json::json!({
+            "name": "High",
+            "value": "high",
+            "is_default": true,
+            "supports_disabling_thinking": true
+        }))
+        .expect("effort level should deserialize");
+        assert_eq!(effort_level.supports_disabling_thinking, Some(true));
+
+        let effort_level = serde_json::from_value::<SupportedEffortLevel>(serde_json::json!({
+            "name": "Max",
+            "value": "max"
+        }))
+        .expect("effort level without an override should deserialize");
+        assert_eq!(effort_level.supports_disabling_thinking, None);
     }
 }

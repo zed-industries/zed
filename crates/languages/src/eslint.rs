@@ -1,10 +1,7 @@
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use github_releases::{AssetKind, GitHubLspBinaryVersion, build_asset_url, download_server_binary};
 use gpui::AsyncApp;
-use http_client::{
-    github::{AssetKind, GitHubLspBinaryVersion, build_asset_url},
-    github_download::download_server_binary,
-};
 use language::{LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, read_package_installed_version};
@@ -117,7 +114,8 @@ impl LspInstaller for EsLintLspAdapter {
                 remove_matching(&container_dir, |_| true).await;
 
                 download_server_binary(
-                    &*delegate.http_client(),
+                    &delegate.background_executor(),
+                    delegate.http_client(),
                     &version.url,
                     None,
                     &destination_path,
@@ -286,7 +284,7 @@ impl LspAdapter for EsLintLspAdapter {
         let file_path = requested_file_path
             .as_ref()
             .and_then(|abs_path| abs_path.strip_prefix(worktree_root).ok())
-            .and_then(|p| RelPath::unix(&p).ok().map(ToOwned::to_owned))
+            .and_then(|p| RelPath::from_unix_str(&p).ok().map(ToOwned::to_owned))
             .unwrap_or_else(|| RelPath::empty().to_owned());
         let override_options = cx.update(|cx| {
             language_server_settings_for(

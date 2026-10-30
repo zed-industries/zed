@@ -2,25 +2,25 @@ use anyhow::Result;
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
 };
+use language_model::chat_completion::{ChatCompletionEventMapper, ResponseStreamEvent};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, RateLimiter, env_var,
+    LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView, RateLimiter, env_var,
+    unavailable_error,
 };
-use open_ai::ResponseStreamEvent;
 use serde::Deserialize;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 pub use settings::VercelAiGatewayAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
-use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
-use ui_input::InputField;
+use ui::IconName;
 use util::ResultExt;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("vercel_ai_gateway");
@@ -41,6 +41,7 @@ pub struct VercelAiGatewaySettings {
 pub struct VercelAiGatewayLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
+    request_limiters: ModelRateLimiters,
 }
 
 pub struct State {
@@ -48,7 +49,8 @@ pub struct State {
     credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<AvailableModel>,
-    fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
+    fetch_models_task: Option<Task<()>>,
+    last_fetch_models_error: Option<String>,
 }
 
 impl State {
@@ -115,10 +117,20 @@ impl State {
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
         if self.is_authenticated() {
-            let task = self.fetch_models(cx);
+            let fetch_task = self.fetch_models(cx);
+            let task = cx.spawn(async move |this, cx| {
+                let result = fetch_task.await;
+                this.update(cx, |this, _cx| {
+                    this.last_fetch_models_error =
+                        result.as_ref().err().map(|error| format!("{error:#}"));
+                })
+                .ok();
+                result.log_err();
+            });
             self.fetch_models_task.replace(task);
         } else {
             self.available_models = Vec::new();
+            self.last_fetch_models_error = None;
         }
     }
 }
@@ -148,10 +160,15 @@ impl VercelAiGatewayLanguageModelProvider {
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_models_task: None,
+                last_fetch_models_error: None,
             }
         });
 
-        Self { http_client, state }
+        Self {
+            http_client,
+            state,
+            request_limiters: ModelRateLimiters::default(),
+        }
     }
 
     fn settings(cx: &App) -> &VercelAiGatewaySettings {
@@ -178,14 +195,78 @@ impl VercelAiGatewayLanguageModelProvider {
         }
     }
 
-    fn create_language_model(&self, model: AvailableModel) -> Arc<dyn LanguageModel> {
-        Arc::new(VercelAiGatewayLanguageModel {
-            id: LanguageModelId::from(model.name.clone()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        })
+    /// Every model this provider offers, keyed by id: the default model, then
+    /// the fetched list, then settings entries, each overriding the last.
+    fn vercel_ai_gateway_models(&self, cx: &App) -> BTreeMap<String, AvailableModel> {
+        let mut models = BTreeMap::default();
+
+        let default_model = Self::default_available_model();
+        models.insert(default_model.name.clone(), default_model);
+
+        for model in self.state.read(cx).available_models.clone() {
+            models.insert(model.name.clone(), model);
+        }
+
+        for model in &Self::settings(cx).available_models {
+            models.insert(model.name.clone(), model.clone());
+        }
+
+        models
+    }
+
+    /// The current configuration of `model`, if this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<AvailableModel, LanguageModelCompletionError> {
+        self.vercel_ai_gateway_models(cx)
+            .remove(model.id.0.as_ref())
+            .ok_or_else(|| unavailable_error(model))
+    }
+
+    fn stream_open_ai(
+        &self,
+        request_limiter: &RateLimiter,
+        request: open_ai::Request,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<ResponseStreamEvent, LanguageModelCompletionError>,
+            >,
+            LanguageModelCompletionError,
+        >,
+    > {
+        let http_client = self.http_client.clone();
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = VercelAiGatewayLanguageModelProvider::api_url(cx);
+            let extra_headers = VercelAiGatewayLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+
+        let future = request_limiter.stream(async move {
+            let provider = PROVIDER_NAME;
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
+            };
+            let request = open_ai::stream_completion(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+                &extra_headers,
+            );
+            let response = request.await.map_err(map_open_ai_error)?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 }
 
@@ -210,31 +291,20 @@ impl LanguageModelProvider for VercelAiGatewayLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiVercel)
     }
 
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(Self::default_available_model()))
+    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
+        self.vercel_ai_gateway_models(cx)
+            .get(&Self::default_available_model().name)
+            .map(language_model)
     }
 
-    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_fast_model(&self, _cx: &App) -> Option<LanguageModel> {
         None
     }
 
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models = BTreeMap::default();
-
-        let default_model = Self::default_available_model();
-        models.insert(default_model.name.clone(), default_model);
-
-        for model in self.state.read(cx).available_models.clone() {
-            models.insert(model.name.clone(), model);
-        }
-
-        for model in &Self::settings(cx).available_models {
-            models.insert(model.name.clone(), model.clone());
-        }
-
-        models
-            .into_values()
-            .map(|model| self.create_language_model(model))
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
+        self.vercel_ai_gateway_models(cx)
+            .values()
+            .map(language_model)
             .collect()
     }
 
@@ -246,86 +316,64 @@ impl LanguageModelProvider for VercelAiGatewayLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
-            .into()
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
+    fn refresh_models(&self, cx: &mut App) {
         self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
     }
 
-    fn api_key_configuration(&self, cx: &App) -> Option<ApiKeyConfiguration> {
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.read(cx);
-        Some(ApiKeyConfiguration {
-            has_key: state.api_key_state.has_key(),
-            is_from_env_var: state.api_key_state.is_from_env_var(),
-            env_var_name: state.api_key_state.env_var_name().clone(),
-            api_key_url:
-                "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys&title=Go+to+AI+Gateway"
-                    .into(),
-        })
+        Some(ProviderSettingsView::ApiKey(ApiKeyConfiguration::new(
+            state.api_key_state.has_key(),
+            state.api_key_state.is_from_env_var(),
+            state.api_key_state.env_var_name().clone(),
+            "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys&title=Go+to+AI+Gateway"
+                .into(),
+        )))
     }
 
-    fn set_api_key(&self, key: String, cx: &mut App) -> Task<Result<()>> {
+    fn set_api_key(&self, api_key: Option<String>, cx: &mut App) -> Task<Result<()>> {
         self.state
-            .update(cx, |state, cx| state.set_api_key(Some(key), cx))
+            .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
 }
 
-pub struct VercelAiGatewayLanguageModel {
-    id: LanguageModelId,
-    model: AvailableModel,
-    state: Entity<State>,
-    http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
-}
-
-impl VercelAiGatewayLanguageModel {
-    fn stream_open_ai(
+impl LanguageModelClient for VercelAiGatewayLanguageModelProvider {
+    fn stream_completion(
         &self,
-        request: open_ai::Request,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let http_client = self.http_client.clone();
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
-            let api_url = VercelAiGatewayLanguageModelProvider::api_url(cx);
-            let extra_headers = VercelAiGatewayLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
-        });
-
-        let future = self.request_limiter.stream(async move {
-            let provider = PROVIDER_NAME;
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey { provider });
-            };
-            let request = open_ai::stream_completion(
-                http_client.as_ref(),
-                provider.0.as_str(),
-                &api_url,
-                &api_key,
-                request,
-                &extra_headers,
-            );
-            let response = request.await.map_err(map_open_ai_error)?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        let request = match crate::provider::open_ai::into_open_ai(
+            request,
+            &config.name,
+            config.capabilities.parallel_tool_calls,
+            config.capabilities.prompt_cache_key,
+            config.max_output_tokens,
+            crate::provider::open_ai::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+            None,
+            false,
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        let completions = self.stream_open_ai(&request_limiter, request, cx);
+        let executor = cx.background_executor().clone();
+        async move {
+            let mapper = ChatCompletionEventMapper::new();
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(completions.await?).boxed(),
+                executor,
+            ))
+        }
+        .boxed()
     }
 }
 
@@ -349,7 +397,7 @@ fn map_open_ai_error(error: open_ai::RequestError) -> LanguageModelCompletionErr
                 retry_after,
             )
         }
-        open_ai::RequestError::Other(error) => LanguageModelCompletionError::Other(error),
+        error => error.into(),
     }
 }
 
@@ -393,98 +441,31 @@ fn has_tag(tags: &[String], expected: &str) -> bool {
         .any(|tag| tag.trim().eq_ignore_ascii_case(expected))
 }
 
-impl LanguageModel for VercelAiGatewayLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
-    }
-
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(
-            self.model
-                .display_name
-                .clone()
-                .unwrap_or_else(|| self.model.name.clone()),
+fn language_model(model: &AvailableModel) -> LanguageModel {
+    LanguageModel {
+        supports_tools: model.capabilities.tools,
+        supports_images: model.capabilities.images,
+        tool_choice_support: LanguageModelToolChoiceSupport {
+            auto: model.capabilities.tools,
+            any: model.capabilities.tools,
+            none: true,
+        },
+        supports_streaming_tools: true,
+        supports_split_token_display: true,
+        max_output_tokens: model.max_output_tokens,
+        ..LanguageModel::new(
+            LanguageModelId::from(model.name.clone()),
+            LanguageModelName::from(
+                model
+                    .display_name
+                    .clone()
+                    .unwrap_or_else(|| model.name.clone()),
+            ),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("vercel_ai_gateway/{}", model.name),
+            model.max_tokens,
         )
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        self.model.capabilities.tools
-    }
-
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchemaSubset
-    }
-
-    fn supports_images(&self) -> bool {
-        self.model.capabilities.images
-    }
-
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        match choice {
-            LanguageModelToolChoice::Auto => self.model.capabilities.tools,
-            LanguageModelToolChoice::Any => self.model.capabilities.tools,
-            LanguageModelToolChoice::None => true,
-        }
-    }
-
-    fn supports_streaming_tools(&self) -> bool {
-        true
-    }
-
-    fn supports_split_token_display(&self) -> bool {
-        true
-    }
-
-    fn telemetry_id(&self) -> String {
-        format!("vercel_ai_gateway/{}", self.model.name)
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.model.max_tokens
-    }
-
-    fn max_output_tokens(&self) -> Option<u64> {
-        self.model.max_output_tokens
-    }
-
-    fn stream_completion(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            futures::stream::BoxStream<
-                'static,
-                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
-            >,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let request = crate::provider::open_ai::into_open_ai(
-            request,
-            &self.model.name,
-            self.model.capabilities.parallel_tool_calls,
-            self.model.capabilities.prompt_cache_key,
-            self.max_output_tokens(),
-            crate::provider::open_ai::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
-            None,
-            false,
-        );
-        let completions = self.stream_open_ai(request, cx);
-        async move {
-            let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
-        }
-        .boxed()
     }
 }
 
@@ -535,12 +516,14 @@ async fn list_models(
             provider: PROVIDER_NAME,
             error,
         })?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let mut response =
         client
             .send(request)
             .await
             .map_err(|error| LanguageModelCompletionError::HttpSend {
                 provider: PROVIDER_NAME,
+                host,
                 error,
             })?;
 
@@ -619,130 +602,76 @@ async fn list_models(
     Ok(models)
 }
 
-struct ConfigurationView {
-    api_key_editor: Entity<InputField>,
-    state: Entity<State>,
-    load_credentials_task: Option<Task<()>>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl ConfigurationView {
-    fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let api_key_editor =
-            cx.new(|cx| InputField::new(window, cx, "vck_000000000000000000000000000"));
+    struct TestCredentialsProvider;
 
-        cx.observe(&state, |_, _, cx| cx.notify()).detach();
+    impl CredentialsProvider for TestCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
 
-        let load_credentials_task = Some(cx.spawn_in(window, {
-            let state = state.clone();
-            async move |this, cx| {
-                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
-                    let _ = task.await;
-                }
-                this.update(cx, |this, cx| {
-                    this.load_credentials_task = None;
-                    cx.notify();
-                })
-                .log_err();
-            }
-        }));
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
 
-        Self {
-            api_key_editor,
-            state,
-            load_credentials_task,
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
         }
     }
 
-    fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let api_key = self.api_key_editor.read(cx).text(cx).trim().to_string();
-        if api_key.is_empty() {
-            return;
-        }
+    #[gpui::test]
+    async fn restart_fetch_models_task_records_error_on_failure(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
 
-        self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
+        let http_client = http_client::FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder()
+                .status(401)
+                .body(AsyncBody::from(r#"{"error":{"message":"invalid key"}}"#))?)
+        });
+        let provider = cx.update(|cx| {
+            VercelAiGatewayLanguageModelProvider::new(
+                http_client,
+                Arc::new(TestCredentialsProvider),
+                cx,
+            )
+        });
 
-        let state = self.state.clone();
-        cx.spawn_in(window, async move |_, cx| {
-            state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
-                .await
-        })
-        .detach_and_log_err(cx);
-    }
+        cx.update(|cx| provider.set_api_key(Some("test-key".to_string()), cx))
+            .await
+            .unwrap();
+        cx.update(|cx| {
+            provider
+                .state
+                .update(cx, |state, cx| state.restart_fetch_models_task(cx))
+        });
+        cx.run_until_parked();
 
-    fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
-
-        let state = self.state.clone();
-        cx.spawn_in(window, async move |_, cx| {
-            state
-                .update(cx, |state, cx| state.set_api_key(None, cx))
-                .await
-        })
-        .detach_and_log_err(cx);
-    }
-
-    fn should_render_editor(&self, cx: &Context<Self>) -> bool {
-        !self.state.read(cx).is_authenticated()
-    }
-}
-
-impl Render for ConfigurationView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let env_var_set = self.state.read(cx).api_key_state.is_from_env_var();
-        let configured_card_label = if env_var_set {
-            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
-        } else {
-            let api_url = VercelAiGatewayLanguageModelProvider::api_url(cx);
-            if api_url == API_URL {
-                "API key configured".to_string()
-            } else {
-                format!("API key configured for {}", api_url)
-            }
-        };
-
-        if self.load_credentials_task.is_some() {
-            div().child(Label::new("Loading credentials...")).into_any()
-        } else if self.should_render_editor(cx) {
-            v_flex()
-                .size_full()
-                .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(
-                    "To use Zed's agent with Vercel AI Gateway, you need to add an API key. Follow these steps:",
-                ))
-                .child(
-                    List::new()
-                        .child(
-                            ListBulletItem::new("")
-                                .child(Label::new("Create an API key in"))
-                                .child(ButtonLink::new(
-                                    "Vercel AI Gateway's console",
-                                    "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys&title=Go+to+AI+Gateway",
-                                )),
-                        )
-                        .child(ListBulletItem::new(
-                            "Paste your API key below and hit enter to start using the assistant",
-                        )),
-                )
-                .child(self.api_key_editor.clone())
-                .child(
-                    Label::new(format!(
-                        "You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed.",
-                    ))
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .into_any_element()
-        } else {
-            ConfiguredApiCard::new("vercel-reset-key", configured_card_label)
-                .disabled(env_var_set)
-                .when(env_var_set, |this| {
-                    this.tooltip_label(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable."))
-                })
-                .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
-                .into_any_element()
-        }
+        let error = cx.read(|cx| provider.state.read(cx).last_fetch_models_error.clone());
+        assert!(
+            error.is_some(),
+            "a failed model fetch should be recorded, not silently dropped"
+        );
     }
 }

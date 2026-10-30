@@ -1,10 +1,9 @@
 use anyhow::{Context as _, anyhow};
 use async_trait::async_trait;
 use cloud_api_types::internal_api::{
-    self, FuzzySearchChannelMembersByGithubLoginBody,
-    FuzzySearchChannelMembersByGithubLoginResponse, FuzzySearchUsersBody, FuzzySearchUsersResponse,
-    LookUpUserByGithubLoginBody, LookUpUserByGithubLoginResponse, LookUpUsersByLegacyIdBody,
-    LookUpUsersByLegacyIdResponse,
+    self, FuzzySearchChannelMembersBody, FuzzySearchChannelMembersResponse, FuzzySearchUsersBody,
+    FuzzySearchUsersResponse, LookUpUserByGithubLoginBody, LookUpUserByGithubLoginResponse,
+    LookUpUsersByLegacyIdBody, LookUpUsersByLegacyIdResponse,
 };
 use reqwest::RequestBuilder;
 use rpc::proto;
@@ -69,10 +68,7 @@ impl CloudUserService {
     ) -> Result<T> {
         let request = request
             .header("Content-Type", "application/json")
-            .header(
-                "Authorization",
-                format!("Bearer {}", &self.internal_api_key),
-            )
+            .header("Authorization", format!("Bearer {}", self.internal_api_key))
             .build()
             .context("failed to build request")?;
 
@@ -105,7 +101,7 @@ impl UserService for CloudUserService {
                 self.http_client
                     .post(format!(
                         "{}/internal/users/look_up_by_legacy_id",
-                        &self.zed_cloud_url
+                        self.zed_cloud_url
                     ))
                     .json(&LookUpUsersByLegacyIdBody {
                         legacy_user_ids: ids.into_iter().map(|id| id.0).collect(),
@@ -122,7 +118,7 @@ impl UserService for CloudUserService {
                 self.http_client
                     .post(format!(
                         "{}/internal/users/look_up_by_github_login",
-                        &self.zed_cloud_url
+                        self.zed_cloud_url
                     ))
                     .json(&LookUpUserByGithubLoginBody {
                         github_login: github_login.to_string(),
@@ -139,7 +135,7 @@ impl UserService for CloudUserService {
                 self.http_client
                     .post(format!(
                         "{}/internal/users/fuzzy_search",
-                        &self.zed_cloud_url
+                        self.zed_cloud_url
                     ))
                     .json(&FuzzySearchUsersBody {
                         query: query.to_string(),
@@ -157,14 +153,14 @@ impl UserService for CloudUserService {
         query: &str,
         limit: u32,
     ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
-        let response_body: FuzzySearchChannelMembersByGithubLoginResponse = self
+        let response_body: FuzzySearchChannelMembersResponse = self
             .send_request(
                 self.http_client
                     .post(format!(
-                        "{}/internal/channel_members/fuzzy_search_by_github_login",
-                        &self.zed_cloud_url
+                        "{}/internal/channel_members/fuzzy_search",
+                        self.zed_cloud_url
                     ))
-                    .json(&FuzzySearchChannelMembersByGithubLoginBody {
+                    .json(&FuzzySearchChannelMembersBody {
                         channel_id: channel.root_id().0,
                         query: query.to_string(),
                         limit,
