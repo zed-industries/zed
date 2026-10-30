@@ -28,7 +28,7 @@ use git::{
     BISECT_LOG, COMMIT_MESSAGE, DOT_GIT, FETCH_HEAD, FSMONITOR_DAEMON, GC_PID, GITIGNORE,
     HOOKS_DIR, INFO_DIR, LFS_DIR, LOGS_DIR, LOGS_REF_STASH, OBJECTS_DIR, ORIG_HEAD,
     REBASE_APPLY_DIR, REBASE_MERGE_DIR, REFS_DIR, REFTABLE_DIR, REPO_EXCLUDE, SEQUENCER_DIR,
-    status::GitSummary,
+    WORKTREES_DIR, status::GitSummary,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
@@ -3743,6 +3743,19 @@ async fn is_dot_git(path: &Path, fs: &dyn Fs) -> bool {
     matches!(config_metadata, Ok(Some(_)))
 }
 
+/// Whether a path inside a `.git` directory is the root of a linked
+/// worktree's private git dir (`worktrees/<name>`). Git creates transient
+/// files like `index.lock` directly inside that directory, so on Windows its
+/// bare Changed events need the same deferral as bare `.git` events.
+fn is_linked_worktree_git_dir_root(path_in_git_dir: &Path) -> bool {
+    let mut components = path_in_git_dir.components();
+    components
+        .next()
+        .is_some_and(|first| first.as_os_str() == OsStr::new(WORKTREES_DIR))
+        && components.next().is_some()
+        && components.next().is_none()
+}
+
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
     let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
     build_gitignore_with_root(abs_path, parent, fs).await
@@ -4910,6 +4923,9 @@ impl BackgroundScanner {
             // infinite loop of rescans. So bare `.git` events are deferred here
             // and only rescanned when nothing in the batch explains them; a
             // standalone bare event (macOS coalescing) still triggers a rescan.
+            // A linked worktree's private git dir (`.git/worktrees/<name>`) gets
+            // transient `index.lock` files too, so its bare Changed events need
+            // the same deferral.
             let mut bare_dot_git_abs_paths = Vec::new();
             let mut dot_git_dirs_with_ignored_events = Vec::new();
 
@@ -4948,9 +4964,10 @@ impl BackgroundScanner {
                             && path_in_git_dir
                                 .extension()
                                 .is_some_and(|ext| ext == "new" || ext == "tmp"));
-                    let is_dot_git = path_in_git_dir == Path::new("")
+                    let is_bare_git_dir = (path_in_git_dir == Path::new("")
+                        || is_linked_worktree_git_dir_root(&path_in_git_dir))
                         && matches!(event.kind, Some(PathEventKind::Changed))
-                        && self.fs.is_dir(&dot_git_abs_path).await;
+                        && self.fs.is_dir(abs_path.as_path()).await;
                     if is_ignored {
                         log::debug!(
                             "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
@@ -4962,9 +4979,9 @@ impl BackgroundScanner {
                         continue;
                     }
 
-                    if is_dot_git {
+                    if is_bare_git_dir {
                         log::debug!(
-                            "ignoring event {abs_path:?} for .git directory itself (kind: {:?})",
+                            "ignoring event {abs_path:?} for the git directory itself (kind: {:?})",
                             event.kind
                         );
                         if !bare_dot_git_abs_paths.contains(&dot_git_abs_path) {
