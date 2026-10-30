@@ -34,11 +34,29 @@ pub fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
         (&status.conflict, &mut status.conflict_background),
         (&status.error, &mut status.error_background),
         (&status.hidden, &mut status.hidden_background),
+        (&status.untracked, &mut status.untracked_background),
     ] {
         if bg_color.is_none()
             && let Some(fg_color) = fg_color
         {
             *bg_color = Some(fg_color.opacity(0.25));
+        }
+    }
+
+    apply_staged_status_color_defaults(status);
+}
+
+/// Uses the regular status colors for staged changes wherever no staged color is set.
+// Themes and overrides that don't distinguish staged changes keep their regular
+// status colors, rather than inheriting the staged colors of the base theme.
+pub fn apply_staged_status_color_defaults(status: &mut StatusColorsRefinement) {
+    for (fg_color, staged_color) in [
+        (&status.created, &mut status.created_staged),
+        (&status.deleted, &mut status.deleted_staged),
+        (&status.modified, &mut status.modified_staged),
+    ] {
+        if staged_color.is_none() {
+            *staged_color = *fg_color;
         }
     }
 }
@@ -286,9 +304,11 @@ pub(crate) fn zed_default_dark() -> Theme {
                 created: green,
                 created_background: green,
                 created_border: green,
+                created_staged: green,
                 deleted: red,
                 deleted_background: red,
                 deleted_border: red,
+                deleted_staged: red,
                 error: red,
                 error_background: red,
                 error_border: red,
@@ -307,6 +327,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 modified: yellow,
                 modified_background: yellow,
                 modified_border: yellow,
+                modified_staged: yellow,
                 predictive: gray,
                 predictive_background: gray,
                 predictive_border: gray,
@@ -319,6 +340,9 @@ pub(crate) fn zed_default_dark() -> Theme {
                 unreachable: gray,
                 unreachable_background: gray,
                 unreachable_border: gray,
+                untracked: orange,
+                untracked_background: orange,
+                untracked_border: orange,
                 warning: yellow,
                 warning_background: yellow,
                 warning_border: yellow,

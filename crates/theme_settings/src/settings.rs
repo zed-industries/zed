@@ -543,7 +543,8 @@ impl ThemeSettings {
             base_theme.styles.window_background_appearance =
                 window_background_appearance.into_gpui();
         }
-        let status_color_refinement = status_colors_refinement(&theme_overrides.status);
+        let mut status_color_refinement = status_colors_refinement(&theme_overrides.status);
+        theme::apply_staged_status_color_defaults(&mut status_color_refinement);
 
         let theme_color_refinement = theme_colors_refinement(
             &theme_overrides.colors,
@@ -886,6 +887,47 @@ mod tests {
                 .colors
                 .color(::theme::ThemeColorField::EditorCodeLensForeground),
             green
+        );
+    }
+
+    #[test]
+    fn overriding_a_status_color_also_overrides_its_staged_color() {
+        let mut test_theme = crate::refine_theme(&crate::ThemeContent {
+            name: "Test".into(),
+            appearance: ::theme::AppearanceContent::Dark,
+            style: ::settings::ThemeStyleContent {
+                status: ::settings::StatusColorsContent {
+                    created: Some("#00ff00ff".into()),
+                    created_staged: Some("#00ff0099".into()),
+                    modified: Some("#ffff00ff".into()),
+                    modified_staged: Some("#ffff0099".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        });
+
+        ThemeSettings::modify_theme(
+            &mut test_theme,
+            &::settings::ThemeStyleContent {
+                status: ::settings::StatusColorsContent {
+                    created: Some("#0000ffff".into()),
+                    modified: Some("#ff00ffff".into()),
+                    modified_staged: Some("#ff00ff99".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let status = &test_theme.styles.status;
+        assert_eq!(
+            status.created_staged,
+            ::theme::try_parse_color("#0000ffff").unwrap()
+        );
+        assert_eq!(
+            status.modified_staged,
+            ::theme::try_parse_color("#ff00ff99").unwrap()
         );
     }
 }
