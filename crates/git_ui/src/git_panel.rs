@@ -7939,18 +7939,18 @@ impl GitPanel {
                                                 )
                                             },
                                         )
-                                        .map(|this| {
-                                            if is_active {
-                                                this.bg(cx.theme().colors().element_selected)
-                                            } else {
+                                        .when_else(
+                                            is_active,
+                                            |this| this.bg(cx.theme().colors().element_selected),
+                                            |this| {
                                                 this.hover(|s| {
                                                     s.bg(cx.theme().colors().element_hover)
                                                 })
                                                 .when(is_context_menu_target, |this| {
                                                     this.bg(cx.theme().colors().element_hover)
                                                 })
-                                            }
-                                        })
+                                            },
+                                        )
                                         .child(
                                             h_flex()
                                                 .gap_1()
