@@ -27,6 +27,25 @@
   });
   ```
 
+# Fork rules
+
+* Crew must regularly integrate upstream Zed features and functional fixes. Choose code placement to keep ownership and upstream integration points clear; a shorter original file does not by itself make a change easier to maintain.
+* Before adding code, identify its responsibility and the existing module or crate that owns it. Apply these placement rules:
+
+  | Case | Placement |
+  | --- | --- |
+  | Change an existing UI's styling, layout, or composition | Edit the existing view or component in its owning crate. Reuse upstream state, actions, focus handling, task lifecycles, and error propagation unless the requested behavior requires changing them. |
+  | Add a distinct Crew-only feature within an existing crate's responsibility | Implement it in a descriptive `.rs` module in that crate, or extend an existing Crew module with the same responsibility. Keep declarations, registration, calls, and other necessary integration in the original owning module. |
+  | Make a small fix or adjustment within an existing responsibility | Change the existing implementation in place. Do not introduce a file or forwarding function solely to shorten the original file. |
+  | Add a UI component or styling rule needed by multiple areas | Reuse or extend the existing shared UI or theme facilities. Extract a shared component when actual reuse exists; keep feature-specific behavior with its owner. |
+  | Add an independent feature that existing crates cannot own without creating unrelated responsibilities or invalid dependencies | Consider a new crate with a cohesive responsibility and explicit dependency direction. Multiple callers alone do not justify a crate; do not create a catch-all Crew crate. |
+  | Fix or integrate upstream functionality | Update the implementation that owns the behavior. Do not create a parallel Crew implementation that bypasses future upstream fixes. |
+
+* Do not copy or move upstream logic into Crew modules merely to isolate the diff. Keep business state under its existing owner rather than duplicating it for the new UI. Any unavoidable replacement must be tracked as a fork divergence requiring review during upstream updates.
+* Keep module boundaries meaningful. Do not widen visibility, pass large amounts of internal state, add forwarding layers, or create dependency cycles merely to move code out of its original file. Change GPUI only when the requirement belongs to the framework; application layout changes belong in application UI code.
+* Consult `Fork.md` when present before changing a fork integration point. Record significant Crew divergences there with their intent, affected modules or symbols, upstream behavior to preserve, intentional behavior differences, verification steps, and the upstream revision last verified. Update or retire entries when the implementation changes; prefer symbols over fragile line numbers.
+* During upstream integration, review relevant behavior changes even when Git reports no conflict. Verify that new features and fixes remain reachable and correct through Crew's UI; compilation alone does not establish this.
+
 # Timers in tests
 
 * In GPUI tests, prefer GPUI executor timers over `smol::Timer::after(...)` when you need timeouts, delays, or to drive `run_until_parked()`:
