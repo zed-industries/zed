@@ -553,6 +553,8 @@ struct SerializedGitPanel {
     #[serde(default)]
     signoff_enabled: bool,
     #[serde(default)]
+    signoff_by_default: bool,
+    #[serde(default)]
     commit_messages: BTreeMap<String, SerializedCommitMessage>,
     /// `None` means the user never toggled it, so the setting decides.
     #[serde(default)]
@@ -1199,6 +1201,7 @@ pub struct GitPanel {
     original_commit_message: Option<String>,
     pending_commit_message_restores: BTreeMap<String, SerializedCommitMessage>,
     signoff_enabled: bool,
+    signoff_by_default: bool,
     skip_hooks_enabled: bool,
     pending_serialization: Task<()>,
     pub(crate) project: Entity<Project>,
@@ -1391,6 +1394,7 @@ impl GitPanel {
             let mut was_file_icons = GitPanelSettings::get_global(cx).file_icons;
             let mut was_folder_indicator = GitPanelSettings::get_global(cx).folder_indicator;
             let mut was_diff_stats = GitPanelSettings::get_global(cx).diff_stats;
+            let mut was_signedoff_by_default = GitPanelSettings::get_global(cx).signoff_by_default;
             let mut was_commit_editor = GitPanelSettings::get_global(cx).commit_editor;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let settings = GitPanelSettings::get_global(cx);
@@ -1400,6 +1404,8 @@ impl GitPanel {
                 let file_icons = settings.file_icons;
                 let folder_indicator = settings.folder_indicator;
                 let diff_stats = settings.diff_stats;
+                let signed_by_default = settings.signoff_by_default;
+
                 let commit_editor = settings.commit_editor;
                 // Changing the setting is an explicit request, so it wins over
                 // whatever this workspace last persisted.
@@ -1424,6 +1430,9 @@ impl GitPanel {
                         _ => {}
                     }
                 }
+                if this.signoff_enabled != was_signedoff_by_default {
+                    this.signoff_enabled = signed_by_default;
+                }
 
                 let mut update_entries = false;
                 if sort_by != was_sort_by || group_by != was_group_by || tree_view != was_tree_view
@@ -1443,6 +1452,7 @@ impl GitPanel {
                 was_file_icons = file_icons;
                 was_folder_indicator = folder_indicator;
                 was_diff_stats = diff_stats;
+                was_signedoff_by_default = signed_by_default;
                 was_commit_editor = commit_editor;
             })
             .detach();
@@ -1544,6 +1554,7 @@ impl GitPanel {
                 original_commit_message,
                 pending_commit_message_restores,
                 signoff_enabled,
+                signoff_by_default: false,
                 skip_hooks_enabled: false,
                 pending_serialization: Task::ready(()),
                 single_staged_entry: None,
@@ -2022,6 +2033,7 @@ impl GitPanel {
             .commit_editor_toggled
             .then_some(self.commit_editor_collapsed);
         let commit_messages = self.serialized_commit_messages(cx);
+        let signoff_by_default = self.signoff_by_default;
         let kvp = KeyValueStore::global(cx);
 
         self.pending_serialization = cx.spawn(async move |git_panel, cx| {
@@ -2048,6 +2060,7 @@ impl GitPanel {
                         serde_json::to_string(&SerializedGitPanel {
                             signoff_enabled,
                             commit_messages,
+                            signoff_by_default,
                             commit_editor_collapsed,
                         })?,
                     )
@@ -4140,6 +4153,7 @@ impl GitPanel {
             .ok();
         });
 
+        self.signoff_enabled = GitPanelSettings::get_global(cx).signoff_by_default;
         self.pending_commit = Some(task);
     }
 
@@ -9412,8 +9426,8 @@ impl GitPanel {
         cx.notify();
     }
 
-    pub fn signoff_enabled(&self) -> bool {
-        self.signoff_enabled
+    pub fn signoff_should_be_enabled(&self) -> bool {
+        self.signoff_by_default
     }
 
     pub fn skip_hooks_enabled(&self) -> bool {
@@ -13287,6 +13301,7 @@ mod tests {
 
             SerializedGitPanel {
                 signoff_enabled: false,
+                signoff_by_default: false,
                 commit_messages: panel.serialized_commit_messages(cx),
                 commit_editor_collapsed: None,
             }
@@ -13332,6 +13347,7 @@ mod tests {
 
         let mismatched_serialized_panel = SerializedGitPanel {
             signoff_enabled: false,
+            signoff_by_default: false,
             commit_editor_collapsed: None,
             commit_messages: BTreeMap::from_iter([(
                 path!("/root/other-project").to_string(),
@@ -13430,6 +13446,7 @@ mod tests {
         .unwrap();
         let serialized_panel = panel.update(cx, |panel, cx| SerializedGitPanel {
             signoff_enabled: false,
+            signoff_by_default: false,
             commit_messages: panel.serialized_commit_messages(cx),
             commit_editor_collapsed: None,
         });
@@ -13526,6 +13543,7 @@ mod tests {
         .unwrap();
         let serialized_panel = panel.update(cx, |panel, cx| SerializedGitPanel {
             signoff_enabled: false,
+            signoff_by_default: false,
             commit_messages: panel.serialized_commit_messages(cx),
             commit_editor_collapsed: None,
         });
