@@ -1,5 +1,9 @@
 use collections::{BTreeMap, HashMap, HashSet};
 use gpui::SharedString;
+use html5ever::{
+    local_name,
+    tokenizer::{Tag, TagKind},
+};
 use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{
@@ -8,7 +12,11 @@ use pulldown_cmark::{
 use std::{ops::Range, sync::Arc};
 use util::markdown::generate_heading_slug;
 
-use crate::{html, path_range::PathWithRange};
+use crate::{
+    html,
+    html::html_parser::{attr_value, html_tags},
+    path_range::PathWithRange,
+};
 
 pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_FOOTNOTES)
@@ -29,6 +37,11 @@ struct ParseState {
     depth: usize,
 }
 
+struct HtmlLinkStart {
+    event_index: usize,
+    depth: usize,
+}
+
 #[derive(Debug, Default)]
 #[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct ParsedMarkdownData {
@@ -37,6 +50,7 @@ pub(crate) struct ParsedMarkdownData {
     pub language_paths: HashSet<Arc<str>>,
     pub root_block_starts: Vec<usize>,
     pub html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
+    pub inline_images: BTreeMap<usize, html::html_parser::HtmlImage>,
     pub metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
@@ -96,6 +110,16 @@ impl ParseState {
                 self.events.push((range, event));
             }
         }
+    }
+
+    fn end_html_link(&mut self, index: usize, end: usize) {
+        let Some((range, _)) = self.events.get_mut(index) else {
+            return;
+        };
+
+        range.end = end;
+        let range = range.clone();
+        self.push_event(range, MarkdownEvent::End(MarkdownTagEnd::Link));
     }
 }
 
@@ -217,19 +241,22 @@ fn trim_metadata_range(source: &str, range: Range<usize>) -> Range<usize> {
     start..end
 }
 
-fn is_br_tag(html: &str) -> bool {
-    let Some(inner) = html
-        .trim()
-        .strip_prefix('<')
-        .and_then(|s| s.strip_suffix('>'))
-    else {
-        return false;
-    };
-    let inner = inner.strip_suffix('/').unwrap_or(inner);
-    inner
-        .split_ascii_whitespace()
-        .next()
-        .is_some_and(|name| name.eq_ignore_ascii_case("br"))
+enum InlineHtmlTag {
+    Break,
+    Image,
+    StartLink(Tag),
+    EndLink,
+}
+
+fn classify_inline_html_tag(html: &str) -> Option<InlineHtmlTag> {
+    let tag = html_tags(html).into_iter().next()?;
+    match (&tag.kind, &tag.name) {
+        (TagKind::StartTag, &local_name!("br")) => Some(InlineHtmlTag::Break),
+        (TagKind::StartTag, &local_name!("img")) => Some(InlineHtmlTag::Image),
+        (TagKind::StartTag, &local_name!("a")) => Some(InlineHtmlTag::StartLink(tag)),
+        (TagKind::EndTag, &local_name!("a")) => Some(InlineHtmlTag::EndLink),
+        _ => None,
+    }
 }
 
 fn yaml_frontmatter_candidate(text: &str) -> Option<&str> {
@@ -284,8 +311,10 @@ pub(crate) fn parse_markdown_with_options(
     let mut language_paths = HashSet::default();
     let mut has_untagged_code_block = false;
     let mut html_blocks = BTreeMap::default();
+    let mut inline_images = BTreeMap::default();
     let mut metadata_blocks = BTreeMap::default();
     let mut within_link = false;
+    let mut html_link_start: Option<HtmlLinkStart> = None;
     let mut within_code_block = false;
     let mut within_metadata = false;
     let mut within_table = false;
@@ -507,6 +536,12 @@ pub(crate) fn parse_markdown_with_options(
                 state.push_event(range, MarkdownEvent::Start(tag))
             }
             pulldown_cmark::Event::End(tag) => {
+                if let Some(start) = &html_link_start
+                    && state.depth <= start.depth
+                {
+                    state.end_html_link(start.event_index, range.end);
+                    html_link_start = None;
+                }
                 if let pulldown_cmark::TagEnd::Link = tag {
                     within_link = false;
                 } else if let pulldown_cmark::TagEnd::CodeBlock = tag {
@@ -583,7 +618,7 @@ pub(crate) fn parse_markdown_with_options(
                 while match parser.peek() {
                     Some((pulldown_cmark::Event::Text(_), _)) => true,
                     Some((pulldown_cmark::Event::InlineHtml(html), _)) => {
-                        parse_html && !is_br_tag(html)
+                        parse_html && classify_inline_html_tag(html).is_none()
                     }
                     _ => false,
                 } {
@@ -612,7 +647,7 @@ pub(crate) fn parse_markdown_with_options(
 
                 let mut ranges = ranges.into_iter().peekable();
 
-                if !within_link && !within_code_block {
+                if !within_link && html_link_start.is_none() && !within_code_block {
                     let mut finder = LinkFinder::new();
                     finder.kinds(&[linkify::LinkKind::Url]);
 
@@ -715,10 +750,51 @@ pub(crate) fn parse_markdown_with_options(
             }
             pulldown_cmark::Event::Html(_) => state.push_event(range, MarkdownEvent::Html),
             pulldown_cmark::Event::InlineHtml(html) => {
-                if parse_html && is_br_tag(&html) {
-                    state.push_event(range, MarkdownEvent::HardBreak)
-                } else {
-                    state.push_event(range, MarkdownEvent::InlineHtml)
+                let tag = parse_html
+                    .then(|| classify_inline_html_tag(&html))
+                    .flatten();
+                match tag {
+                    Some(InlineHtmlTag::StartLink(tag)) => {
+                        if !within_link
+                            && html_link_start.is_none()
+                            && !tag.self_closing
+                            && let Some(href) = attr_value(&tag.attrs, local_name!("href"))
+                        {
+                            let title = attr_value(&tag.attrs, local_name!("title"))
+                                .map(SharedString::from)
+                                .unwrap_or_default();
+                            state.push_event(
+                                range,
+                                MarkdownEvent::Start(MarkdownTag::Link {
+                                    link_type: LinkType::Inline,
+                                    dest_url: href.into(),
+                                    title,
+                                    id: SharedString::default(),
+                                }),
+                            );
+                            html_link_start = Some(HtmlLinkStart {
+                                event_index: state.events.len() - 1,
+                                depth: state.depth,
+                            });
+                        }
+                    }
+                    Some(InlineHtmlTag::EndLink) => {
+                        if let Some(start) = html_link_start.take() {
+                            state.end_html_link(start.event_index, range.end);
+                        }
+                    }
+                    Some(InlineHtmlTag::Break) => state.push_event(range, MarkdownEvent::HardBreak),
+                    Some(InlineHtmlTag::Image) => {
+                        if let Some(block) =
+                            html::html_parser::parse_html_block(&html, range.clone())
+                            && let Some(html::html_parser::ParsedHtmlElement::Image(image)) =
+                                block.children.into_iter().next()
+                        {
+                            inline_images.insert(range.start, image);
+                        }
+                        state.push_event(range, MarkdownEvent::InlineHtml);
+                    }
+                    None => state.push_event(range, MarkdownEvent::InlineHtml),
                 }
             }
             pulldown_cmark::Event::FootnoteReference(label) => state.push_event(
@@ -748,6 +824,7 @@ pub(crate) fn parse_markdown_with_options(
         language_paths,
         root_block_starts: state.root_block_starts,
         html_blocks,
+        inline_images,
         metadata_blocks,
         heading_slugs,
         footnote_definitions,
@@ -1998,6 +2075,172 @@ mod tests {
     }
 
     #[test]
+    fn test_unclosed_html_links_end_at_the_parent_boundary() {
+        for source in [
+            "- <a href=\"https://x.com\">one\n- two\n\nPara",
+            "| A | B |\n| --- | --- |\n| <a href=\"https://x.com\">one | two |\n\nPara",
+        ] {
+            let parsed = parse_markdown_with_options(source, true, false, false);
+            assert_eq!(
+                parsed.root_block_starts,
+                vec![
+                    0,
+                    source
+                        .find("Para")
+                        .expect("source should contain the final paragraph")
+                ]
+            );
+            let links = parsed_links(&parsed);
+            assert_eq!(links.len(), 1);
+            assert!(
+                links[0].0.end
+                    <= source
+                        .find("two")
+                        .expect("source should contain a second item or cell"),
+                "link should stay inside the first item or cell: {source}"
+            );
+            assert_eq!(
+                parsed
+                    .events
+                    .iter()
+                    .filter(|(_, event)| matches!(event, MarkdownEvent::RootEnd(_)))
+                    .count(),
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn test_html_link_closes_before_enclosing_emphasis() {
+        let parsed =
+            parse_markdown_with_options("*<a href=https://x.com>em*</a>", true, false, false);
+        let nesting = parsed
+            .events
+            .iter()
+            .filter_map(|(_, event)| match event {
+                Start(Emphasis) => Some("start emphasis"),
+                Start(Link { .. }) => Some("start link"),
+                End(MarkdownTagEnd::Link) => Some("end link"),
+                End(MarkdownTagEnd::Emphasis) => Some("end emphasis"),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            nesting,
+            ["start emphasis", "start link", "end link", "end emphasis"]
+        );
+
+        let source = "Before <a href=https://x.com>**one** two</a> after";
+        let parsed = parse_markdown_with_options(source, true, false, false);
+        let (range, _) = parsed
+            .events
+            .iter()
+            .find(|(_, event)| matches!(event, Start(Link { .. })))
+            .expect("HTML anchor should produce a link event");
+        assert_eq!(
+            range.end,
+            source.find("</a>").expect("source should close the anchor") + 4
+        );
+    }
+
+    #[test]
+    fn test_inline_html_link_spans_and_scope() {
+        let source = r#"Before <a href="https://example.com?x=1&amp;y=2">label<img src="icon.png"></a> after"#;
+        let parsed = parse_markdown_with_options(source, true, false, false);
+        let links = parsed_links(&parsed);
+        assert_eq!(
+            links,
+            vec![(
+                source.find("<a").expect("source should open the anchor")
+                    ..source.find("</a>").expect("source should close the anchor") + 4,
+                "https://example.com?x=1&y=2"
+            )]
+        );
+        let disabled = parse_markdown_with_options(source, false, false, false);
+        assert!(
+            !disabled
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, Start(Link { .. })))
+        );
+        for source in [
+            "Before <a id=badge><img src=icon.png></a> after",
+            "Before </a> after",
+        ] {
+            let parsed = parse_markdown_with_options(source, true, false, false);
+            assert!(
+                !parsed.events.iter().any(|(_, event)| matches!(
+                    event,
+                    Start(Link { .. }) | End(MarkdownTagEnd::Link)
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn test_inline_html_images() {
+        for source in [
+            r#"[<img src="badge.svg" alt="version &amp; status" width="100" height="20" />](https://example.com)"#,
+            r#"Before <img src="badge.svg" alt="version &amp; status" width="100" height="20"> after."#,
+            r#"[label <IMG SRC="badge.svg" ALT="version &amp; status" WIDTH="100" HEIGHT="20"/> suffix](https://example.com)"#,
+            "<div align=\"center\">\n\n# Heading\n\n[<img src=\"badge.svg\" alt=\"version &amp; status\" width=\"100\" height=\"20\">](https://example.com)\n\n</div>",
+        ] {
+            let parsed = parse_markdown_with_options(source, true, false, false);
+            assert_eq!(parsed.inline_images.len(), 1, "{source}");
+            let (&offset, image) = parsed
+                .inline_images
+                .first_key_value()
+                .expect("inline image should be parsed");
+            assert_eq!(image.dest_url, "badge.svg");
+            assert_eq!(image.alt_text.as_deref(), Some("version & status"));
+            assert_eq!(image.width, Some(gpui::px(100.).into()));
+            assert_eq!(image.height, Some(gpui::px(20.).into()));
+            assert_eq!(offset, image.source_range.start);
+            assert!(
+                parsed
+                    .events
+                    .contains(&(image.source_range.clone(), InlineHtml))
+            );
+
+            let unparsed = parse_markdown_with_options(source, false, false, false);
+            assert!(unparsed.inline_images.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_inline_html_badge_row() {
+        let source = r#"[<img src="one.svg">](https://example.com/one) [<img src="two.svg">][two]
+
+[two]: https://example.com/two"#;
+        let parsed = parse_markdown_with_options(source, true, false, false);
+        let destinations = parsed
+            .inline_images
+            .values()
+            .map(|image| image.dest_url.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(destinations, ["one.svg", "two.svg"]);
+        let links = parsed_links(&parsed)
+            .into_iter()
+            .map(|(_, destination)| destination)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            links,
+            ["https://example.com/one", "https://example.com/two"]
+        );
+    }
+
+    #[test]
+    fn test_inline_html_image_requires_img_tag_and_source() {
+        for source in [
+            "before <img alt='missing source'> after",
+            "before <img-custom src='badge.svg'> after",
+        ] {
+            let parsed = parse_markdown_with_options(source, true, false, false);
+            assert!(parsed.inline_images.is_empty());
+        }
+    }
+
+    #[test]
     fn test_br_tag_emits_hard_break() {
         for input in [
             "hello<br>world",
@@ -2083,5 +2326,16 @@ mod tests {
                 "unrecognized inline HTML \"{input}\" should not emit HardBreak"
             );
         }
+    }
+
+    fn parsed_links(parsed: &ParsedMarkdownData) -> Vec<(Range<usize>, &str)> {
+        parsed
+            .events
+            .iter()
+            .filter_map(|(range, event)| match event {
+                Start(Link { dest_url, .. }) => Some((range.clone(), dest_url.as_ref())),
+                _ => None,
+            })
+            .collect()
     }
 }
