@@ -200,11 +200,18 @@ impl EntityMap {
         );
     }
 
+    /// Records entities accessed by a reused draw. Entities released since it
+    /// recorded them are skipped, because the window would otherwise subscribe
+    /// to them again after `App` has cleaned up their subscriptions, and
+    /// nothing would clean those up.
     pub fn extend_accessed(&mut self, entities: &FxHashSet<EntityId>) {
-        self.accessed_entities
-            .get_mut()
-            .innermost()
-            .extend(entities.iter().copied());
+        let ref_counts = self.ref_counts.read();
+        self.accessed_entities.get_mut().innermost().extend(
+            entities
+                .iter()
+                .copied()
+                .filter(|entity_id| ref_counts.counts.contains_key(*entity_id)),
+        );
     }
 
     /// Clears the accessed entities and ends any scope left open, for example
@@ -1292,7 +1299,7 @@ mod test {
     }
 
     #[test]
-    fn test_access_scopes_record_entities_accessed_before_them() {
+    fn test_accessed_entity_scopes() {
         let mut entity_map = EntityMap::new();
         let slot = entity_map.reserve::<TestEntity>();
         let first = entity_map.insert(slot, TestEntity { i: 1 });
@@ -1312,6 +1319,15 @@ mod test {
         let both = FxHashSet::from_iter([first.entity_id(), second.entity_id()]);
         assert_eq!(outer, both);
         assert_eq!(entity_map.take_accessed(), both);
+
+        drop(second);
+        entity_map.take_dropped();
+        entity_map.extend_accessed(&both);
+        assert_eq!(
+            entity_map.take_accessed(),
+            FxHashSet::from_iter([first.entity_id()]),
+            "a released entity shouldn't be recorded again"
+        );
     }
 
     #[test]
