@@ -1172,11 +1172,10 @@ impl WaylandWindowStatePtr {
             );
 
             let initial_configure = self.frame_loop.get() == FrameLoop::Unconfigured;
-            drop(state);
+            update_window(state);
             if initial_configure {
                 self.frame(None, FrameRequestSource::NativeCallback);
             } else {
-                update_window(self.state.borrow_mut());
                 self.request_redraw();
             }
         }
