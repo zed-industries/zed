@@ -32,6 +32,7 @@ test-support = [
 agent_settings.workspace = true
 anyhow.workspace = true
 auto_update.workspace = true
+file_icons.workspace = true
 fs.workspace = true
 platform_title_bar.workspace = true
 call.workspace = true
