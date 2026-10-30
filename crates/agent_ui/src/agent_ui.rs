@@ -13,6 +13,7 @@ pub(crate) mod conversation_view;
 mod diagnostics;
 pub mod draft_prompt_store;
 mod entry_view_state;
+mod external_agent_models;
 mod external_source_prompt;
 mod favorite_models;
 mod inline_assistant;
@@ -710,6 +711,7 @@ pub fn init(
         init_language_model_settings(cx);
     }
     agent_panel::init(cx);
+    external_agent_models::init(cx);
     context_server_configuration::init(language_registry, fs.clone(), cx);
     thread_metadata_store::init(cx);
     terminal_thread_metadata_store::init(cx);
