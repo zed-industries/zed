@@ -22,8 +22,7 @@ use gpui::{
     ParentElement, Render, Styled, Task, TaskExt, WeakEntity, Window, actions,
 };
 use persistence::CommandPaletteDB;
-use picker::Direction;
-use picker::{Picker, PickerDelegate};
+use picker::{Direction, Picker, PickerDelegate, QueryMode};
 use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
 use ui::{
@@ -106,12 +105,13 @@ impl CommandPalette {
 
         let entity = cx.weak_entity();
         workspace.toggle_modal(window, cx, move |window, cx| {
-            CommandPalette::new(previous_focus_handle, query, entity, window, cx)
+            CommandPalette::new(previous_focus_handle, QueryMode::Standalone, query, entity, window, cx)
         });
     }
 
     fn new(
         previous_focus_handle: FocusHandle,
+        query_mode: QueryMode,
         query: &str,
         entity: WeakEntity<Workspace>,
         window: &mut Window,
@@ -144,10 +144,11 @@ impl CommandPalette {
 
         let picker = cx.new(|cx| {
             // One-shot action; there's nothing to reopen.
-            let picker = Picker::uniform_list(delegate, window, cx)
+            let mut picker = Picker::uniform_list(delegate, window, cx)
                 .initial_width(rems(38.0))
                 .reopenable(false, cx)
                 .show_scrollbar(true);
+            picker.set_query_mode(query_mode);
             picker.set_query(query, window, cx);
             picker
         });
