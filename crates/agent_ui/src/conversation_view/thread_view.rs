@@ -11,7 +11,8 @@ use std::{cell::RefCell, path::Path};
 use acp_thread::{
     Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity, OutputTokensUpdate,
     SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason,
-    SubmissionId, SubmissionResponse, SubmissionState, ToolCallLocation, decode_path_escapes,
+    SessionMessageSide, SubmissionId, SubmissionResponse, SubmissionState, ToolCallLocation,
+    decode_path_escapes,
 };
 use agent::{
     SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
@@ -55,40 +56,10 @@ use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
 };
-use super::subagent_card::{SubagentCardId, SubagentCardState, SubagentStatus, acp_subagent_card};
+use super::subagent_card::{
+    AcpSubagentCard, SubagentCardId, SubagentCardState, SubagentStatus, acp_subagent_card,
+};
 use super::*;
-
-/// Which side of a session message a transcript shows, and the other participant when it
-/// is known.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SessionMessageSide<'a> {
-    Outgoing {
-        recipient: Option<&'a acp_v2::SessionId>,
-    },
-    Incoming {
-        sender: Option<&'a acp_v2::SessionId>,
-    },
-    Unknown,
-}
-
-/// The transcript's own session is always one participant, so a single known participant
-/// that is another session also tells the direction.
-pub(super) fn session_message_side<'a>(
-    message: &'a acp_thread::SessionMessage,
-    own_session_id: &acp_v2::SessionId,
-) -> SessionMessageSide<'a> {
-    let sender = message.sender_session_id.as_ref();
-    let recipient = message.recipient_session_id.as_ref();
-    if sender == Some(own_session_id) {
-        SessionMessageSide::Outgoing { recipient }
-    } else if recipient == Some(own_session_id) || sender.is_some() {
-        SessionMessageSide::Incoming { sender }
-    } else if recipient.is_some() {
-        SessionMessageSide::Outgoing { recipient }
-    } else {
-        SessionMessageSide::Unknown
-    }
-}
 
 /// How a parent's view names a subagent. An ACP parent's own title for the subagent
 /// describes it in that view, so it wins over the subagent's title for itself.
@@ -99,6 +70,10 @@ pub(super) fn subagent_label(thread: &AcpThread) -> SharedString {
         .or_else(|| thread.title())
         .unwrap_or_else(|| "Subagent".into())
 }
+
+/// Most agents echo an accepted prompt almost immediately, so the in-flight status row
+/// only appears for submissions that stay unsettled long enough to be worth reporting.
+pub(crate) const UNSETTLED_SUBMISSION_REVEAL_DELAY: Duration = Duration::from_secs(1);
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
 
@@ -811,6 +786,8 @@ pub struct ThreadView {
     _sandbox_status_refresh_task: Option<Task<()>>,
     pub hovered_edited_file_buttons: Option<usize>,
     pub current_submission: Option<SubmissionId>,
+    revealed_unsettled_submissions: HashSet<SubmissionId>,
+    submission_reveal_tasks: HashMap<SubmissionId, Task<()>>,
     pub _subscriptions: Vec<Subscription>,
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -1269,6 +1246,13 @@ impl ThreadView {
         }));
 
         let current_submission = thread.read(cx).latest_submission_id();
+        // Submissions that were already in flight when this view was built have had
+        // time to settle, so they are shown without a reveal delay.
+        let revealed_unsettled_submissions = thread
+            .read(cx)
+            .recoverable_submissions()
+            .map(|(submission_id, _)| submission_id)
+            .collect();
         let mut this = Self {
             root_thread_id,
             session_id,
@@ -1323,6 +1307,8 @@ impl ThreadView {
             _sandbox_status_refresh_task: None,
             hovered_edited_file_buttons: None,
             current_submission,
+            revealed_unsettled_submissions,
+            submission_reveal_tasks: HashMap::default(),
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
@@ -1898,6 +1884,45 @@ impl ThreadView {
         }
     }
 
+    pub(crate) fn sync_submission_reveal(
+        &mut self,
+        submission_id: SubmissionId,
+        cx: &mut Context<Self>,
+    ) {
+        let is_unsettled = self
+            .thread
+            .read(cx)
+            .submission(submission_id)
+            .is_some_and(|record| {
+                matches!(
+                    record.state,
+                    SubmissionState::Pending | SubmissionState::Accepted { echoed: false, .. }
+                )
+            });
+        if !is_unsettled {
+            self.revealed_unsettled_submissions.remove(&submission_id);
+            self.submission_reveal_tasks.remove(&submission_id);
+            return;
+        }
+        if self.revealed_unsettled_submissions.contains(&submission_id)
+            || self.submission_reveal_tasks.contains_key(&submission_id)
+        {
+            return;
+        }
+        let task = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(UNSETTLED_SUBMISSION_REVEAL_DELAY)
+                .await;
+            this.update(cx, |this, cx| {
+                this.submission_reveal_tasks.remove(&submission_id);
+                this.revealed_unsettled_submissions.insert(submission_id);
+                cx.notify();
+            })
+            .log_err();
+        });
+        self.submission_reveal_tasks.insert(submission_id, task);
+    }
+
     fn render_recoverable_submissions(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let submissions = {
             let thread = self.thread.read(cx);
@@ -1906,42 +1931,55 @@ impl ThreadView {
             }
             thread
                 .recoverable_submissions()
+                .filter(|(submission_id, record)| {
+                    !matches!(
+                        record.state,
+                        SubmissionState::Pending | SubmissionState::Accepted { echoed: false, .. }
+                    ) || self.revealed_unsettled_submissions.contains(submission_id)
+                })
                 .map(|(submission_id, record)| {
-                    let (status, settled): (SharedString, bool) = match &record.state {
-                        SubmissionState::Pending => ("Sending message…".into(), false),
-                        SubmissionState::Accepted { echoed: false, .. } => {
-                            ("Waiting for message to appear…".into(), false)
-                        }
-                        SubmissionState::Disconnected { receipt: Some(_) } => {
-                            ("Message accepted; agent connection lost".into(), true)
-                        }
-                        SubmissionState::Disconnected { receipt: None } => (
-                            "Connection lost; message acceptance is unknown".into(),
-                            true,
-                        ),
-                        SubmissionState::Failed(error) => (
-                            format!(
-                                "Message failed to send: {}",
-                                util::truncate_and_trailoff(error, 160)
-                            )
-                            .into(),
-                            true,
-                        ),
-                        SubmissionState::Cancelled => ("Message cancelled".into(), true),
-                        _ => ("Message".into(), false),
-                    };
+                    let (status, detail, settled): (SharedString, Option<SharedString>, bool) =
+                        match &record.state {
+                            SubmissionState::Pending => ("Sending…".into(), None, false),
+                            SubmissionState::Accepted { echoed: false, .. } => (
+                                "Waiting…".into(),
+                                Some("The agent accepted this message but hasn't shown it yet.".into()),
+                                false,
+                            ),
+                            SubmissionState::Disconnected { receipt: Some(_) } => (
+                                "Connection lost".into(),
+                                Some("The agent accepted this message, then the connection was lost.".into()),
+                                true,
+                            ),
+                            SubmissionState::Disconnected { receipt: None } => (
+                                "Connection lost".into(),
+                                Some("The connection was lost before the agent confirmed this message.".into()),
+                                true,
+                            ),
+                            SubmissionState::Failed(error) => (
+                                "Failed".into(),
+                                Some(util::truncate_and_trailoff(error, 500).into()),
+                                true,
+                            ),
+                            SubmissionState::Cancelled => ("Cancelled".into(), None, true),
+                            _ => ("Message".into(), None, false),
+                        };
+                    let preview: String =
+                        Itertools::intersperse(Self::submission_text_parts(&record.content), " ")
+                            .flat_map(str::chars)
+                            .take(201)
+                            .map(|character| if character.is_whitespace() { ' ' } else { character })
+                            .collect();
                     (
                         submission_id,
                         status,
+                        detail,
                         settled,
                         matches!(
                             record.state,
                             SubmissionState::Failed(_) | SubmissionState::Cancelled
                         ),
-                        Itertools::intersperse(Self::submission_text_parts(&record.content), "\n")
-                            .flat_map(str::chars)
-                            .take(161)
-                            .collect::<String>(),
+                        SharedString::from(util::truncate_and_trailoff(&preview, 200)),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1951,18 +1989,44 @@ impl ThreadView {
         }
         let rows = submissions
             .into_iter()
-            .map(|(submission_id, status, settled, restorable, text)| {
-                let preview: SharedString = util::truncate_and_trailoff(&text, 160).into();
+            .map(|(submission_id, status, detail, settled, restorable, preview)| {
                 let row_id = submission_id.as_u64();
-                v_flex()
+                let status_color = match (settled, restorable) {
+                    (false, _) => Color::Muted,
+                    (true, true) => Color::Error,
+                    (true, false) => Color::Warning,
+                };
+                h_flex()
                     .id(("recoverable-submission", row_id))
+                    .w_full()
                     .px_3()
-                    .py_1()
-                    .gap_1()
-                    .child(Label::new(status).size(LabelSize::Small))
-                    .child(Label::new(preview).size(LabelSize::Small))
+                    .py_0p5()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id(("recoverable-submission-status", row_id))
+                            .flex_none()
+                            .child(
+                                Label::new(status)
+                                    .size(LabelSize::Small)
+                                    .color(status_color),
+                            )
+                            .when_some(detail, |this, detail| {
+                                this.tooltip(Tooltip::text(detail))
+                            }),
+                    )
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Label::new(preview)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .single_line()
+                                .truncate(),
+                        ),
+                    )
                     .child(
                         h_flex()
+                            .flex_none()
                             .gap_1()
                             .child(
                                 div()
@@ -2025,7 +2089,10 @@ impl ThreadView {
         Some(
             v_flex()
                 .id("recoverable-submissions")
-                .max_h(px(180.))
+                .py_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .max_h(px(120.))
                 .overflow_y_scroll()
                 .children(rows),
         )
@@ -2165,7 +2232,7 @@ impl ThreadView {
                     .read()
                     .available_commands()
                     .iter()
-                    .any(|available_command| available_command.name == "logout");
+                    .any(|available_command| available_command.name() == "logout");
             if can_login && !logout_supported {
                 message_editor.update(cx, |editor, cx| editor.clear(window, cx));
                 self.clear_external_source_prompt_warning(cx);
@@ -3783,19 +3850,6 @@ impl ThreadView {
 
     // thread stuff
 
-    pub fn restore_checkpoint(&mut self, client_id: &ClientUserMessageId, cx: &mut Context<Self>) {
-        self.thread
-            .update(cx, |thread, cx| {
-                telemetry::event!(
-                    "Agent Checkpoint Restored",
-                    agent = thread.connection().telemetry_id(),
-                    session = thread.session_id().clone(),
-                );
-                thread.restore_checkpoint(client_id.clone(), cx)
-            })
-            .detach_and_log_err(cx);
-    }
-
     pub fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
         self.thread_error = None;
         self.thread_error_markdown = None;
@@ -5249,10 +5303,11 @@ impl ThreadView {
             return false;
         };
 
-        // An ACP subagent reports its own outcome; a native one's is its parent's tool call.
+        // A subagent that reports its own state shows that. Otherwise, as for a native
+        // subagent saved before it recorded outcomes, its outcome is its parent's tool call.
         let thread = self.thread.read(cx);
-        if thread.subagent_association().is_some() {
-            return SubagentCardState::from_acp_subagent(thread)
+        if thread.subagent_association().is_some() && thread.has_received_session_state() {
+            return SubagentCardState::from_acp_subagent(thread, None)
                 .status
                 .is_failed_or_canceled();
         }
@@ -7286,13 +7341,8 @@ impl ThreadView {
                 let opaque_window = cx.theme().window_background_appearance()
                     == gpui::WindowBackgroundAppearance::Opaque;
 
-                let has_checkpoint_button = message
-                    .checkpoint
-                    .as_ref()
-                    .is_some_and(|checkpoint| checkpoint.show);
-
                 let is_subagent = self.is_subagent();
-                let can_restore_checkpoint = self
+                let can_rewind = self
                     .thread
                     .read(cx)
                     .can_rewind_to(message.client_id.as_ref(), cx);
@@ -7301,7 +7351,7 @@ impl ThreadView {
                     .source_blocks()
                     .iter()
                     .all(acp_thread::content::can_convert_to_v1);
-                let is_editable = can_restore_checkpoint && source_is_representable;
+                let is_editable = can_rewind && source_is_representable;
                 let agent_name = if is_subagent {
                     "subagents".into()
                 } else {
@@ -7321,25 +7371,6 @@ impl ThreadView {
                     .px_2()
                     .gap_1p5()
                     .w_full()
-                    .when(can_restore_checkpoint && has_checkpoint_button, |this| {
-                        this.children(message.client_id.clone().map(|client_id| {
-                            h_flex()
-                                .px_3()
-                                .gap_2()
-                                .child(Divider::horizontal())
-                                .child(
-                                    Button::new("restore-checkpoint", "Restore Checkpoint")
-                                        .start_icon(Icon::new(IconName::Undo).size(IconSize::XSmall).color(Color::Muted))
-                                        .label_size(LabelSize::XSmall)
-                                        .color(Color::Muted)
-                                        .tooltip(Tooltip::text("Restores all files in the project to the content they had at this point in the conversation."))
-                                        .on_click(cx.listener(move |this, _, _window, cx| {
-                                            this.restore_checkpoint(&client_id, cx);
-                                        }))
-                                )
-                                .child(Divider::horizontal())
-                        }))
-                    })
                     .child(
                         div()
                             .relative()
@@ -7598,10 +7629,8 @@ impl ThreadView {
             }
             AgentThreadEntry::SessionMessage(message) => {
                 let session_message =
-                    match acp_subagent_card(self.thread.read(cx), entry_ix, message) {
-                        Some((card_id, subagent)) => {
-                            self.render_acp_subagent_card(entry_ix, &card_id, &subagent, window, cx)
-                        }
+                    match acp_subagent_card(self.thread.read(cx), entry_ix, message, cx) {
+                        Some(card) => self.render_acp_subagent_card(entry_ix, &card, window, cx),
                         None => self.render_session_message(entry_ix, message, window, cx),
                     };
                 if let Some(handle) = self
@@ -8185,6 +8214,14 @@ impl ThreadView {
 
     pub fn scroll_to_end(&mut self, cx: &mut Context<Self>) {
         self.list_state.scroll_to_end();
+        cx.notify();
+    }
+
+    pub(crate) fn scroll_to_entry(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
+        self.list_state.scroll_to(ListOffset {
+            item_ix: entry_ix,
+            offset_in_item: px(0.),
+        });
         cx.notify();
     }
 
@@ -8947,7 +8984,7 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> Div {
         let own_session_id = self.thread.read(cx).session_id().clone();
-        let (icon, direction, participant) = match session_message_side(message, &own_session_id) {
+        let (icon, direction, participant) = match message.side(&own_session_id) {
             SessionMessageSide::Outgoing { recipient } => (IconName::Send, "To", recipient),
             SessionMessageSide::Incoming { sender } => (IconName::Envelope, "From", sender),
             SessionMessageSide::Unknown => (IconName::Envelope, "Message between sessions", None),
@@ -8963,11 +9000,12 @@ impl ThreadView {
                             .on_click(cx.listener({
                                 let session_id = session_id.clone();
                                 move |this, _, window, cx| {
-                                    this.server_view
-                                        .update(cx, |view, cx| {
-                                            view.navigate_to_thread(session_id.clone(), window, cx)
-                                        })
-                                        .log_err();
+                                    this.open_session_message_participant(
+                                        entry_ix,
+                                        &session_id,
+                                        window,
+                                        cx,
+                                    );
                                 }
                             })),
                     )
@@ -9009,12 +9047,12 @@ impl ThreadView {
     fn render_acp_subagent_card(
         &self,
         entry_ix: usize,
-        card_id: &SubagentCardId,
-        subagent: &Entity<AcpThread>,
+        card: &AcpSubagentCard,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        let subagent_session_id = subagent.read(cx).session_id().clone();
+        let subagent = card.subagent.read(cx);
+        let subagent_session_id = subagent.session_id().clone();
         let subagent_thread_view = self
             .server_view
             .upgrade()
@@ -9023,8 +9061,8 @@ impl ThreadView {
         let content = self.render_subagent_card(
             self.thread.read(cx).session_id(),
             entry_ix,
-            card_id,
-            &SubagentCardState::from_acp_subagent(subagent.read(cx)),
+            &card.id,
+            &SubagentCardState::from_acp_subagent(subagent, card.entries),
             subagent_thread_view,
             &self.focus_handle(cx),
             window,
@@ -9039,6 +9077,41 @@ impl ThreadView {
             .child(content)
     }
 
+    /// Opens the other participant of the session message at `entry_ix`, at its view of the
+    /// message when the two views are linked.
+    fn open_session_message_participant(
+        &mut self,
+        entry_ix: usize,
+        session_id: &acp_v2::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(server_view) = self.server_view.upgrade() else {
+            return;
+        };
+        let participant_view = server_view.read(cx).thread_view(session_id);
+        let thread = self.thread.read(cx);
+        let linked_entry_ix = participant_view.as_ref().and_then(|participant_view| {
+            let Some(AgentThreadEntry::SessionMessage(message)) = thread.entries().get(entry_ix)
+            else {
+                return None;
+            };
+            participant_view
+                .read(cx)
+                .thread
+                .read(cx)
+                .linked_session_message(message, thread.session_id())
+        });
+        server_view.update(cx, |view, cx| {
+            view.navigate_to_thread(session_id.clone(), window, cx)
+        });
+        if let Some(participant_view) = participant_view
+            && let Some(linked_entry_ix) = linked_entry_ix
+        {
+            participant_view.update(cx, |view, cx| view.scroll_to_entry(linked_entry_ix, cx));
+        }
+    }
+
     /// How this conversation names another of its sessions, or `None` when it has no thread
     /// for that session.
     pub(super) fn session_participant_label(
@@ -9046,9 +9119,10 @@ impl ThreadView {
         session_id: &acp_v2::SessionId,
         cx: &App,
     ) -> Option<SharedString> {
-        let server_view = self.server_view.upgrade()?;
-        let thread_view = server_view.read(cx).thread_view(session_id)?;
-        let thread = thread_view.read(cx).thread.read(cx);
+        // Read the thread through the conversation rather than its view: an expanded subagent
+        // card renders the subagent's entries while the parent's view is being updated.
+        let conversation = self.conversation.read(cx);
+        let thread = conversation.thread(session_id)?.read(cx);
         Some(if thread.parent_session_id().is_none() {
             "Main Agent".into()
         } else {
@@ -11517,7 +11591,10 @@ impl ThreadView {
                             selections.select_anchor_ranges([anchor..anchor]);
                         })
                     } else {
-                        let row = tool_call_location.line.unwrap_or_default();
+                        // ACP numbers lines from 1; editor rows start at 0.
+                        let row = tool_call_location
+                            .line
+                            .map_or(0, |line| line.saturating_sub(1));
                         editor.change_selections(Default::default(), window, cx, |selections| {
                             selections.select_ranges([Point::new(row, 0)..Point::new(row, 0)]);
                         })
@@ -11977,11 +12054,16 @@ impl ThreadView {
                 .and_then(|connected| connected.threads.get(&session_id))
         });
 
+        let state = SubagentCardState::for_subagent_tool_call(
+            tool_call,
+            subagent_thread_view.map(|view| view.read(cx).thread.read(cx)),
+            cx,
+        );
         let content = self.render_subagent_card(
             active_session_id,
             entry_ix,
             &SubagentCardId::ToolCall(tool_call.id.clone()),
-            &SubagentCardState::from_tool_call(tool_call, cx),
+            &state,
             subagent_thread_view,
             focus_handle,
             window,
@@ -12265,9 +12347,12 @@ impl ThreadView {
                     .pending_tool_call(tv_session_id, cx);
 
                 let nav_session_id = tv_session_id.clone();
+                let fullscreen_entry = state.fullscreen_entry();
+                let subagent_view = thread_view.clone();
 
                 let fullscreen_toggle = h_flex()
                     .id(entry_ix)
+                    .debug_selector(move || format!("subagent-fullscreen-{entry_ix}"))
                     .py_1()
                     .w_full()
                     .justify_center()
@@ -12289,6 +12374,9 @@ impl ThreadView {
                                 this.navigate_to_thread(nav_session_id.clone(), window, cx);
                             })
                             .ok();
+                        if let Some(entry_ix) = fullscreen_entry {
+                            subagent_view.update(cx, |view, cx| view.scroll_to_entry(entry_ix, cx));
+                        }
                     }));
 
                 if is_running && let Some((_, subagent_tool_call_id, _)) = pending_tool_call {
@@ -14069,7 +14157,7 @@ pub(crate) fn open_link(
                                     .into_iter()
                                     .flatten()
                                     .filter_map(move |path| {
-                                        path_style.join_path_preserving_components(root, path).ok()
+                                        (!path_style.has_root(path)).then(|| path_style.join(root, path))
                                     })
                                 })
                                 .collect::<Vec<_>>()
@@ -14335,8 +14423,8 @@ fn leading_native_command(
     let name_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
     let name = &rest[..name_end];
     let is_native = available_commands.iter().any(|command| {
-        command.name == name
-            && acp_thread::command_category_from_meta(&command.meta)
+        command.name() == name
+            && acp_thread::command_category_from_meta(command.meta())
                 == Some(acp_thread::CommandCategory::Native)
     });
     is_native.then(|| name.to_string())
@@ -14418,14 +14506,14 @@ mod tests {
     }
 
     fn native_command(name: &str) -> acp_v2::AvailableCommand {
-        acp_v2::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
-            acp_thread::CommandCategory::Native,
+        acp_v2::AvailableCommand::Command(acp_v2::Command::new(name, "").meta(
+            acp_thread::meta_with_command_category(acp_thread::CommandCategory::Native),
         ))
     }
 
     fn mcp_command(name: &str) -> acp_v2::AvailableCommand {
-        acp_v2::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
-            acp_thread::CommandCategory::Mcp,
+        acp_v2::AvailableCommand::Command(acp_v2::Command::new(name, "").meta(
+            acp_thread::meta_with_command_category(acp_thread::CommandCategory::Mcp),
         ))
     }
 

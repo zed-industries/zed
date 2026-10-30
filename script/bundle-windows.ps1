@@ -115,11 +115,11 @@ function GenerateLicenses {
 
 function BuildZedAndItsFriends {
     Write-Output "Building Zed and its friends, for channel: $channel"
-    # Build zed.exe, cli.exe and auto_update_helper.exe
+    # Build zed.exe, cli.exe and auto-update-helper.exe
     cargo --config .cargo/bundle-config.toml build --release --package zed --package cli --package auto_update_helper --target $target
     Copy-Item -Path ".\$CargoOutDir\zed.exe" -Destination "$innoDir\Zed.exe" -Force
     Copy-Item -Path ".\$CargoOutDir\cli.exe" -Destination "$innoDir\cli.exe" -Force
-    Copy-Item -Path ".\$CargoOutDir\auto_update_helper.exe" -Destination "$innoDir\auto_update_helper.exe" -Force
+    Copy-Item -Path ".\$CargoOutDir\auto-update-helper.exe" -Destination "$innoDir\auto_update_helper.exe" -Force
     # Build explorer_command_injector.dll
     switch ($channel) {
         "stable" {
@@ -139,8 +139,9 @@ function BuildRemoteServer {
     Write-Output "Building remote_server for $target"
     cargo --config .cargo/bundle-config.toml build --release --package remote_server --target $target
 
-    # Create zipped remote server binary
-    $remoteServerSrc = (Resolve-Path ".\$CargoOutDir\remote_server.exe").Path
+    # SSH clients expect remote_server.exe inside the archive.
+    Copy-Item -Path ".\$CargoOutDir\remote-server.exe" -Destination "$innoDir\remote_server.exe" -Force
+    $remoteServerSrc = (Resolve-Path "$innoDir\remote_server.exe").Path
 
     if ($canCodeSign) {
         Write-Output "Code signing remote_server.exe"
@@ -150,6 +151,7 @@ function BuildRemoteServer {
     $remoteServerDst = "$env:ZED_WORKSPACE\target\zed-remote-server-windows-$Architecture.zip"
     Write-Output "Compressing remote_server to $remoteServerDst"
     Compress-Archive -Path $remoteServerSrc -DestinationPath $remoteServerDst -Force
+    Remove-Item -Path $remoteServerSrc -Force
 
     Write-Output "Remote server compressed successfully"
 }

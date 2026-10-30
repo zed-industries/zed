@@ -54,18 +54,8 @@ pub(super) fn parse_terminal_notification(
                 agent_client_protocol::Error::invalid_params()
                     .data("Malformed ACP v2 terminal notification")
             })?;
-    // The SDK defaults malformed output to Undefined; don't apply sibling fields in that case.
-    if let acp_v2::SessionUpdate::TerminalUpdate(update) = &notification.update
-        && message
-            .params()
-            .get("update")
-            .and_then(|update| update.get("output"))
-            .is_some_and(|output| !output.is_null())
-        && update.output.is_undefined()
-    {
-        return Err(agent_client_protocol::Error::invalid_params()
-            .data("Malformed ACP v2 terminal output snapshot"));
-    }
+    // The SDK parses a malformed `output` snapshot as omitted, so the rest of the update still
+    // applies, the same as a snapshot with invalid base64.
     Ok(notification)
 }
 
@@ -77,12 +67,17 @@ pub fn decode_terminal_notification(
             let output = match update.output {
                 MaybeUndefined::Undefined => MaybeUndefined::Undefined,
                 MaybeUndefined::Null => MaybeUndefined::Null,
-                MaybeUndefined::Value(output) => MaybeUndefined::Value(DisplayTerminalOutput {
-                    data: STANDARD
-                        .decode(output.data)
-                        .context("invalid base64 in ACP v2 terminal output snapshot")?,
-                    meta: output.meta,
-                }),
+                MaybeUndefined::Value(output) => match STANDARD.decode(output.data) {
+                    Ok(data) => MaybeUndefined::Value(DisplayTerminalOutput {
+                        data,
+                        meta: output.meta,
+                    }),
+                    // Keep the bytes already shown and still apply the rest of the update.
+                    Err(_) => {
+                        log::warn!("Ignoring ACP v2 terminal output snapshot with invalid base64");
+                        MaybeUndefined::Undefined
+                    }
+                },
             };
             DecodedTerminalUpdate::Patch {
                 terminal_id: update.terminal_id,
@@ -236,7 +231,7 @@ mod tests {
             patch.exit_status,
             MaybeUndefined::Value(
                 acp_v2::TerminalExitStatus::new()
-                    .exit_code(7u32)
+                    .exit_code(7)
                     .signal("SIGTERM")
                     .meta(scoped_meta("exit"))
             )
@@ -390,41 +385,47 @@ mod tests {
     }
 
     #[test]
-    fn invalid_snapshot_and_chunk_are_rejected_without_echoing_payloads() -> Result<()> {
-        for (fixture, context) in [
-            (
-                r#"{
-                    "sessionId": "session-1",
-                    "update": {
-                        "sessionUpdate": "terminal_update",
-                        "terminalId": "terminal-1",
-                        "command": "echo ready",
-                        "cwd": "/tmp",
-                        "output": {"data": "private-output!"}
-                    }
-                }"#,
-                "terminal output snapshot",
-            ),
-            (
-                r#"{
-                    "sessionId": "session-1",
-                    "update": {
-                        "sessionUpdate": "terminal_output_chunk",
-                        "terminalId": "terminal-1",
-                        "data": "private-output!"
-                    }
-                }"#,
-                "terminal output chunk",
-            ),
-        ] {
-            let error = match decode_terminal_notification(serde_json::from_str(fixture)?) {
-                Err(error) => error,
-                Ok(_) => bail!("expected invalid base64 to reject the entire notification"),
-            };
-            let message = format!("{error:#}");
-            assert!(message.contains(context));
-            assert!(!message.contains("private-output!"));
-        }
+    fn invalid_snapshot_is_ignored_and_other_fields_apply() -> Result<()> {
+        let decoded = decode_fixture(
+            r#"{
+                "sessionId": "session-1",
+                "update": {
+                    "sessionUpdate": "terminal_update",
+                    "terminalId": "terminal-1",
+                    "command": "echo ready",
+                    "cwd": "/tmp",
+                    "output": {"data": "private-output!"}
+                }
+            }"#,
+        )?;
+        let DecodedTerminalUpdate::Patch { patch, .. } = decoded.update else {
+            bail!("expected a terminal patch");
+        };
+        assert!(patch.output.is_undefined());
+        assert_eq!(
+            patch.command,
+            MaybeUndefined::Value("echo ready".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_chunk_is_rejected_without_echoing_payload() -> Result<()> {
+        let fixture = r#"{
+            "sessionId": "session-1",
+            "update": {
+                "sessionUpdate": "terminal_output_chunk",
+                "terminalId": "terminal-1",
+                "data": "private-output!"
+            }
+        }"#;
+        let error = match decode_terminal_notification(serde_json::from_str(fixture)?) {
+            Err(error) => error,
+            Ok(_) => bail!("expected invalid base64 to reject the chunk"),
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("terminal output chunk"));
+        assert!(!message.contains("private-output!"));
         Ok(())
     }
 

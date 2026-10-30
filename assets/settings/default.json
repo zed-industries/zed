@@ -1906,6 +1906,14 @@
     //
     // Trailing slashes are ignored.
     "worktree_directory": "../worktrees",
+    // Settings for automatically fetching the default branch's remote and the current branch's upstream remote.
+    "auto_fetch": {
+      // Whether to automatically fetch in the background.
+      "enabled": false,
+      // How long to wait between automatic fetches, in seconds.
+      // Only applies when auto fetch is enabled. (min: 15)
+      "interval_secs": 60,
+    },
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [

@@ -15,7 +15,7 @@ use action_log::ActionLog;
 use agent_client_protocol::{
     Agent, Client, ConnectTo, InitializeOutcome, JsonRpcRequest, JsonRpcResponse, Lines,
     PreparedRequest, RequestCancellationHandle, V2ConnectionTo,
-    schema::{ProtocolVersion, v2 as acp},
+    schema::{ProtocolVersion, v1 as acp_v1, v2 as acp},
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
@@ -37,6 +37,16 @@ use util::path_list::PathList;
 
 fn is_connection_closed(connection: &V2ConnectionTo<Agent>) -> bool {
     connection.is_incoming_closed() || connection.termination().is_some()
+}
+
+/// The SDK reports JSON-RPC IDs with the v1 type, which allows `null`. It never assigns
+/// `null` to a request it sends and rejects incoming v2 requests that use it.
+fn v2_request_id(request_id: &acp_v1::RequestId) -> Result<acp::RequestId> {
+    match request_id {
+        acp_v1::RequestId::Number(id) => Ok(acp::RequestId::Number(*id)),
+        acp_v1::RequestId::Str(id) => Ok(acp::RequestId::Str(id.clone())),
+        acp_v1::RequestId::Null => Err(anyhow!("v2 requests cannot have a null ID")),
+    }
 }
 
 fn cancel_request_elicitations(
@@ -409,8 +419,9 @@ impl AcpV2Connection {
                 .url(acp::ElicitationUrlCapabilities::new()),
         );
         if supports_terminal_auth {
-            capabilities = capabilities
-                .auth(acp::AuthCapabilities::new().terminal(acp::TerminalAuthCapabilities::new()));
+            capabilities = capabilities.auth(
+                acp::ClientAuthCapabilities::new().terminal(acp::TerminalAuthCapabilities::new()),
+            );
         }
         let initialize_request =
             acp::InitializeRequest::new(ProtocolVersion::V2, info).capabilities(capabilities);
@@ -583,7 +594,7 @@ impl AcpV2Connection {
         // An eagerly spawned child can publish before cancellation drops an unpolled caller.
         async move {
             let request = connection.prepare_request(request);
-            let request_id = request.id().clone();
+            let request_id = v2_request_id(request.id())?;
             let cancellation = request.cancellation_handle();
             enqueue_notification(&dispatch_tx, request_id.clone(), register_request);
             let response = request.block_task();
@@ -1019,7 +1030,10 @@ impl AcpV2Connection {
             };
         thread.update(cx, |thread, cx| thread.mark_activity_unconfirmed(cx));
         let request = self.connection.prepare_request(request);
-        let request_id = request.id().clone();
+        let request_id = match v2_request_id(request.id()) {
+            Ok(request_id) => request_id,
+            Err(error) => return Task::ready(Err(error)),
+        };
         let cancellation = request.cancellation_handle();
         let (response, applied) = Self::ordered_prepared_response(
             &self.connection,
@@ -1153,7 +1167,7 @@ impl AcpV2Connection {
         let response = async move {
             preflight()?;
             let (sender, received) = futures::channel::oneshot::channel();
-            let request_id = request.id().clone();
+            let request_id = v2_request_id(request.id())?;
             let cancellation = request.cancellation_handle();
             enqueue_notification(&dispatch_tx, request_id.clone(), register_request);
             let published = request.on_receiving_result({
@@ -1292,7 +1306,10 @@ impl AgentConnection for AcpV2Connection {
             .additional_directories(context.additional_directories.clone())
             .mcp_servers(context.mcp_servers.clone());
         let request = self.connection.prepare_request(request);
-        let request_id = request.id().clone();
+        let request_id = match v2_request_id(request.id()) {
+            Ok(request_id) => request_id,
+            Err(error) => return Task::ready(Err(error)),
+        };
         let (response, applied) = Self::ordered_prepared_response(
             &self.connection,
             &self.dispatch_tx,
@@ -1345,9 +1362,22 @@ impl AgentConnection for AcpV2Connection {
                     })?;
                     let result = (|| {
                         for notification in notifications {
+                            // Traffic for the new session's subagents goes to their own threads,
+                            // which the announcements before it created.
+                            let target = this
+                                .sessions
+                                .borrow()
+                                .get(&notification.session_id)
+                                .map(|session| session.thread.clone())
+                                .with_context(|| {
+                                    format!(
+                                        "Session update for unannounced session {}",
+                                        notification.session_id
+                                    )
+                                })?;
                             apply_v2_session_notification(
                                 notification,
-                                &thread.downgrade(),
+                                &target,
                                 &this.sessions,
                                 cx,
                             )?;
@@ -1437,6 +1467,11 @@ impl AgentConnection for AcpV2Connection {
 
     fn supports_close_session(&self) -> bool {
         self.initialize_response.capabilities.session.is_some()
+    }
+
+    fn announces_subagents(&self) -> bool {
+        // Subagents are part of v2's baseline session model.
+        true
     }
 
     fn close_session(
@@ -2072,7 +2107,10 @@ mod tests {
                                     responder: Responder<acp::NewSessionResponse>,
                                     agent: V2ConnectionTo<Client>| {
                             new_sender
-                                .try_send((request.clone(), responder.id().clone()))
+                                .try_send((
+                                    request.clone(),
+                                    v2_request_id(responder.id()).expect("v2 request ID"),
+                                ))
                                 .expect("record creation");
                             if *deferred_new.lock().expect("new response mode") {
                                 new_reply_sender
@@ -2363,10 +2401,9 @@ mod tests {
                 acp::SessionConfigOption::boolean("enabled", "Enabled", false)
                     .meta(meta("initial-config")),
             ])
-            .available_commands(vec![
-                acp::AvailableCommand::new("initial", "Initial command")
-                    .meta(meta("initial-command")),
-            ])
+            .available_commands(vec![acp::AvailableCommand::Command(
+                acp::Command::new("initial", "Initial command").meta(meta("initial-command")),
+            )])
             .meta(meta("delivery-not-session"))
     }
 
@@ -2585,7 +2622,7 @@ mod tests {
                 .expect("resume");
             harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
             announce_running_child();
-            // A subagent whose replayed history ends, as claude-agent-acp replays each one.
+            // A subagent whose replayed history ends with an outcome.
             harness.send_update(
                 "saved",
                 acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("finished")),
@@ -2609,11 +2646,15 @@ mod tests {
             let child = child.expect("the subagent was announced before the response");
             let finished = finished.expect("the subagent was announced before the response");
             finished.read_with(cx, |finished, _| {
-                assert_eq!(
-                    finished.foreground_state(),
-                    Some(&cancelled()),
-                    "a replayed outcome confirms no activity, so it stays"
-                );
+                if replay_history {
+                    assert_eq!(
+                        finished.foreground_state(),
+                        None,
+                        "a replayed outcome is history too"
+                    );
+                } else {
+                    assert_eq!(finished.foreground_state(), Some(&cancelled()));
+                }
             });
             child.read_with(cx, |child, _| {
                 let association = child.subagent_association().expect("subagent");
@@ -2636,7 +2677,9 @@ mod tests {
             });
 
             if replay_history {
+                // The agent reports current states after the response.
                 announce_running_child();
+                harness.send_update("finished", acp::SessionUpdate::StateUpdate(cancelled()));
                 harness.drain_updates(cx).await;
                 child.read_with(cx, |child, _| {
                     assert!(child.subagent_association().expect("subagent").can_cancel);
@@ -2644,6 +2687,9 @@ mod tests {
                         child.foreground_activity(),
                         acp_thread::ForegroundActivity::Running
                     );
+                });
+                finished.read_with(cx, |finished, _| {
+                    assert_eq!(finished.foreground_state(), Some(&cancelled()));
                 });
             }
             drop((parent, child, finished));
@@ -2657,6 +2703,7 @@ mod tests {
         use agent_client_protocol::schema::MaybeUndefined;
 
         let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        assert!(harness.client.announces_subagents());
         let parent = harness.thread(cx).await;
         harness.send_update(
             "session",
@@ -3774,6 +3821,69 @@ done
     }
 
     #[gpui::test]
+    async fn v2_new_session_keeps_subagent_traffic_sent_before_its_response(
+        cx: &mut TestAppContext,
+    ) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        *harness.hold_new_responses.lock().expect("new mode") = true;
+        let creation = harness.create(cx);
+        let (_, response) = bounded(harness.new_replies.recv(), cx)
+            .await
+            .expect("new request");
+        let message = |id: &str, text: &str| {
+            acp::SessionUpdate::AgentMessage(acp::AgentMessage::new(id).content(vec![text.into()]))
+        };
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("child")),
+        );
+        harness.send_update("child", message("child-message", "child works"));
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("grandchild")),
+        );
+        harness.send_update(
+            "grandchild",
+            message("grandchild-message", "grandchild works"),
+        );
+        // Traffic for a session nobody announced is still not delivered.
+        harness.send_update("stranger", message("stranger-message", "unrelated"));
+        cx.run_until_parked();
+        response
+            .respond(initial_response())
+            .expect("new session response");
+        let parent = bounded(creation, cx).await.expect("created session");
+        cx.run_until_parked();
+
+        let child = parent
+            .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
+            .expect("announced before the response");
+        let grandchild = child
+            .read_with(cx, |child, _| child.subagent(&"grandchild".into()).cloned())
+            .expect("announced before the response");
+        for (thread, text) in [(&child, "child works"), (&grandchild, "grandchild works")] {
+            thread.read_with(cx, |thread, cx| {
+                assert!(
+                    thread.to_markdown(cx).contains(text),
+                    "a subagent's traffic sent before the response reaches it"
+                );
+            });
+        }
+        parent.read_with(cx, |parent, cx| {
+            let transcript = parent.to_markdown(cx);
+            assert!(!transcript.contains("child works"));
+            assert!(!transcript.contains("unrelated"));
+        });
+        assert!(
+            !harness
+                .client
+                .sessions
+                .borrow()
+                .contains_key(&acp::SessionId::new("stranger"))
+        );
+    }
+
+    #[gpui::test]
     async fn v2_new_sdk_correlates_concurrent_prefixes_by_response_id(cx: &mut TestAppContext) {
         use acp_thread::ForegroundActivity;
         let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
@@ -3838,7 +3948,7 @@ done
         harness.send_update(
             "second",
             acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
-                acp::AvailableCommand::new("prefix", "Prefix"),
+                acp::AvailableCommand::Command(acp::Command::new("prefix", "Prefix")),
             ])),
         );
         cx.run_until_parked();
@@ -3854,7 +3964,9 @@ done
         let config = vec![acp::SessionConfigOption::boolean(
             "response", "Response", true,
         )];
-        let commands = vec![acp::AvailableCommand::new("response", "Response")];
+        let commands = vec![acp::AvailableCommand::Command(acp::Command::new(
+            "response", "Response",
+        ))];
         second_response
             .respond(
                 acp::NewSessionResponse::new("second")
@@ -4154,7 +4266,10 @@ done
             assert_eq!(thread.session_info().title.as_deref(), Some("Early title"));
             assert!(thread.to_markdown(cx).contains("Early content"));
             let (_, tool) = thread.tool_call(&"early-tool".into()).expect("early tool");
-            assert_eq!(tool.content().len(), 2);
+            let [content] = tool.content() else {
+                panic!("the chunk continues the text block");
+            };
+            assert_eq!(content.to_markdown(cx), "tool prefixtool suffix");
             let terminal = thread
                 .terminal("early-terminal".into())
                 .expect("early terminal");
@@ -5517,7 +5632,7 @@ while IFS= read -r request; do
             printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"info":{"name":"session-stdio","version":"1"},"capabilities":{"session":{}}}}\n' "$id"
             ;;
         *'"method":"session/new"'*)
-            printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"stdio-session","configOptions":[{"configId":"enabled","name":"Enabled","type":"boolean","currentValue":false}],"availableCommands":[{"name":"initial","description":"Initial"}]}}\n' "$id"
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"stdio-session","configOptions":[{"configId":"enabled","name":"Enabled","type":"boolean","currentValue":false}],"availableCommands":[{"type":"command","name":"initial","description":"Initial"}]}}\n' "$id"
             printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"stdio-session","update":{"sessionUpdate":"session_info_update","title":"Immediate stdio title"}}}\n'
             ;;
         *'"method":"session/set_config_option"'*)
@@ -5908,7 +6023,9 @@ done
                     .agent
                     .send_request(acp::CreateElicitationRequest::new(
                         acp::ElicitationFormMode::new(
-                            acp::ElicitationRequestScope::new(responder.id().clone()),
+                            acp::ElicitationRequestScope::new(
+                                v2_request_id(responder.id()).expect("v2 request ID"),
+                            ),
                             acp::ElicitationSchema::new(),
                         ),
                         "Resume setup input",
@@ -6246,7 +6363,9 @@ done
                 .agent
                 .send_request(acp::CreateElicitationRequest::new(
                     acp::ElicitationFormMode::new(
-                        acp::ElicitationRequestScope::new(responder.id().clone()),
+                        acp::ElicitationRequestScope::new(
+                            v2_request_id(responder.id()).expect("v2 request ID"),
+                        ),
                         acp::ElicitationSchema::new(),
                     ),
                     "Resume setup",
@@ -6594,7 +6713,8 @@ done
                             async move |request: acp::LoginAuthRequest,
                                         responder: Responder<acp::LoginAuthResponse>,
                                         agent: V2ConnectionTo<Client>| {
-                                let request_id = responder.id().clone();
+                                let request_id =
+                                    v2_request_id(responder.id()).expect("v2 request ID");
                                 let method_id = request.method_id.clone();
                                 logins
                                     .lock()
@@ -6778,7 +6898,8 @@ done
             .expect("published prompt");
         assert_eq!(received, request);
         let cancellation = responder.cancellation();
-        let input = harness.request_input(responder.id().clone(), cx);
+        let input =
+            harness.request_input(v2_request_id(responder.id()).expect("v2 request ID"), cx);
         harness.registered(cx).await;
         let expected = acp::PromptResponse::new("accepted-message").meta(meta("receipt"));
         responder
@@ -6881,7 +7002,7 @@ done
             .await
             .expect("first prompt");
         let first_cancellation = first_responder.cancellation();
-        let first_id = first_responder.id().clone();
+        let first_id = v2_request_id(first_responder.id()).expect("v2 request ID");
         let first_input = harness.request_input(first_id.clone(), cx);
         harness.registered(cx).await;
         let second = cx.update(|cx| {
@@ -6894,7 +7015,10 @@ done
             .await
             .expect("second prompt");
         let second_cancellation = second_responder.cancellation();
-        let second_input = harness.request_input(second_responder.id().clone(), cx);
+        let second_input = harness.request_input(
+            v2_request_id(second_responder.id()).expect("v2 request ID"),
+            cx,
+        );
         harness.registered(cx).await;
         drop(first);
         bounded(first_cancellation.cancelled(), cx).await;

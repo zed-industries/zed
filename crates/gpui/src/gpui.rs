@@ -1,33 +1,43 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
-#![allow(clippy::collapsible_else_if)] // False positives in platform specific code
-#![allow(unused_mut)] // False positives in platform specific code
+
+pub extern crate accesskit;
+pub extern crate http_client;
+#[cfg(any(test, feature = "test-support"))]
+pub extern crate proptest;
+/// Subsecond entry points for hot-patching callbacks outside GPUI's render boundaries.
+#[cfg(all(
+    feature = "hot-reload",
+    any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "ios"
+    )
+))]
+pub extern crate subsecond;
 
 extern crate self as gpui;
+
+pub mod colors;
+pub mod prelude;
+pub mod profiler;
+
 #[macro_use]
 mod action;
 mod app;
-
 mod arena;
 mod asset_cache;
 mod assets;
 mod bounds_tree;
 mod color;
-/// The default colors used by GPUI.
-pub mod colors;
-#[cfg(feature = "profiler")]
-mod debug_overlay;
 mod element;
 mod elements;
 mod executor;
-mod platform_scheduler;
-pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
 mod gestures;
 mod global;
-#[cfg(gpui_hot_reload)]
-mod hot_reload;
 mod input;
 mod inspector;
 mod interactive;
@@ -35,25 +45,8 @@ mod key_dispatch;
 mod keymap;
 mod path_builder;
 mod platform;
-pub mod prelude;
-/// Profiling utilities for task, frame, and thread performance tracking.
-pub mod profiler;
-#[cfg(any(
-    test,
-    target_os = "windows",
-    target_os = "linux",
-    target_family = "wasm",
-    feature = "test-support",
-    feature = "bench-support"
-))]
-#[expect(missing_docs)]
-pub mod queue;
-/// A seeded, mutable element tree for benchmarks and tests of GPUI rendering.
-#[cfg(any(test, feature = "bench-support"))]
-pub mod randomized_element_tree;
+mod platform_scheduler;
 mod scene;
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-mod seeds;
 mod shared_uri;
 mod spring;
 mod style;
@@ -62,17 +55,42 @@ mod subscription;
 mod svg_renderer;
 mod tab_stop;
 mod taffy;
-#[cfg(any(test, feature = "test-support"))]
-pub mod test;
 mod text_system;
 mod util;
 mod view;
 mod window;
 
-#[cfg(any(test, feature = "test-support"))]
-pub use proptest;
+#[cfg(feature = "profiler")]
+mod debug_overlay;
+#[cfg(feature = "profiler")]
+pub use debug_overlay::*;
+
+#[cfg(gpui_hot_reload)]
+mod hot_reload;
+#[cfg(any(
+    test,
+    target_os = "windows",
+    target_os = "linux",
+    target_family = "wasm",
+    feature = "test-support",
+    feature = "bench-support"
+))]
+pub mod queue;
+
+#[cfg(any(test, feature = "bench-support"))]
+pub mod randomized_element_tree;
+
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+mod bench;
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+mod seeds;
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub use seeds::calculate_seeds;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test;
+#[cfg(any(test, feature = "test-support"))]
+pub use test::*;
 
 #[cfg(doc)]
 pub mod _accessibility;
@@ -90,25 +108,16 @@ pub mod private {
     pub use serde_json;
 }
 
-mod seal {
-    /// A mechanism for restricting implementations of a trait to only those in GPUI.
-    /// See: <https://predr.ag/blog/definitive-guide-to-sealed-traits-in-rust/>
-    pub trait Sealed {}
-}
+#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 
-pub use accesskit;
-pub use accesskit::Action as AccessibleAction;
-pub use accesskit::{Orientation, Role, Toggled};
+pub use accesskit::{Action as AccessibleAction, Orientation, Role, Toggled};
 pub use action::*;
 pub use anyhow::Result;
 pub use app::*;
-pub(crate) use arena::*;
 pub use asset_cache::*;
 pub use assets::*;
 pub use color::*;
-pub use ctor::ctor;
-#[cfg(feature = "profiler")]
-pub use debug_overlay::*;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;
@@ -118,110 +127,24 @@ pub use global::*;
 pub use gpui_macros::{
     AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,
 };
-pub use spring::*;
-
-/// Defines a Criterion benchmark group for benchmarks annotated with [`gpui::bench`].
-///
-/// This mirrors `criterion::criterion_group!`, but the group measures with the
-/// `gpui::BenchMeasurement` configured by `BENCH_MEASUREMENT` (see
-/// `BenchMeasurement::from_env`). By default Criterion analyzes wall time
-/// while retired instructions, cycles, IPC, context switches, and the other
-/// counters this machine supports are printed per iteration in the GPUI bench
-/// report. `BENCH_MEASUREMENT=instructions` makes Criterion analyze
-/// process-wide instructions instead, `foreground-instructions` the benchmark
-/// thread's alone, and `wall-time` disables all counters. A
-/// `config = ...` expression may set any other Criterion option; its
-/// measurement is replaced. To measure with something else, call
-/// `criterion::criterion_group!` directly with
-/// `config = criterion::Criterion::default().with_measurement(gpui::BenchMeasurement::new(...))`.
-///
-/// [`gpui::bench`]: crate::bench
-#[macro_export]
-macro_rules! bench_group {
-    (name = $name:ident; config = $config:expr; targets = $($target:path),+ $(,)?) => {
-        criterion::criterion_group! {
-            name = $name;
-            config = ($config).with_measurement($crate::BenchMeasurement::from_env_or_exit());
-            targets = $($target),+
-        }
-    };
-    ($name:ident, $($target:path),+ $(,)?) => {
-        $crate::bench_group! {
-            name = $name;
-            config = criterion::Criterion::default();
-            targets = $($target),+
-        }
-    };
-}
-
-/// Defines the entry point for GPUI Criterion benchmark groups.
-///
-/// This mirrors `criterion::criterion_main!` so GPUI benchmark files can keep the
-/// same shape as ordinary Criterion benchmarks. It also installs
-/// [`CountingAllocator`] as the binary's global allocator, so reports include
-/// heap allocations per iteration. It wraps the system allocator by default;
-/// `allocator = Path;` wraps another unit-struct allocator instead, e.g. to
-/// compare allocators, which pay the same small counting cost:
-///
-/// ```ignore
-/// gpui::bench_main!(allocator = mimalloc::MiMalloc; benches);
-/// ```
-///
-/// `allocator = none;` installs no global allocator, leaving Rust's default and
-/// dropping the allocation metrics from reports.
-#[macro_export]
-macro_rules! bench_main {
-    (allocator = none; $($groups:tt)*) => {
-        criterion::criterion_main!($($groups)*);
-    };
-    (allocator = $allocator:path; $($groups:tt)*) => {
-        #[global_allocator]
-        static GPUI_BENCH_ALLOCATOR: $crate::CountingAllocator<$allocator> =
-            $crate::CountingAllocator::new($allocator);
-
-        criterion::criterion_main!($($groups)*);
-    };
-    ($($groups:tt)*) => {
-        $crate::bench_main!(allocator = ::std::alloc::System; $($groups)*);
-    };
-}
 pub use gpui_shared_string::*;
 pub use gpui_util::arc_cow::ArcCow;
-pub use http_client;
 pub use input::*;
 pub use inspector::*;
 pub use interactive::*;
-use key_dispatch::*;
 pub use keymap::*;
 pub use path_builder::*;
 pub use platform::*;
 pub use profiler::*;
-#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
-pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;
 pub use shared_uri::*;
-use std::{any::Any, future::Future};
+pub use spring::*;
 pub use style::*;
 pub use styled::*;
 pub use subscription::*;
-/// Subsecond entry points for hot-patching callbacks outside GPUI's render boundaries.
-#[cfg(all(
-    feature = "hot-reload",
-    any(
-        target_os = "macos",
-        target_os = "linux",
-        target_os = "windows",
-        target_os = "ios"
-    )
-))]
-pub use subsecond;
 pub use svg_renderer::*;
-pub(crate) use tab_stop::*;
-use taffy::TaffyLayoutEngine;
 pub use taffy::{AvailableSpace, LayoutId};
-#[cfg(any(test, feature = "test-support"))]
-pub use test::*;
 pub use text_system::*;
 pub use util::{FutureExt, Timeout};
 pub use view::*;
@@ -229,6 +152,20 @@ pub use window::*;
 
 #[cfg(not(target_family = "wasm"))]
 pub use pollster::block_on;
+
+pub(crate) use arena::*;
+pub(crate) use platform_scheduler::PlatformScheduler;
+pub(crate) use tab_stop::*;
+
+use std::{any::Any, future::Future};
+
+use key_dispatch::*;
+
+mod seal {
+    /// A mechanism for restricting implementations of a trait to only those in GPUI.
+    /// See: <https://predr.ag/blog/definitive-guide-to-sealed-traits-in-rust/>
+    pub trait Sealed {}
+}
 
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.
