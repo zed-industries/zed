@@ -1681,6 +1681,18 @@
     },
   },
   {
+    "context": "DocxViewer",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-c": "docx_viewer::CopyAllText",
+      "cmd-=": "docx_viewer::ZoomIn",
+      "cmd-+": "docx_viewer::ZoomIn",
+      "cmd--": "docx_viewer::ZoomOut",
+      "cmd-0": "docx_viewer::ResetZoom",
+      "cmd-k r": "editor::RevealInFileManager",
+    },
+  },
+  {
     "context": "ImageViewer",
     "use_key_equivalents": true,
     "bindings": {

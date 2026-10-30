@@ -1605,6 +1605,17 @@
     },
   },
   {
+    "context": "DocxViewer",
+    "bindings": {
+      "ctrl-c": "docx_viewer::CopyAllText",
+      "ctrl-=": "docx_viewer::ZoomIn",
+      "ctrl-+": "docx_viewer::ZoomIn",
+      "ctrl--": "docx_viewer::ZoomOut",
+      "ctrl-0": "docx_viewer::ResetZoom",
+      "ctrl-k r": "editor::RevealInFileManager",
+    },
+  },
+  {
     "context": "ImageViewer",
     "bindings": {
       "ctrl-=": "image_viewer::ZoomIn",

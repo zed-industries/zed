@@ -1522,6 +1522,8 @@ fn initialize_pane(
             toolbar.add_item(basedpyright_banner, window, cx);
             let image_view_toolbar = cx.new(|_| image_viewer::ImageViewToolbarControls::new());
             toolbar.add_item(image_view_toolbar, window, cx);
+            let docx_view_toolbar = cx.new(|_| docx_viewer::DocxViewToolbarControls::new());
+            toolbar.add_item(docx_view_toolbar, window, cx);
         })
     });
 }

@@ -56,6 +56,7 @@ members = [
     "crates/deepseek",
     "crates/dev_container",
     "crates/diagnostics",
+    "crates/docx_viewer",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
     "crates/edit_prediction_cli",
@@ -338,6 +339,7 @@ deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 dev_container = { path = "crates/dev_container" }
 diagnostics = { path = "crates/diagnostics" }
+docx_viewer = { path = "crates/docx_viewer" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }
 edit_prediction_metrics = { path = "crates/edit_prediction_metrics", features = ["tree-sitter"] }
@@ -1011,6 +1013,7 @@ xkbcommon = { version = "0.8", default-features = false }
 yaml-rust2 = { version = "0.8", default-features = false }
 yawc = { version = "0.4", default-features = false }
 zeroize = "1.8"
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
 zstd = { version = "0.13", default-features = false, features = ["legacy", "arrays"] }
 
 [workspace.dependencies.windows]
