@@ -63,7 +63,11 @@ pub(super) struct StickyHeaderLine {
 }
 
 impl EditorElement {
-    pub(crate) fn sticky_headers(editor: &Editor, snapshot: &EditorSnapshot) -> Vec<StickyHeader> {
+    pub(crate) fn sticky_headers(
+        editor: &Editor,
+        snapshot: &EditorSnapshot,
+        top_offset_rows: ScrollOffset,
+    ) -> Vec<StickyHeader> {
         let scroll_top = snapshot.scroll_position().y;
 
         let mut end_rows = Vec::<DisplayRow>::new();
@@ -113,7 +117,7 @@ impl EditorElement {
                 end_rows.pop();
             }
             let depth = end_rows.len();
-            let adjusted_scroll_top = scroll_top + depth as f64;
+            let adjusted_scroll_top = scroll_top + top_offset_rows + depth as f64;
 
             if sticky_row.as_f64() >= adjusted_scroll_top || end_row.as_f64() <= adjusted_scroll_top
             {
@@ -121,7 +125,7 @@ impl EditorElement {
             }
 
             let max_scroll_offset = max_sticky_row.as_f64() - scroll_top;
-            let offset = (depth as f64).min(max_scroll_offset);
+            let offset = (top_offset_rows + depth as f64).min(max_scroll_offset);
 
             end_rows.push(end_row);
             rows.push(StickyHeader {
@@ -239,6 +243,7 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         relative_line_numbers: RelativeLineNumbers,
         relative_to: Option<DisplayRow>,
+        top_offset_rows: ScrollOffset,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<StickyHeaders> {
@@ -246,7 +251,7 @@ impl EditorElement {
             .show_line_numbers
             .unwrap_or_else(|| EditorSettings::get_global(cx).gutter.line_numbers);
 
-        let rows = Self::sticky_headers(self.editor.read(cx), snapshot);
+        let rows = Self::sticky_headers(self.editor.read(cx), snapshot, top_offset_rows);
 
         let mut lines = Vec::<StickyHeaderLine>::new();
 
