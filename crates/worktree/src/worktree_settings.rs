@@ -1,10 +1,21 @@
 use std::path::Path;
 
+use bitflags::bitflags;
 use settings::{RegisterSetting, ScanSymlinksSetting, Settings};
 use util::{
     paths::{PathMatcher, PathStyle},
     rel_path::RelPath,
 };
+
+bitflags! {
+    /// The surfaces an entry is excluded from, see
+    /// [`WorktreeSettings::path_exclusions`].
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct EntryExclusions: u32 {
+        const SEARCH = 1 << 0;
+        const FINDER = 1 << 1;
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, RegisterSetting)]
 pub struct WorktreeSettings {
@@ -15,6 +26,8 @@ pub struct WorktreeSettings {
     /// This field contains all ancestors of the `file_scan_inclusions`. It's used to
     /// determine whether to terminate worktree scanning for a given dir.
     pub parent_dir_scan_inclusions: PathMatcher,
+    pub file_search_exclusions: PathMatcher,
+    pub file_finder_exclusions: PathMatcher,
     pub scan_symlinks: ScanSymlinksSetting,
     pub file_scan_depth: Option<u32>,
     pub private_files: PathMatcher,
@@ -31,6 +44,25 @@ impl WorktreeSettings {
     pub fn is_path_excluded(&self, path: &RelPath) -> bool {
         path.ancestors()
             .any(|ancestor| self.file_scan_exclusions.is_match(ancestor))
+    }
+
+    pub fn path_exclusions(&self, path: &RelPath) -> EntryExclusions {
+        let mut exclusions = EntryExclusions::empty();
+        // The root of a single-file worktree was opened explicitly, so never exclude it.
+        if path.is_empty() {
+            return exclusions;
+        }
+        for (matcher, exclusion) in [
+            (&self.file_search_exclusions, EntryExclusions::SEARCH),
+            (&self.file_finder_exclusions, EntryExclusions::FINDER),
+        ] {
+            // Computed for every scanned entry, so skip the per-ancestor matching
+            // for the (default) empty lists.
+            if !matcher.is_empty() && path.ancestors().any(|ancestor| matcher.is_match(ancestor)) {
+                exclusions |= exclusion;
+            }
+        }
+        exclusions
     }
 
     pub fn is_path_always_included(&self, path: &RelPath, is_dir: bool) -> bool {
@@ -63,6 +95,8 @@ impl Settings for WorktreeSettings {
         let private_files = worktree.private_files.unwrap().0;
         let hidden_files = worktree.hidden_files.unwrap().0;
         let read_only_files = worktree.read_only_files.unwrap_or_default().0;
+        let file_search_exclusions = worktree.file_search_exclusions.unwrap_or_default().0;
+        let file_finder_exclusions = worktree.file_finder_exclusions.unwrap_or_default().0;
         let scan_symlinks = worktree.scan_symlinks.unwrap();
         let (file_scan_inclusions, parent_dir_scan_inclusions) =
             file_scan_inclusion_matchers(file_scan_inclusions);
@@ -72,6 +106,14 @@ impl Settings for WorktreeSettings {
             file_scan_exclusions: valid_path_matchers(file_scan_exclusions, "file_scan_exclusions"),
             parent_dir_scan_inclusions,
             file_scan_inclusions,
+            file_search_exclusions: valid_path_matchers(
+                file_search_exclusions,
+                "file_search_exclusions",
+            ),
+            file_finder_exclusions: valid_path_matchers(
+                file_finder_exclusions,
+                "file_finder_exclusions",
+            ),
             private_files: valid_path_matchers(private_files, "private_files"),
             hidden_files: valid_path_matchers(hidden_files, "hidden_files"),
             read_only_files: valid_path_matchers(read_only_files, "read_only_files"),

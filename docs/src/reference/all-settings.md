@@ -2436,6 +2436,50 @@ Use `"..."` to add patterns without repeating Zed's defaults. In project setting
 
 Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
 
+## File Search Exclusions
+
+- Setting: `file_search_exclusions`
+- Description: Exclude files and folders matching these glob patterns from project search and the agent's text search, including files inside matching folders. Unlike `file_scan_exclusions`, matching entries are still scanned and shown in the project panel. Enabling "Include Ignored" in project search, or `search.include_ignored`, also includes these entries.
+- Default:
+
+```json [settings]
+{
+  "file_search_exclusions": []
+}
+```
+
+Use `"..."` to add patterns without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+
+```json [settings]
+{
+  "file_search_exclusions": ["**/vendor", "..."]
+}
+```
+
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
+
+## File Finder Exclusions
+
+- Setting: `file_finder_exclusions`
+- Description: Exclude files and folders matching these glob patterns from the file finder, including files inside matching folders. Recently opened and currently open files are still suggested. Unlike `file_scan_exclusions`, matching entries are still scanned and shown in the project panel. Including ignored files in the file finder, or `file_finder.include_ignored`, also includes these entries.
+- Default:
+
+```json [settings]
+{
+  "file_finder_exclusions": []
+}
+```
+
+Use `"..."` to add patterns without repeating Zed's defaults. In project settings, it extends the user or parent configuration value. Omit `"..."` to replace the inherited list.
+
+```json [settings]
+{
+  "file_finder_exclusions": ["**/vendor", "..."]
+}
+```
+
+Inherited patterns are inserted at `"..."`, and duplicates keep their first occurrence.
+
 ## File Scan Depth
 
 - Setting: `file_scan_depth`
@@ -4288,7 +4332,7 @@ Non-negative `integer` values
 
 ### Include Ignore
 
-- Description: Whether to include gitignored files in search results.
+- Description: Whether to include gitignored files and files matching `file_search_exclusions` in search results.
 - Setting: `include_ignored`
 - Default: `false`
 

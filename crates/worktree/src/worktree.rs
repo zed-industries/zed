@@ -79,7 +79,7 @@ use util::{
     paths::{PathMatcher, PathStyle, SanitizedPath, home_dir},
     rel_path::{RelPath, RelPathBuf},
 };
-pub use worktree_settings::WorktreeSettings;
+pub use worktree_settings::{EntryExclusions, WorktreeSettings};
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
@@ -1328,20 +1328,27 @@ impl LocalWorktree {
         self.path_prefixes_to_scan_tx = path_prefixes_to_scan_tx;
 
         self.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
-        let always_included_entries = self
+        let entries_to_refresh = self
             .snapshot
             .entries(true, 0)
-            .filter(|entry| entry.is_always_included)
+            .filter(|entry| {
+                entry.is_always_included
+                    || ((entry.is_ignored || entry.is_external)
+                        && entry.kind != EntryKind::UnloadedDir
+                        && entry.exclusions != self.settings.path_exclusions(&entry.path))
+            })
             .map(|entry| entry.path.clone())
             .collect::<Vec<_>>();
         log::debug!(
-            "refreshing entries for the following always included paths: {:?}",
-            always_included_entries
+            "refreshing entries for the following always included or re-excluded paths: {:?}",
+            entries_to_refresh
         );
 
         // Cleans up old always included entries to ensure they get updated properly. Otherwise,
         // nested always included entries may not get updated and will result in out-of-date info.
-        self.refresh_entries_for_paths(always_included_entries);
+        // Loaded ignored and external entries are not rescanned either, so their exclusions would
+        // be stale. Unloaded directories are skipped, as refreshing them would force them to load.
+        self.refresh_entries_for_paths(entries_to_refresh);
     }
 
     fn start_background_scanner(
@@ -4003,6 +4010,10 @@ pub struct Entry {
     /// We only scan hidden entries once the directory is expanded.
     pub is_hidden: bool,
 
+    /// The surfaces this entry is excluded from, including exclusions
+    /// inherited from its ancestors.
+    pub exclusions: EntryExclusions,
+
     /// Whether this entry is always included in searches.
     ///
     /// This is used for entries that are always included in searches, even
@@ -4177,6 +4188,7 @@ impl Entry {
             canonical_path,
             is_ignored: false,
             is_hidden: false,
+            exclusions: EntryExclusions::empty(),
             is_always_included: false,
             is_external: false,
             is_private: false,
@@ -5642,6 +5654,7 @@ impl BackgroundScanner {
                     log::debug!("detected hidden file: {relative_path:?}");
                     child_entry.is_hidden = true;
                 }
+                child_entry.exclusions = self.settings.path_exclusions(&relative_path);
             }
 
             new_entries.push(child_entry);
@@ -5777,6 +5790,7 @@ impl BackgroundScanner {
                     fs_entry.is_always_included =
                         self.settings.is_path_always_included(path, is_dir);
                     fs_entry.is_hidden = self.settings.is_path_hidden(path);
+                    fs_entry.exclusions = self.settings.path_exclusions(path);
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if self.should_scan_directory(
@@ -7094,6 +7108,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
             is_unloaded: entry.kind == EntryKind::UnloadedDir,
+            exclusions: entry.exclusions.bits(),
         }
     }
 }
@@ -7130,6 +7145,7 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
                 .map(|path_string| Arc::from(PathBuf::from(path_string))),
             is_ignored: entry.is_ignored,
             is_hidden: entry.is_hidden,
+            exclusions: EntryExclusions::from_bits_truncate(entry.exclusions),
             is_always_included,
             is_external: entry.is_external,
             is_private: false,
