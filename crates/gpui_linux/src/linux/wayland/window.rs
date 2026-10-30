@@ -2480,6 +2480,7 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
     // Prefer the ext-background-effect protocol, as it is DE agnostic and
     // replaces the deprecated kde-blur protocol, which is no longer supported
     // since KDE Plasma 6.7.
+    // https://invent.kde.org/plasma/kwin/-/commit/7f9e0aa1cd2c2ab4fea1097800893b6f780089eb
     if let Some(ref background_effects_manager) = state.globals.background_effects_manager {
         if state.background_appearance == WindowBackgroundAppearance::Blurred {
             if state.background_effects.is_none() {
