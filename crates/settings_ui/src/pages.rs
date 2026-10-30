@@ -1,3 +1,4 @@
+mod agent_profiles_page;
 mod audio_input_output_setup;
 mod audio_test_window;
 mod edit_prediction_provider_setup;
@@ -10,6 +11,10 @@ mod skill_creator;
 mod skills_setup;
 mod tool_permissions_setup;
 
+pub(crate) use agent_profiles_page::{
+    AgentProfileContextServers, AgentProfileForm, AgentProfilePageState, open_agent_profile_form,
+    reconcile_agent_profile_state, render_agent_profiles_page, sync_agent_profile_page_state,
+};
 pub(crate) use audio_input_output_setup::{
     render_input_audio_device_dropdown, render_output_audio_device_dropdown,
 };

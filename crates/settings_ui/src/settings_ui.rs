@@ -59,8 +59,8 @@ use crate::components::{
     text_field_a11y_state, theme_picker,
 };
 use crate::pages::{
-    CustomAgentForm, LlmProviderForm, McpServerForm, render_input_audio_device_dropdown,
-    render_output_audio_device_dropdown,
+    AgentProfileForm, AgentProfilePageState, CustomAgentForm, LlmProviderForm, McpServerForm,
+    render_input_audio_device_dropdown, render_output_audio_device_dropdown,
 };
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
@@ -1013,6 +1013,13 @@ pub struct SettingsWindow {
     /// mouse, where `focus_visible` styling would otherwise be suppressed).
     pub(crate) external_agent_add_focus_handle: FocusHandle,
     skill_creator_page: Option<(Entity<pages::SkillCreatorPage>, Subscription)>,
+    /// State for the active agent profile detail sub-page, if open.
+    pub(crate) agent_profile_page: Option<AgentProfilePageState>,
+    /// State for the active add/fork agent profile form sub-page, if open.
+    pub(crate) agent_profile_form: Option<AgentProfileForm>,
+    /// `ContextServerRegistry` shared by agent profile detail pages, keyed by
+    /// the active project.
+    pub(crate) agent_profile_context_servers: Option<pages::AgentProfileContextServers>,
 }
 
 struct SearchDocument {
@@ -1817,6 +1824,7 @@ impl SettingsWindow {
         let mut ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
             this.fetch_files(window, cx);
+            pages::sync_agent_profile_page_state(this, window, cx);
 
             // Whenever settings are changed, it's possible that the changed
             // settings affects the rendering of the `SettingsWindow`, like is
@@ -2035,6 +2043,9 @@ impl SettingsWindow {
             custom_agent_form: None,
             external_agent_add_focus_handle: cx.focus_handle(),
             skill_creator_page: None,
+            agent_profile_page: None,
+            agent_profile_form: None,
+            agent_profile_context_servers: None,
         };
 
         this.fetch_files(window, cx);
@@ -2543,6 +2554,7 @@ impl SettingsWindow {
             self.build_content_handles(window, cx);
         }
         self.sub_page_stack.clear();
+        pages::reconcile_agent_profile_state(self);
         // PERF: doesn't have to be rebuilt, can just be filled with true. pages is constant once it is built
         self.build_filter_table();
         self.reset_list_state();
@@ -2671,6 +2683,7 @@ impl SettingsWindow {
         }
 
         self.sub_page_stack.clear();
+        pages::reconcile_agent_profile_state(self);
     }
 
     fn open_best_matching_nav_page(&mut self, query_words: &[&str]) {
@@ -3825,6 +3838,11 @@ impl SettingsWindow {
                 && current_sub_page.link.title.as_ref() == "LLM Providers";
             let is_external_agents_page = current_sub_page.link.json_path == Some("agent_servers");
             let is_mcp_servers_page = current_sub_page.link.json_path == Some("context_servers");
+            // The dynamic profile detail page shares the json path; a profile
+            // may even be named "Agent Profiles". Only the registered list
+            // page (which carries a description) shows the Add button.
+            let is_agent_profiles_page = current_sub_page.link.json_path == Some("agent.profiles")
+                && current_sub_page.link.description.is_some();
 
             page_header = h_flex()
                 .w_full()
@@ -3846,8 +3864,9 @@ impl SettingsWindow {
                         .child(self.render_sub_page_breadcrumbs(window, cx)),
                 )
                 .child(
-                    div()
+                    h_flex()
                         .flex_shrink_0()
+                        .gap_2()
                         .when(current_sub_page.link.in_json, |this| {
                             this.child(
                                 Button::new("open-in-settings-file", "Edit in settings.json")
@@ -3885,6 +3904,21 @@ impl SettingsWindow {
                         })
                         .when(is_mcp_servers_page, |this| {
                             this.child(pages::render_add_server_popover(self, window, cx))
+                        })
+                        .when(is_agent_profiles_page, |this| {
+                            this.child(
+                                Button::new("agent-profile-add", "Add Profile")
+                                    .tab_index(0_isize)
+                                    .style(ButtonStyle::OutlinedGhost)
+                                    .start_icon(
+                                        Icon::new(IconName::Plus)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        pages::open_agent_profile_form(this, None, window, cx);
+                                    })),
+                            )
                         }),
                 )
                 .into_any_element();
@@ -4460,6 +4494,7 @@ impl SettingsWindow {
         cx: &mut Context<SettingsWindow>,
     ) {
         self.sub_page_stack.clear();
+        pages::reconcile_agent_profile_state(self);
         let skills_page_index = self.pages.iter().position(|page| {
             page.items.iter().any(|item| {
                 matches!(
@@ -4520,6 +4555,7 @@ impl SettingsWindow {
         cx: &mut Context<SettingsWindow>,
     ) -> bool {
         self.sub_page_stack.clear();
+        pages::reconcile_agent_profile_state(self);
 
         for (page_index, page) in self.pages.iter().enumerate() {
             for (item_index, item) in page.items.iter().enumerate() {
@@ -4555,11 +4591,12 @@ impl SettingsWindow {
     pub(crate) fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         self.regex_validation_error = None;
         self.sandbox_host_validation_error = None;
-        if let Some(popped) = self.sub_page_stack.pop()
-            && popped.link.r#type == SubPageType::SkillCreator
-        {
-            self.skill_creator_page = None;
+        if let Some(popped) = self.sub_page_stack.pop() {
+            if popped.link.r#type == SubPageType::SkillCreator {
+                self.skill_creator_page = None;
+            }
         }
+        pages::reconcile_agent_profile_state(self);
         self.retry_llm_provider_authentication(cx);
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
@@ -5238,7 +5275,7 @@ fn render_picker_trigger_button(id: SharedString, label: SharedString) -> Button
 /// Wires the Expand/Collapse accessibility actions on a picker trigger button to
 /// the popover handle, so assistive technology can open and close the picker
 /// (used by UIA on Windows and AX on macOS; Linux/AT-SPI uses the click action).
-fn wire_picker_trigger_a11y<M: gpui::ManagedView>(
+pub(crate) fn wire_picker_trigger_a11y<M: gpui::ManagedView>(
     button: Button,
     handle: ui::PopoverMenuHandle<M>,
 ) -> Button {
@@ -5507,6 +5544,9 @@ pub mod test {
                 custom_agent_form: None,
                 external_agent_add_focus_handle: cx.focus_handle(),
                 skill_creator_page: None,
+                agent_profile_page: None,
+                agent_profile_form: None,
+                agent_profile_context_servers: None,
             }
         }
     }
@@ -5647,6 +5687,9 @@ pub mod test {
             custom_agent_form: None,
             external_agent_add_focus_handle: cx.focus_handle(),
             skill_creator_page: None,
+            agent_profile_page: None,
+            agent_profile_form: None,
+            agent_profile_context_servers: None,
         };
 
         settings_window.build_filter_table();

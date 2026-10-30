@@ -28,6 +28,7 @@ component.workspace = true
 codestral.workspace = true
 collections.workspace = true
 context_server.workspace = true
+convert_case.workspace = true
 copilot.workspace = true
 copilot_ui.workspace = true
 cpal.workspace = true
