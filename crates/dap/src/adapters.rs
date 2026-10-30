@@ -110,6 +110,15 @@ pub struct TcpArguments {
     pub host: IpAddr,
     pub port: u16,
     pub timeout: Option<u64>,
+    // Child sessions need a fresh proxy connection without restarting the adapter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdio_proxy: Option<StdioProxy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StdioProxy {
+    pub command: String,
+    pub arguments: Vec<String>,
 }
 
 impl TcpArguments {
@@ -119,6 +128,7 @@ impl TcpArguments {
             host: host.host.context("missing host")?,
             port: host.port.context("missing port")?,
             timeout: host.timeout,
+            stdio_proxy: None,
         })
     }
 
@@ -468,6 +478,7 @@ impl DebugAdapter for FakeAdapter {
                 host: connection.host(),
                 port: connection.port.unwrap_or(17),
                 timeout: connection.timeout,
+                stdio_proxy: None,
             });
         Ok(DebugAdapterBinary {
             command: Some("command".into()),
