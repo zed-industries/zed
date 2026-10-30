@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use const_format::{concatcp, formatcp};
 use fs::Fs;
 use futures::StreamExt;
@@ -751,6 +751,156 @@ pub fn global_skills_dir() -> PathBuf {
     paths::home_dir()
         .join(AGENTS_DIR_NAME)
         .join(SKILLS_DIR_NAME)
+}
+
+/// Watches a skills directory and calls `on_change` once per batch of changes,
+/// until `on_change` returns `false` or the events stop. Returns `true` when it
+/// stopped because `skills_dir` itself was removed.
+pub async fn watch_skills_dir(
+    fs: Arc<dyn Fs>,
+    skills_dir: PathBuf,
+    mut on_change: impl FnMut() -> bool,
+) -> bool {
+    let (mut events, watcher) = fs
+        .watch(&skills_dir, std::time::Duration::from_millis(500))
+        .await;
+
+    // Linux's inotify backend is non-recursive, so a watch on
+    // `skills_dir` only fires for direct children. Skill discovery
+    // is intentionally one level deep (`<skills_dir>/<skill>/SKILL.md`),
+    // so we only register watches on each immediate child directory
+    // and deliberately do NOT recurse: a stray `node_modules`,
+    // `target`, or `.git` inside a skill folder would otherwise
+    // register watches for tens of thousands of subdirectories.
+    // These per-child adds are cheap no-ops on macOS/Windows where
+    // the OS-level watch is already recursive.
+    if let Ok(mut entries) = fs.read_dir(&skills_dir).await {
+        while let Some(entry) = entries.next().await {
+            let Ok(path) = entry else { continue };
+            if let Ok(Some(metadata)) = fs.metadata(&path).await
+                && metadata.is_dir
+            {
+                watcher.add(&path).ok();
+            }
+        }
+    }
+
+    while let Some(events) = events.next().await {
+        // When a new immediate child directory of `skills_dir` is
+        // created, add a single watch for it so changes to its
+        // `SKILL.md` are observed on Linux. We intentionally do not
+        // recurse into the new directory — skill discovery is only
+        // one level deep.
+        for event in &events {
+            if event.kind == Some(fs::PathEventKind::Created)
+                && event.path.parent() == Some(skills_dir.as_path())
+                && fs.is_dir(&event.path).await
+            {
+                watcher.add(&event.path).ok();
+            }
+        }
+
+        let watched_root_removed = events.iter().any(|event| {
+            event.path == skills_dir && event.kind == Some(fs::PathEventKind::Removed)
+        });
+
+        if !on_change() {
+            return false;
+        }
+        if watched_root_removed {
+            return true;
+        }
+    }
+    false
+}
+
+/// Serialize the SKILL.md file to disk at `<skills_dir>/<name>/SKILL.md`.
+///
+/// Refuses to overwrite an existing directory at `<skills_dir>/<name>`. The
+/// caller surfaces the resulting error to the user, who picks a different
+/// name.
+pub async fn write_skill_to_disk(
+    fs: &dyn Fs,
+    skills_dir: &std::path::Path,
+    name: &str,
+    description: &str,
+    body: &str,
+    disable_model_invocation: bool,
+) -> Result<PathBuf> {
+    let skill_dir = skills_dir.join(name);
+    match fs.metadata(&skill_dir).await {
+        Ok(Some(metadata)) => {
+            return Err(existing_skill_path_error(name, &skill_dir, metadata.is_dir));
+        }
+        Ok(None) => {}
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "failed to check whether {} already exists",
+                    skill_dir.display()
+                )
+            });
+        }
+    }
+
+    let content = format_skill_file(name, description, body, disable_model_invocation)?;
+
+    fs.create_dir(&skill_dir)
+        .await
+        .with_context(|| format!("failed to create skill directory {}", skill_dir.display()))?;
+    let skill_file_path = skill_dir.join(SKILL_FILE_NAME);
+    fs.write(&skill_file_path, content.as_bytes())
+        .await
+        .with_context(|| format!("failed to write {}", skill_file_path.display()))?;
+
+    Ok(skill_file_path)
+}
+
+pub fn existing_skill_path_error(
+    name: &str,
+    skill_dir: &std::path::Path,
+    is_dir: bool,
+) -> anyhow::Error {
+    if is_dir {
+        anyhow!(
+            "A skill named \"{name}\" already exists at {}. Pick a different name.",
+            skill_dir.display()
+        )
+    } else {
+        // Without this check, creating the directory fails with a vague "File exists" error.
+        anyhow!(
+            "A file (not a skill directory) already exists at {}. \
+             Delete it or pick a different skill name.",
+            skill_dir.display()
+        )
+    }
+}
+
+pub fn format_skill_file(
+    name: &str,
+    description: &str,
+    body: &str,
+    disable_model_invocation: bool,
+) -> Result<String> {
+    let metadata = SkillMetadata {
+        name: name.to_string(),
+        description: description.to_string(),
+        disable_model_invocation,
+    };
+    let frontmatter = serde_yaml_ng::to_string(&metadata)
+        .context("failed to serialize skill frontmatter as YAML")?;
+
+    let mut content = String::with_capacity(frontmatter.len() + body.len() + 16);
+    content.push_str("---\n");
+    content.push_str(&frontmatter);
+    content.push_str("---\n");
+    let trimmed_body = body.trim();
+    if !trimmed_body.is_empty() {
+        content.push('\n');
+        content.push_str(trimmed_body);
+        content.push('\n');
+    }
+    Ok(content)
 }
 
 /// Project-local skills live at this path relative to a worktree root,

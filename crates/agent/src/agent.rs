@@ -790,63 +790,22 @@ impl NativeAgent {
         skills_dir: PathBuf,
         cx: &mut AsyncApp,
     ) {
-        let (mut events, watcher) = fs
-            .watch(&skills_dir, std::time::Duration::from_millis(500))
-            .await;
-
-        // Linux's inotify backend is non-recursive, so a watch on
-        // `skills_dir` only fires for direct children. Skill discovery
-        // is intentionally one level deep (`<skills_dir>/<skill>/SKILL.md`),
-        // so we only register watches on each immediate child directory
-        // and deliberately do NOT recurse: a stray `node_modules`,
-        // `target`, or `.git` inside a skill folder would otherwise
-        // register watches for tens of thousands of subdirectories.
-        // These per-child adds are cheap no-ops on macOS/Windows where
-        // the OS-level watch is already recursive.
-        if let Ok(mut entries) = fs.read_dir(&skills_dir).await {
-            while let Some(entry) = entries.next().await {
-                let Ok(path) = entry else { continue };
-                if let Ok(Some(metadata)) = fs.metadata(&path).await
-                    && metadata.is_dir
-                {
-                    watcher.add(&path).ok();
-                }
-            }
-        }
-
-        while let Some(events) = events.next().await {
-            // When a new immediate child directory of `skills_dir` is
-            // created, add a single watch for it so changes to its
-            // `SKILL.md` are observed on Linux. We intentionally do not
-            // recurse into the new directory — skill discovery is only
-            // one level deep.
-            for event in &events {
-                if event.kind == Some(fs::PathEventKind::Created)
-                    && event.path.parent() == Some(skills_dir.as_path())
-                    && fs.is_dir(&event.path).await
-                {
-                    watcher.add(&event.path).ok();
-                }
-            }
-
-            let watched_root_removed = events.iter().any(|event| {
-                event.path == skills_dir && event.kind == Some(fs::PathEventKind::Removed)
-            });
-
-            let updated = this.update(cx, |this, _cx| {
+        let watched_root_removed = agent_skills::watch_skills_dir(fs, skills_dir, || {
+            this.update(cx, |this, _cx| {
                 for state in this.projects.values_mut() {
                     state.project_context_needs_refresh.send(()).ok();
                 }
-                if watched_root_removed {
-                    // Drop back to Idle so the next user trigger
-                    // retries the scan; the next trigger will rediscover
-                    // the directory if the user has recreated it.
-                    this.skills_state = SkillsState::Idle;
-                }
-            });
-            if updated.is_err() || watched_root_removed {
-                return;
-            }
+            })
+            .is_ok()
+        })
+        .await;
+        if watched_root_removed {
+            // Drop back to Idle so the next user trigger retries the scan
+            // and rediscovers the directory if it's recreated.
+            this.update(cx, |this, _cx| {
+                this.skills_state = SkillsState::Idle;
+            })
+            .ok();
         }
     }
 
