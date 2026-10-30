@@ -17,7 +17,7 @@ use text::{
 };
 use util::{ResultExt, debug_panic};
 
-pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
+pub const MAX_WORD_DIFF_LINE_COUNT: usize = 8;
 
 pub struct BufferDiff {
     pub buffer_id: BufferId,
@@ -1336,8 +1336,8 @@ impl HunkSink<'_> {
 
         let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = self.diff_options
             && !buffer_row_range.is_empty()
-            && base_line_count == buffer_line_count
-            && diff_options.max_word_diff_line_count >= base_line_count
+            && base_line_count <= diff_options.max_word_diff_line_count
+            && buffer_line_count <= diff_options.max_word_diff_line_count
         {
             let base_text: String = self
                 .diff_base_rope
@@ -2536,6 +2536,43 @@ mod tests {
             &buffer,
             &diff_base,
             &[],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_word_diff_with_unequal_hunk_line_counts(cx: &mut gpui::TestAppContext) {
+        let diff_base = "- Keep `render_cache` focused: retain only visible rows; use `full` only when exact measurements are required.\n".to_string();
+        let buffer_text = concat!(
+            "- `render_cache` focused: retain only visible rows; use `full` only when measurements are required.\n",
+            "\n",
+            "## Rendering notes\n",
+            "\n",
+            "- Cache visible rows before painting.\n",
+            "- Skip hidden rows when rebuilding the view.\n",
+        )
+        .to_string();
+
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let diff = BufferDiffSnapshot::new_sync(&buffer, diff_base.clone(), cx);
+        let hunks = diff
+            .hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(buffer.remote_id()),
+                &buffer,
+            )
+            .collect::<Vec<_>>();
+
+        assert_eq!(hunks.len(), 1);
+        assert!(
+            hunks[0]
+                .base_word_diffs
+                .iter()
+                .any(|range| diff_base[range.clone()].contains("Keep"))
+        );
+        assert!(
+            !hunks[0]
+                .base_word_diffs
+                .iter()
+                .any(|range| diff_base[range.clone()].contains("render_cache"))
         );
     }
 
