@@ -2457,8 +2457,8 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         .compositor
         .create_region(&state.globals.qh, ());
 
-    // Note that rounded corners make this rectangle API hard to work with.
-    // As this is common when using CSD, let's just disable this API.
+    // Client decorations include transparent shadows and antialiased corners,
+    // so don't promise the compositor an opaque region.
     if state.background_appearance == WindowBackgroundAppearance::Opaque
         && state.decorations == WindowDecorations::Server
     {
@@ -2484,7 +2484,7 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
     if let Some(ref background_effects_manager) = state.globals.background_effects_manager {
         if state.background_appearance == WindowBackgroundAppearance::Blurred {
             if state.background_effects.is_none() {
-                log::info!("Using ext-background-effect protocol");
+                log::debug!("Using ext-background-effect protocol");
                 let background_effects = background_effects_manager.get_background_effect(
                     &state.surface,
                     &state.globals.qh,
@@ -2502,23 +2502,18 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
                 .as_ref()
                 .unwrap()
                 .set_blur_region(Some(&region));
-        } else {
-            // It probably doesn't hurt to clear the blur for opaque windows
-            if let Some(b) = state.background_effects.take() {
-                b.set_blur_region(None);
-                b.destroy();
-            }
+        } else if let Some(background_effects) = state.background_effects.take() {
+            background_effects.destroy();
         }
     } else if let Some(ref blur_manager) = state.globals.kde_blur_manager {
         if state.background_appearance == WindowBackgroundAppearance::Blurred {
             if state.kde_blur.is_none() {
-                log::info!("Using kde-blur protocol");
+                log::debug!("Using kde-blur protocol");
                 let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
                 state.kde_blur = Some(blur);
             }
             state.kde_blur.as_ref().unwrap().commit();
         } else {
-            // It probably doesn't hurt to clear the blur for opaque windows
             blur_manager.unset(&state.surface);
             if let Some(b) = state.kde_blur.take() {
                 b.release()
