@@ -704,17 +704,10 @@ impl MetalRenderer {
             (viewport_size.width.ceil() as i32).into(),
             (viewport_size.height.ceil() as i32).into(),
         );
-        let drawable = layer
-            .nextDrawable()
-            .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
-
-        let command_buffer = self.render_frame(scene, &drawable.texture(), viewport_size)?;
-
-        // Commit and wait for completion without presenting
-        command_buffer.commit();
-        command_buffer.waitUntilCompleted();
-
-        read_texture_to_image(&drawable.texture())
+        // When a `CAMetalDisplayLink` drives the layer, it owns the layer's
+        // drawables and `nextDrawable` raises an Objective-C exception, so
+        // render into a texture of our own instead.
+        self.render_offscreen(scene, viewport_size)
     }
 
     /// Renders a scene to an image without requiring a window or CAMetalLayer.
@@ -734,50 +727,52 @@ impl MetalRenderer {
         // Headless callers do not have a Cocoa event-loop pool to release
         // autoreleased command buffers and render-pass descriptors.
         objc2::rc::autoreleasepool(|_| {
-            // Update path intermediate textures for this size
             self.update_path_intermediate_textures(size)?;
-
-            // Create an offscreen texture as render target
-            let texture_descriptor = MTLTextureDescriptor::new();
-            unsafe {
-                texture_descriptor.setWidth(size.width.0 as usize);
-                texture_descriptor.setHeight(size.height.0 as usize);
-            }
-            texture_descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
-            texture_descriptor
-                .setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
-            // Like the atlas, only Apple GPUs can create shared textures on macOS;
-            // Intel Macs cannot, even with unified memory. iOS has no managed storage.
-            let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
-            texture_descriptor.setStorageMode(if uses_shared_storage {
-                MTLStorageMode::Shared
-            } else {
-                MTLStorageMode::Managed
-            });
-            let target_texture = self
-                .device
-                .newTextureWithDescriptor(&texture_descriptor)
-                .context("allocating headless render target")?;
-
-            let command_buffer = self.render_frame(scene, &target_texture, size)?;
-
-            // Managed textures require an explicit blit synchronize before the CPU
-            // can read back the rendered data. Without this, get_bytes returns
-            // stale zeros.
-            if !uses_shared_storage {
-                let blit = command_buffer
-                    .blitCommandEncoder()
-                    .context("creating blit command encoder")?;
-                blit.synchronizeResource(ProtocolObject::from_ref(&*target_texture));
-                blit.endEncoding();
-            }
-
-            // Commit and wait for completion
-            command_buffer.commit();
-            command_buffer.waitUntilCompleted();
-
-            read_texture_to_image(&target_texture)
+            self.render_offscreen(scene, size)
         })
+    }
+
+    /// Renders a scene into a new offscreen texture of `size` and reads it
+    /// back, without presenting anything.
+    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    fn render_offscreen(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<RgbaImage> {
+        let texture_descriptor = MTLTextureDescriptor::new();
+        unsafe {
+            texture_descriptor.setWidth(size.width.0 as usize);
+            texture_descriptor.setHeight(size.height.0 as usize);
+        }
+        texture_descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+        texture_descriptor.setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
+        // Like the atlas, only Apple GPUs can create shared textures on macOS;
+        // Intel Macs cannot, even with unified memory. iOS has no managed storage.
+        let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
+        texture_descriptor.setStorageMode(if uses_shared_storage {
+            MTLStorageMode::Shared
+        } else {
+            MTLStorageMode::Managed
+        });
+        let target_texture = self
+            .device
+            .newTextureWithDescriptor(&texture_descriptor)
+            .context("allocating offscreen render target")?;
+
+        let command_buffer = self.render_frame(scene, &target_texture, size)?;
+
+        // Managed textures require an explicit blit synchronize before the CPU
+        // can read back the rendered data. Without this, get_bytes returns
+        // stale zeros.
+        if !uses_shared_storage {
+            let blit = command_buffer
+                .blitCommandEncoder()
+                .context("creating blit command encoder")?;
+            blit.synchronizeResource(ProtocolObject::from_ref(&*target_texture));
+            blit.endEncoding();
+        }
+
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+
+        read_texture_to_image(&target_texture)
     }
 
     /// Renders a scene to a reused offscreen texture without reading pixels
