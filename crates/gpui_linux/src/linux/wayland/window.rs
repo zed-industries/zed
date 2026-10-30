@@ -18,6 +18,7 @@ use wayland_client::{
     Proxy,
     protocol::{wl_callback, wl_output, wl_seat, wl_surface},
 };
+use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_popup;
@@ -34,7 +35,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{Globals, Output, PendingActivation, WaylandClientStatePtr, get_window};
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, ExternalDragPayload,
+    AnyWindowHandle, Bounds, Capslock, Corners, Decorations, DevicePixels, ExternalDragPayload,
     FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformFrameSignal, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
     PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
@@ -108,7 +109,8 @@ pub struct WaylandWindowState {
     pub surface: wl_surface::WlSurface,
     app_id: Option<String>,
     appearance: WindowAppearance,
-    blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
+    kde_blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
+    background_effects: Option<ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1>,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
@@ -139,6 +141,7 @@ pub struct WaylandWindowState {
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
     client_inset: Option<Pixels>,
+    client_corner_radii: Corners<Pixels>,
     accesskit_adapter: Option<accesskit_unix::Adapter>,
 }
 
@@ -610,7 +613,8 @@ impl WaylandWindowState {
             children: FxHashMap::default(),
             surface,
             app_id: options.app_id,
-            blur: None,
+            kde_blur: None,
+            background_effects: None,
             viewport,
             globals,
             outputs: HashMap::default(),
@@ -639,6 +643,7 @@ impl WaylandWindowState {
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
+            client_corner_radii: Corners::default(),
             accesskit_adapter: None,
         })
     }
@@ -783,8 +788,13 @@ impl Drop for WaylandWindow {
         state.renderer.take();
 
         // Destroy blur first, this has no dependencies.
-        if let Some(blur) = &state.blur {
+        if let Some(blur) = &state.kde_blur {
             blur.release();
+        }
+
+        // Destroy background effects, this has no dependencies.
+        if let Some(background_effects) = &state.background_effects {
+            background_effects.destroy();
         }
 
         // Decorations must be destroyed before the xdg state.
@@ -1162,7 +1172,7 @@ impl WaylandWindowStatePtr {
             );
 
             let initial_configure = self.frame_loop.get() == FrameLoop::Unconfigured;
-            drop(state);
+            update_window(state);
             if initial_configure {
                 self.frame(None, FrameRequestSource::NativeCallback);
             } else {
@@ -1531,13 +1541,11 @@ impl WaylandWindowStatePtr {
             self.callbacks.borrow_mut().resize = Some(fun);
         }
 
-        {
-            let state = self.state.borrow();
-            if let Some(viewport) = &state.viewport {
-                viewport
-                    .set_destination(f32::from(size.width) as i32, f32::from(size.height) as i32);
-            }
+        let state = self.state.borrow_mut();
+        if let Some(viewport) = &state.viewport {
+            viewport.set_destination(f32::from(size.width) as i32, f32::from(size.height) as i32);
         }
+        update_window(state);
     }
 
     pub fn resize(&self, size: Size<Pixels>) {
@@ -2212,6 +2220,15 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
+    fn set_client_corner_radii(&self, radii: Corners<Pixels>) {
+        let mut state = self.borrow_mut();
+        if radii != state.client_corner_radii {
+            state.client_corner_radii = radii;
+            update_window(state);
+            self.0.request_redraw();
+        }
+    }
+
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let state = self.borrow();
         if !state.active {
@@ -2291,31 +2308,166 @@ impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
     }
 }
 
+fn add_rounded_rect(
+    area: Bounds<i32>,
+    radii: Corners<Pixels>,
+    mut add_rectangle: impl FnMut(i32, i32, i32, i32),
+) {
+    if area.size.width <= 0 || area.size.height <= 0 {
+        return;
+    }
+
+    let clamp_radius = |radius: Pixels| {
+        radius
+            .to_i32()
+            .max(0)
+            .min(area.size.width / 2)
+            .min(area.size.height / 2)
+    };
+    let top_left = clamp_radius(radii.top_left);
+    let top_right = clamp_radius(radii.top_right);
+    let bottom_left = clamp_radius(radii.bottom_left);
+    let bottom_right = clamp_radius(radii.bottom_right);
+
+    let corner_inset = |radius: i32, row: i32| {
+        if row >= radius {
+            return 0;
+        }
+        let y = f64::from(radius) - (f64::from(row) + 0.5);
+        let x = (f64::from(radius).powi(2) - y * y).sqrt();
+        (f64::from(radius) - x - 0.5).ceil() as i32
+    };
+
+    for (left_radius, right_radius, bottom) in [
+        (top_left, top_right, false),
+        (bottom_left, bottom_right, true),
+    ] {
+        for row in 0..left_radius.max(right_radius) {
+            let left_inset = corner_inset(left_radius, row);
+            let right_inset = corner_inset(right_radius, row);
+            let width = area.size.width - left_inset - right_inset;
+            if width <= 0 {
+                continue;
+            }
+            let y = if bottom {
+                area.origin.y + area.size.height - row - 1
+            } else {
+                area.origin.y + row
+            };
+            add_rectangle(area.origin.x + left_inset, y, width, 1);
+        }
+    }
+
+    let top_height = top_left.max(top_right);
+    let bottom_height = bottom_left.max(bottom_right);
+    let height = area.size.height - top_height - bottom_height;
+    if height > 0 {
+        add_rectangle(
+            area.origin.x,
+            area.origin.y + top_height,
+            area.size.width,
+            height,
+        );
+    }
+}
+
+#[cfg(test)]
+mod rounded_rect_tests {
+    use super::add_rounded_rect;
+    use gpui::{Bounds, Corners, Pixels, point, px, size};
+
+    fn rectangles(area: Bounds<i32>, radii: Corners<Pixels>) -> Vec<(i32, i32, i32, i32)> {
+        let mut rectangles = Vec::new();
+        add_rounded_rect(area, radii, |x, y, width, height| {
+            rectangles.push((x, y, width, height));
+        });
+        rectangles
+    }
+
+    #[test]
+    fn square_corners() {
+        let area = Bounds::new(point(10, 20), size(8, 8));
+        assert_eq!(rectangles(area, Corners::default()), vec![(10, 20, 8, 8)]);
+    }
+
+    #[test]
+    fn independent_corners() {
+        let area = Bounds::new(point(10, 20), size(8, 8));
+        let radii = Corners {
+            top_left: px(4.0),
+            top_right: px(0.0),
+            bottom_left: px(0.0),
+            bottom_right: px(4.0),
+        };
+        assert_eq!(
+            rectangles(area, radii),
+            vec![
+                (12, 20, 6, 1),
+                (11, 21, 7, 1),
+                (10, 22, 8, 1),
+                (10, 23, 8, 1),
+                (10, 27, 6, 1),
+                (10, 26, 7, 1),
+                (10, 25, 8, 1),
+                (10, 24, 8, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn clamps_radii() {
+        let area = Bounds::new(point(10, 20), size(10, 6));
+        assert_eq!(
+            rectangles(area, Corners::all(px(100.0))),
+            rectangles(area, Corners::all(px(3.0)))
+        );
+        assert_eq!(
+            rectangles(area, Corners::all(px(-1.0))),
+            rectangles(area, Corners::default())
+        );
+    }
+
+    #[test]
+    fn empty_area() {
+        for dimensions in [size(0, 10), size(10, 0), size(-1, 10), size(10, -1)] {
+            let area = Bounds::new(point(10, 20), dimensions);
+            assert!(rectangles(area, Corners::all(px(4.0))).is_empty());
+        }
+    }
+}
+
 fn update_window(mut state: RefMut<WaylandWindowState>) {
     let opaque = !state.is_transparent();
 
     if let Some(renderer) = &mut state.renderer {
         renderer.update_transparency(!opaque);
     }
-    let opaque_area = state.window_bounds.map(|v| f32::from(v) as i32);
-    opaque_area.inset(f32::from(state.inset()) as i32);
+
+    let area = inset_by_tiling(
+        state.bounds.map_origin(|_| px(0.0)),
+        state.inset(),
+        state.tiling,
+    )
+    .map(|value| value.to_i32())
+    .map_size(|value| value.max(0));
 
     let region = state
         .globals
         .compositor
         .create_region(&state.globals.qh, ());
-    region.add(
-        opaque_area.origin.x,
-        opaque_area.origin.y,
-        opaque_area.size.width,
-        opaque_area.size.height,
-    );
 
-    // Note that rounded corners make this rectangle API hard to work with.
-    // As this is common when using CSD, let's just disable this API.
+    // Client decorations include transparent shadows and antialiased corners,
+    // so don't promise the compositor an opaque region.
     if state.background_appearance == WindowBackgroundAppearance::Opaque
         && state.decorations == WindowDecorations::Server
     {
+        region.add(
+            area.origin.x,
+            area.origin.y,
+            area.size.width,
+            area.size.height,
+        );
+
         // Promise the compositor that this region of the window surface
         // contains no transparent pixels. This allows the compositor to skip
         // updating whatever is behind the surface for better performance.
@@ -2324,17 +2476,45 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         state.surface.set_opaque_region(None);
     }
 
-    if let Some(ref blur_manager) = state.globals.blur_manager {
+    // Prefer the ext-background-effect protocol, as it is DE agnostic and
+    // replaces the deprecated kde-blur protocol, which is no longer supported
+    // since KDE Plasma 6.7.
+    // https://invent.kde.org/plasma/kwin/-/commit/7f9e0aa1cd2c2ab4fea1097800893b6f780089eb
+    if let Some(ref background_effects_manager) = state.globals.background_effects_manager {
         if state.background_appearance == WindowBackgroundAppearance::Blurred {
-            if state.blur.is_none() {
-                let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
-                state.blur = Some(blur);
+            if state.background_effects.is_none() {
+                log::debug!("Using ext-background-effect protocol");
+                let background_effects = background_effects_manager.get_background_effect(
+                    &state.surface,
+                    &state.globals.qh,
+                    (),
+                );
+                state.background_effects = Some(background_effects);
             }
-            state.blur.as_ref().unwrap().commit();
+
+            add_rounded_rect(area, state.client_corner_radii, |x, y, width, height| {
+                region.add(x, y, width, height);
+            });
+
+            state
+                .background_effects
+                .as_ref()
+                .unwrap()
+                .set_blur_region(Some(&region));
+        } else if let Some(background_effects) = state.background_effects.take() {
+            background_effects.destroy();
+        }
+    } else if let Some(ref blur_manager) = state.globals.kde_blur_manager {
+        if state.background_appearance == WindowBackgroundAppearance::Blurred {
+            if state.kde_blur.is_none() {
+                log::debug!("Using kde-blur protocol");
+                let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
+                state.kde_blur = Some(blur);
+            }
+            state.kde_blur.as_ref().unwrap().commit();
         } else {
-            // It probably doesn't hurt to clear the blur for opaque windows
             blur_manager.unset(&state.surface);
-            if let Some(b) = state.blur.take() {
+            if let Some(b) = state.kde_blur.take() {
                 b.release()
             }
         }
