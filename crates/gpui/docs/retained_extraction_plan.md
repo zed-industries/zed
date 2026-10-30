@@ -125,6 +125,25 @@ it faster or more correct.
 
   These close several of the untracked reads the Zed audit found, and may
   explain the idle-redraw bug.
+- **A flat per-frame entity-read array with scope ranges** (follow-up to
+  #65952; pairs with an entity → reading-views reverse index):
+  - **Today:** #65952 keeps a stack of per-scope `FxHashSet` read sets and
+    merges each one into its parent on pop, so the cost grows with reads times
+    nesting depth.
+  - **The idea:** one `accessed: Vec<EntityId>` on the `Frame`, appended in
+    tree order. Each cached view or deferred draw keeps a
+    `reads_range: Range<usize>`, like its prepaint and paint ranges. Scopes
+    nest in tree order, so a scope's reads, children included, are one
+    contiguous slice. Popping a scope only records its end, and reuse is an
+    `extend_from_slice` from the last frame's array, like `reuse_prepaint` and
+    `reuse_paint`.
+  - **Duplicates:** a per-frame "last recorded" stamp per entity skips repeat
+    reads within one scope. Duplicates across sibling scopes are removed when
+    subscriptions are built. An `IndexSet` doesn't work, because deduplicating
+    globally breaks the "a subtree is one slice" property.
+  - **Size:** roughly 100–150 lines in `EntityMap`, `Frame`, `view.rs` and
+    deferred draws. It's also the natural storage for retained mode's per-view
+    own-read sets and incremental subscriptions.
 - **Segment replay with bulk copies** (`7d58a867df`, `d895b3c7f1`,
   `7da4f7036b`, `ce9c0a8840`, `008ecc8855`): a reused view's output is copied
   by array ranges.
