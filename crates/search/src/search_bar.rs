@@ -39,15 +39,15 @@ pub(super) enum ActionButtonState {
     Toggled,
 }
 
-pub(super) fn render_local_action_button<T: 'static>(
-    cx: &Context<T>,
+pub(super) fn render_local_action_button<T: 'static, A: Action>(
     id_prefix: &'static str,
     icon: ui::IconName,
     button_state: Option<ActionButtonState>,
     tooltip: &'static str,
-    action: &'static dyn Action,
+    action: &'static A,
     focus_handle: FocusHandle,
-    on_click: impl Fn(&mut T, &mut Window, &mut Context<T>) + 'static,
+    cx: &Context<T>,
+    handler: fn(&mut T, &A, &mut Window, &mut Context<T>),
 ) -> impl IntoElement {
     IconButton::new(
         SharedString::from(format!("{id_prefix}-{}", action.name())),
@@ -60,7 +60,7 @@ pub(super) fn render_local_action_button<T: 'static>(
             if !focus_handle.is_focused(window) {
                 window.focus(&focus_handle, cx);
             }
-            on_click(this, window, cx);
+            handler(this, action, window, cx);
         }
     }))
     .tooltip(move |_window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, cx))

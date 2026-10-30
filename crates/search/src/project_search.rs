@@ -1029,14 +1029,14 @@ pub enum ViewEvent {
 
 impl EventEmitter<ViewEvent> for ProjectSearchView {}
 
-fn render_landing_action_button(
-    cx: &Context<ProjectSearchView>,
+fn render_landing_action_button<A: Action>(
     id: &'static str,
     label: &'static str,
     icon: IconName,
-    action: &'static dyn Action,
+    action: &'static A,
     focus_handle: FocusHandle,
-    on_click: impl Fn(&mut ProjectSearchView, &mut Window, &mut Context<ProjectSearchView>) + 'static,
+    cx: &Context<ProjectSearchView>,
+    handler: fn(&mut ProjectSearchView, &A, &mut Window, &mut Context<ProjectSearchView>),
 ) -> impl IntoElement {
     Button::new(id, label)
         .start_icon(Icon::new(icon).size(IconSize::Small))
@@ -1047,7 +1047,7 @@ fn render_landing_action_button(
                 if !focus_handle.is_focused(window) {
                     window.focus(&focus_handle, cx);
                 }
-                on_click(this, window, cx);
+                handler(this, action, window, cx);
             })
         })
 }
@@ -1361,7 +1361,7 @@ impl ProjectSearchView {
         self.adjust_query_regex_language(cx);
     }
 
-    fn toggle_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_replace(&mut self, _: &ToggleReplace, window: &mut Window, cx: &mut Context<Self>) {
         self.replace_enabled = !self.replace_enabled;
         let editor_to_focus = if self.replace_enabled {
             self.replacement_editor.focus_handle(cx)
@@ -1372,7 +1372,12 @@ impl ProjectSearchView {
         cx.notify();
     }
 
-    fn toggle_filters_ui(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_filters_ui(
+        &mut self,
+        _: &ToggleFilters,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.toggle_filters(cx);
         self.included_files_editor.update(cx, |_, cx| cx.notify());
         self.excluded_files_editor.update(cx, |_, cx| cx.notify());
@@ -2523,49 +2528,49 @@ impl ProjectSearchView {
                 .mb_2(),
             )
             .child(render_landing_action_button(
-                cx,
                 "filter-paths",
                 "Include/exclude specific paths",
                 IconName::Filter,
                 &ToggleFilters,
                 focus_handle.clone(),
-                |this, window, cx| this.toggle_filters_ui(window, cx),
+                cx,
+                Self::toggle_filters_ui,
             ))
             .child(render_landing_action_button(
-                cx,
                 "find-replace",
                 "Find and replace",
                 IconName::Replace,
                 &ToggleReplace,
                 focus_handle.clone(),
-                |this, window, cx| this.toggle_replace(window, cx),
+                cx,
+                Self::toggle_replace,
             ))
             .child(render_landing_action_button(
-                cx,
                 "regex",
                 "Match with regex",
                 IconName::Regex,
                 &ToggleRegex,
                 focus_handle.clone(),
-                |this, _window, cx| this.toggle_search_option_ui(SearchOptions::REGEX, cx),
+                cx,
+                |this, _, _, cx| this.toggle_search_option_ui(SearchOptions::REGEX, cx),
             ))
             .child(render_landing_action_button(
-                cx,
                 "match-case",
                 "Match case",
                 IconName::CaseSensitive,
                 &ToggleCaseSensitive,
                 focus_handle.clone(),
-                |this, _window, cx| this.toggle_search_option_ui(SearchOptions::CASE_SENSITIVE, cx),
+                cx,
+                |this, _, _, cx| this.toggle_search_option_ui(SearchOptions::CASE_SENSITIVE, cx),
             ))
             .child(render_landing_action_button(
-                cx,
                 "match-whole-words",
                 "Match whole words",
                 IconName::WholeWord,
                 &ToggleWholeWord,
                 focus_handle,
-                |this, _window, cx| this.toggle_search_option_ui(SearchOptions::WHOLE_WORD, cx),
+                cx,
+                |this, _, _, cx| this.toggle_search_option_ui(SearchOptions::WHOLE_WORD, cx),
             ))
     }
 
@@ -2793,9 +2798,14 @@ impl ProjectSearchBar {
         true
     }
 
-    fn toggle_replace(&mut self, _: &ToggleReplace, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_replace(
+        &mut self,
+        action: &ToggleReplace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(search) = &self.active_project_search {
-            search.update(cx, |this, cx| this.toggle_replace(window, cx));
+            search.update(cx, |this, cx| this.toggle_replace(action, window, cx));
         }
     }
 
@@ -2814,7 +2824,7 @@ impl ProjectSearchBar {
     fn toggle_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                search_view.toggle_filters_ui(window, cx)
+                search_view.toggle_filters_ui(&ToggleFilters, window, cx)
             });
             cx.notify();
             true
@@ -3120,7 +3130,6 @@ impl Render for ProjectSearchBar {
             .border_l_1()
             .border_color(theme_colors.border_variant)
             .child(render_local_action_button(
-                cx,
                 "project-search-nav-button",
                 IconName::ChevronLeft,
                 search
@@ -3130,10 +3139,10 @@ impl Render for ProjectSearchBar {
                 "Select Previous Match",
                 &SelectPreviousMatch,
                 query_focus.clone(),
-                |this, window, cx| this.select_prev_match(&SelectPreviousMatch, window, cx),
+                cx,
+                Self::select_prev_match,
             ))
             .child(render_local_action_button(
-                cx,
                 "project-search-nav-button",
                 IconName::ChevronRight,
                 search
@@ -3143,7 +3152,8 @@ impl Render for ProjectSearchBar {
                 "Select Next Match",
                 &SelectNextMatch,
                 query_focus.clone(),
-                |this, window, cx| this.select_next_match(&SelectNextMatch, window, cx),
+                cx,
+                Self::select_next_match,
             ))
             .child(
                 div()
@@ -3208,7 +3218,6 @@ impl Render for ProjectSearchBar {
                     }),
             )
             .child(render_local_action_button(
-                cx,
                 "project-search",
                 IconName::Replace,
                 self.active_project_search
@@ -3218,7 +3227,8 @@ impl Render for ProjectSearchBar {
                 "Toggle Replace",
                 &ToggleReplace,
                 focus_handle.clone(),
-                |this, window, cx| this.toggle_replace(&ToggleReplace, window, cx),
+                cx,
+                Self::toggle_replace,
             ))
             .child(matches_column);
 
@@ -3270,24 +3280,24 @@ impl Render for ProjectSearchBar {
                 .min_w_64()
                 .gap_1()
                 .child(render_local_action_button(
-                    cx,
                     "project-search-replace-button",
                     IconName::ReplaceNext,
                     is_search_underway.then_some(ActionButtonState::Disabled),
                     "Replace Next Match",
                     &ReplaceNext,
                     focus_handle.clone(),
-                    |this, window, cx| this.replace_next(&ReplaceNext, window, cx),
+                    cx,
+                    Self::replace_next,
                 ))
                 .child(render_local_action_button(
-                    cx,
                     "project-search-replace-button",
                     IconName::ReplaceAll,
                     Default::default(),
                     "Replace All Matches",
                     &ReplaceAll,
                     focus_handle,
-                    |this, window, cx| this.replace_all(&ReplaceAll, window, cx),
+                    cx,
+                    Self::replace_all,
                 ));
 
             h_flex()
