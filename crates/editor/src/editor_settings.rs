@@ -71,12 +71,25 @@ pub struct EditorSettings {
     pub completion_menu_item_kind: CompletionMenuItemKind,
     pub diff_view_style: DiffViewStyle,
     pub minimum_split_diff_width: f32,
+    pub commit_view: CommitViewSettings,
     pub file_diff: FileDiffSettings,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct CursorAnimationSettings {
     pub enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CommitViewSettings {
+    /// Whether newly opened commit views show the full commit description.
+    ///
+    /// Default: false
+    pub expand_description: bool,
+    /// Whether newly opened commit views collapse every changed file.
+    ///
+    /// Default: false
+    pub collapse_files: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -224,6 +237,7 @@ impl Settings for EditorSettings {
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
         let sticky_scroll = editor.sticky_scroll.unwrap();
+        let commit_view = content.git.as_ref().unwrap().commit_view.unwrap();
         let file_diff = content.git.as_ref().unwrap().file_diff.unwrap();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
@@ -340,6 +354,10 @@ impl Settings for EditorSettings {
             completion_menu_item_kind: editor.completion_menu_item_kind.unwrap(),
             diff_view_style: editor.diff_view_style.unwrap(),
             minimum_split_diff_width: editor.minimum_split_diff_width.unwrap(),
+            commit_view: CommitViewSettings {
+                expand_description: commit_view.expand_description.unwrap(),
+                collapse_files: commit_view.collapse_files.unwrap(),
+            },
             file_diff: FileDiffSettings {
                 show_full_file: file_diff.show_full_file.unwrap(),
             },

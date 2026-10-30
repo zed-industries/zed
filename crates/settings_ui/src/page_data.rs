@@ -8660,6 +8660,66 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
+    fn commit_view_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Commit View"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Expand Description by Default",
+                description: "Whether newly opened commit views show the full commit description.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.commit_view.expand_description"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .commit_view
+                            .as_ref()?
+                            .expand_description
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .commit_view
+                            .get_or_insert_default()
+                            .expand_description = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Collapse Files by Default",
+                description: "Whether newly opened commit views collapse every changed file.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.commit_view.collapse_files"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .commit_view
+                            .as_ref()?
+                            .collapse_files
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .commit_view
+                            .get_or_insert_default()
+                            .collapse_files = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn file_diff_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("File Diff"),
@@ -8701,6 +8761,7 @@ fn version_control_page() -> SettingsPage {
             inline_git_blame_section(),
             git_blame_view_section(),
             branch_picker_section(),
+            commit_view_section(),
             file_diff_section(),
             git_hunks_section(),
         ],
