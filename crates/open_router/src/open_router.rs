@@ -483,7 +483,7 @@ pub async fn stream_completion(
                     Some(Err(OpenRouterError::ApiError(ApiError {
                         status: None,
                         code: error.code,
-                        message: error.message,
+                        message: error.display_message(),
                         retry_after: None,
                     })))
                 }
@@ -619,7 +619,7 @@ pub async fn list_models(
         Err(OpenRouterError::ApiError(ApiError {
             status: Some(status.as_u16()),
             code: error_response.code,
-            message: error_response.message,
+            message: error_response.display_message(),
             retry_after: retry_after_with_rate_limit_default(status, response.headers()),
         }))
     }
@@ -668,7 +668,7 @@ impl OpenRouterError {
         Self::ApiError(ApiError {
             status: Some(status_code.as_u16()),
             code: error_response.code,
-            message: error_response.message,
+            message: error_response.display_message(),
             retry_after: retry_after_with_rate_limit_default(status_code, &headers),
         })
     }
@@ -692,6 +692,34 @@ pub struct OpenRouterErrorBody {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<std::collections::HashMap<String, serde_json::Value>>,
+}
+
+impl OpenRouterErrorBody {
+    /// OpenRouter's top-level `message` is often a generic wrapper (e.g. "Provider
+    /// returned error") while the actionable detail lives in `metadata.raw` (the
+    /// upstream provider's own error text) and `metadata.remedy_hint` (what the
+    /// caller can do about it, e.g. add a provider key or wait and retry). Fold
+    /// those into the message we surface so the person sees something useful
+    /// instead of the generic wrapper alone.
+    fn display_message(&self) -> String {
+        let mut message = self.message.clone();
+        let Some(metadata) = &self.metadata else {
+            return message;
+        };
+        let raw = metadata.get("raw").and_then(Value::as_str);
+        let remedy_hint = metadata.get("remedy_hint").and_then(Value::as_str);
+        if let Some(raw) = raw
+            && !message.contains(raw)
+        {
+            message = format!("{message}: {raw}");
+        }
+        if let Some(remedy_hint) = remedy_hint
+            && !message.contains(remedy_hint)
+        {
+            message = format!("{message} ({remedy_hint})");
+        }
+        message
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -902,6 +930,50 @@ mod tests {
                 ..
             } if code == "402"
         ));
+    }
+
+    #[test]
+    fn error_message_includes_provider_metadata() {
+        let body = OpenRouterErrorBody {
+            code: 429,
+            message: "Provider returned error".to_string(),
+            metadata: Some(std::collections::HashMap::from([
+                (
+                    "raw".to_string(),
+                    Value::String(
+                        "model is temporarily rate-limited upstream. Please retry shortly."
+                            .to_string(),
+                    ),
+                ),
+                (
+                    "remedy_hint".to_string(),
+                    Value::String(
+                        "Retry shortly, add your own provider key, or route to another provider"
+                            .to_string(),
+                    ),
+                ),
+                (
+                    "provider_name".to_string(),
+                    Value::String("Stealth".to_string()),
+                ),
+            ])),
+        };
+
+        let message = body.display_message();
+        assert!(message.contains("Provider returned error"));
+        assert!(message.contains("temporarily rate-limited upstream"));
+        assert!(message.contains("add your own provider key"));
+    }
+
+    #[test]
+    fn error_message_without_metadata_is_unchanged() {
+        let body = OpenRouterErrorBody {
+            code: 500,
+            message: "Internal error".to_string(),
+            metadata: None,
+        };
+
+        assert_eq!(body.display_message(), "Internal error");
     }
 
     #[test]
