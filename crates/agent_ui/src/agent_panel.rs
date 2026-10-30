@@ -87,6 +87,7 @@ use settings::{NotifyWhenAgentWaiting, Settings, SettingsStore, update_settings_
 
 use search::{BufferSearchBar, buffer_search::Deploy as DeployBufferSearch};
 use terminal::Event as TerminalEvent;
+use terminal::TERMINAL_THREAD_ID_ENV_VAR;
 #[cfg(any(test, feature = "test-support"))]
 use terminal::terminal_settings::TerminalSettings;
 use terminal_view::TerminalView;
@@ -2057,7 +2058,7 @@ impl AgentPanel {
         self.pending_terminal_spawn = Some(terminal_id);
         let terminal_working_directory = working_directory.clone();
         let init_command = Self::terminal_init_command(run_init_command, cx);
-        let terminal_task = self.create_terminal_shell(working_directory, cx);
+        let terminal_task = self.create_terminal_shell(terminal_id, working_directory, cx);
         let workspace = self.workspace.clone();
         let workspace_id = self.workspace_id;
         let project = self.project.downgrade();
@@ -2110,6 +2111,7 @@ impl AgentPanel {
 
     fn create_terminal_shell(
         &mut self,
+        terminal_id: TerminalId,
         working_directory: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<terminal::Terminal>>> {
@@ -2124,8 +2126,17 @@ impl AgentPanel {
             });
         }
 
+        // The terminal ID is stable across restarts (it is persisted in the
+        // terminal thread metadata store and reused by `restore_terminal`),
+        // so shells can rely on it to identify their terminal thread.
+        let extra_env = [(
+            TERMINAL_THREAD_ID_ENV_VAR.to_string(),
+            terminal_id.to_string(),
+        )]
+        .into_iter()
+        .collect();
         self.project.update(cx, |project, cx| {
-            project.create_terminal_shell(working_directory, cx)
+            project.create_terminal_shell_with_env(working_directory, extra_env, cx)
         })
     }
 
@@ -8011,6 +8022,71 @@ mod tests {
             "writing the init command must not mark the terminal as having received \
              user keyboard input"
         );
+    }
+
+    /// Exercises the real `spawn_terminal` path with a genuine shell PTY to
+    /// verify the terminal thread ID is injected into the shell environment.
+    /// Restored terminals go through the same `spawn_terminal` path with the
+    /// persisted terminal ID, so this covers restarts as well.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_spawn_terminal_injects_terminal_thread_id_env(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.executor().allow_parking();
+        cx.update(|_, cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.terminal_init_command =
+                Some("printf 'thread_id_is_%s\\n' \"$ZED_TERMINAL_THREAD_ID\"".to_string());
+            AgentSettings::override_global(settings, cx);
+
+            // Force a known POSIX shell so the test doesn't depend on the developer's login shell.
+            let mut terminal_settings = TerminalSettings::get_global(cx).clone();
+            terminal_settings.shell = task::Shell::Program("/bin/sh".to_string());
+            TerminalSettings::override_global(terminal_settings, cx);
+        });
+
+        let terminal_id = TerminalId::new();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.spawn_terminal(
+                terminal_id,
+                // No working directory: the FakeFs project path doesn't exist on
+                // the real filesystem the shell process runs against.
+                None,
+                None,
+                None,
+                None,
+                true,
+                true,
+                true,
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            );
+        });
+
+        let expected = format!("thread_id_is_{terminal_id}");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            cx.run_until_parked();
+            let content = panel.read_with(&cx, |panel, cx| {
+                panel
+                    .terminals
+                    .get(&terminal_id)
+                    .map(|terminal| terminal.view.read(cx).terminal().read(cx).get_content())
+            });
+            if let Some(content) = &content
+                && content.contains(&expected)
+            {
+                break;
+            }
+            if Instant::now() >= deadline {
+                panic!(
+                    "ZED_TERMINAL_THREAD_ID was never set to the terminal thread ID; \
+                     content={content:?}"
+                );
+            }
+            cx.executor().timer(Duration::from_millis(50)).await;
+        }
     }
 
     #[gpui::test]
