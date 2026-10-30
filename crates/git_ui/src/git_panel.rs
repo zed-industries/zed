@@ -2671,7 +2671,12 @@ impl GitPanel {
         if !selected_path_matches {
             return DiffBase::Head;
         }
-        Self::diff_base_for_section(self.section_for_entry_index(selected_index))
+        let section = self
+            .projected_entries_by_path
+            .get(repo_path)
+            .and_then(|entries| entries.iter().find(|entry| entry.index == selected_index))
+            .map(|entry| entry.section);
+        Self::diff_base_for_section(section)
     }
 
     fn view_file(&mut self, _: &ViewFile, window: &mut Window, cx: &mut Context<Self>) {
@@ -12046,6 +12051,8 @@ mod tests {
                 "partial.rs": "partial content",
                 "staged.rs": "staged content",
                 "unstaged.rs": "unstaged content",
+                "untracked.rs": "untracked content",
+                "src": { "nested.rs": "nested content" },
             }),
             &[],
         )
@@ -12064,6 +12071,8 @@ mod tests {
                 ),
                 ("staged.rs", FileStatus::index(StatusCode::Modified)),
                 ("unstaged.rs", StatusCode::Modified.worktree()),
+                ("untracked.rs", FileStatus::Untracked),
+                ("src/nested.rs", StatusCode::Modified.worktree()),
             ],
         );
         settle_git_panel(&project, &panel, &mut cx).await;
@@ -12122,6 +12131,86 @@ mod tests {
                 DiffBase::Head
             );
         });
+
+        for group_by in [
+            GitPanelGroupBy::None,
+            GitPanelGroupBy::Status,
+            GitPanelGroupBy::Staging,
+        ] {
+            for tree_view in [false, true] {
+                for sort_by in [GitPanelSortBy::Path, GitPanelSortBy::Name] {
+                    cx.update(|_window, cx| {
+                        SettingsStore::update_global(cx, |store, cx| {
+                            store.update_user_settings(cx, |settings| {
+                                let git_panel = settings.git_panel.get_or_insert_default();
+                                git_panel.group_by = Some(group_by);
+                                git_panel.tree_view = Some(tree_view);
+                                git_panel.sort_by = Some(sort_by);
+                            });
+                        });
+                    });
+                    cx.run_until_parked();
+                    panel.update_in(&mut cx, |panel, _window, cx| {
+                        for (path, section, staged_group_base) in [
+                            ("partial.rs", Section::Staged, DiffBase::Staged),
+                            ("partial.rs", Section::Unstaged, DiffBase::Index),
+                            ("staged.rs", Section::Staged, DiffBase::Staged),
+                            ("unstaged.rs", Section::Unstaged, DiffBase::Index),
+                            ("untracked.rs", Section::Unstaged, DiffBase::Index),
+                            ("src/nested.rs", Section::Unstaged, DiffBase::Index),
+                        ] {
+                            let file_path = repo_path(path);
+                            let (selected_index, expected_base) = match group_by {
+                                GitPanelGroupBy::None | GitPanelGroupBy::Status => {
+                                    (panel.entry_by_path(&file_path), DiffBase::Head)
+                                }
+                                GitPanelGroupBy::Staging => (
+                                    panel.entry_by_path_in_section(&file_path, section),
+                                    staged_group_base,
+                                ),
+                            };
+                            panel.selected_entry = Some(
+                                selected_index.expect("file should exist in the expected section"),
+                            );
+                            assert_eq!(
+                                panel.diff_base_for_repo_path(&repository, &file_path, cx),
+                                expected_base,
+                                "group_by={group_by:?}, tree_view={tree_view}, \
+                                 sort_by={sort_by:?}, section={section:?}, path={path}"
+                            );
+                            assert_eq!(
+                                panel.diff_base_for_repo_path(
+                                    &repository,
+                                    &repo_path("missing.rs"),
+                                    cx,
+                                ),
+                                DiffBase::Head
+                            );
+                        }
+
+                        for selected_index in 0..=panel.entries.len() {
+                            if panel
+                                .entries
+                                .get(selected_index)
+                                .and_then(GitListEntry::status_entry)
+                                .is_some()
+                            {
+                                continue;
+                            }
+                            panel.selected_entry = Some(selected_index);
+                            assert_eq!(
+                                panel.diff_base_for_repo_path(
+                                    &repository,
+                                    &repo_path("partial.rs"),
+                                    cx,
+                                ),
+                                DiffBase::Head
+                            );
+                        }
+                    });
+                }
+            }
+        }
     }
 
     #[gpui::test]
