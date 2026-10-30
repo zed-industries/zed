@@ -735,7 +735,8 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub extend_comment_on_newline: Option<bool>,
-    /// Whether to continue markdown lists when pressing enter.
+    /// Whether to continue Markdown lists on Enter and automatically renumber
+    /// ordered lists when editing them.
     ///
     /// Default: true
     pub extend_list_on_newline: Option<bool>,
