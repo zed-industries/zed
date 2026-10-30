@@ -1,12 +1,12 @@
 use acp_thread::{
-    AcpThread, AgentThreadEntry, MessageIdentity, SessionMessage, ToolCall, ToolCallContent,
-    ToolCallStatus,
+    AcpThread, AgentThreadEntry, MessageIdentity, SessionMessage, SessionMessageSide, ToolCall,
+    ToolCallContent, ToolCallStatus,
 };
 use agent_client_protocol::schema::v2 as acp_v2;
 use gpui::{App, Entity, SharedString};
 use std::{fmt, ops::Range};
 
-use super::thread_view::{SessionMessageSide, session_message_side, subagent_label};
+use super::thread_view::subagent_label;
 
 /// Native subagent tool calls report a user cancellation as output with this text.
 const USER_CANCELED_OUTPUT: &str = "User canceled";
@@ -30,20 +30,31 @@ impl fmt::Display for SubagentCardId {
     }
 }
 
-/// The subagent whose card a session message in `thread` is drawn as, in place of its
-/// message row. The message must be the first that `thread` sent to one of its own
-/// subagents. Later messages to the same subagent stay message rows, because nothing yet
-/// links each message to its part of the subagent's transcript or to its outcome, so one
-/// card covers the whole subagent.
+/// A session message that an ACP parent sent to one of its own subagents, drawn as a
+/// subagent card in place of its message row.
+pub(crate) struct AcpSubagentCard {
+    pub id: SubagentCardId,
+    pub subagent: Entity<AcpThread>,
+    /// The subagent entries for this message; `None` covers the whole subagent.
+    pub entries: Option<SubagentEntries>,
+}
+
+/// The subagent card that a session message in `thread` is drawn as, if any.
+///
+/// A message linked to the subagent's view of it gets a card for its part of the
+/// subagent's transcript: from that view up to the next message from `thread`. Without a
+/// link, only the first message to a subagent gets a card, which covers the whole subagent,
+/// and later ones stay message rows.
 pub(crate) fn acp_subagent_card(
     thread: &AcpThread,
     entry_ix: usize,
     message: &SessionMessage,
-) -> Option<(SubagentCardId, Entity<AcpThread>)> {
+    cx: &App,
+) -> Option<AcpSubagentCard> {
     let own_session_id = thread.session_id();
     let SessionMessageSide::Outgoing {
         recipient: Some(recipient),
-    } = session_message_side(message, own_session_id)
+    } = message.side(own_session_id)
     else {
         return None;
     };
@@ -51,15 +62,47 @@ pub(crate) fn acp_subagent_card(
     let MessageIdentity::Keyed(message_id) = &message.identity else {
         return None;
     };
+    let id = SubagentCardId::SessionMessage(message_id.clone());
+
+    let subagent_thread = subagent.read(cx);
+    if let Some(start) = subagent_thread.linked_session_message(message, own_session_id) {
+        let next_message_ix = subagent_thread
+            .entries()
+            .iter()
+            .enumerate()
+            .skip(start + 1)
+            .find_map(|(ix, entry)| {
+                matches!(
+                    entry,
+                    AgentThreadEntry::SessionMessage(later)
+                        if later.side(recipient)
+                            == SessionMessageSide::Incoming { sender: Some(own_session_id) }
+                )
+                .then_some(ix)
+            });
+        return Some(AcpSubagentCard {
+            id,
+            subagent,
+            entries: Some(SubagentEntries {
+                start,
+                end: next_message_ix.map(|next_message_ix| next_message_ix - 1),
+            }),
+        });
+    }
+
     let sent_earlier = thread.entries().get(..entry_ix)?.iter().any(|entry| {
         matches!(
             entry,
             AgentThreadEntry::SessionMessage(earlier)
-                if session_message_side(earlier, own_session_id)
+                if earlier.side(own_session_id)
                     == SessionMessageSide::Outgoing { recipient: Some(recipient) }
         )
     });
-    (!sent_earlier).then(|| (SubagentCardId::SessionMessage(message_id.clone()), subagent))
+    (!sent_earlier).then_some(AcpSubagentCard {
+        id,
+        subagent,
+        entries: None,
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -177,10 +220,48 @@ impl SubagentCardState {
         }
     }
 
-    /// Builds the card for an ACP subagent. Without a link from the parent's message to the
-    /// subagent's entries, the card covers the subagent's whole transcript.
-    pub(crate) fn from_acp_subagent(thread: &AcpThread) -> Self {
-        let (status, error) = SubagentStatus::from_reported_state(thread.foreground_state());
+    /// Builds the card for a subagent tool call. Once the call has finished, a subagent that
+    /// recorded an outcome for the call's run (as native subagents do) shows that outcome.
+    /// Calls saved before outcomes were recorded, and subagents of agents that don't report
+    /// state, show the tool call's status.
+    pub(crate) fn for_subagent_tool_call(
+        tool_call: &ToolCall,
+        subagent: Option<&AcpThread>,
+        cx: &App,
+    ) -> Self {
+        let card = Self::from_tool_call(tool_call, cx);
+        let Some(SubagentEntries {
+            start,
+            end: Some(_),
+        }) = card.entries
+        else {
+            return card;
+        };
+        let Some(outcome) = subagent
+            .filter(|subagent| subagent.subagent_association().is_some())
+            .and_then(|subagent| subagent.subagent_outcome_after(start))
+        else {
+            return card;
+        };
+        let (status, error) = SubagentStatus::from_reported_state(Some(outcome));
+        Self {
+            status,
+            error,
+            can_stop: false,
+            ..card
+        }
+    }
+
+    /// Builds the card for an ACP subagent, covering `entries` of its transcript or all of
+    /// it. The subagent reports one state for all its work, so a card for an earlier message
+    /// shows the first outcome the subagent reported after receiving it. Until then, that
+    /// work continues alongside the later message's, and the card shows the current state.
+    pub(crate) fn from_acp_subagent(thread: &AcpThread, entries: Option<SubagentEntries>) -> Self {
+        let earlier_outcome = entries
+            .filter(|entries| entries.end.is_some())
+            .and_then(|entries| thread.subagent_outcome_after(entries.start));
+        let (status, error) =
+            SubagentStatus::from_reported_state(earlier_outcome.or(thread.foreground_state()));
         let can_cancel = thread
             .subagent_association()
             .is_some_and(|association| association.can_cancel);
@@ -190,7 +271,7 @@ impl SubagentCardState {
             status,
             error,
             can_stop: status == SubagentStatus::Running && can_cancel,
-            entries: None,
+            entries,
         }
     }
 
@@ -208,6 +289,14 @@ impl SubagentCardState {
                 "Spawning Agent…".into()
             }
         })
+    }
+
+    /// The subagent entry that full screen should open at: the start of this card's part
+    /// once its work has stopped, or `None` while it runs, so the subagent's view keeps
+    /// following its latest entries.
+    pub(crate) fn fullscreen_entry(&self) -> Option<usize> {
+        (self.status != SubagentStatus::Running)
+            .then(|| self.entries.map_or(0, |entries| entries.start))
     }
 
     /// The last `max_entries` of the entries this card covers.
@@ -372,6 +461,27 @@ mod tests {
             let (status, error) = SubagentStatus::from_reported_state(state.as_ref());
             assert_eq!(status, expected_status, "{state:?}");
             assert_eq!(error.as_deref(), expected_error, "{state:?}");
+        }
+    }
+
+    #[test]
+    fn fullscreen_opens_a_stopped_card_at_the_start_of_its_part() {
+        let part = Some(SubagentEntries {
+            start: 4,
+            end: Some(6),
+        });
+        assert_eq!(
+            card(None, SubagentStatus::Running, part).fullscreen_entry(),
+            None
+        );
+        for status in [
+            SubagentStatus::Completed,
+            SubagentStatus::Canceled,
+            SubagentStatus::Failed,
+            SubagentStatus::Unknown,
+        ] {
+            assert_eq!(card(None, status, part).fullscreen_entry(), Some(4));
+            assert_eq!(card(None, status, None).fullscreen_entry(), Some(0));
         }
     }
 

@@ -5,7 +5,7 @@ mod paste;
 mod select;
 mod surround;
 
-use editor::display_map::{DisplayRow, DisplaySnapshot};
+use editor::display_map::{DisplayRow, DisplaySnapshot, ToDisplayPoint};
 use editor::{
     DisplayPoint, Editor, EditorSettings, MultiBufferOffset, NavigationOverlayLabel,
     NavigationTargetOverlay, SelectionEffects, ToOffset, ToPoint, movement,
@@ -59,6 +59,8 @@ actions!(
         HelixSubstitute,
         /// Delete the selection and enter edit mode, without yanking the selection.
         HelixSubstituteNoYank,
+        /// Replace the selection with the contents of the default register (`R`).
+        HelixReplaceWithYanked,
         /// Activate Helix-style word jump labels.
         HelixJumpToWord,
         /// Select the next match for the current search query.
@@ -80,6 +82,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_goto_last_modification);
     Vim::action(editor, cx, Vim::helix_goto_line);
     Vim::action(editor, cx, Vim::helix_paste);
+    Vim::action(editor, cx, Vim::helix_replace_with_yanked);
     Vim::action(editor, cx, Vim::helix_select_regex);
     Vim::action(editor, cx, Vim::helix_keep_newest_selection);
     Vim::action(editor, cx, |vim, _: &HelixDuplicateBelow, window, cx| {
@@ -785,6 +788,63 @@ impl Vim {
                 });
             });
         });
+    }
+
+    /// Replace each selection with the contents of the default
+    /// register (or an explicitly selected register)
+    pub fn helix_replace_with_yanked(
+        &mut self,
+        _: &HelixReplaceWithYanked,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.record_current_action(cx);
+        self.update_editor(cx, |vim, editor, cx| {
+            if editor.read_only(cx) {
+                return;
+            }
+            let selected_register = vim.selected_register.take();
+            let Some(register) = Vim::update_globals(cx, |globals, cx| {
+                globals.read_register(selected_register, Some(editor), cx)
+            })
+            .filter(|reg| !reg.text.is_empty()) else {
+                return;
+            };
+
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+                let display_map = editor.display_snapshot(cx);
+                let selections = editor.selections.all_adjusted(&display_map);
+                let replacement_texts = paste::replacement_texts(register, selections.len());
+
+                let snapshot = display_map.buffer_snapshot();
+                let mut edits = Vec::with_capacity(selections.len());
+                let mut new_anchors = Vec::with_capacity(selections.len());
+                for (selection, mut text) in selections.iter().zip(replacement_texts) {
+                    LineEnding::normalize(&mut text);
+                    let mut range = selection.start..selection.end;
+                    if range.is_empty() {
+                        range.end = movement::saturating_right(
+                            &display_map,
+                            range.end.to_display_point(&display_map),
+                        )
+                        .to_point(&display_map);
+                    }
+                    new_anchors.push((snapshot.anchor_before(range.start), text.len()));
+                    edits.push((range, text));
+                }
+                editor.edit(edits, cx);
+
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges(new_anchors.into_iter().map(|(anchor, length)| {
+                        let start = anchor.to_offset(&snapshot);
+                        start..start + length
+                    }));
+                });
+            });
+        });
+        self.switch_mode(Mode::HelixNormal, true, window, cx);
     }
 
     pub fn helix_replace(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -2791,61 +2851,138 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
 
-        // Test yanking current character with no selection
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("external".into()));
+
+        // Test yanking a single character (no explicit selection) should not clobber the system clipboard
         cx.set_state("hello ˇworld", Mode::HelixNormal);
         cx.simulate_keystrokes("y");
-
-        // Test cursor remains at the same position after yanking single character
         cx.assert_state("hello ˇworld", Mode::HelixNormal);
-        cx.shared_clipboard().assert_eq("w");
+        cx.shared_clipboard().assert_eq("external");
+        cx.simulate_keystrokes("l p");
+        cx.assert_state("hello wo«wˇ»rld", Mode::HelixNormal);
 
-        // Move cursor and yank another character
-        cx.simulate_keystrokes("l");
-        cx.simulate_keystrokes("y");
-        cx.shared_clipboard().assert_eq("o");
-
-        // Test yanking with existing selection
+        // Test yanking a multi-char selection
         cx.set_state("hello «worlˇ»d", Mode::HelixNormal);
         cx.simulate_keystrokes("y");
-        cx.shared_clipboard().assert_eq("worl");
+        cx.shared_clipboard().assert_eq("external");
         cx.assert_state("hello «worlˇ»d", Mode::HelixNormal);
-
-        // Test yanking in select mode character by character
-        cx.set_state("hello ˇworld", Mode::HelixNormal);
-        cx.simulate_keystroke("v");
-        cx.assert_state("hello «wˇ»orld", Mode::HelixSelect);
-        cx.simulate_keystroke("y");
-        cx.assert_state("hello «wˇ»orld", Mode::HelixNormal);
-        cx.shared_clipboard().assert_eq("w");
     }
 
     #[gpui::test]
-    async fn test_shift_r_paste(cx: &mut gpui::TestAppContext) {
+    async fn test_shift_r_replace_with_yanked(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
 
-        // First copy some text to clipboard
+        // External clipboard content is irrelevant
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("external".into()));
+
         cx.set_state("«hello worldˇ»", Mode::HelixNormal);
         cx.simulate_keystrokes("y");
 
-        // Test paste with shift-r on single cursor
+        // Test bare cursor
         cx.set_state("foo ˇbar", Mode::HelixNormal);
         cx.simulate_keystrokes("shift-r");
-
-        cx.assert_state("foo hello worldˇbar", Mode::HelixNormal);
+        cx.assert_state("foo «hello worldˇ»ar", Mode::HelixNormal);
 
         // Test paste with shift-r on selection from Helix Normal Mode
         cx.set_state("foo «barˇ» baz", Mode::HelixNormal);
         cx.simulate_keystrokes("shift-r");
 
-        cx.assert_state("foo hello worldˇ baz", Mode::HelixNormal);
+        cx.assert_state("foo «hello worldˇ» baz", Mode::HelixNormal);
 
         // Test shift-r paste on selection from Helix Select Mode returns to Helix Normal Mode
         cx.set_state("foo «barˇ» baz fizz", Mode::HelixSelect);
         cx.simulate_keystrokes("e"); // if we're in Select Mode, the selection should be extended to include ` baz`
         cx.simulate_keystrokes("shift-r");
 
-        cx.assert_state("foo hello worldˇ fizz", Mode::HelixNormal);
+        cx.assert_state("foo «hello worldˇ» fizz", Mode::HelixNormal);
+
+        cx.set_state("«fooˇ» «barˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+        for (before, after) in [
+            ("«oneˇ» «twoˇ» «threeˇ»", "«fooˇ» «barˇ» «barˇ»"),
+            ("«oneˇ»", "«fooˇ»"),
+        ] {
+            cx.set_state(before, Mode::HelixNormal);
+            cx.simulate_keystrokes("shift-r");
+            cx.assert_state(after, Mode::HelixNormal);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_helix_delete_registers(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("external".into()));
+
+        cx.set_state("«yankedˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+        for action in ["d", "c escape"] {
+            cx.set_state("«deletedˇ»", Mode::HelixNormal);
+            cx.simulate_keystrokes(action);
+            cx.shared_clipboard().assert_eq("external");
+
+            cx.set_state("ˇ", Mode::HelixNormal);
+            cx.simulate_keystrokes("\" 0 p");
+            cx.assert_state("«yankedˇ»", Mode::HelixNormal);
+            cx.set_state("ˇ", Mode::HelixNormal);
+            cx.simulate_keystrokes("\" - p");
+            cx.assert_state("«deletedˇ»", Mode::HelixNormal);
+        }
+
+        cx.set_state("«first\nˇ»second", Mode::HelixNormal);
+        cx.simulate_keystrokes("d");
+        cx.set_state("«second\nˇ»third", Mode::HelixNormal);
+        cx.simulate_keystrokes("d");
+        cx.set_state("ˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes("\" 1 p");
+        cx.assert_state("«second\nˇ»", Mode::HelixNormal);
+        cx.set_state("ˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes("\" 2 p");
+        cx.assert_state("«first\nˇ»", Mode::HelixNormal);
+        cx.shared_clipboard().assert_eq("external");
+
+        cx.set_state("ˇ\nsecond line", Mode::HelixNormal);
+        cx.simulate_keystrokes("d");
+        cx.shared_clipboard().assert_eq("external");
+    }
+
+    #[gpui::test]
+    async fn test_helix_explicit_registers(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("external".into()));
+        cx.set_state("«internalˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+
+        for action in ["p", "\" \" p", "shift-r", "\" \" shift-r"] {
+            cx.set_state("ˇ", Mode::HelixNormal);
+            cx.simulate_keystrokes(action);
+            cx.assert_state("«internalˇ»", Mode::HelixNormal);
+            cx.shared_clipboard().assert_eq("external");
+        }
+        cx.set_state("«namedˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("\" a y");
+        cx.set_state("ˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes("\" a shift-r");
+        cx.assert_state("«namedˇ»", Mode::HelixNormal);
+        cx.shared_clipboard().assert_eq("external");
+
+        cx.set_state("«exportedˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("\" + y");
+        cx.shared_clipboard().assert_eq("exported");
+
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("a\r\nb".into()));
+        for (before, action) in [("ˇz", "\" + shift-p"), ("«xˇ»z", "\" + shift-r")] {
+            cx.set_state(before, Mode::HelixNormal);
+            cx.simulate_keystrokes(action);
+            cx.assert_state("«a\nbˇ»z", Mode::HelixNormal);
+        }
+
+        cx.set_state("«xˇ»z", Mode::HelixNormal);
+        cx.update_editor(|editor, _window, _cx| editor.set_read_only(true));
+        cx.simulate_keystrokes("\" + shift-r");
+        cx.assert_state("«xˇ»z", Mode::HelixNormal);
     }
 
     #[gpui::test]

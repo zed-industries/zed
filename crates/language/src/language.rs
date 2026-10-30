@@ -38,7 +38,7 @@ use collections::{HashMap, HashSet};
 use futures::Future;
 use futures::future::LocalBoxFuture;
 use futures::lock::OwnedMutexGuard;
-use gpui::{App, AsyncApp, Entity, EntityId, SharedString};
+use gpui::{App, AsyncApp, BackgroundExecutor, Entity, EntityId, SharedString};
 use http_client::HttpClient;
 
 pub use language_core::{
@@ -500,6 +500,7 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut App);
     fn http_client(&self) -> Arc<dyn HttpClient>;
+    fn background_executor(&self) -> &BackgroundExecutor;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
     fn resolve_relative_path(&self, path: PathBuf) -> PathBuf;

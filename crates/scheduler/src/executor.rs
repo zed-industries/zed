@@ -51,6 +51,14 @@ impl LocalExecutor {
         }
     }
 
+    /// Creates a thread-safe handle that submits `Send` futures to this executor's dispatch destination.
+    pub fn to_send(&self) -> SendLocalExecutor {
+        SendLocalExecutor {
+            _scheduler: self.scheduler.clone(),
+            dispatch: self.dispatch.clone(),
+        }
+    }
+
     pub fn session_id(&self) -> SessionId {
         self.session_id
     }
@@ -190,6 +198,36 @@ impl LocalExecutor {
     fn schedule(&self) -> impl Fn(Runnable<RunnableMeta>) + Send + Sync + 'static {
         let dispatch = self.dispatch.clone();
         move |runnable| dispatch(runnable)
+    }
+}
+
+/// Submits `Send` futures from any thread to a [`LocalExecutor`]'s dispatch destination.
+///
+/// Retains the scheduler and dispatch destination independently of the original executor.
+#[derive(Clone)]
+pub struct SendLocalExecutor {
+    _scheduler: Arc<dyn Scheduler>,
+    dispatch: Arc<dyn Fn(Runnable<RunnableMeta>) + Send + Sync>,
+}
+
+impl SendLocalExecutor {
+    /// Spawns a future whose polls run on the original executor's dispatch thread.
+    #[track_caller]
+    pub fn spawn<F>(&self, future: F) -> Task<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        let dispatch = self.dispatch.clone();
+        let location = Location::caller();
+        let (runnable, task) = async_task::Builder::new()
+            .metadata(RunnableMeta {
+                location,
+                spawned: crate::SpawnTime(Instant::now()),
+            })
+            .spawn(move |_| future, move |runnable| dispatch(runnable));
+        runnable.schedule();
+        Task(TaskState::Spawned(task))
     }
 }
 

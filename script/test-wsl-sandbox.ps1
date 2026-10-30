@@ -11,7 +11,7 @@
 #      current default WSL distro) user namespaces are restricted by AppArmor by
 #      default, which is exactly why this step is needed.
 #   3. Runs `cargo xtask wsl-sandbox-tests`, which builds and runs
-#      `wsl_sandbox_test_helper` against the real WSL/Bubblewrap sandbox.
+#      `wsl-sandbox-test-helper` against the real WSL/Bubblewrap sandbox.
 #
 # By default it requires the sandbox to actually be enforced (so a broken setup
 # fails loudly instead of silently skipping). Pass -AllowSkip to keep the

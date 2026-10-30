@@ -154,10 +154,13 @@ actions!(image, [Quit]);
 fn run_example() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
+    let app = gpui_platform::application();
     #[cfg(not(target_family = "wasm"))]
-    let app = gpui_platform::application();
+    let http_client =
+        ReqwestClient::user_agent("gpui example").expect("failed to create HTTP client");
     #[cfg(target_family = "wasm")]
-    let app = gpui_platform::application();
+    let http_client = gpui_web::FetchHttpClient::new(app.foreground_executor().to_send());
+    let app = app.with_http_client(Arc::new(http_client));
     app.with_assets(Assets {
         base: manifest_dir.join("examples"),
     })
@@ -165,12 +168,6 @@ fn run_example() {
         if !example_support::load_fonts(cx) {
             return;
         }
-        #[cfg(not(target_family = "wasm"))]
-        {
-            let http_client = ReqwestClient::user_agent("gpui example").unwrap();
-            cx.set_http_client(Arc::new(http_client));
-        }
-
         cx.activate(true);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);

@@ -84,6 +84,200 @@ use util::{
 };
 
 #[gpui::test]
+async fn test_remote_auto_fetch(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    use project::{
+        project_settings::ProjectSettings,
+        trusted_worktrees::{self, PathTrust, TrustedWorktrees},
+    };
+    use std::time::Duration;
+
+    cx.update(|cx| {
+        let mut store = SettingsStore::test(cx);
+        store
+            .set_user_settings(
+                r#"{"git":{"auto_fetch":{"enabled":true,"interval_secs":15}}}"#,
+                cx,
+            )
+            .expect("valid client settings");
+        cx.set_global(store);
+    });
+    server_cx.update(|cx| {
+        trusted_worktrees::init(Default::default(), cx);
+    });
+    let fs = FakeFs::new(server_cx.executor());
+    let dot_git = Path::new(path!("/project/.git"));
+    fs.insert_tree(
+        path!("/project"),
+        json!({".git": {}, "README.md": "project"}),
+    )
+    .await;
+    fs.insert_branches(dot_git, &["main", "origin/main"]);
+    fs.set_remote_for_repo(dot_git, "origin", "https://example.com/repo.git");
+    let fetches = fs
+        .with_git_state(dot_git, false, |state| state.fetches.clone())
+        .expect("repository exists");
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    server_cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_server_settings(r#"{"git":{"auto_fetch":{"interval_secs":45}}}"#, cx)
+                .expect("valid server settings");
+        });
+    });
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .expect("open remote project");
+    cx.run_until_parked();
+    server_cx.update(|cx| {
+        let settings = ProjectSettings::get_global(cx).git.auto_fetch;
+        assert!(
+            settings.enabled,
+            "forward existing user settings on connection"
+        );
+        assert_eq!(settings.interval_secs, 45);
+    });
+    server_cx.executor().advance_clock(Duration::from_secs(45));
+    cx.run_until_parked();
+    assert_eq!(
+        fetches.lock().len(),
+        0,
+        "untrusted repositories must not fetch"
+    );
+
+    let (worktree_store, worktree_id) = headless.read_with(server_cx, |headless, cx| {
+        let store = headless.worktree_store.clone();
+        let id = store
+            .read(cx)
+            .worktrees()
+            .next()
+            .expect("host worktree exists")
+            .read(cx)
+            .id();
+        (store, id)
+    });
+    let trusted =
+        server_cx.update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust store exists"));
+    trusted.update(server_cx, |trusted, cx| {
+        trusted.trust(
+            &worktree_store,
+            [PathTrust::Worktree(worktree_id)].into_iter().collect(),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    let repository = project
+        .read_with(cx, |project, cx| project.active_repository(cx))
+        .expect("client repository exists");
+    // Leave the client unaware of the new branch until fetch emits a Git event.
+    fs.with_git_state(dot_git, false, |state| {
+        state.branches.insert("fetched-branch".into());
+    })
+    .expect("repository exists");
+    cx.run_until_parked();
+    assert!(!repository.read_with(cx, |repository, _| {
+        repository
+            .branch_list
+            .iter()
+            .any(|branch| branch.name() == "fetched-branch")
+    }));
+    server_cx.executor().advance_clock(Duration::from_secs(15));
+    cx.run_until_parked();
+    assert_eq!(
+        fetches.lock().len(),
+        0,
+        "server interval overrides client interval"
+    );
+    server_cx.executor().advance_clock(Duration::from_secs(30));
+    cx.run_until_parked();
+    assert_eq!(fetches.lock().len(), 1);
+    assert!(repository.read_with(cx, |repository, _| {
+        repository
+            .branch_list
+            .iter()
+            .any(|branch| branch.name() == "fetched-branch")
+    }));
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{"git":{"auto_fetch":{"enabled":false,"interval_secs":15}}}"#,
+                    cx,
+                )
+                .expect("disable auto-fetch on client");
+        });
+    });
+    cx.run_until_parked();
+    server_cx.executor().advance_clock(Duration::from_secs(60));
+    cx.run_until_parked();
+    assert_eq!(fetches.lock().len(), 1);
+
+    server_cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_server_settings(
+                    r#"{"git":{"auto_fetch":{"enabled":true,"interval_secs":30}}}"#,
+                    cx,
+                )
+                .expect("enable server override");
+        });
+    });
+    cx.run_until_parked();
+    server_cx.executor().advance_clock(Duration::from_secs(30));
+    cx.run_until_parked();
+    assert_eq!(fetches.lock().len(), 2);
+
+    server_cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_server_settings("{}", cx)
+                .expect("clear server override");
+        });
+    });
+    cx.run_until_parked();
+    server_cx.executor().advance_clock(Duration::from_secs(60));
+    cx.run_until_parked();
+    assert_eq!(
+        fetches.lock().len(),
+        2,
+        "fall back to disabled client setting"
+    );
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{"git":{"auto_fetch":{"enabled":true,"interval_secs":15}}}"#,
+                    cx,
+                )
+                .expect("enable auto-fetch on client");
+        });
+    });
+    cx.run_until_parked();
+    server_cx.executor().advance_clock(Duration::from_secs(15));
+    cx.run_until_parked();
+    assert_eq!(fetches.lock().len(), 3);
+
+    trusted.update(server_cx, |trusted, cx| {
+        trusted.restrict(
+            worktree_store.downgrade(),
+            [PathTrust::Worktree(worktree_id)].into_iter().collect(),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    server_cx.executor().advance_clock(Duration::from_secs(45));
+    cx.run_until_parked();
+    assert_eq!(
+        fetches.lock().len(),
+        3,
+        "revoking trust stops subsequent fetches"
+    );
+}
+
+#[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
