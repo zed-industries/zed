@@ -912,6 +912,7 @@ impl NotebookEditor {
 
     fn add_code_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let new_cell_id: CellId = Uuid::new_v4().into();
+        let languages = self.languages.clone();
         let notebook_language = self.notebook_language.clone();
         let metadata: nbformat::v4::CellMetadata =
             serde_json::from_str("{}").expect("empty object should parse");
@@ -922,6 +923,7 @@ impl NotebookEditor {
                 new_cell_id.clone(),
                 metadata,
                 String::new(),
+                languages,
                 notebook_language,
                 window,
                 cx,
@@ -1482,7 +1484,7 @@ impl NotebookEditor {
 
 impl Render for NotebookEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("NotebookEditor");
         key_context.set(
             "notebook_mode",

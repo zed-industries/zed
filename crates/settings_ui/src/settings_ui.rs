@@ -18,7 +18,7 @@ use gpui::{
 
 use language::Buffer;
 use platform_title_bar::PlatformTitleBar;
-use project::{Project, ProjectPath, Worktree, WorktreeId};
+use project::{DisableAiSettings, Project, ProjectPath, Worktree, WorktreeId};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -3075,7 +3075,7 @@ impl SettingsWindow {
             "Focus Navbar"
         };
 
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("NavigationMenu");
         key_context.add("menu");
         if self.search_bar.focus_handle(cx).is_focused(window) {
@@ -4349,6 +4349,7 @@ impl SettingsWindow {
         self.sandbox_host_validation_error = None;
         self.sub_page_stack
             .push(SubPage::new(sub_page_link, section_header));
+        self.retry_llm_provider_authentication(cx);
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
@@ -4559,8 +4560,20 @@ impl SettingsWindow {
         {
             self.skill_creator_page = None;
         }
+        self.retry_llm_provider_authentication(cx);
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
+    }
+
+    fn retry_llm_provider_authentication(&self, cx: &mut Context<Self>) {
+        if self.sub_page_stack.last().is_some_and(|sub_page| {
+            sub_page.link.json_path == Some("llm_providers")
+                && sub_page.link.title.as_ref() == "LLM Providers"
+        }) && !DisableAiSettings::get_global(cx).disable_ai
+        {
+            language_model::LanguageModelRegistry::global(cx)
+                .update(cx, |registry, cx| registry.retry_authentication(cx));
+        }
     }
 
     pub(crate) fn active_project(&self, cx: &App) -> Option<Entity<Project>> {
@@ -5427,6 +5440,9 @@ fn render_icon_theme_picker(
 pub mod test {
 
     use super::*;
+    use credentials_provider::test_support::FakeCredentialsProvider;
+    use language_model::{ApiKeyState, EnvVar, LanguageModelProviderState, LanguageModelRegistry};
+    use language_models::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
 
     impl SettingsWindow {
         fn navbar_entry(&self) -> usize {
@@ -6189,10 +6205,10 @@ pub mod test {
         });
         draw_settings_page(&view, px(400.), px(600.) + last_height * 2., cx);
         draw_settings_page(&view, px(400.), px(600.) + last_height, cx);
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        cx.simulate_event(gpui::ScrollEvent {
             position: point(px(200.), px(100.)),
             delta: gpui::ScrollDelta::Pixels(point(px(0.), -last_height)),
-            ..gpui::ScrollWheelEvent::default()
+            ..gpui::ScrollEvent::default()
         });
         draw_settings_page(&view, px(400.), px(600.), cx);
         let viewport = list_state.viewport_bounds();
@@ -6302,10 +6318,10 @@ pub mod test {
             });
             let expected_offset = match input {
                 ScrollInput::Wheel => {
-                    cx.simulate_event(gpui::ScrollWheelEvent {
+                    cx.simulate_event(gpui::ScrollEvent {
                         position: point(px(200.), px(100.)),
                         delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-32.))),
-                        ..gpui::ScrollWheelEvent::default()
+                        ..gpui::ScrollEvent::default()
                     });
                     px(-32.)
                 }
@@ -7108,6 +7124,210 @@ pub mod test {
         });
     }
 
+    /// The project's fs is separate from the host's, so tests can tell which one was used.
+    async fn init_project_skill_test(
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        Entity<SettingsWindow>,
+        &mut gpui::VisualTestContext,
+        Arc<fs::FakeFs>,
+        Arc<fs::FakeFs>,
+        project::WorktreeId,
+    ) {
+        use project::Project;
+        use serde_json::json;
+
+        cx.update(|cx| {
+            register_settings(cx);
+        });
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            AppState::set_global(app_state.clone(), cx);
+            app_state
+        });
+
+        let host_fs = app_state.fs.as_fake();
+        host_fs
+            .insert_tree(
+                "/project",
+                json!({ ".agents": { "skills": { "my-skill": { "SKILL.md": "host copy" } } } }),
+            )
+            .await;
+        let project_fs = fs::FakeFs::new(cx.executor());
+        project_fs
+            .insert_tree(
+                "/project",
+                json!({ ".agents": { "skills": { "my-skill": { "SKILL.md": "project copy" } } } }),
+            )
+            .await;
+
+        let project = Project::test(project_fs.clone(), ["/project".as_ref()], cx).await;
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let (_multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        let workspace_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
+        cx.run_until_parked();
+
+        let (settings_window, cx) = cx
+            .add_window_view(|window, cx| SettingsWindow::new(Some(workspace_handle), window, cx));
+        cx.run_until_parked();
+
+        (settings_window, cx, project_fs, host_fs, worktree_id)
+    }
+
+    fn project_skill(worktree_id: project::WorktreeId, name: &str) -> agent_skills::Skill {
+        let directory_path = PathBuf::from(format!("/project/.agents/skills/{name}"));
+        agent_skills::Skill {
+            name: name.to_string(),
+            description: String::new(),
+            source: agent_skills::SkillSource::ProjectLocal {
+                worktree_id: agent_skills::SkillScopeId(worktree_id.to_usize()),
+                worktree_root_name: "project".into(),
+            },
+            skill_file_path: directory_path.join("SKILL.md"),
+            directory_path,
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            embedded_body: None,
+        }
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_share_link_reads_through_project(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        let skill = project_skill(worktree_id, "my-skill");
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::copy_skill_share_link(&skill, settings_window, cx)
+            })
+            .await;
+
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(agent_skills::encode_skill_share_link("project copy"))
+        );
+        settings_window.read_with(cx, |settings_window, _| {
+            assert_eq!(
+                settings_window.last_copied_skill_directory_path,
+                Some(skill.directory_path.clone())
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_delete_trashes_through_project(cx: &mut gpui::TestAppContext) {
+        use fs::Fs as _;
+
+        let (settings_window, cx, project_fs, host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        let skill = project_skill(worktree_id, "my-skill");
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::trash_skill(&skill, settings_window, cx)
+            })
+            .await;
+
+        assert!(!project_fs.is_dir(&skill.directory_path).await);
+        assert!(host_fs.is_dir(&skill.directory_path).await);
+        settings_window.read_with(cx, |settings_window, _| {
+            assert!(
+                settings_window
+                    .hidden_deleted_skill_directory_paths
+                    .contains(&skill.directory_path)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_share_link_skips_project_with_same_worktree_id(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // Shares the project's worktree id but not its path, as a collab project can.
+        let (settings_window, cx, _project_fs, host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        host_fs
+            .insert_tree(
+                "/elsewhere",
+                serde_json::json!({ ".agents": { "skills": { "my-skill": { "SKILL.md": "elsewhere copy" } } } }),
+            )
+            .await;
+        let mut skill = project_skill(worktree_id, "my-skill");
+        skill.directory_path = PathBuf::from("/elsewhere/.agents/skills/my-skill");
+        skill.skill_file_path = skill.directory_path.join("SKILL.md");
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::copy_skill_share_link(&skill, settings_window, cx)
+            })
+            .await;
+
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(agent_skills::encode_skill_share_link("elsewhere copy"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_delete_failure_shows_skill_again(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx, project_fs, _host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        let skill = project_skill(worktree_id, "my-skill");
+        project_fs.set_remove_dir_error(&skill.directory_path, "permission denied".into());
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::trash_skill(&skill, settings_window, cx)
+            })
+            .await;
+
+        settings_window.read_with(cx, |settings_window, _| {
+            assert!(
+                !settings_window
+                    .hidden_deleted_skill_directory_paths
+                    .contains(&skill.directory_path)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_delete_keeps_already_deleted_skill_hidden(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        let skill = project_skill(worktree_id, "deleted-outside-zed");
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::trash_skill(&skill, settings_window, cx)
+            })
+            .await;
+
+        settings_window.read_with(cx, |settings_window, _| {
+            assert!(
+                settings_window
+                    .hidden_deleted_skill_directory_paths
+                    .contains(&skill.directory_path)
+            );
+        });
+    }
+
     #[gpui::test]
     async fn test_open_skill_creator_navigates_to_sub_page(cx: &mut gpui::TestAppContext) {
         use project::Project;
@@ -7284,6 +7504,76 @@ pub mod test {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_llm_provider_authentication_and_settings_retry(cx: &mut gpui::TestAppContext) {
+        let url = "https://settings-provider.example/v1";
+        let credentials = Arc::new(FakeCredentialsProvider::default());
+        let release = credentials.defer_read(url);
+        let provider = cx.update(|cx| {
+            register_settings(cx);
+            let app_state = AppState::test(cx);
+            AppState::set_global(app_state.clone(), cx);
+            let settings = r#"{"language_models":{"openai_compatible":{
+                "settings-retry":{"api_url":"https://settings-provider.example/v1",
+                "available_models":[]}
+            }}}"#;
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(settings, cx)
+                    .expect("provider settings");
+            });
+            let provider = Arc::new(OpenAiCompatibleLanguageModelProvider::new(
+                Arc::from("settings-retry"),
+                app_state.client.http_client(),
+                credentials.clone(),
+                cx,
+            ));
+            let env_var = EnvVar {
+                name: SharedString::from("TEST_SETTINGS_API_KEY"),
+                value: None,
+            };
+            let state = provider.observable_entity().expect("provider state");
+            state.update(cx, |state, _| {
+                state.api_key_state = ApiKeyState::new(SharedString::from(url), env_var);
+            });
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+                registry.authenticate_providers(cx);
+            });
+            provider
+        });
+        let (settings_window, cx) =
+            cx.add_window_view(|window, cx| SettingsWindow::new(None, window, cx));
+        cx.run_until_parked();
+        for release in [None, Some(release)] {
+            if let Some(release) = release {
+                release.send(()).expect("authentication remains live");
+                cx.run_until_parked();
+            }
+            cx.cx.update(|cx| {
+                LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                    registry.register_provider(provider.clone(), cx);
+                    registry.authenticate_providers(cx);
+                    registry.authenticate_providers(cx);
+                });
+            });
+            cx.run_until_parked();
+            credentials.assert_reads(&[url]);
+        }
+        cx.cx
+            .update(|cx| open_settings_editor(Some("llm_providers"), None, None, cx));
+        cx.run_until_parked();
+        credentials.assert_reads(&[url; 2]);
+        settings_window.update(cx, |_, cx| cx.notify());
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1000.), px(700.)),
+            |_, _| settings_window.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+        credentials.assert_reads(&[url; 2]);
     }
 
     fn settings_window_with_items(

@@ -153,8 +153,11 @@ pub fn init(cx: &mut App) {
                 let is_remote = !workspace.project().read(cx).is_local();
 
                 if is_remote {
-                    let connection_options =
-                        workspace.project().read(cx).remote_connection_options(cx);
+                    let connection_options = workspace
+                        .project()
+                        .read(cx)
+                        .remote_connection_options(cx)
+                        .cloned();
                     let app_state = workspace.app_state().clone();
                     let workspace_handle = workspace.weak_handle();
                     cx.spawn_in(window, async move |_, cx| {
