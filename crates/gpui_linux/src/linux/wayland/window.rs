@@ -2493,13 +2493,9 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
                 state.background_effects = Some(background_effects);
             }
 
-            add_rounded_rect(
-                area,
-                state.client_corner_radii.clone(),
-                |x, y, width, height| {
-                    region.add(x, y, width, height);
-                },
-            );
+            add_rounded_rect(area, state.client_corner_radii, |x, y, width, height| {
+                region.add(x, y, width, height);
+            });
 
             state
                 .background_effects
