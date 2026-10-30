@@ -817,6 +817,54 @@ async fn test_stdio_server_restarts_when_project_root_becomes_available(cx: &mut
 }
 
 #[gpui::test]
+async fn test_global_context_servers_start_without_worktrees(cx: &mut TestAppContext) {
+    let server_id = ContextServerId("my-server".into());
+
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+    });
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let executor = cx.executor();
+    store.update(cx, |store, _| {
+        store.set_context_server_factory(Box::new(move |id, _| {
+            Arc::new(ContextServer::new(
+                id.clone(),
+                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+            ))
+        }));
+    });
+
+    set_context_server_configuration(
+        vec![(
+            server_id.0.clone(),
+            settings::ContextServerSettingsContent::Stdio {
+                enabled: true,
+                remote: false,
+                command: ContextServerCommand {
+                    path: "somebinary".into(),
+                    args: vec!["arg".to_string()],
+                    env: None,
+                    timeout: None,
+                },
+            },
+        )],
+        cx,
+    );
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "user-level context servers must start before any worktree exists"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_server_ids_includes_disabled_servers(cx: &mut TestAppContext) {
     const ENABLED_SERVER_ID: &str = "enabled-server";
     const DISABLED_SERVER_ID: &str = "disabled-server";

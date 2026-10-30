@@ -10,7 +10,7 @@ use project::{
     LocalProjectFlags, Project, WorktreeId,
     git_store::{Repository, resolve_git_worktree_to_main_repo, worktrees_directory_for_repo},
 };
-use remote::{RemoteConnectionOptions, same_remote_connection_identity};
+use remote::RemoteConnectionOptions;
 use util::ResultExt;
 use workspace::{AppState, MultiWorkspace, Workspace};
 
@@ -104,18 +104,13 @@ pub fn build_root_plan(
 ) -> Option<RootPlan> {
     let path = path.to_path_buf();
 
-    let matches_target_connection = |project: &Entity<Project>, cx: &App| {
-        same_remote_connection_identity(
-            project.read(cx).remote_connection_options(cx).as_ref(),
-            remote_connection,
-        )
-    };
-
     let affected_projects = workspaces
         .iter()
         .filter_map(|workspace| {
             let project = workspace.read(cx).project().clone();
-            if !matches_target_connection(&project, cx) {
+            if project.read(cx).remote_connection_identity(cx)
+                != remote_connection.map(|o| o.identity())
+            {
                 return None;
             }
             let worktree = project
@@ -136,7 +131,14 @@ pub fn build_root_plan(
 
     let linked_repo = workspaces
         .iter()
-        .filter(|workspace| matches_target_connection(workspace.read(cx).project(), cx))
+        .filter(|workspace| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .remote_connection_identity(cx)
+                == remote_connection.map(|o| o.identity())
+        })
         .flat_map(|workspace| {
             workspace
                 .read(cx)
@@ -364,13 +366,12 @@ async fn find_or_create_repository(
             .into_iter()
             .filter_map(|workspace| {
                 let project = workspace.read(cx).project().clone();
-                let project_connection = project.read(cx).remote_connection_options(cx);
-                if !same_remote_connection_identity(
-                    project_connection.as_ref(),
-                    remote_connection_owned.as_ref(),
-                ) {
+                if project.read(cx).remote_connection_identity(cx)
+                    != remote_connection_owned.as_ref().map(|o| o.identity())
+                {
                     return None;
                 }
+
                 Some((
                     project
                         .read(cx)

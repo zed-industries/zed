@@ -7,11 +7,20 @@ use collections::{HashMap, HashSet};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task};
 use itertools::Itertools;
 use language::{
-    Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point, TextBuffer,
+    Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt as _, Point,
+    TextBuffer,
 };
 use markdown::Markdown;
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
-use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
+use std::{
+    cell::{Cell, OnceCell},
+    cmp::Reverse,
+    mem,
+    ops::Range,
+    path::Path,
+    rc::Rc,
+    sync::Arc,
+};
 use util::ResultExt;
 use util::paths::PathStyle;
 
@@ -307,68 +316,25 @@ impl Diff {
         old_text: Option<String>,
         new_text: String,
         language_registry: Arc<LanguageRegistry>,
-        cx: &mut Context<Self>,
     ) -> Self {
-        let multibuffer = cx.new(|_cx| MultiBuffer::without_headers(Capability::ReadOnly));
-        let new_buffer = cx.new(|cx| Buffer::local(new_text, cx));
         let base_text_exists = old_text.is_some();
-        let base_text = old_text.clone().unwrap_or(String::new()).into();
-        let task = cx.spawn({
-            let multibuffer = multibuffer.clone();
-            let path = path.clone();
-            let buffer = new_buffer.clone();
-            async move |_, cx| {
-                let language = language_registry
-                    .load_language_for_file_path(Path::new(&path))
-                    .await
-                    .log_err();
-
-                buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx));
-                buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
-
-                let diff = build_buffer_diff(
-                    old_text.unwrap_or("".into()).into(),
-                    base_text_exists,
-                    &buffer,
-                    cx,
-                )
-                .await?;
-
-                multibuffer.update(cx, |multibuffer, cx| {
-                    let hunk_ranges = {
-                        let buffer = buffer.read(cx);
-                        diff.read(cx)
-                            .snapshot(cx)
-                            .hunks_intersecting_range(
-                                Anchor::min_for_buffer(buffer.remote_id())
-                                    ..Anchor::max_for_buffer(buffer.remote_id()),
-                                buffer,
-                            )
-                            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
-                            .collect::<Vec<_>>()
-                    };
-
-                    multibuffer.set_excerpts_for_path(
-                        PathKey::for_buffer(&buffer, cx),
-                        buffer.clone(),
-                        hunk_ranges,
-                        excerpt_context_lines(cx),
-                        cx,
-                    );
-                    multibuffer.add_diff(diff, cx);
-                });
-
-                anyhow::Ok(())
-            }
-        });
-
         Self::Finalized(FinalizedDiff {
-            multibuffer,
             path,
-            base_text,
-            new_buffer,
-            _update_diff: task,
+            base_text: Arc::from(old_text.unwrap_or_default()),
+            base_text_exists,
+            state: FinalizedDiffState::Deferred(DeferredSource {
+                new_text,
+                language_registry,
+                has_changes: OnceCell::new(),
+            }),
         })
+    }
+
+    /// Restores an interrupted edit's buffer to its base text.
+    pub fn discard_partial_edit(&mut self, cx: &mut Context<Self>) {
+        let base_text = self.base_text().clone();
+        self.buffer(cx)
+            .update(cx, |buffer, cx| buffer.set_text(base_text.as_ref(), cx));
     }
 
     pub fn new(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
@@ -423,14 +389,6 @@ impl Diff {
         }
     }
 
-    /// Returns the buffer being edited (for pending diffs) or the snapshot buffer (for finalized diffs).
-    pub fn buffer(&self) -> &Entity<Buffer> {
-        match self {
-            Self::Pending(PendingDiff { new_buffer, .. }) => new_buffer,
-            Self::Finalized(FinalizedDiff { new_buffer, .. }) => new_buffer,
-        }
-    }
-
     pub fn file_path(&self, cx: &App) -> Option<String> {
         match self {
             Self::Pending(PendingDiff { new_buffer, .. }) => new_buffer
@@ -441,29 +399,45 @@ impl Diff {
         }
     }
 
-    pub fn multibuffer(&self) -> &Entity<MultiBuffer> {
+    pub fn multibuffer(&mut self, cx: &mut Context<Self>) -> Entity<MultiBuffer> {
         match self {
-            Self::Pending(PendingDiff { multibuffer, .. }) => multibuffer,
-            Self::Finalized(FinalizedDiff { multibuffer, .. }) => multibuffer,
+            Self::Pending(PendingDiff { multibuffer, .. }) => multibuffer.clone(),
+            Self::Finalized(finalized) => {
+                finalized.with_resolved(cx, |resolved| resolved.multibuffer.clone())
+            }
         }
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
-        let buffer_text = self
-            .multibuffer()
-            .read(cx)
-            .all_buffers()
-            .iter()
-            .map(|buffer| buffer.read(cx).text())
-            .join("\n");
-        let path = match self {
-            Diff::Pending(PendingDiff {
-                new_buffer: buffer, ..
-            }) => buffer
-                .read(cx)
-                .file()
-                .map(|file| file.path().display(file.path_style(cx))),
-            Diff::Finalized(FinalizedDiff { path, .. }) => Some(path.as_str().into()),
+        let (path, buffer_text) = match self {
+            Self::Pending(PendingDiff {
+                new_buffer,
+                multibuffer,
+                ..
+            }) => {
+                let buffer_text = multibuffer
+                    .read(cx)
+                    .all_buffers()
+                    .iter()
+                    .map(|buffer| buffer.read(cx).text())
+                    .join("\n");
+                let path = new_buffer
+                    .read(cx)
+                    .file()
+                    .map(|file| file.path().display(file.path_style(cx)));
+                (path, buffer_text)
+            }
+            Self::Finalized(finalized) => {
+                let buffer_text = match &finalized.state {
+                    FinalizedDiffState::Resolved(resolved) => {
+                        finalized.export_resolved(resolved, cx)
+                    }
+                    FinalizedDiffState::Deferred(deferred) => finalized
+                        .normalized_changed_text(deferred.new_text.clone())
+                        .unwrap_or_default(),
+                };
+                (Some(finalized.path.as_str().into()), buffer_text)
+            }
         };
         format!(
             "Diff: {}\n```\n{}\n```\n",
@@ -473,12 +447,34 @@ impl Diff {
     }
 
     pub fn has_revealed_range(&self, cx: &App) -> bool {
-        !self.multibuffer().read(cx).is_empty()
+        match self {
+            Self::Pending(PendingDiff { multibuffer, .. }) => !multibuffer.read(cx).is_empty(),
+            Self::Finalized(finalized) => match &finalized.state {
+                FinalizedDiffState::Resolved(resolved) => !resolved.multibuffer.read(cx).is_empty(),
+                FinalizedDiffState::Deferred(_) => false,
+            },
+        }
+    }
+
+    pub fn has_changes(&self, cx: &App) -> bool {
+        match self {
+            Self::Pending(PendingDiff { multibuffer, .. }) => !multibuffer.read(cx).is_empty(),
+            Self::Finalized(finalized) => match &finalized.state {
+                FinalizedDiffState::Resolved(resolved) => {
+                    finalized.resolved_has_changes(resolved, cx)
+                }
+                FinalizedDiffState::Deferred(deferred) => *deferred.has_changes.get_or_init(|| {
+                    finalized
+                        .normalized_changed_text(deferred.new_text.clone())
+                        .is_some()
+                }),
+            },
+        }
     }
 
     pub fn needs_update(&self, old_text: &str, new_text: &str, cx: &App) -> bool {
         match self {
-            Diff::Pending(PendingDiff {
+            Self::Pending(PendingDiff {
                 base_text,
                 new_buffer,
                 ..
@@ -486,13 +482,26 @@ impl Diff {
                 base_text.as_ref() != old_text
                     || !new_buffer.read(cx).as_rope().chunks().equals_str(new_text)
             }
-            Diff::Finalized(FinalizedDiff {
-                base_text,
-                new_buffer,
-                ..
-            }) => {
-                base_text.as_ref() != old_text
-                    || !new_buffer.read(cx).as_rope().chunks().equals_str(new_text)
+            Self::Finalized(finalized) => {
+                let FinalizedDiffState::Resolved(resolved) = &finalized.state else {
+                    return true;
+                };
+                finalized.base_text.as_ref() != old_text
+                    || !resolved
+                        .new_buffer
+                        .read(cx)
+                        .as_rope()
+                        .chunks()
+                        .equals_str(new_text)
+            }
+        }
+    }
+
+    fn buffer(&mut self, cx: &mut Context<Self>) -> Entity<Buffer> {
+        match self {
+            Self::Pending(PendingDiff { new_buffer, .. }) => new_buffer.clone(),
+            Self::Finalized(finalized) => {
+                finalized.with_resolved(cx, |resolved| resolved.new_buffer.clone())
             }
         }
     }
@@ -576,10 +585,10 @@ impl PendingDiff {
             }
         });
 
-        let update_diff = cx.spawn(async move |this, cx| {
+        let update_diff = cx.spawn(async move |diff, cx| {
             let buffer_diff = buffer_diff.await?;
-            this.update(cx, |this, cx| {
-                this.multibuffer().update(cx, |multibuffer, cx| {
+            diff.update(cx, |diff, cx| {
+                diff.multibuffer(cx).update(cx, |multibuffer, cx| {
                     let path_key = PathKey::for_buffer(&buffer, cx);
                     multibuffer.clear(cx);
                     multibuffer.set_excerpts_for_path(
@@ -599,9 +608,13 @@ impl PendingDiff {
         FinalizedDiff {
             path,
             base_text: self.base_text.clone(),
-            multibuffer: self.multibuffer.clone(),
-            new_buffer: self.new_buffer.clone(),
-            _update_diff: update_diff,
+            base_text_exists: true,
+            state: FinalizedDiffState::Resolved(ResolvedFinalized {
+                new_buffer: self.new_buffer.clone(),
+                multibuffer: self.multibuffer.clone(),
+                _update_diff: update_diff,
+                populated: Rc::new(Cell::new(true)),
+            }),
         }
     }
 
@@ -663,9 +676,137 @@ impl PendingDiff {
 pub struct FinalizedDiff {
     path: String,
     base_text: Arc<str>,
+    base_text_exists: bool,
+    state: FinalizedDiffState,
+}
+
+enum FinalizedDiffState {
+    Deferred(DeferredSource),
+    Resolved(ResolvedFinalized),
+}
+
+struct DeferredSource {
+    new_text: String,
+    language_registry: Arc<LanguageRegistry>,
+    has_changes: OnceCell<bool>,
+}
+
+struct ResolvedFinalized {
     new_buffer: Entity<Buffer>,
     multibuffer: Entity<MultiBuffer>,
     _update_diff: Task<Result<()>>,
+    populated: Rc<Cell<bool>>,
+}
+
+impl FinalizedDiff {
+    fn with_resolved<T>(&mut self, cx: &mut App, read: impl FnOnce(&ResolvedFinalized) -> T) -> T {
+        match &mut self.state {
+            FinalizedDiffState::Resolved(resolved) => read(resolved),
+            FinalizedDiffState::Deferred(deferred) => {
+                let resolved = build_finalized(
+                    self.path.clone(),
+                    self.base_text_exists,
+                    self.base_text.clone(),
+                    mem::take(&mut deferred.new_text),
+                    deferred.language_registry.clone(),
+                    cx,
+                );
+                let result = read(&resolved);
+                self.state = FinalizedDiffState::Resolved(resolved);
+                result
+            }
+        }
+    }
+
+    fn resolved_has_changes(&self, resolved: &ResolvedFinalized, cx: &App) -> bool {
+        if resolved.populated.get() {
+            return !resolved.multibuffer.read(cx).is_empty();
+        }
+        self.normalized_changed_text(resolved.new_buffer.read(cx).text())
+            .is_some()
+    }
+
+    fn export_resolved(&self, resolved: &ResolvedFinalized, cx: &App) -> String {
+        if resolved.populated.get() {
+            return resolved
+                .multibuffer
+                .read(cx)
+                .all_buffers()
+                .iter()
+                .map(|buffer| buffer.read(cx).text())
+                .join("\n");
+        }
+        self.normalized_changed_text(resolved.new_buffer.read(cx).text())
+            .unwrap_or_default()
+    }
+
+    fn normalized_changed_text(&self, mut new_text: String) -> Option<String> {
+        let base_text = LineEnding::normalize_arc(self.base_text.clone());
+        LineEnding::normalize(&mut new_text);
+        (!self.base_text_exists || new_text.as_str() != base_text.as_ref()).then_some(new_text)
+    }
+}
+
+fn build_finalized(
+    path: String,
+    base_text_exists: bool,
+    base_text: Arc<str>,
+    new_text: String,
+    language_registry: Arc<LanguageRegistry>,
+    cx: &mut App,
+) -> ResolvedFinalized {
+    let multibuffer = cx.new(|_| MultiBuffer::without_headers(Capability::ReadOnly));
+    let new_buffer = cx.new(|cx| Buffer::local(new_text, cx));
+    let populated = Rc::new(Cell::new(false));
+    let task = cx.spawn({
+        let multibuffer = multibuffer.clone();
+        let buffer = new_buffer.clone();
+        let populated = populated.clone();
+        async move |cx| {
+            let language = language_registry
+                .load_language_for_file_path(Path::new(&path))
+                .await
+                .log_err();
+            buffer.update(cx, |buffer, cx| buffer.set_language(language, cx));
+            buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
+
+            let diff = build_buffer_diff(base_text, base_text_exists, &buffer, cx).await?;
+
+            multibuffer.update(cx, |multibuffer, cx| {
+                let hunk_ranges = {
+                    let buffer = buffer.read(cx);
+                    diff.read(cx)
+                        .snapshot(cx)
+                        .hunks_intersecting_range(
+                            Anchor::min_for_buffer(buffer.remote_id())
+                                ..Anchor::max_for_buffer(buffer.remote_id()),
+                            buffer,
+                        )
+                        .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
+                        .collect::<Vec<_>>()
+                };
+
+                multibuffer.set_excerpts_for_path(
+                    PathKey::for_buffer(&buffer, cx),
+                    buffer.clone(),
+                    hunk_ranges,
+                    excerpt_context_lines(cx),
+                    cx,
+                );
+                multibuffer.add_diff(diff, cx);
+            });
+
+            populated.set(true);
+            anyhow::Ok(())
+        }
+    });
+
+    ResolvedFinalized {
+        new_buffer,
+        multibuffer,
+        _update_diff: task,
+        populated,
+    }
 }
 
 async fn build_buffer_diff(
@@ -1037,10 +1178,139 @@ mod tests {
     #[gpui::test]
     async fn test_pending_diff(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("hello!", cx));
-        let _diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
+        let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
+        let multibuffer = diff.update(cx, |diff, cx| diff.multibuffer(cx));
         buffer.update(cx, |buffer, cx| {
             buffer.set_text("HELLO!", cx);
         });
         cx.run_until_parked();
+
+        diff.update(cx, |diff, cx| diff.finalize(cx));
+        assert_eq!(
+            diff.update(cx, |diff, cx| diff.multibuffer(cx)),
+            multibuffer
+        );
+        cx.run_until_parked();
+
+        buffer.update(cx, |buffer, cx| buffer.set_text("later", cx));
+        cx.run_until_parked();
+        assert_eq!(
+            multibuffer.read_with(cx, |multibuffer, cx| {
+                multibuffer
+                    .all_buffers()
+                    .iter()
+                    .map(|buffer| buffer.read(cx).text())
+                    .collect::<Vec<_>>()
+            }),
+            ["HELLO!"]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_finalized_diff_export_survives_resolution(cx: &mut TestAppContext) {
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        for (old_text, new_text, expected_changes, expected_body) in [
+            (Some("same"), "same", false, ""),
+            (Some("before"), "after", true, "after"),
+            (Some("a\r\nb"), "a\r\nb", false, ""),
+            (Some("a\nb"), "a\r\nb", false, ""),
+            (None, "added", true, "added"),
+            (None, "", true, ""),
+            (Some(""), "", false, ""),
+            (Some("removed"), "", true, ""),
+        ] {
+            let diff = cx.new(|_| {
+                Diff::finalized(
+                    "test.rs".into(),
+                    old_text.map(str::to_string),
+                    new_text.to_string(),
+                    languages.clone(),
+                )
+            });
+            let exported_before = cx.update(|cx| diff.read(cx).to_markdown(cx));
+            assert_eq!(
+                exported_before,
+                format!("Diff: test.rs\n```\n{expected_body}\n```\n")
+            );
+            assert!(diff.read_with(cx, |diff, _| matches!(
+                diff,
+                Diff::Finalized(FinalizedDiff {
+                    state: FinalizedDiffState::Deferred(_),
+                    ..
+                })
+            )));
+            assert_eq!(
+                cx.update(|cx| diff.read(cx).has_changes(cx)),
+                expected_changes,
+                "unexpected has_changes before resolving {old_text:?} -> {new_text:?}"
+            );
+
+            let multibuffer = diff.update(cx, |diff, cx| diff.multibuffer(cx));
+            assert_eq!(
+                diff.update(cx, |diff, cx| diff.multibuffer(cx)),
+                multibuffer
+            );
+
+            assert_eq!(
+                cx.update(|cx| diff.read(cx).has_changes(cx)),
+                expected_changes,
+                "has_changes must not wait for the async build {old_text:?} -> {new_text:?}"
+            );
+            assert_eq!(
+                cx.update(|cx| diff.read(cx).to_markdown(cx)),
+                exported_before,
+                "export must not wait for the async build {old_text:?} -> {new_text:?}"
+            );
+
+            cx.run_until_parked();
+
+            let exported_after = cx.update(|cx| diff.read(cx).to_markdown(cx));
+            assert_eq!(
+                cx.update(|cx| diff.read(cx).has_changes(cx)),
+                expected_changes,
+                "has_changes changed when resolving {old_text:?} -> {new_text:?}"
+            );
+            assert_eq!(
+                exported_after, exported_before,
+                "export changed when resolving {old_text:?} -> {new_text:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_discard_partial_edit_resolves_deferred_diff(cx: &mut TestAppContext) {
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        let diff = cx.new(|_| {
+            Diff::finalized(
+                "test.rs".into(),
+                Some("before".into()),
+                "after".into(),
+                languages,
+            )
+        });
+
+        assert!(
+            diff.read_with(cx, |diff, cx| diff.has_changes(cx)),
+            "deferred diff should report changes without resolution"
+        );
+
+        diff.update(cx, |diff, cx| diff.discard_partial_edit(cx));
+
+        assert_eq!(
+            diff.update(cx, |diff, cx| diff.buffer(cx).read(cx).text()),
+            "before"
+        );
+        assert!(
+            !diff.read_with(cx, |diff, cx| diff.has_changes(cx)),
+            "discarding should clear has_changes before the async build completes"
+        );
+        cx.run_until_parked();
+        assert!(!diff.read_with(cx, |diff, cx| diff.has_changes(cx)));
+        assert_eq!(
+            diff.read_with(cx, |diff, cx| diff.to_markdown(cx)),
+            "Diff: test.rs\n```\n\n```\n"
+        );
     }
 }

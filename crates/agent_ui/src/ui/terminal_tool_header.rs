@@ -24,7 +24,7 @@ pub struct TerminalToolHeader {
     running: bool,
     truncated_tooltip: Option<SharedString>,
     failed: bool,
-    exit_code: Option<u32>,
+    exit_code: Option<i64>,
     sandbox_warning: Option<TerminalSandboxWarning>,
     on_toggle_expand: Option<ClickHandler>,
     on_stop: Option<ClickHandler>,
@@ -70,7 +70,7 @@ impl TerminalToolHeader {
         self
     }
 
-    pub fn failed(mut self, exit_code: Option<u32>) -> Self {
+    pub fn failed(mut self, exit_code: Option<i64>) -> Self {
         self.failed = true;
         self.exit_code = exit_code;
         self
