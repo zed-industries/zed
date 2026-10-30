@@ -1503,6 +1503,115 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
 }
 
 #[gpui::test]
+async fn test_ignoring_breakpoints_clears_and_restores_them(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let project_path = Path::new(path!("/project"));
+    let worktree = project
+        .update(cx, |project, cx| project.find_worktree(project_path, cx))
+        .expect("This worktree should exist in project")
+        .0;
+
+    let worktree_id = workspace
+        .update(cx, |_, _, cx| worktree.read(cx).id())
+        .unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    cx.run_until_parked();
+
+    let set_breakpoints_calls = Arc::new(AtomicUsize::new(0));
+    let last_breakpoint_count = Arc::new(AtomicUsize::new(usize::MAX));
+
+    client.on_request::<SetBreakpoints, _>({
+        let set_breakpoints_calls = set_breakpoints_calls.clone();
+        let last_breakpoint_count = last_breakpoint_count.clone();
+        move |_, args| {
+            assert_eq!(path!("/project/main.rs"), args.source.path.unwrap());
+            set_breakpoints_calls.fetch_add(1, Ordering::SeqCst);
+            last_breakpoint_count.store(
+                args.breakpoints.map_or(0, |breakpoints| breakpoints.len()),
+                Ordering::SeqCst,
+            );
+
+            Ok(dap::SetBreakpointsResponse {
+                breakpoints: Vec::default(),
+            })
+        }
+    });
+
+    session
+        .update(cx, |session, cx| session.toggle_ignore_breakpoints(cx))
+        .await;
+    cx.run_until_parked();
+
+    assert!(
+        session.read_with(cx, |session, _| session.ignore_breakpoints()),
+        "The session should report that it is ignoring breakpoints"
+    );
+    assert_eq!(1, set_breakpoints_calls.load(Ordering::SeqCst));
+    assert_eq!(
+        0,
+        last_breakpoint_count.load(Ordering::SeqCst),
+        "Ignoring breakpoints should send an empty breakpoint set to the adapter"
+    );
+
+    session
+        .update(cx, |session, cx| session.toggle_ignore_breakpoints(cx))
+        .await;
+    cx.run_until_parked();
+
+    assert!(
+        !session.read_with(cx, |session, _| session.ignore_breakpoints()),
+        "The session should stop ignoring breakpoints when toggled back"
+    );
+    assert_eq!(2, set_breakpoints_calls.load(Ordering::SeqCst));
+    assert_eq!(
+        1,
+        last_breakpoint_count.load(Ordering::SeqCst),
+        "Toggling back should send the breakpoint to the adapter again"
+    );
+}
+
+#[gpui::test]
 async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
