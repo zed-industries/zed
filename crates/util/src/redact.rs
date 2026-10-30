@@ -14,8 +14,9 @@ static REDACT_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
     // Only match sensitive names so a non-sensitive assignment does not
     // consume a nested or adjacent secret assignment as part of its value.
     // Use ASCII-only case folding for names; util does not enable regex's unicode-case feature.
+    // Stop unquoted values at shell separators, unless they are escaped.
     regex::Regex::new(&format!(
-        r#"(?i-u:((?:[a-z_][a-z0-9_]*)?(?:{})))=(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\S+)"#,
+        r#"(?i-u:((?:[a-z_][a-z0-9_]*)?(?:{})))=(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?:\\.|[^\s;&|\\])+)"#,
         REDACTED_SUFFIXES.join("|"),
     ))
     .unwrap()
@@ -103,4 +104,49 @@ mod tests {
             assert_eq!(redact_command(input), expected, "input: {input}");
         }
     }
+
+    #[test]
+    fn test_redact_command_with_adjacent_quoted_secret_assignments() {
+        for (input, expected) in [
+            (
+                "access_token=public;API_KEY='synthetic secret' command",
+                r#"access_token="[REDACTED]";API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                r#"access_token=public;API_KEY="synthetic secret" command"#,
+                r#"access_token="[REDACTED]";API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                "mode=debug;API_KEY='synthetic secret' command",
+                r#"mode=debug;API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                "Access_Token=public&&api_key='synthetic secret' command",
+                r#"Access_Token="[REDACTED]"&&api_key="[REDACTED]" command"#,
+            ),
+            (
+                "access_token=public||API_KEY='synthetic secret' command",
+                r#"access_token="[REDACTED]"||API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                "access_token=public|API_KEY='synthetic secret' command",
+                r#"access_token="[REDACTED]"|API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                r"access_token=public\;escaped;API_KEY='synthetic secret' command",
+                r#"access_token="[REDACTED]";API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                r"access_token=public\ with\ spaces;API_KEY='synthetic secret' command",
+                r#"access_token="[REDACTED]";API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                "API_KEY='secret with; semicolon';access_token=plain",
+                r#"API_KEY="[REDACTED]";access_token="[REDACTED]""#,
+            ),
+        ] {
+            assert_eq!(redact_command(input), expected, "input: {input}");
+        }
+    }
+
 }
