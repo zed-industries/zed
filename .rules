@@ -46,6 +46,18 @@
 * Consult `Fork.md` when present before changing a fork integration point. Record significant Crew divergences there with their intent, affected modules or symbols, upstream behavior to preserve, intentional behavior differences, verification steps, and the upstream revision last verified. Update or retire entries when the implementation changes; prefer symbols over fragile line numbers.
 * During upstream integration, review relevant behavior changes even when Git reports no conflict. Verify that new features and fixes remain reachable and correct through Crew's UI; compilation alone does not establish this.
 
+# Responses to the human
+
+The human reads only what is printed on screen. Print only what they need to understand the result or make a decision.
+
+* Start with the answer or outcome in one or two sentences. No preamble, no restating the request, no narration of steps you are taking or took.
+* Include only: the result, what changed (files or symbols), what failed or was skipped and why, and decisions the human must make. Leave out tool output, intermediate reasoning, exploration logs, and things the human already knows.
+* Do not repeat information. No closing summary that restates the reply.
+* Keep replies short. Use a list or table only when it is shorter and clearer than prose; no headings in short replies.
+* Put any question to the human at the end, separated from the rest of the reply. Each question must stand on its own: name the files, options, or items it refers to, give concrete options, and mark the recommended one. Never bury a question inside a paragraph.
+* Put long material (research, reports, plans) in a file and print only its path and the key points.
+* When the human only states an observation or complaint without a request, reply to it briefly and ask what they want. Do not start reading code, researching, or editing on your own.
+
 # Timers in tests
 
 * In GPUI tests, prefer GPUI executor timers over `smol::Timer::after(...)` when you need timeouts, delays, or to drive `run_until_parked()`:
