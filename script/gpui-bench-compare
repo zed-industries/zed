@@ -3,37 +3,34 @@
 
 Usage: script/gpui-bench-compare BASELINE CANDIDATE
        script/gpui-bench-compare BASELINE CANDIDATE --filter 'TextPanels/'
-       GPUI_RETAIN_VIEWS=1 script/gpui-bench-compare BASELINE CANDIDATE
        script/gpui-bench-compare BASELINE CANDIDATE --renderer gpu
 
 The invoking checkout's three benchmark files, randomized tree fixture and bench
-macro are used for BOTH revisions.
-Their GPUI benchmark APIs must be compatible. Sources, build artifacts, binaries,
-raw logs, Criterion samples and summary.json persist under target/gpui-bench-compare.
-Nothing switches the invoking checkout or publishes a branch.
+macro are used for BOTH revisions, so both revisions must provide the GPUI
+benchmark APIs they call. Sources, build artifacts, binaries, raw logs, Criterion
+samples and summary.json persist under target/gpui-bench-compare. Nothing
+switches the invoking checkout or publishes a branch.
 
-The default core suite keeps five full-refresh tree shapes, leaf style, cached
-leaf style, warm installed-font text, text first frame, three scrolling workloads,
-six bounds patterns and
-two inspector workloads. --full selects every variant; --slow restores the old
-settings (including inspector's five-second measurement). --repetitions controls
-independent runs, not random seeds. Use --seed to compare another fixed tree.
+The default core suite keeps five full-refresh tree shapes, leaf style, warm
+installed-font text, text first frame, three scrolling workloads, six bounds
+patterns and two inspector workloads. --full selects every variant; --slow
+restores the benchmarks' own Criterion settings (including inspector's
+five-second measurement). --repetitions controls independent runs, not random
+seeds. Use --seed to compare another fixed tree.
 
-Foreground instructions are primary: perf access is required on Linux. CPU mode
-is the default: production layout, prepaint, paint, Scene::finish sorting/batching,
-platform text shaping and glyph rasterization, with a memory-only atlas instead
-of GPU upload/submission. --renderer gpu includes headless GPU submission where
-supported, but driver queue backpressure can cause instruction-count drift even
-on an unchanged binary. Wall-time medians include calibration samples; raw logs
-retain frame metrics. CPU and GPU results must not be compared to one another.
-Spread is the full range of independent run medians divided by their median,
-not a confidence interval. Warnings also flag wide within-run sample ranges;
-even slow settings can drift, so inspect raw samples before judging small changes.
-Do not run competing benchmarks on the same machine.
+Foreground retired instructions are primary. Linux needs perf access
+(CAP_PERFMON or perf_event_paranoid <= 2); macOS needs Apple Silicon. CPU mode
+is the default: production layout, prepaint, paint, Scene::finish sorting and
+batching, platform text shaping and glyph rasterization, with a memory-only atlas
+instead of GPU upload and submission. --renderer gpu includes headless GPU
+submission where supported, but driver queue backpressure can cause
+instruction-count drift even on an unchanged binary. Wall-time medians include
+calibration samples; raw logs retain frame metrics. CPU and GPU results must not
+be compared to one another. Spread is the full range of independent run medians
+divided by their median, not a confidence interval. Warnings also flag wide
+within-run sample ranges; even slow settings can drift, so inspect raw samples
+before judging small changes. Do not run competing benchmarks on the same machine.
 LayoutChurnHeap diagnostics are excluded, including with --full or --filter.
-Both revisions inherit the same rendering mode: unset GPUI_LAYOUT_CACHE and
-GPUI_RETAIN_VIEWS for the default path, set GPUI_LAYOUT_CACHE=1 for cache-only,
-or GPUI_RETAIN_VIEWS=1 for retention (which implicitly enables the layout cache).
 Requires Python 3.12+ on Linux or macOS.
 """
 
@@ -63,7 +60,6 @@ CORE = {
     "randomized_element_tree": (
         r"^(RandomizedTree/full refresh/tree/|"
         r"RandomizedTree/leaf style/tree/mixed/|"
-        r"CachedTree/leaf style/tree/mixed/|"
         r"Scroll/workload/|"
         r"TextPanels/installed font two updates/panels/32$|"
         r"TextPanels/first populated installed font/panels/32$)"
@@ -229,8 +225,10 @@ def main():
     parser.add_argument("--renderer", choices=("cpu", "gpu"), default="cpu")
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--features", default="bench-support,x11" if sys.platform == "linux"
-                        else "bench-support")
+    # Text benchmarks need the platform's real text system: x11 on Linux, font-kit on macOS.
+    parser.add_argument("--features", default={"linux": "bench-support,x11",
+                                                "darwin": "bench-support,font-kit"}.get(
+                                                    sys.platform, "bench-support"))
     parser.add_argument("--timeout", type=int, default=300,
                         help="hard timeout for EACH build/run, at most 300 seconds")
     parser.add_argument("--cache", type=Path)
@@ -344,9 +342,8 @@ def main():
                 "results": results,
                 "cases": cases,
                 "environment": {name: value for name, value in environment.items()
-                                if name in ("BENCH_MEASUREMENT", "GPUI_LAYOUT_CACHE",
-                                            "GPUI_RETAIN_VIEWS", "GPUI_VERIFY_REUSE_DIFFERENTIAL",
-                                            "GPUI_BENCH_NO_GPU", "SEED", "ITERATIONS", "RUSTFLAGS")},
+                                if name in ("BENCH_MEASUREMENT", "GPUI_BENCH_NO_GPU",
+                                            "SEED", "ITERATIONS", "RUSTFLAGS")},
             }
             (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
     for index, revision in enumerate(revisions):
