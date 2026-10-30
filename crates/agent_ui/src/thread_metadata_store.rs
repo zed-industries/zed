@@ -831,6 +831,27 @@ impl ThreadMetadataStore {
             if thread.archived {
                 continue;
             }
+            // Only re-home threads that already belong to this project: a thread
+            // whose stored folder paths are a subset of the new worktree set.
+            // Threads from other projects (or other remotes) must keep their own
+            // paths - otherwise any worktree event re-groups every retained
+            // thread into the active project.
+            let new_folder_paths = worktree_paths.folder_path_list();
+            let belongs_to_project =
+                thread
+                    .worktree_paths
+                    .folder_path_list()
+                    .paths()
+                    .iter()
+                    .all(|path| {
+                        new_folder_paths
+                            .paths()
+                            .iter()
+                            .any(|new_path| new_path.as_path() == path.as_path())
+                    });
+            if !belongs_to_project {
+                continue;
+            }
             self.save_internal(ThreadMetadata {
                 worktree_paths: worktree_paths.clone(),
                 ..thread.clone()
@@ -4311,6 +4332,79 @@ mod tests {
                 entry.folder_paths().paths(),
                 &[std::path::PathBuf::from("/project-a")],
                 "retained thread A's stored path must not be updated while the project is via collab"
+            );
+        });
+    }
+
+    // A worktree event applies the active project's worktree paths to every
+    // retained thread. Only threads whose stored folder paths are a subset of
+    // the new set belong to that project; threads from other projects must
+    // keep their own paths (see #64899).
+    #[gpui::test]
+    async fn test_update_worktree_paths_only_rehomes_threads_that_belong_to_project(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let now = Utc::now();
+        let subset_thread = make_metadata(
+            "session-subset",
+            "Subset Thread",
+            now,
+            PathList::new(&[Path::new("/project-a")]),
+        );
+        let subset_thread_id = subset_thread.thread_id;
+        let outside_thread = make_metadata(
+            "session-outside",
+            "Outside Thread",
+            now,
+            PathList::new(&[Path::new("/project-a"), Path::new("/other-project")]),
+        );
+        let outside_thread_id = outside_thread.thread_id;
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(subset_thread, cx);
+                store.save(outside_thread, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let new_worktree_paths = WorktreePaths::from_folder_paths(&PathList::new(&[
+            Path::new("/project-a"),
+            Path::new("/project-b"),
+        ]));
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.update_worktree_paths(
+                    &[subset_thread_id, outside_thread_id],
+                    new_worktree_paths,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            // Threads whose stored paths are a subset of the new worktree
+            // set are re-homed to it.
+            assert_eq!(
+                store.entry(subset_thread_id).unwrap().folder_paths(),
+                &PathList::new(&[Path::new("/project-a"), Path::new("/project-b")]),
+                "thread with paths inside the new worktree set should be re-homed"
+            );
+
+            // Threads with a path outside the new worktree set keep their
+            // own paths instead of being regrouped into the active project.
+            assert_eq!(
+                store.entry(outside_thread_id).unwrap().folder_paths(),
+                &PathList::new(&[Path::new("/project-a"), Path::new("/other-project")]),
+                "thread with a path outside the new worktree set must keep its paths"
             );
         });
     }
