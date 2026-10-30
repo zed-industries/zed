@@ -50,6 +50,7 @@ pub struct Call {
     pub target: Location,
     pub site_count: usize,
     pub label: Option<Arc<CodeLabel>>,
+    pub label_includes_detail: bool,
     pub display: CallDisplay,
 }
 
@@ -60,6 +61,7 @@ pub struct CallDisplay {
     pub path: Option<SharedString>,
     pub full_signature: SharedString,
     pub label_text: Option<SharedString>,
+    pub separate_detail: Option<SharedString>,
     pub needs_tooltip: bool,
 }
 
@@ -127,6 +129,7 @@ pub async fn fetch_calls(
                         target,
                         site_count,
                         label: None,
+                        label_includes_detail: false,
                         display: CallDisplay::default(),
                     }
                 })
@@ -762,7 +765,7 @@ impl PickerDelegate for CallHierarchyDelegate {
         let tooltip_max_width = self.modal_width;
         let full_signature = call.display.full_signature.clone();
         let full_path = call.display.path.clone();
-        let detail = call.display.detail.clone();
+        let separate_detail = call.display.separate_detail.clone();
 
         Some(
             ListItem::new(ix)
@@ -792,7 +795,7 @@ impl PickerDelegate for CallHierarchyDelegate {
                         AnyView::from(cx.new(|_| CallSignatureTooltip {
                             label: tooltip_label.clone(),
                             full_signature: full_signature.clone(),
-                            detail: detail.clone(),
+                            separate_detail: separate_detail.clone(),
                             path: full_path.clone(),
                             max_width: tooltip_max_width,
                         }))
@@ -805,25 +808,9 @@ impl PickerDelegate for CallHierarchyDelegate {
 struct CallSignatureTooltip {
     label: Option<(Arc<CodeLabel>, SharedString)>,
     full_signature: SharedString,
-    detail: Option<SharedString>,
+    separate_detail: Option<SharedString>,
     path: Option<SharedString>,
     max_width: Pixels,
-}
-
-impl CallSignatureTooltip {
-    fn signature_parts(&self) -> (SharedString, Option<SharedString>) {
-        match &self.label {
-            Some((label, label_text)) => {
-                let separate_detail = if label_carries_detail(Some(label)) {
-                    None
-                } else {
-                    self.detail.clone()
-                };
-                (label_text.clone(), separate_detail)
-            }
-            None => (self.full_signature.clone(), None),
-        }
-    }
 }
 
 impl Render for CallSignatureTooltip {
@@ -831,15 +818,15 @@ impl Render for CallSignatureTooltip {
         let mut signature_style = buffer_text_style(cx);
         signature_style.line_height =
             relative(ThemeSettings::get_global(cx).buffer_line_height.value());
-        let (signature_text, separate_detail) = self.signature_parts();
+        let separate_detail = self.separate_detail.clone();
         let signature = match &self.label {
-            Some((label, _)) => StyledText::new(signature_text)
+            Some((label, label_text)) => StyledText::new(label_text)
                 .with_default_highlights(
                     &signature_style,
                     cx.theme().syntax().resolve_runs(&label.runs),
                 )
                 .into_any_element(),
-            None => div().child(signature_text).into_any_element(),
+            None => div().child(self.full_signature.clone()).into_any_element(),
         };
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         let max_width = self.max_width;
@@ -928,6 +915,7 @@ async fn attach_labels(calls: &mut [Call], project: &Entity<Project>, cx: &mut A
         };
         if let Some(label) = signature_label(&call.item, &language) {
             call.label = Some(Arc::new(label));
+            call.label_includes_detail = true;
             continue;
         }
         match fallback_groups
@@ -1168,6 +1156,11 @@ fn compute_call_display(call: &Call, cx: &App) -> CallDisplay {
         .label
         .as_ref()
         .map(|label| SharedString::from(label.text.clone()));
+    let separate_detail = if label_text.is_some() && !call.label_includes_detail {
+        detail.clone()
+    } else {
+        None
+    };
 
     CallDisplay {
         name: SharedString::from(call.item.name.clone()),
@@ -1175,6 +1168,7 @@ fn compute_call_display(call: &Call, cx: &App) -> CallDisplay {
         path,
         full_signature,
         label_text,
+        separate_detail,
         needs_tooltip: false,
     }
 }
@@ -1248,7 +1242,7 @@ fn render_item(
         ..HighlightStyle::default()
     };
 
-    let detail_styled = if label_carries_detail(call_item.label.as_deref()) {
+    let detail_styled = if call_item.label_includes_detail {
         None
     } else {
         call_item.display.detail.clone().map(|detail| {
@@ -1595,50 +1589,49 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_tooltip_appends_separate_detail_for_name_only_label() {
-        // Go labels are name-only ("func helper"), so the package-path detail
-        // lives outside the label and must be appended by the tooltip.
-        let tooltip = CallSignatureTooltip {
-            label: Some((
-                Arc::new(CodeLabel::new("func helper".to_string(), 5..11, Vec::new())),
-                "func helper".into(),
-            )),
-            full_signature: "helper github.com/foo/bar".into(),
-            detail: Some("github.com/foo/bar".into()),
-            path: None,
-            max_width: px(400.),
-        };
+    #[gpui::test]
+    async fn test_tooltip_appends_detail_only_when_label_lacks_it(cx: &mut TestAppContext) {
+        init_test(cx);
 
-        let (signature, detail) = tooltip.signature_parts();
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({"src": {"main.rs": source()}}))
+            .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+        let language = rust_lang();
 
-        assert_eq!(signature, "func helper");
-        assert_eq!(detail.as_deref(), Some("github.com/foo/bar"));
-    }
+        let cases = [
+            ("helper", "github.com/foo/bar", true), // Go: name-only label
+            ("helper", "fn helper(&self) -> i32", false), // Rust: complete signature
+            ("Widget", "ns::Widget", false),        // C++: prefix-only label
+        ];
 
-    #[test]
-    fn test_tooltip_does_not_duplicate_detail_for_complete_signature_label() {
-        // Rust labels are complete signatures, so the detail is already part of
-        // the label text and must not be appended again.
-        let tooltip = CallSignatureTooltip {
-            label: Some((
-                Arc::new(CodeLabel::new(
-                    "fn helper(&self) -> i32".to_string(),
-                    3..9,
-                    Vec::new(),
-                )),
-                "fn helper(&self) -> i32".into(),
-            )),
-            full_signature: "helper (&self) -> i32".into(),
-            detail: Some("(&self) -> i32".into()),
-            path: None,
-            max_width: px(400.),
-        };
+        for (name, detail, should_append) in cases {
+            let mut call = make_call(
+                name,
+                path!("/test/src/main.rs").as_ref(),
+                5,
+                Some(detail.to_string()),
+                &project,
+                cx,
+            )
+            .await;
 
-        let (signature, detail) = tooltip.signature_parts();
+            // Identical behavior with attach_labels(): use the signature label when it succeeds,
+            // otherwise the adapter's name-only fallback.
+            let primary_label = signature_label(&call.item, &language);
+            call.label_includes_detail = primary_label.is_some();
+            call.label = Some(Arc::new(primary_label.unwrap_or_else(|| {
+                CodeLabel::new(format!("fn {name}"), 3..3 + name.len(), Vec::new())
+            })));
 
-        assert_eq!(signature, "fn helper(&self) -> i32");
-        assert_eq!(detail, None);
+            let display = cx.update(|cx| compute_call_display(&call, cx));
+
+            assert_eq!(
+                display.separate_detail.is_some(),
+                should_append,
+                "case: name={name}, detail={detail}"
+            );
+        }
     }
 
     #[test]
@@ -2564,6 +2557,7 @@ mod tests {
             target,
             site_count: 1,
             label: None,
+            label_includes_detail: false,
             display: CallDisplay::default(),
         }
     }
