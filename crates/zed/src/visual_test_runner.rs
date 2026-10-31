@@ -2916,7 +2916,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                     .color(Color::Default),
             )
             .child(section_label(
-                "Linked worktree with branch (worktree / branch)",
+                "Linked worktree with branch (worktree • branch, both icons)",
             ))
             .child(
                 container().child(
@@ -2933,7 +2933,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                 ),
             )
             .child(section_label(
-                "Linked worktree without branch (detached HEAD)",
+                "Linked worktree without branch (worktree only)",
             ))
             .child(
                 container().child(
