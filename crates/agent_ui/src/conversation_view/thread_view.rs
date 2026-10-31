@@ -11675,9 +11675,11 @@ impl ThreadView {
                                             .color(Color::Muted),
                                     )
                                     .when_some(
-                                        self.entry_view_state.read(cx).entry(entry_ix).and_then(
-                                            |entry| entry.editor_for_patch_hunk(&hunk.buffer),
-                                        ),
+                                        hunk.resolved_buffer().and_then(|buffer| {
+                                            self.entry_view_state.read(cx).entry(entry_ix).and_then(
+                                                |entry| entry.editor_for_patch_hunk(&buffer),
+                                            )
+                                        }),
                                         |this, editor| this.child(editor),
                                     )
                             })),

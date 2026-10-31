@@ -386,7 +386,7 @@ impl EntryViewState {
                     materialize_tool_calls || self.is_tool_call_content_visible(tool_call);
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
-                let patch_hunk_buffers = tool_call
+                let patch_hunks = tool_call
                     .content()
                     .iter()
                     .filter_map(|content| match content {
@@ -396,12 +396,8 @@ impl EntryViewState {
                         _ => None,
                     })
                     .flat_map(|files| files.iter().flat_map(|file| &file.hunks))
-                    .map(|hunk| hunk.buffer.clone())
+                    .cloned()
                     .collect::<Vec<_>>();
-                let patch_hunk_ids: HashSet<_> = patch_hunk_buffers
-                    .iter()
-                    .map(|buffer| buffer.entity_id())
-                    .collect();
 
                 let tool_call_entry =
                     if let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) {
@@ -431,6 +427,7 @@ impl EntryViewState {
                     matches!(tool_call.status(), acp_thread::ToolCallStatus::Completed);
                 let emit_new_view_events = matches!(tool_call_sync, ToolCallSync::Live);
 
+                let mut patch_hunk_ids = HashSet::default();
                 if materialize_content {
                     for terminal in terminals {
                         let terminal_id = terminal.entity_id();
@@ -525,8 +522,10 @@ impl EntryViewState {
                             entry.insert(editor.into_any());
                         }
                     }
-                    for buffer in patch_hunk_buffers {
+                    for hunk in &patch_hunks {
+                        let buffer = hunk.buffer(cx);
                         let buffer_id = buffer.entity_id();
+                        patch_hunk_ids.insert(buffer_id);
                         if let collections::hash_map::Entry::Vacant(entry) = views.entry(buffer_id)
                         {
                             let editor = create_multibuffer_diff_editor(buffer, window, cx);
@@ -543,8 +542,15 @@ impl EntryViewState {
                 } else {
                     restored_view_ids.extend(terminals.iter().map(|terminal| terminal.entity_id()));
                     restored_view_ids.extend(diffs.iter().map(|diff| diff.entity_id()));
-                    restored_view_ids.extend(patch_hunk_ids.iter().copied());
+                    for hunk in &patch_hunks {
+                        if let Some(buffer) = hunk.resolved_buffer() {
+                            let buffer_id = buffer.entity_id();
+                            patch_hunk_ids.insert(buffer_id);
+                            restored_view_ids.insert(buffer_id);
+                        }
+                    }
                 }
+
                 if let Some(Entry::ToolCall(entry)) = self.entries.get_mut(index) {
                     for stale_id in entry.patch_hunk_ids.difference(&patch_hunk_ids) {
                         entry.content.remove(stale_id);
@@ -1180,6 +1186,426 @@ mod tests {
                 Some(Entry::AssistantMessage(_))
             ));
         });
+    }
+
+    #[gpui::test]
+    async fn test_diff_patch_lazy_sync_leaves_hunks_deferred(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "test.rs": "before\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
+            "toolCallId": "patch-tool",
+            "title": "Edit file",
+            "content": [{
+                "type": "diff",
+                "changes": [{"operation": "modify", "path": "/project/test.rs"}],
+                "patch": {
+                    "format": "git_patch",
+                    "text": "--- /project/test.rs\n+++ /project/test.rs\n@@ -1 +1 @@\n-before\n+after\n"
+                }
+            }]
+        }))
+        .expect("diff patch should deserialize");
+
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread = cx
+            .update(|_, cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch, cx))
+            .expect("diff patch should apply");
+        cx.run_until_parked();
+
+        let view_state = cx.new(|_cx| {
+            EntryViewState::new(
+                workspace.downgrade(),
+                project.downgrade(),
+                None,
+                Arc::new(RwLock::new(SessionCapabilities::default())),
+                "Test Agent".into(),
+            )
+        });
+
+        view_state.update_in(cx, |view_state, window, cx| {
+            view_state.sync_entry_initial(0, &thread, window, cx)
+        });
+
+        thread.read_with(cx, |thread, _| {
+            let (_, call) = thread
+                .tool_call(&acp_v2::ToolCallId::new("patch-tool"))
+                .unwrap();
+            let [acp_thread::ToolCallContent::DiffPatch { render, .. }] = call.content() else {
+                panic!("expected diff patch");
+            };
+            assert!(
+                render.files[0].hunks[0].is_deferred(),
+                "hunk must remain deferred on initial restore"
+            );
+            assert!(render.files[0].hunks[0].resolved_buffer().is_none());
+        });
+
+        view_state.update_in(cx, |view_state, window, cx| {
+            view_state.sync_entry_inner(0, &thread, window, ToolCallSync::Materialize, cx)
+        });
+
+        cx.run_until_parked();
+
+        let buffer = thread.read_with(cx, |thread, _| {
+            let (_, call) = thread
+                .tool_call(&acp_v2::ToolCallId::new("patch-tool"))
+                .unwrap();
+            let [acp_thread::ToolCallContent::DiffPatch { render, .. }] = call.content() else {
+                panic!("expected diff patch");
+            };
+            let hunk = &render.files[0].hunks[0];
+            assert!(
+                !hunk.is_deferred(),
+                "hunk must be resolved after materialization"
+            );
+            hunk.resolved_buffer().expect("buffer must exist")
+        });
+
+        let editor = view_state.read_with(cx, |view_state, _| {
+            view_state
+                .entry(0)
+                .unwrap()
+                .editor_for_patch_hunk(&buffer)
+                .expect("editor must exist for materialized hunk")
+        });
+        assert!(editor.read_with(cx, |editor, cx| editor.read_only(cx)));
+    }
+
+    #[gpui::test]
+    async fn test_diff_patch_cleans_up_stale_hunk_editors_while_hidden(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "test.rs": "before1\n\n\n\nbefore2\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let patch_1: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
+            "toolCallId": "patch-tool",
+            "title": "Edit file",
+            "content": [{
+                "type": "diff",
+                "changes": [{"operation": "modify", "path": "/project/test.rs"}],
+                "patch": {
+                    "format": "git_patch",
+                    "text": "--- /project/test.rs\n+++ /project/test.rs\n@@ -1 +1 @@\n-before1\n+after1\n@@ -5 +5 @@\n-before2\n+after2\n"
+                }
+            }]
+        }))
+        .expect("diff patch 1 should deserialize");
+
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread = cx
+            .update(|_, cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch_1, cx))
+            .expect("diff patch 1 should apply");
+        cx.run_until_parked();
+
+        let view_state = cx.new(|_cx| {
+            EntryViewState::new(
+                workspace.downgrade(),
+                project.downgrade(),
+                None,
+                Arc::new(RwLock::new(SessionCapabilities::default())),
+                "Test Agent".into(),
+            )
+        });
+
+        let tool_call_id = acp_v2::ToolCallId::new("patch-tool");
+
+        view_state.update(cx, |view_state, _| {
+            view_state.expand_tool_call(tool_call_id.clone());
+        });
+        view_state.update_in(cx, |view_state, window, cx| {
+            view_state.sync_entry_inner(0, &thread, window, ToolCallSync::Live, cx)
+        });
+        cx.run_until_parked();
+
+        let (buffer_1, buffer_2) = thread.read_with(cx, |thread, _| {
+            let (_, call) = thread.tool_call(&tool_call_id).unwrap();
+            let [acp_thread::ToolCallContent::DiffPatch { render, .. }] = call.content() else {
+                panic!("expected diff patch");
+            };
+            assert_eq!(render.files[0].hunks.len(), 2);
+            let b1 = render.files[0].hunks[0]
+                .resolved_buffer()
+                .expect("hunk 0 buffer");
+            let b2 = render.files[0].hunks[1]
+                .resolved_buffer()
+                .expect("hunk 1 buffer");
+            (b1, b2)
+        });
+
+        view_state.read_with(cx, |view_state, _| {
+            let entry = view_state.entry(0).expect("entry must exist");
+            assert!(entry.editor_for_patch_hunk(&buffer_1).is_some());
+            assert!(entry.editor_for_patch_hunk(&buffer_2).is_some());
+        });
+
+        view_state.update(cx, |view_state, _| {
+            view_state.collapse_tool_call(&tool_call_id);
+        });
+
+        let patch_2: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
+            "toolCallId": "patch-tool",
+            "title": "Edit file replacement",
+            "content": [{
+                "type": "diff",
+                "changes": [{"operation": "modify", "path": "/project/test.rs"}],
+                "patch": {
+                    "format": "git_patch",
+                    "text": "--- /project/test.rs\n+++ /project/test.rs\n@@ -20 +20 @@\n-before3\n+after3\n"
+                }
+            }]
+        }))
+        .expect("diff patch 2 should deserialize");
+
+        thread
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch_2, cx))
+            .expect("diff patch 2 should apply");
+        cx.run_until_parked();
+
+        view_state.update_in(cx, |view_state, window, cx| {
+            view_state.sync_entry_initial(0, &thread, window, cx)
+        });
+
+        view_state.read_with(cx, |view_state, _| {
+            let entry = view_state.entry(0).expect("entry must exist");
+            assert!(
+                entry.editor_for_patch_hunk(&buffer_1).is_none(),
+                "stale editor for buffer 1 must be removed"
+            );
+            assert!(
+                entry.editor_for_patch_hunk(&buffer_2).is_none(),
+                "stale editor for buffer 2 must be removed"
+            );
+        });
+
+        // Verify new hunk remains deferred
+        thread.read_with(cx, |thread, _| {
+            let (_, call) = thread.tool_call(&tool_call_id).unwrap();
+            let [acp_thread::ToolCallContent::DiffPatch { render, .. }] = call.content() else {
+                panic!("expected diff patch");
+            };
+            assert_eq!(render.files[0].hunks.len(), 1);
+            let new_hunk = &render.files[0].hunks[0];
+            assert!(
+                new_hunk.is_deferred(),
+                "new hunk must remain deferred while card is collapsed"
+            );
+            assert!(new_hunk.resolved_buffer().is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_diff_patch_many_hunks_remain_deferred_until_materialized(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let file_count = 10;
+        let hunks_per_file = 5;
+        let total_hunks = file_count * hunks_per_file;
+
+        let mut initial_tree = serde_json::Map::new();
+        let mut patch_text = String::new();
+        let mut changes = Vec::new();
+
+        for f in 0..file_count {
+            let file_name = format!("file_{f}.rs");
+            let file_path = format!("/project/{file_name}");
+            let mut file_content = String::new();
+            for h in 0..hunks_per_file {
+                file_content.push_str(&format!("// filler line {}\n", h * 20));
+                file_content.push_str(&format!("fn test_{f}_{h}() -> usize {{\n    {h}\n}}\n"));
+            }
+            initial_tree.insert(file_name.clone(), json!(file_content));
+
+            changes.push(json!({
+                "operation": "modify",
+                "path": file_path,
+            }));
+
+            patch_text.push_str(&format!(
+                "diff --git {file_path} {file_path}\n--- {file_path}\n+++ {file_path}\n"
+            ));
+            for h in 0..hunks_per_file {
+                let start_line = h * 20 + 2;
+                patch_text.push_str(&format!(
+                    "@@ -{start_line},3 +{start_line},3 @@\n fn test_{f}_{h}() -> usize {{\n-    {h}\n+    {}\n }}\n",
+                    h + 1000
+                ));
+            }
+        }
+
+        fs.insert_tree("/project", serde_json::Value::Object(initial_tree))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let patch: acp_v2::ToolCallUpdate = serde_json::from_value(json!({
+            "toolCallId": "large-patch-tool",
+            "title": "Large multi-file patch",
+            "content": [{
+                "type": "diff",
+                "changes": changes,
+                "patch": {
+                    "format": "git_patch",
+                    "text": patch_text
+                }
+            }]
+        }))
+        .expect("diff patch should deserialize");
+
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread = cx
+            .update(|_, cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(patch, cx))
+            .expect("diff patch should apply");
+        cx.run_until_parked();
+
+        let view_state = cx.new(|_cx| {
+            EntryViewState::new(
+                workspace.downgrade(),
+                project.downgrade(),
+                None,
+                Arc::new(RwLock::new(SessionCapabilities::default())),
+                "Test Agent".into(),
+            )
+        });
+
+        view_state.update_in(cx, |view_state, window, cx| {
+            view_state.sync_entry_initial(0, &thread, window, cx)
+        });
+
+        let (restored_deferred_count, restored_resolved_count) =
+            thread.read_with(cx, |thread, _| {
+                let (_, call) = thread
+                    .tool_call(&acp_v2::ToolCallId::new("large-patch-tool"))
+                    .unwrap();
+                let [acp_thread::ToolCallContent::DiffPatch { render, .. }] = call.content() else {
+                    panic!("expected diff patch");
+                };
+                let mut deferred = 0;
+                let mut resolved = 0;
+                for file in &render.files {
+                    for hunk in &file.hunks {
+                        if hunk.is_deferred() {
+                            deferred += 1;
+                        }
+                        if hunk.resolved_buffer().is_some() {
+                            resolved += 1;
+                        }
+                    }
+                }
+                (deferred, resolved)
+            });
+
+        let restored_editors_count = view_state.read_with(cx, |view_state, _| {
+            let entry = view_state.entry(0).expect("entry must exist");
+            let Entry::ToolCall(tool_call) = entry else {
+                panic!("expected tool call");
+            };
+            tool_call.content.len()
+        });
+
+        assert_eq!(restored_deferred_count, total_hunks);
+        assert_eq!(restored_resolved_count, 0);
+        assert_eq!(restored_editors_count, 0);
+
+        view_state.update_in(cx, |view_state, window, cx| {
+            view_state.sync_entry_inner(0, &thread, window, ToolCallSync::Materialize, cx)
+        });
+        cx.run_until_parked();
+
+        // Measure materialized state
+        let (materialized_deferred_count, materialized_resolved_count) =
+            thread.read_with(cx, |thread, _| {
+                let (_, call) = thread
+                    .tool_call(&acp_v2::ToolCallId::new("large-patch-tool"))
+                    .unwrap();
+                let [acp_thread::ToolCallContent::DiffPatch { render, .. }] = call.content() else {
+                    panic!("expected diff patch");
+                };
+                let mut deferred = 0;
+                let mut resolved = 0;
+                for file in &render.files {
+                    for hunk in &file.hunks {
+                        if hunk.is_deferred() {
+                            deferred += 1;
+                        }
+                        if hunk.resolved_buffer().is_some() {
+                            resolved += 1;
+                        }
+                    }
+                }
+                (deferred, resolved)
+            });
+
+        let materialized_editors_count = view_state.read_with(cx, |view_state, _| {
+            let entry = view_state.entry(0).expect("entry must exist");
+            let Entry::ToolCall(tool_call) = entry else {
+                panic!("expected tool call");
+            };
+            tool_call.content.len()
+        });
+
+        assert_eq!(materialized_deferred_count, 0);
+        assert_eq!(materialized_resolved_count, total_hunks);
+        assert_eq!(materialized_editors_count, total_hunks);
     }
 
     fn init_test(cx: &mut TestAppContext) {
