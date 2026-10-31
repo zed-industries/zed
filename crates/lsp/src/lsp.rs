@@ -19,7 +19,7 @@ use postage::{barrier, prelude::Stream};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json, value::RawValue};
-use util::command::{Child, Stdio};
+use util::process::Child;
 
 use gpui_util::{ResultExt, TryFutureExt};
 use std::path::Path;
@@ -32,6 +32,7 @@ use std::{
     ops::DerefMut,
     path::PathBuf,
     pin::Pin,
+    process::Stdio,
     sync::{
         Arc, Weak,
         atomic::{AtomicI32, Ordering::SeqCst},
@@ -537,19 +538,16 @@ impl LanguageServer {
             working_dir,
             binary.arguments
         );
-        let mut command = util::command::new_command(&binary.path);
+        let mut command = util::command::new_std_command(&binary.path);
         command
             .current_dir(working_dir)
             .args(&binary.arguments)
-            .envs(binary.env.clone().unwrap_or_default())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+            .envs(binary.env.clone().unwrap_or_default());
 
-        let mut server = command
-            .spawn()
-            .with_context(|| format!("failed to spawn command {command:?}",))?;
+        // Spawn through `util::process`, which puts the server in its own
+        // process group on Unix and a job object on Windows, so that anything
+        // the server spawns is torn down with it instead of being orphaned.
+        let mut server = Child::spawn(command, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
