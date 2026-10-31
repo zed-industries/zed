@@ -64,6 +64,9 @@ pub struct Organization {
 pub struct OrganizationUiPermissions {
     #[serde(default)]
     pub can_install_github_app: bool,
+    /// Whether the user may change the organization's settings in the dashboard.
+    #[serde(default)]
+    pub can_manage_organization: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
