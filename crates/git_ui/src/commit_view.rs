@@ -348,9 +348,10 @@ impl CommitView {
 
         let repository_clone = repository.clone();
         let project_clone = project.clone();
+        let commit_view_settings = EditorSettings::get_global(cx).commit_view;
 
         let load_diff_task = cx.spawn_in(window, async move |this, cx| {
-            let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
+            let mut folded_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
             for file in commit_diff.files {
@@ -413,8 +414,8 @@ impl CommitView {
                     }),
                 );
 
-                if is_binary {
-                    binary_buffer_ids.insert(buffer_id);
+                if is_binary || commit_view_settings.collapse_files {
+                    folded_buffer_ids.insert(buffer_id);
                 }
 
                 let buffer_diff = if is_binary {
@@ -494,10 +495,10 @@ impl CommitView {
                         });
                     });
                 });
-                if !binary_buffer_ids.is_empty() {
+                if !folded_buffer_ids.is_empty() {
                     this.editor.update(cx, |editor, cx| {
                         editor.rhs_editor().update(cx, |editor, cx| {
-                            editor.fold_buffers(binary_buffer_ids, cx);
+                            editor.fold_buffers(folded_buffer_ids, cx);
                         });
                     });
                 }
@@ -525,7 +526,7 @@ impl CommitView {
             commit,
             editor,
             message,
-            message_expanded: false,
+            message_expanded: commit_view_settings.expand_description,
             message_scroll_handle: ScrollHandle::new(),
             multibuffer,
             stash,
@@ -1542,10 +1543,142 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{EmptyView, TestAppContext};
+    use gpui::{EmptyView, TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use language::{Language, LanguageConfig, LanguageMatcher, markdown_lang};
+    use project::{FakeFs, git_store::CommitFile};
+    use serde_json::json;
     use settings::SettingsStore;
+    use std::path::Path;
+    use util::path;
+    use workspace::MultiWorkspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            language_model::init(cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    /// Opens a commit view for a commit that modifies `a.txt` and `b.txt`.
+    async fn open_test_commit_view(
+        cx: &mut TestAppContext,
+    ) -> (Entity<CommitView>, &mut VisualTestContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "a.txt": "a new\n", "b.txt": "b new\n" }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        cx.run_until_parked();
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("project should have a repository")
+        });
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+
+        let commit = CommitDetails {
+            sha: "0123456789abcdef0123456789abcdef01234567".into(),
+            message: "Subject\n\nA longer description.".into(),
+            ..Default::default()
+        };
+        let commit_diff = CommitDiff {
+            files: ["a.txt", "b.txt"]
+                .map(|path| CommitFile {
+                    path: RepoPath::new(path).expect("valid repository path"),
+                    old_text: Some(format!("{path} old\n")),
+                    new_text: Some(format!("{path} new\n")),
+                    is_binary: false,
+                })
+                .into(),
+            is_shallow_boundary: false,
+        };
+        let commit_view = workspace.update_in(cx, |workspace, window, cx| {
+            let workspace_entity = cx.entity();
+            let workspace_handle = cx.weak_entity();
+            let commit_view = cx.new(|cx| {
+                CommitView::new(
+                    commit,
+                    commit_diff,
+                    repository,
+                    project.clone(),
+                    workspace_entity,
+                    workspace_handle,
+                    None,
+                    None,
+                    window,
+                    cx,
+                )
+            });
+            workspace.add_item_to_active_pane(
+                Box::new(commit_view.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            commit_view
+        });
+        cx.run_until_parked();
+        (commit_view, cx)
+    }
+
+    fn folded_files(commit_view: &CommitView, cx: &App) -> usize {
+        let editor = commit_view.editor.read(cx).rhs_editor().read(cx);
+        commit_view
+            .multibuffer
+            .read(cx)
+            .all_buffers()
+            .iter()
+            .filter(|buffer| editor.is_buffer_folded(buffer.read(cx).remote_id(), cx))
+            .count()
+    }
+
+    #[gpui::test]
+    async fn test_commit_view_opens_with_defaults(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (commit_view, cx) = open_test_commit_view(cx).await;
+
+        commit_view.read_with(cx, |commit_view, cx| {
+            assert!(!commit_view.message_expanded);
+            assert_eq!(folded_files(commit_view, cx), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_commit_view_settings_expand_description_and_collapse_files(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let commit_view = settings
+                        .git
+                        .get_or_insert_default()
+                        .commit_view
+                        .get_or_insert_default();
+                    commit_view.expand_description = Some(true);
+                    commit_view.collapse_files = Some(true);
+                })
+            });
+        });
+        let (commit_view, cx) = open_test_commit_view(cx).await;
+
+        commit_view.read_with(cx, |commit_view, cx| {
+            assert!(commit_view.message_expanded);
+            assert_eq!(folded_files(commit_view, cx), 2);
+        });
+    }
 
     #[gpui::test]
     async fn test_build_buffer_resolves_injected_languages(cx: &mut TestAppContext) {
