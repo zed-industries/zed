@@ -239,7 +239,17 @@ fn should_recalculate_indented_range(
         }
 
         let next_line_indent = snapshot.buffer_snapshot().line_indent_for_row(new_row + 1);
-        next_line_indent.is_line_empty() || next_line_indent != old_line_indent
+        if next_line_indent.is_line_empty() || next_line_indent != old_line_indent {
+            return true;
+        }
+
+        let Some(previous_row) = new_row.0.checked_sub(1) else {
+            return false;
+        };
+        let previous_line_indent = snapshot
+            .buffer_snapshot()
+            .line_indent_for_row(MultiBufferRow(previous_row));
+        previous_line_indent.is_line_empty() || previous_line_indent != old_line_indent
     } else {
         true
     }
