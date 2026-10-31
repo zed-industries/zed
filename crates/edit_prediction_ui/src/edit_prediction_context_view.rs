@@ -30,7 +30,7 @@ use edit_prediction::{
     ContextRetrievalFinishedDebugEvent, ContextRetrievalStartedDebugEvent, DebugEvent,
     EditPredictionStore,
 };
-use workspace::Item;
+use workspace::{Item, ItemNavigation};
 
 pub struct EditPredictionContextView {
     empty_focus_handle: FocusHandle,
@@ -367,6 +367,10 @@ impl EventEmitter<()> for EditPredictionContextView {}
 
 impl Item for EditPredictionContextView {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Edit Prediction Context".into()

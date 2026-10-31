@@ -533,7 +533,7 @@ mod tests {
         ConfiguredLanguageServer, GlobalLspSettingsContent, LanguageSettingsContent,
         SemanticTokenRule, SemanticTokenRules, SemanticTokens, SettingsStore,
     };
-    use workspace::{MultiWorkspace, WorkspaceHandle as _};
+    use workspace::{MultiWorkspace, NavigableItem as _, WorkspaceHandle as _};
 
     use crate::{
         Capability,
@@ -1087,7 +1087,7 @@ mod tests {
                 .active_pane()
                 .read(cx)
                 .nav_history_for_item(&cx.entity());
-            editor.set_nav_history(Some(nav_history));
+            editor.bind_history(nav_history, cx);
             window.focus(&editor.focus_handle(cx), cx)
         });
 
@@ -1634,7 +1634,7 @@ mod tests {
                 .active_pane()
                 .read(cx)
                 .nav_history_for_item(&cx.entity());
-            editor.set_nav_history(Some(nav_history));
+            editor.bind_history(nav_history, cx);
             window.focus(&editor.focus_handle(cx), cx)
         });
 
@@ -1881,7 +1881,7 @@ mod tests {
                 .active_pane()
                 .read(cx)
                 .nav_history_for_item(&cx.entity());
-            editor.set_nav_history(Some(nav_history));
+            editor.bind_history(nav_history, cx);
             window.focus(&editor.focus_handle(cx), cx)
         });
 

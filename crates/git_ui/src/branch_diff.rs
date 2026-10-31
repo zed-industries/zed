@@ -26,13 +26,10 @@ use project::{
     },
 };
 use settings::{GitDiffBaseSetting, Settings};
-use std::{
-    any::{Any, TypeId},
-    sync::Arc,
-};
+use std::{any::TypeId, sync::Arc};
 use ui::{DiffStat, Divider, PopoverMenu, Tooltip, prelude::*};
 use workspace::{
-    ItemHandle, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
+    ItemHandle, ItemNavigation, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
     item::{Item, ItemEvent, SaveOptions},
     notifications::NotifyTaskExt,
@@ -456,19 +453,8 @@ impl Item for BranchDiff {
         Editor::to_item_events(event, f)
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.diff
-            .update(cx, |diff, cx| diff.deactivated(window, cx));
-    }
-
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.diff
-            .update(cx, |diff, cx| diff.navigate(data, window, cx))
+    fn navigation(&self, _: &Entity<Self>, cx: &App) -> ItemNavigation {
+        ItemNavigation::delegate(self.diff.read(cx).editor().clone())
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
@@ -500,16 +486,6 @@ impl Item for BranchDiff {
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.diff.read(cx).active_project_path(cx)
-    }
-
-    fn set_nav_history(
-        &mut self,
-        nav_history: ItemNavHistory,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.diff
-            .update(cx, |diff, cx| diff.set_nav_history(nav_history, cx));
     }
 
     fn can_split(&self) -> bool {

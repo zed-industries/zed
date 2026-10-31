@@ -8,7 +8,10 @@ use project::{Project, ProjectItem as _};
 use ui::{ButtonLike, ElevationIndex, KeyBinding, prelude::*};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
-use workspace::{Workspace, item::Item};
+use workspace::{
+    Workspace,
+    item::{Item, ItemNavigation},
+};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
@@ -205,6 +208,10 @@ impl Focusable for ReplSessionsPage {
 
 impl Item for ReplSessionsPage {
     type Event = ItemEvent;
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "REPL Sessions".into()

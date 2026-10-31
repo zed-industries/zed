@@ -22,7 +22,7 @@ use project::{
 };
 use settings::Settings;
 use std::{
-    any::{Any, TypeId},
+    any::TypeId,
     cmp::{self, Ordering},
     ops::Range,
     sync::Arc,
@@ -30,7 +30,7 @@ use std::{
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
 use ui::{Button, ButtonStyle, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use workspace::{
-    ItemHandle, ItemNavHistory, Workspace,
+    ItemHandle, ItemNavigation, Workspace,
     item::{Item, ItemEvent, TabContentParams},
 };
 
@@ -743,9 +743,8 @@ impl Item for BufferDiagnosticsEditor {
         })))
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor
-            .update(cx, |editor, cx| editor.deactivated(window, cx));
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::delegate(self.editor.clone())
     }
 
     fn for_each_project_item(&self, cx: &App, f: &mut dyn FnMut(EntityId, &dyn ProjectItem)) {
@@ -770,16 +769,6 @@ impl Item for BufferDiagnosticsEditor {
 
     fn capability(&self, cx: &App) -> Capability {
         self.multibuffer.read(cx).capability()
-    }
-
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.editor
-            .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
     fn reload(
@@ -809,17 +798,6 @@ impl Item for BufferDiagnosticsEditor {
         _cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         unreachable!()
-    }
-
-    fn set_nav_history(
-        &mut self,
-        nav_history: ItemNavHistory,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.editor.update(cx, |editor, _| {
-            editor.set_nav_history(Some(nav_history));
-        })
     }
 
     // Builds the content to be displayed in the tab.

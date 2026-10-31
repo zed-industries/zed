@@ -64,7 +64,6 @@ pub enum ToolbarItemLocation {
 pub struct Toolbar {
     active_item: Option<Box<dyn ItemHandle>>,
     hidden: bool,
-    can_navigate: bool,
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
 }
 
@@ -172,13 +171,7 @@ impl Toolbar {
             active_item: None,
             items: Default::default(),
             hidden: false,
-            can_navigate: true,
         }
-    }
-
-    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut Context<Self>) {
-        self.can_navigate = can_navigate;
-        cx.notify();
     }
 
     pub fn add_item<T>(&mut self, item: Entity<T>, window: &mut Window, cx: &mut Context<Self>)
