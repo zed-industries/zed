@@ -455,7 +455,12 @@ where
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
+        // rodio's channel converter overflows on a `usize::MAX` lower bound
+        // (panic in debug builds). Calling self.inner.size_hint() triggers the
+        // overflow.
+        //
+        // See https://github.com/RustAudio/rodio/issues/935
+        (0, None)
     }
 }
 
@@ -682,6 +687,16 @@ mod tests {
                 .inspect_buffer::<3, _>(|buffer| assert_eq!(buffer, &SAMPLES[..3]))
                 .count();
             assert_eq!(yielded, SAMPLES.len())
+        }
+
+        #[test]
+        fn sample_rate_conversion_does_not_overflow_for_unbounded_sources() {
+            let (mixer, source) = rodio::mixer::mixer(nz!(2), nz!(48000));
+            mixer.add(rodio::source::Zero::new(nz!(2), nz!(48000)));
+            let source = source.inspect_buffer::<960, _>(|_| {});
+            let mut source = rodio::source::UniformSourceIterator::new(source, nz!(2), nz!(44100));
+
+            assert!(source.next().is_some());
         }
     }
 
