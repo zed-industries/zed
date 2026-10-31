@@ -507,6 +507,11 @@ pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
         workspace.toggle_panel_focus::<GitPanel>(window, cx);
     });
+    workspace.register_action(|workspace, _: &FocusEditor, window, cx| {
+        if let Some(panel) = workspace.focus_panel::<GitPanel>(window, cx) {
+            panel.update(cx, |panel, cx| panel.focus_editor(&FocusEditor, window, cx));
+        }
+    });
     workspace.register_action(|workspace, _: &Toggle, window, cx| {
         if !workspace.toggle_panel_focus::<GitPanel>(window, cx) {
             workspace.close_panel::<GitPanel>(window, cx);
@@ -2555,6 +2560,10 @@ impl GitPanel {
     }
 
     fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_active_tab(GitPanelTab::Changes, window, cx);
+        if self.commit_editor_collapsed {
+            self.toggle_commit_editor(&ToggleCommitEditor, window, cx);
+        }
         self.commit_editor.update(cx, |editor, cx| {
             window.focus(&editor.focus_handle(cx), cx);
         });
@@ -15057,6 +15066,57 @@ mod tests {
             assert!(context.contains("menu"));
             assert!(!context.contains("CommitEditor"));
         })
+    }
+
+    #[gpui::test]
+    async fn test_focus_editor_from_history_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "tracked": "tracked\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("tracked", "old tracked\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_active_tab(GitPanelTab::History, window, cx);
+            panel.commit_editor_collapsed = true;
+            panel.focus_editor(&FocusEditor, window, cx);
+
+            assert_eq!(panel.active_tab, GitPanelTab::Changes);
+            assert!(
+                !panel.commit_editor_collapsed,
+                "focus_editor should show a hidden commit editor"
+            );
+            assert!(
+                panel.commit_editor.read(cx).is_focused(window),
+                "commit editor should be focused after focus_editor from the History tab"
+            );
+        });
     }
 
     #[gpui::test]
