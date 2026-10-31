@@ -115,27 +115,32 @@ unchanged.
 
 ## External-agent model catalog (`project` + `agent_ui`)
 
-**Purpose.** Per-project, in-memory catalog of the models exposed by each
-installed external agent. `project` owns the dependency-free contract so
-consumers such as `settings_ui` never depend on `agent_ui`; `agent_ui`
-registers a source that populates the catalog from open `AgentPanel`
-sessions or short-lived probe sessions.
+**Purpose.** App-wide, in-memory catalog of the models exposed by each
+installed external agent, keyed by `AgentId`. `project` owns the
+dependency-free contract so consumers such as `settings_ui` never depend on
+`agent_ui`; `agent_ui` registers a source that populates the catalog from
+open `AgentPanel` sessions or short-lived probe sessions.
 
 **Touched symbols.**
 
 - `crates/project/src/external_agent_models.rs` — `ExternalAgentModel`,
   `ExternalAgentModelsState`, `ExternalAgentModelCatalog`
-  (`state`/`set_state`/`set_task`/`clear`),
-  `set_external_agent_model_source`, `external_agent_model_catalog`,
-  `refresh_external_agent_models`; a private `GlobalExternalAgentModelCatalogs`
-  keyed by `EntityId` that drops entries whose project weak ref no longer
-  upgrades.
+  (`state`/`set_state`/`set_task`/`ensure_store_subscription`/
+  `enable_refresh_on_agent_changes`), `AgentFingerprint` (settings +
+  registry version), `set_external_agent_model_source`,
+  `external_agent_model_catalog`, `subscribe_external_agent_models`,
+  `refresh_external_agent_models`; a private
+  `GlobalExternalAgentModelCatalogs` holding the single app-wide catalog.
 - `crates/agent_ui/src/external_agent_models.rs` — `init` (one call from
-  `agent_ui::init`), the source `refresh`, `find_agent_panel`
-  (`workspace::AppState` workspace scan), `probe_agent`/`run_probe`/
-  `run_probe_session`/`read_models`/`close_probe_session` helpers, and the
+  `agent_ui::init`), the source `refresh`/`refresh_with_panel`,
+  `ExternalAgentModelPreload` (startup preload state),
+  `maybe_start_preload`/`wait_for_registry`/`on_registry_notification`/
+  `start_preload` (`App::observe_new::<AgentPanel>` trigger),
+  `find_agent_panel` (`workspace::AppState` workspace scan),
+  `probe_agent`/`run_probe`/`run_probe_session`/`read_models`/
+  `close_probe_session`/`archive_probe_session` helpers, and the
   `CatalogTestConnection`/`CatalogTestConfigOptions`/`CatalogTestModelSelector`/
-  `CatalogTestSessionList` test types.
+  `CatalogTestSessionList`/`GatedFetchHttpClient` test types.
 
 **Upstream behaviors preserved.**
 
@@ -143,26 +148,40 @@ sessions or short-lived probe sessions.
   `AgentConnectionStore::request_connection`; no external-agent process is
   spawned independently, and `Agent::server`/`CustomAgentServer` keep owning
   command construction.
-- `AgentServersUpdated` still owns agent lifecycle: the catalog subscribes to
-  it and clears all states and pending probe tasks rather than duplicating
-  the update logic.
 - `AuthRequired::from_error` remains the single classifier for auth errors;
   the probe never calls `authenticate`.
+- Reading the catalog (`external_agent_model_catalog`) never invokes the
+  source, so renders cannot start agent processes.
 
 **Intentional divergences.**
 
+- The catalog is app-wide: one `ExternalAgentModelCatalog` serves every
+  project and window. It subscribes to each local project's
+  `AgentServerStore` for `AgentServersUpdated`; non-local projects are never
+  subscribed, and a project's subscription is dropped when the project
+  entity is released.
+- `AgentServersUpdated` performs selective invalidation: a per-agent
+  `AgentFingerprint` (settings entry + registry version) is compared, and
+  only removed agents or agents whose fingerprint changed lose their state
+  and pending probe task. `enable_refresh_on_agent_changes` arms
+  re-invocation of the source after real changes; it stays off for
+  plain catalog reads/picker refreshes so they cannot drive probing.
+- On startup the catalog preloads once: the first `AgentPanel` for a local
+  project triggers it after `AgentRegistryStore::is_fetching` becomes
+  false (or immediately when no registry store exists), and only while AI
+  is enabled. Shared/collab and remote projects are never probed.
 - Probing an agent with no open session creates a throwaway ACP session
-  (no `ConversationView`, sidebar entry, or `ThreadMetadataStore` row) to
-  read its model list. The whole probe — the pending connection wait plus
-  `new_session` — is bounded by one 30s executor-timer timeout; a
+  (no `ConversationView`, sidebar entry, or visible `ThreadMetadataStore`
+  row) to read its model list. The whole probe — the pending connection
+  wait plus `new_session` — is bounded by one 30s executor-timer timeout; a
   late-resolving session is closed but its result is discarded, and a
   timed-out `Failed` entry is retried on the next refresh against the same
   pending `AgentConnectionStore` entry.
 - Probe sessions are torn down via `close_session` (when
   `supports_close_session`) and `delete_session` (when the agent's session
-  list supports deletion). **Approved limitation:** when an agent supports
-  neither, the probe session may remain visible in that agent's
-  history/import listings until the agent removes it.
+  list supports deletion). When the agent cannot delete the session, a
+  `ThreadMetadata` row is written with `archived: true` so the leftover
+  session stays out of the sidebar and the Import Thread list.
 - **Approved limitation:** cataloged external models are not applied to
   external sessions. The Agent Profiles settings page persists the
   selection through the existing `LanguageModelSelection` `default_model`

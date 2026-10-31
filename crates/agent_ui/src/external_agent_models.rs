@@ -6,37 +6,144 @@ use acp_thread::{
 };
 use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::{Result, anyhow};
+use chrono::Utc;
 use collections::HashSet;
 use futures::{FutureExt as _, channel::oneshot, future::Shared};
-use gpui::{App, AsyncApp, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, AsyncApp, Context, Entity, Global, SharedString, Subscription, Task, WeakEntity};
 use project::{
-    AgentId, Project,
+    AgentId, AgentRegistryStore, DisableAiSettings, Project, WorktreePaths,
     external_agent_models::{
         ExternalAgentModel, ExternalAgentModelCatalog, ExternalAgentModelsState,
-        set_external_agent_model_source,
+        set_external_agent_model_source, subscribe_external_agent_models,
     },
 };
-use util::ResultExt as _;
+use settings::Settings as _;
+use util::{ResultExt as _, path_list::PathList};
 
 use crate::agent_connection_store::AgentConnectedState;
+use crate::thread_metadata_store::{ThreadId, ThreadMetadata, ThreadMetadataStore};
 use crate::{Agent, AgentPanel};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+const PROBE_SESSION_TITLE: &str = "Model list probe";
+
+/// Startup preload happens once per application run, the first time all of
+/// these hold: an `AgentPanel` exists, its project is local, the ACP registry
+/// has finished loading, and AI is enabled.
+#[derive(Default)]
+struct ExternalAgentModelPreload {
+    started: bool,
+    panel: Option<WeakEntity<AgentPanel>>,
+    registry_subscription: Option<Subscription>,
+}
+
+impl Global for ExternalAgentModelPreload {}
 
 pub(crate) fn init(cx: &mut App) {
     set_external_agent_model_source(refresh, cx);
+    cx.observe_new::<AgentPanel>(|panel, _window, cx| {
+        maybe_start_preload(panel, cx.weak_entity(), cx)
+    })
+    .detach();
+}
+
+fn maybe_start_preload(
+    panel: &mut AgentPanel,
+    weak_panel: WeakEntity<AgentPanel>,
+    cx: &mut Context<AgentPanel>,
+) {
+    if cx.default_global::<ExternalAgentModelPreload>().started
+        || DisableAiSettings::get_global(cx).disable_ai
+        || !panel
+            .connection_store()
+            .read(cx)
+            .project()
+            .read(cx)
+            .is_local()
+    {
+        return;
+    }
+    if let Some(registry) = AgentRegistryStore::try_global(cx) {
+        if registry.read(cx).is_fetching() {
+            wait_for_registry(registry, weak_panel, cx);
+            return;
+        }
+    }
+    start_preload(weak_panel, cx);
+}
+
+/// Records the panel as the preload candidate and subscribes to the registry
+/// store before re-checking, so a notification that lands between the first
+/// `is_fetching` read and the subscription is not missed.
+fn wait_for_registry(
+    registry: Entity<AgentRegistryStore>,
+    weak_panel: WeakEntity<AgentPanel>,
+    cx: &mut Context<AgentPanel>,
+) {
+    cx.default_global::<ExternalAgentModelPreload>().panel = Some(weak_panel);
+    if cx
+        .default_global::<ExternalAgentModelPreload>()
+        .registry_subscription
+        .is_none()
+    {
+        let subscription = App::observe(cx, &registry, |registry, cx| {
+            on_registry_notification(registry, cx)
+        });
+        cx.default_global::<ExternalAgentModelPreload>()
+            .registry_subscription = Some(subscription);
+    }
+    if !registry.read(cx).is_fetching() {
+        if let Some(panel) = cx
+            .default_global::<ExternalAgentModelPreload>()
+            .panel
+            .take()
+        {
+            start_preload(panel, cx);
+        }
+    }
+}
+
+fn on_registry_notification(registry: Entity<AgentRegistryStore>, cx: &mut App) {
+    if registry.read(cx).is_fetching() {
+        return;
+    }
+    if let Some(panel) = cx
+        .default_global::<ExternalAgentModelPreload>()
+        .panel
+        .take()
+    {
+        start_preload(panel, cx);
+    }
+}
+
+fn start_preload(panel: WeakEntity<AgentPanel>, cx: &mut App) {
+    let Some(panel) = panel.upgrade() else {
+        return;
+    };
+    if DisableAiSettings::get_global(cx).disable_ai {
+        return;
+    }
+    let project = panel.read(cx).connection_store().read(cx).project().clone();
+    if !project.read(cx).is_local() {
+        return;
+    }
+    {
+        let preload = cx.default_global::<ExternalAgentModelPreload>();
+        if preload.started {
+            return;
+        }
+        preload.started = true;
+        preload.panel = None;
+        preload.registry_subscription = None;
+    }
+    let catalog = subscribe_external_agent_models(&project, cx);
+    catalog.update(cx, |catalog, _cx| catalog.enable_refresh_on_agent_changes());
+    cx.defer(move |cx| refresh_with_panel(project, panel, catalog, cx));
 }
 
 fn refresh(project: Entity<Project>, catalog: Entity<ExternalAgentModelCatalog>, cx: &mut App) {
-    let agent_ids: Vec<AgentId> = project
-        .read(cx)
-        .agent_server_store()
-        .read(cx)
-        .external_agents()
-        .cloned()
-        .collect();
-
     if project.read(cx).is_via_collab() {
+        let agent_ids = installed_agent_ids(&project, cx);
         fail_all(
             &catalog,
             &agent_ids,
@@ -47,10 +154,21 @@ fn refresh(project: Entity<Project>, catalog: Entity<ExternalAgentModelCatalog>,
     }
 
     let Some(panel) = find_agent_panel(&project, cx) else {
+        let agent_ids = installed_agent_ids(&project, cx);
         fail_all(&catalog, &agent_ids, "Agent Panel is not available", cx);
         return;
     };
 
+    refresh_with_panel(project, panel, catalog, cx);
+}
+
+fn refresh_with_panel(
+    project: Entity<Project>,
+    panel: Entity<AgentPanel>,
+    catalog: Entity<ExternalAgentModelCatalog>,
+    cx: &mut App,
+) {
+    let agent_ids = installed_agent_ids(&project, cx);
     let open_threads: Vec<Entity<AcpThread>> = panel
         .read(cx)
         .conversation_views()
@@ -91,6 +209,16 @@ fn refresh(project: Entity<Project>, catalog: Entity<ExternalAgentModelCatalog>,
 
         probe_agent(agent_id, &panel, &project, &catalog, cx);
     }
+}
+
+fn installed_agent_ids(project: &Entity<Project>, cx: &App) -> Vec<AgentId> {
+    project
+        .read(cx)
+        .agent_server_store()
+        .read(cx)
+        .external_agents()
+        .cloned()
+        .collect()
 }
 
 fn fail_all(
@@ -231,14 +359,25 @@ async fn run_probe_session(
     project: Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<Vec<ExternalAgentModel>> {
-    let new_session = cx.update(|cx| {
+    let agent_id = connection.agent_id();
+    let (new_session, work_dirs, remote_connection) = cx.update(|cx| {
         let work_dirs = project.read(cx).default_path_list(cx);
-        connection.clone().new_session(project, work_dirs, cx)
+        let remote_connection = project.read(cx).remote_connection_options(cx).cloned();
+        (
+            connection
+                .clone()
+                .new_session(project, work_dirs.clone(), cx),
+            work_dirs,
+            remote_connection,
+        )
     });
     let thread = new_session.await?;
     let session_id = thread.read_with(cx, |thread, _cx| thread.session_id().clone());
     let models = read_models(&connection, &session_id, cx).await;
-    close_probe_session(&connection, &session_id, cx).await;
+    let deleted = close_probe_session(&connection, &session_id, cx).await;
+    if !deleted {
+        archive_probe_session(&agent_id, session_id, work_dirs, remote_connection, cx);
+    }
     models
 }
 
@@ -278,17 +417,57 @@ async fn close_probe_session(
     connection: &Rc<dyn AgentConnection>,
     session_id: &acp_v2::SessionId,
     cx: &mut AsyncApp,
-) {
+) -> bool {
     if connection.supports_close_session() {
         let close = cx.update(|cx| connection.clone().close_session(session_id, cx));
         close.await.log_err();
     }
-    if let Some(session_list) = cx.update(|cx| connection.session_list(cx)) {
-        if session_list.supports_delete() {
-            let delete = cx.update(|cx| session_list.delete_session(session_id, cx));
-            delete.await.log_err();
-        }
+    let Some(session_list) = cx.update(|cx| connection.session_list(cx)) else {
+        return false;
+    };
+    if !session_list.supports_delete() {
+        return false;
     }
+    let delete = cx.update(|cx| session_list.delete_session(session_id, cx));
+    delete.await.log_err().is_some()
+}
+
+/// A probe session the agent could not delete stays in the agent's own
+/// history. Archiving matching metadata keeps it out of the sidebar and the
+/// Import Thread list.
+fn archive_probe_session(
+    agent_id: &AgentId,
+    session_id: acp_v2::SessionId,
+    work_dirs: PathList,
+    remote_connection: Option<remote::RemoteConnectionOptions>,
+    cx: &mut AsyncApp,
+) {
+    let Some(store) = cx.update(|cx| ThreadMetadataStore::try_global(cx)) else {
+        log::warn!(
+            "Model list probe session {session_id:?} for {agent_id:?} could not be deleted and \
+             ThreadMetadataStore is unavailable; the session may appear in the agent's history"
+        );
+        return;
+    };
+    let now = Utc::now();
+    store.update(cx, |store, cx| {
+        store.save(
+            ThreadMetadata {
+                thread_id: ThreadId::new(),
+                session_id: Some(session_id),
+                agent_id: agent_id.clone(),
+                title: Some(PROBE_SESSION_TITLE.into()),
+                title_override: None,
+                updated_at: now,
+                created_at: Some(now),
+                interacted_at: None,
+                worktree_paths: WorktreePaths::from_folder_paths(&work_dirs),
+                remote_connection,
+                archived: true,
+            },
+            cx,
+        );
+    });
 }
 
 fn models_from_config_options(
@@ -414,7 +593,19 @@ mod tests {
             agent::ThreadStore::init_global(cx);
             crate::thread_metadata_store::init(cx);
             init(cx);
+            // Most tests drive `refresh` directly; the startup preload would
+            // probe unseeded connections as soon as a panel appears. Preload
+            // tests reset this state explicitly.
+            cx.default_global::<ExternalAgentModelPreload>().started = true;
         });
+    }
+
+    fn reset_preload(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_global(ExternalAgentModelPreload::default()));
+    }
+
+    fn preload_started(cx: &mut TestAppContext) -> bool {
+        cx.update(|cx| cx.default_global::<ExternalAgentModelPreload>().started)
     }
 
     fn install_custom_agent(id: &str, cx: &mut TestAppContext) {
@@ -435,6 +626,30 @@ mod tests {
                 });
             });
         });
+    }
+
+    fn update_custom_agent_args(id: &str, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    let Some(entry) = content.agent_servers.get_or_insert_default().0.get_mut(id)
+                    else {
+                        panic!("{id} should have custom agent settings");
+                    };
+                    let CustomAgentServerSettings::Custom { args, .. } = entry else {
+                        panic!("{id} should be a custom agent");
+                    };
+                    args.push("--changed".to_string());
+                });
+            });
+        });
+    }
+
+    fn emit_agent_servers_updated(project: &Entity<Project>, cx: &mut VisualTestContext) {
+        let agent_server_store =
+            project.read_with(cx, |project, _cx| project.agent_server_store().clone());
+        agent_server_store.update(cx, |_store, cx| cx.emit(AgentServersUpdated));
+        cx.run_until_parked();
     }
 
     async fn setup_workspace_with_panel(
@@ -462,13 +677,41 @@ mod tests {
         (window_handle.into(), workspace, panel)
     }
 
-    fn seed_connection(
+    /// Like `setup_workspace_with_panel` but does not pump the executor, so a
+    /// test can seed stub connections before the startup preload task runs.
+    async fn setup_workspace_with_panel_unparked(
+        project: Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> (gpui::AnyWindowHandle, Entity<Workspace>, Entity<AgentPanel>) {
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let multi_workspace = window_handle
+            .root(cx)
+            .expect("MultiWorkspace root should exist");
+        let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+            multi_workspace.workspace().clone()
+        });
+        let app_state = workspace.read_with(cx, |workspace, _cx| workspace.app_state().clone());
+        cx.update(|cx| workspace::AppState::set_global(app_state, cx));
+
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        (window_handle.into(), workspace, panel)
+    }
+
+    /// Registers a stub connection entry without pumping, so several stubs can
+    /// be installed before the executor — and the startup preload — runs.
+    fn seed_connection_entry(
         panel: &Entity<AgentPanel>,
         connection: CatalogTestConnection,
         cx: &mut VisualTestContext,
     ) {
         let server: Rc<dyn agent_servers::AgentServer> =
-            Rc::new(StubAgentServer::new(connection.clone()).with_connection_agent_id());
+            Rc::new(StubAgentServer::new(connection).with_connection_agent_id());
         let agent = Agent::Custom {
             id: server.agent_id(),
         };
@@ -477,6 +720,14 @@ mod tests {
             .update(cx, |store, cx| {
                 store.request_connection(agent, server, cx);
             });
+    }
+
+    fn seed_connection(
+        panel: &Entity<AgentPanel>,
+        connection: CatalogTestConnection,
+        cx: &mut VisualTestContext,
+    ) {
+        seed_connection_entry(panel, connection.clone(), cx);
         cx.run_until_parked();
         assert_eq!(connection.new_session_call_count(), 0);
     }
@@ -893,7 +1144,49 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn agent_servers_updated_discards_in_flight_probe_result(cx: &mut TestAppContext) {
+    async fn unchanged_agent_servers_updated_keeps_in_flight_probe(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        init_test(cx, fs.clone());
+        let project = Project::test(fs, [], cx).await;
+        install_custom_agent("catalog-agent", cx);
+        let (window, _workspace, panel) = setup_workspace_with_panel(project.clone(), cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+
+        let connection = CatalogTestConnection::new("catalog-agent")
+            .with_close_session()
+            .with_model_list(AgentModelList::Flat(vec![stub_model("m", "M")]));
+        let release_session = connection.defer_next_new_session();
+        seed_connection(&panel, connection.clone(), cx);
+
+        let catalog = refresh(&project, cx);
+        assert_eq!(connection.new_session_call_count(), 1);
+        assert_eq!(
+            catalog_state(&catalog, "catalog-agent", cx).as_deref(),
+            Some("loading")
+        );
+
+        // An event without agent changes keeps the in-flight probe and its
+        // eventual result.
+        emit_agent_servers_updated(&project, cx);
+        assert_eq!(connection.new_session_call_count(), 1);
+        assert_eq!(
+            catalog_state(&catalog, "catalog-agent", cx).as_deref(),
+            Some("loading")
+        );
+
+        release_session.send(Ok(())).expect("probe still waiting");
+        cx.run_until_parked();
+        assert_eq!(connection.close_session_call_count(), 1);
+        assert_eq!(
+            catalog_state(&catalog, "catalog-agent", cx).as_deref(),
+            Some("ready")
+        );
+    }
+
+    #[gpui::test]
+    async fn changed_agent_servers_updated_discards_in_flight_probe_result(
+        cx: &mut TestAppContext,
+    ) {
         let fs = FakeFs::new(cx.executor());
         init_test(cx, fs.clone());
         let project = Project::test(fs, [], cx).await;
@@ -912,18 +1205,26 @@ mod tests {
             Some("loading")
         );
 
-        // Uninstalling/changing agents mid-probe clears the catalog task; the
-        // detached session lifecycle must still close the session, but the
-        // late result must not be written back into the cleared catalog.
-        let agent_server_store =
-            project.read_with(cx, |project, _cx| project.agent_server_store().clone());
-        agent_server_store.update(cx, |_store, cx| cx.emit(AgentServersUpdated));
-        assert_eq!(catalog_state(&catalog, "catalog-agent", cx), None);
+        // Changing the agent's settings mid-probe invalidates it; the
+        // refresh-on-change path re-probes (which fails here) and the detached
+        // late session must be closed but must not write its result back.
+        catalog.update(cx, |catalog, _cx| catalog.enable_refresh_on_agent_changes());
+        connection.fail_next_new_session(anyhow!("boom"));
+        update_custom_agent_args("catalog-agent", cx);
+        cx.run_until_parked();
+        assert_eq!(connection.new_session_call_count(), 2);
+        assert_eq!(
+            catalog_state(&catalog, "catalog-agent", cx).as_deref(),
+            Some("failed:boom")
+        );
 
         release_session.send(Ok(())).expect("probe still waiting");
         cx.run_until_parked();
         assert_eq!(connection.close_session_call_count(), 1);
-        assert_eq!(catalog_state(&catalog, "catalog-agent", cx), None);
+        assert_eq!(
+            catalog_state(&catalog, "catalog-agent", cx).as_deref(),
+            Some("failed:boom")
+        );
     }
 
     #[gpui::test]
@@ -994,7 +1295,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn agent_servers_updated_clears_catalog_and_refresh_reprobes(cx: &mut TestAppContext) {
+    async fn agent_servers_updated_preserves_unchanged_and_reprobes_changed(
+        cx: &mut TestAppContext,
+    ) {
         let fs = FakeFs::new(cx.executor());
         init_test(cx, fs.clone());
         let project = Project::test(fs, [], cx).await;
@@ -1013,12 +1316,20 @@ mod tests {
         );
         assert_eq!(connection.new_session_call_count(), 1);
 
-        let agent_server_store =
-            project.read_with(cx, |project, _cx| project.agent_server_store().clone());
-        agent_server_store.update(cx, |_store, cx| cx.emit(AgentServersUpdated));
-        assert_eq!(catalog_state(&catalog, "catalog-agent", cx), None);
+        // An unchanged event preserves the catalog and starts no probe.
+        emit_agent_servers_updated(&project, cx);
+        assert_eq!(connection.new_session_call_count(), 1);
+        assert_eq!(
+            catalog_state(&catalog, "catalog-agent", cx).as_deref(),
+            Some("ready")
+        );
 
-        let catalog = refresh(&project, cx);
+        // A settings change invalidates the agent and, with the
+        // refresh-on-change flag armed by the startup preload, re-probes it
+        // without another picker open.
+        catalog.update(cx, |catalog, _cx| catalog.enable_refresh_on_agent_changes());
+        update_custom_agent_args("catalog-agent", cx);
+        cx.run_until_parked();
         assert_eq!(connection.new_session_call_count(), 2);
         assert_eq!(
             catalog_state(&catalog, "catalog-agent", cx).as_deref(),
@@ -1049,6 +1360,53 @@ mod tests {
         );
         assert_eq!(connection.close_session_call_count(), 1);
         assert_eq!(session_list.delete_call_count(), 1);
+        // A deleted probe session leaves no metadata behind.
+        let probe_entries = cx.update(|_window, cx| {
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entries()
+                .filter(|entry| entry.title.as_deref() == Some(PROBE_SESSION_TITLE))
+                .count()
+        });
+        assert_eq!(probe_entries, 0);
+    }
+
+    #[gpui::test]
+    async fn undeletable_probe_session_is_archived(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        init_test(cx, fs.clone());
+        let project = Project::test(fs, [], cx).await;
+        install_custom_agent("catalog-agent", cx);
+        let (window, _workspace, panel) = setup_workspace_with_panel(project.clone(), cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+
+        let connection = CatalogTestConnection::new("catalog-agent")
+            .with_close_session()
+            .with_model_list(AgentModelList::Flat(vec![stub_model("m", "M")]));
+        seed_connection(&panel, connection.clone(), cx);
+
+        let catalog = refresh(&project, cx);
+        assert_eq!(
+            catalog_state(&catalog, "catalog-agent", cx).as_deref(),
+            Some("ready")
+        );
+        assert_eq!(connection.close_session_call_count(), 1);
+
+        // Without a deletable session list the probe archives metadata so the
+        // leftover session stays out of the sidebar and Import Thread.
+        cx.update(|_window, cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            let probes: Vec<_> = store
+                .entries()
+                .filter(|entry| entry.title.as_deref() == Some(PROBE_SESSION_TITLE))
+                .collect();
+            assert_eq!(probes.len(), 1);
+            let probe = probes[0];
+            assert!(probe.archived);
+            assert_eq!(probe.agent_id, AgentId::new("catalog-agent"));
+            assert!(probe.session_id.is_some());
+        });
     }
 
     #[gpui::test]
@@ -1074,8 +1432,13 @@ mod tests {
             .with_model_list(AgentModelList::Flat(vec![stub_model("m", "M")]));
         seed_connection(&panel, connection.clone(), cx);
 
-        let metadata_entries =
-            cx.update(|_window, cx| ThreadMetadataStore::global(cx).read(cx).entries().count());
+        let visible_entries = cx.update(|_window, cx| {
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entries()
+                .filter(|entry| !entry.archived)
+                .count()
+        });
 
         refresh(&project, cx);
 
@@ -1087,9 +1450,20 @@ mod tests {
         panel.read_with(cx, |panel, _cx| {
             assert!(panel.conversation_views().is_empty());
         });
-        let metadata_entries_after =
-            cx.update(|_window, cx| ThreadMetadataStore::global(cx).read(cx).entries().count());
-        assert_eq!(metadata_entries, metadata_entries_after);
+        // The probe session could not be deleted, so it is archived: sidebar
+        // and import-visible entries stay unchanged.
+        cx.update(|_window, cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            let visible_after = store.entries().filter(|entry| !entry.archived).count();
+            assert_eq!(visible_entries, visible_after);
+            let probes: Vec<_> = store
+                .archived_entries()
+                .filter(|entry| entry.title.as_deref() == Some(PROBE_SESSION_TITLE))
+                .collect();
+            assert_eq!(probes.len(), 1);
+            assert_eq!(probes[0].agent_id, AgentId::new("catalog-agent"));
+        });
     }
 
     #[gpui::test]
@@ -1118,6 +1492,204 @@ mod tests {
                         .is_none()
                 })
         );
+    }
+
+    #[gpui::test]
+    async fn preload_probes_each_agent_once(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        init_test(cx, fs.clone());
+        reset_preload(cx);
+
+        // The registry stays in-flight so stub connections can be seeded
+        // before the preload probes.
+        let (gated, http_client) = GatedFetchHttpClient::new();
+        let release_fetch = gated.defer_next_fetch();
+        cx.update(|cx| {
+            AgentRegistryStore::init_global(cx, fs.clone(), http_client);
+        });
+        cx.run_until_parked();
+
+        install_custom_agent("agent-one", cx);
+        install_custom_agent("agent-two", cx);
+        let project = Project::test(fs, [], cx).await;
+        let (window, _workspace, panel) =
+            setup_workspace_with_panel_unparked(project.clone(), cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+
+        let connection_one = CatalogTestConnection::new("agent-one")
+            .with_model_list(AgentModelList::Flat(vec![stub_model("m1", "M1")]));
+        let connection_two = CatalogTestConnection::new("agent-two")
+            .with_model_list(AgentModelList::Flat(vec![stub_model("m2", "M2")]));
+        seed_connection_entry(&panel, connection_one.clone(), cx);
+        seed_connection_entry(&panel, connection_two.clone(), cx);
+
+        release_fetch.send(()).expect("fetch still gated");
+        cx.run_until_parked();
+
+        assert_eq!(connection_one.new_session_call_count(), 1);
+        assert_eq!(connection_two.new_session_call_count(), 1);
+        assert!(preload_started(cx));
+
+        // The app-wide catalog already holds the results; a picker refresh
+        // does not start another session for Ready agents.
+        let catalog = cx
+            .update(|_window, cx| external_agent_models::external_agent_model_catalog(cx))
+            .expect("app-wide catalog exists after preload");
+        assert_eq!(
+            catalog_state(&catalog, "agent-one", cx).as_deref(),
+            Some("ready")
+        );
+
+        refresh(&project, cx);
+        assert_eq!(connection_one.new_session_call_count(), 1);
+        assert_eq!(connection_two.new_session_call_count(), 1);
+    }
+
+    #[gpui::test]
+    async fn preload_waits_for_registry_to_finish_fetching(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        init_test(cx, fs.clone());
+        reset_preload(cx);
+
+        let (gated, http_client) = GatedFetchHttpClient::new();
+        let release_fetch = gated.defer_next_fetch();
+        cx.update(|cx| {
+            AgentRegistryStore::init_global(cx, fs.clone(), http_client);
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert!(AgentRegistryStore::global(cx).read(cx).is_fetching());
+        });
+
+        install_custom_agent("catalog-agent", cx);
+        let project = Project::test(fs, [], cx).await;
+        let (window, _workspace, panel) =
+            setup_workspace_with_panel_unparked(project.clone(), cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        let connection = CatalogTestConnection::new("catalog-agent")
+            .with_model_list(AgentModelList::Flat(vec![stub_model("m", "M")]));
+        seed_connection_entry(&panel, connection.clone(), cx);
+        cx.run_until_parked();
+
+        // The panel exists but the registry is still fetching: no probe yet.
+        assert_eq!(connection.new_session_call_count(), 0);
+        assert!(!preload_started(cx));
+
+        release_fetch.send(()).expect("fetch still gated");
+        cx.run_until_parked();
+        assert_eq!(connection.new_session_call_count(), 1);
+        assert!(preload_started(cx));
+    }
+
+    #[gpui::test]
+    async fn preload_skips_when_ai_is_disabled(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        init_test(cx, fs.clone());
+        reset_preload(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.project.disable_ai = Some(true.into());
+                });
+            });
+        });
+
+        install_custom_agent("catalog-agent", cx);
+        let project = Project::test(fs, [], cx).await;
+        let (window, _workspace, panel) =
+            setup_workspace_with_panel_unparked(project.clone(), cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        let connection = CatalogTestConnection::new("catalog-agent")
+            .with_model_list(AgentModelList::Flat(vec![stub_model("m", "M")]));
+        seed_connection_entry(&panel, connection.clone(), cx);
+        cx.run_until_parked();
+
+        // AI is disabled: the preload never starts a probe nor marks itself.
+        assert_eq!(connection.new_session_call_count(), 0);
+        assert!(!preload_started(cx));
+    }
+
+    #[gpui::test]
+    async fn preload_skips_non_local_project_without_marking_started(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        init_test(cx, fs.clone());
+        reset_preload(cx);
+
+        let (gated, http_client) = GatedFetchHttpClient::new();
+        let release_fetch = gated.defer_next_fetch();
+        cx.update(|cx| {
+            AgentRegistryStore::init_global(cx, fs.clone(), http_client);
+        });
+        cx.run_until_parked();
+
+        install_custom_agent("catalog-agent", cx);
+        let project = Project::test(fs, [], cx).await;
+        let (window, _workspace, panel) =
+            setup_workspace_with_panel_unparked(project.clone(), cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        let connection = CatalogTestConnection::new("catalog-agent")
+            .with_model_list(AgentModelList::Flat(vec![stub_model("m", "M")]));
+        seed_connection_entry(&panel, connection.clone(), cx);
+
+        // The panel's project turns out to be non-local by the time the
+        // pending preload checks it.
+        project.update(cx, |project, _cx| project.mark_as_collab_for_testing());
+        release_fetch.send(()).expect("fetch still gated");
+        cx.run_until_parked();
+
+        assert_eq!(connection.new_session_call_count(), 0);
+        assert!(!preload_started(cx));
+    }
+
+    #[gpui::test]
+    async fn preload_dropped_panel_falls_back_to_later_live_panel(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        init_test(cx, fs.clone());
+        reset_preload(cx);
+
+        // The registry stays in-flight while the first panel is dropped and
+        // replaced, so the recorded candidate is exercised.
+        let (gated, http_client) = GatedFetchHttpClient::new();
+        let release_fetch = gated.defer_next_fetch();
+        cx.update(|cx| {
+            AgentRegistryStore::init_global(cx, fs.clone(), http_client);
+        });
+        cx.run_until_parked();
+
+        install_custom_agent("catalog-agent", cx);
+        let project = Project::test(fs, [], cx).await;
+        let (window, workspace, panel_one) =
+            setup_workspace_with_panel_unparked(project.clone(), cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+
+        // The first panel is removed and released before the pending preload
+        // checks it; the replacement panel becomes the recorded candidate.
+        workspace.update_in(cx, |workspace, window, cx| {
+            for dock in workspace.all_docks() {
+                dock.update(cx, |dock, cx| {
+                    dock.remove_panel(&panel_one, window, cx);
+                });
+            }
+        });
+        drop(panel_one);
+        cx.update(|_window, _cx| {});
+
+        let panel_two = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        let connection = CatalogTestConnection::new("catalog-agent")
+            .with_model_list(AgentModelList::Flat(vec![stub_model("m", "M")]));
+        seed_connection_entry(&panel_two, connection.clone(), cx);
+
+        release_fetch.send(()).expect("fetch still gated");
+        cx.run_until_parked();
+
+        // The probe ran through the second panel's connection store, not the
+        // dead panel.
+        assert_eq!(connection.new_session_call_count(), 1);
+        assert!(preload_started(cx));
     }
 
     #[gpui::test]
@@ -1264,6 +1836,42 @@ mod tests {
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
+        }
+    }
+
+    /// An HTTP client whose requests hang until the test releases them, used
+    /// to hold the ACP registry in the `is_fetching` state.
+    struct GatedFetchHttpClient {
+        deferred_fetches: Arc<Mutex<VecDeque<oneshot::Receiver<()>>>>,
+    }
+
+    impl GatedFetchHttpClient {
+        fn new() -> (Self, Arc<http_client::HttpClientWithUrl>) {
+            let deferred_fetches = Arc::new(Mutex::new(VecDeque::new()));
+            let client = http_client::FakeHttpClient::create({
+                let deferred_fetches = deferred_fetches.clone();
+                move |_request| {
+                    let receiver = deferred_fetches.lock().pop_front();
+                    async move {
+                        if let Some(receiver) = receiver {
+                            if let Err(error) = receiver.await {
+                                return Err(anyhow::Error::new(error));
+                            }
+                        }
+                        let response = http_client::Response::builder()
+                            .status(404)
+                            .body(http_client::AsyncBody::empty())?;
+                        Ok(response)
+                    }
+                }
+            });
+            (Self { deferred_fetches }, client)
+        }
+
+        fn defer_next_fetch(&self) -> oneshot::Sender<()> {
+            let (sender, receiver) = oneshot::channel();
+            self.deferred_fetches.lock().push_back(receiver);
+            sender
         }
     }
 

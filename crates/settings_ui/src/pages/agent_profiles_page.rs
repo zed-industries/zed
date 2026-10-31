@@ -470,7 +470,7 @@ fn external_default_model_label(
     let agent_name = store
         .agent_display_name(&agent_id)
         .unwrap_or_else(|| agent_id.0.clone());
-    let model_name = external_agent_model_catalog(project, cx).and_then(|catalog| {
+    let model_name = external_agent_model_catalog(cx).and_then(|catalog| {
         match catalog.read(cx).state(&agent_id) {
             Some(ExternalAgentModelsState::Ready(models)) => models
                 .iter()

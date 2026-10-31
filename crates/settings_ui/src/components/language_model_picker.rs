@@ -990,14 +990,9 @@ mod tests {
         });
 
         let cx = cx.add_empty_window();
-        let picker = build_picker(
-            cx,
-            None,
-            Some(project.clone()),
-            Rc::new(RefCell::new(Vec::new())),
-        );
+        let picker = build_picker(cx, None, Some(project), Rc::new(RefCell::new(Vec::new())));
         let catalog = cx
-            .update(|_, cx| external_agent_model_catalog(&project, cx))
+            .update(|_, cx| external_agent_model_catalog(cx))
             .expect("catalog created by the picker's refresh");
 
         picker.update_in(cx, |picker, window, cx| {
@@ -1053,11 +1048,11 @@ mod tests {
         let picker = build_picker(
             cx,
             Some(selection("late-agent", "m1")),
-            Some(project.clone()),
+            Some(project),
             Rc::new(RefCell::new(Vec::new())),
         );
         let catalog = cx
-            .update(|_, cx| external_agent_model_catalog(&project, cx))
+            .update(|_, cx| external_agent_model_catalog(cx))
             .expect("catalog");
 
         // Only the Loading status row exists for the agent — nothing matches
