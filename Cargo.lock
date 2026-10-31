@@ -7058,6 +7058,7 @@ dependencies = [
  "language",
  "language_model",
  "log",
+ "lsp",
  "markdown",
  "menu",
  "multi_buffer",
