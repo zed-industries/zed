@@ -1,3 +1,4 @@
+use crate::background_image::background_layers;
 use crate::focus_follows_mouse::FocusFollowsMouse as _;
 use crate::persistence::model::DockData;
 use crate::status_bar::HideStatusItem;
@@ -362,6 +363,14 @@ impl DockPosition {
             Self::Left => "Left",
             Self::Bottom => "Bottom",
             Self::Right => "Right",
+        }
+    }
+
+    fn background_target(&self) -> &'static str {
+        match self {
+            Self::Left => "left_dock",
+            Self::Bottom => "bottom_dock",
+            Self::Right => "right_dock",
         }
     }
 
@@ -1278,6 +1287,8 @@ impl Render for Dock {
         let dispatch_context = Self::dispatch_context(cx);
         if let Some(entry) = self.visible_entry() {
             let position = self.position;
+            let background =
+                background_layers([entry.panel.panel_key(), position.background_target()], cx);
             let create_resize_handle = || {
                 let handle = div()
                     .id("resize-handle")
@@ -1357,6 +1368,7 @@ impl Render for Dock {
                     DockPosition::Right => this.border_l_1(),
                     DockPosition::Bottom => this.border_t_1(),
                 })
+                .children(background.below)
                 .child(
                     div()
                         .map(|this| match self.position().axis() {
@@ -1370,6 +1382,7 @@ impl Render for Dock {
                                 .cached(StyleRefinement::default().v_flex().size_full()),
                         ),
                 )
+                .children(background.above)
                 .when(self.resizable(cx), |this| {
                     this.child(create_resize_handle())
                 })
