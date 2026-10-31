@@ -18835,6 +18835,87 @@ async fn test_project_group_key_groups_nested_linked_worktree_under_main_repo(
 }
 
 #[gpui::test]
+async fn test_unstaged_diff_ignores_invalid_nested_git_directory(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = TempTree::new(json!({
+        "Engine": {
+            "Source": {}
+        }
+    }));
+    let work_dir = git_init(root.path());
+    let source_path = work_dir.join("Engine/Source/AssetRenameManager.cpp");
+    let base_text = (0..2200)
+        .map(|line| format!("// line {line}\n"))
+        .collect::<String>();
+    std::fs::write(&source_path, &base_text).expect("write original source");
+    git_add("Engine/Source/AssetRenameManager.cpp", &work_dir);
+    git_commit("initial source", &work_dir);
+
+    let modified_text = base_text.replace("// line 1647\n", "one\ntwo\nthree\nfour\nfive\nsix\n");
+    std::fs::write(&source_path, &modified_text).expect("modify source");
+    let invalid_dot_git = work_dir.join("Engine/.git");
+    std::fs::create_dir(&invalid_dot_git).expect("create invalid nested git directory");
+    std::fs::write(invalid_dot_git.join("index-test.tmp"), "temporary index")
+        .expect("write temporary index");
+
+    for opened_path in [
+        &work_dir,
+        &work_dir.join("Engine"),
+        &work_dir.join("Engine/Source"),
+    ] {
+        let project = Project::test(
+            RealFs::new(None, cx.executor()),
+            [opened_path.as_path()],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        project.read_with(cx, |project, cx| {
+            let repositories = project.repositories(cx);
+            assert_eq!(repositories.len(), 1);
+            let repository = repositories.values().next().expect("parent repository");
+            assert_eq!(
+                repository.read(cx).work_directory_abs_path.as_ref(),
+                util::paths::SanitizedPath::new(&work_dir).as_path()
+            );
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(&source_path, cx)
+            })
+            .await
+            .expect("open source");
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        let unstaged_diff = git_store
+            .update(cx, |git_store, cx| {
+                git_store.open_unstaged_diff(buffer.clone(), cx)
+            })
+            .await
+            .expect("open unstaged diff");
+        let changes = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(buffer.clone(), cx)
+            })
+            .await
+            .expect("open changes");
+        for diff in [&unstaged_diff, &changes] {
+            diff.read_with(cx, |diff, cx| {
+                assert_eq!(
+                    diff.base_text_string(cx).as_deref(),
+                    Some(base_text.as_str())
+                );
+                assert_eq!(diff.changed_row_counts(), (6, 1));
+            });
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_repository_subfolder_git_status(
     executor: gpui::BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
