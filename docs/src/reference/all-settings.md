@@ -5285,6 +5285,26 @@ The shell running in the terminal needs to be configured to emit the title.
 
 Example command to set the title: `echo -e "\e]2;New Title\007";`
 
+## Terminal: Tab Bar
+
+- Description: Whether or not to show the tab bar in the terminal panel. The `terminal_panel::ToggleTabBar` action toggles this setting.
+- Setting: `tab_bar`
+- Default:
+
+```json [settings]
+{
+  "terminal": {
+    "tab_bar": {
+      "show": true
+    }
+  }
+}
+```
+
+**Options**
+
+`boolean` values
+
 ### Terminal: Button
 
 - Description: Control to show or hide the terminal button in the status bar
