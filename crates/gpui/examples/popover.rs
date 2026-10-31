@@ -179,7 +179,7 @@ fn run_example() {
                 secondary_open: false,
             })
         })
-        .unwrap();
+        .detach_and_log_err(cx);
         cx.activate(true);
     });
 }

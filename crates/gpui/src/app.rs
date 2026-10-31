@@ -1576,7 +1576,28 @@ impl App {
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `Window`, which can be used to interact with window-specific
     /// functionality.
+    ///
+    /// Dropping a pending task cancels the request; dropping it after completion does not close
+    /// the window.
     pub fn open_window<V: 'static + Render>(
+        &mut self,
+        options: crate::WindowOptions,
+        build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V> + 'static,
+    ) -> Task<anyhow::Result<WindowHandle<V>>> {
+        if self.quitting {
+            return Task::ready(Err(anyhow::anyhow!("app is quitting")));
+        }
+        self.spawn(async move |cx: &mut AsyncApp| {
+            cx.update(|cx| {
+                if cx.quitting {
+                    anyhow::bail!("app is quitting");
+                }
+                cx.open_window_sync(options, build_root_view)
+            })
+        })
+    }
+
+    pub(crate) fn open_window_sync<V: 'static + Render>(
         &mut self,
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
@@ -3668,8 +3689,48 @@ mod test {
 
     use crate::{
         AppContext, Context, Empty, FallbackFontClass, IntoElement, MissingGlyph, Render,
-        TestAppContext, Window,
+        TestAppContext, Window, WindowOptions,
     };
+
+    #[gpui::test]
+    async fn open_window_rejects_requests_while_quitting(cx: &mut TestAppContext) {
+        let async_app = cx.update(|cx| cx.to_async());
+        cx.update(|cx| cx.quitting = true);
+        let app_request =
+            cx.update(|cx| cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| Empty)));
+        let async_request =
+            async_app.open_window(WindowOptions::default(), |_, cx| cx.new(|_| Empty));
+        assert_eq!(
+            app_request.await.unwrap_err().to_string(),
+            "app is quitting"
+        );
+        assert_eq!(
+            async_request.await.unwrap_err().to_string(),
+            "app is quitting"
+        );
+        assert!(cx.windows().is_empty());
+        cx.update(|cx| cx.quitting = false);
+    }
+
+    #[gpui::test]
+    async fn open_window_rechecks_quitting_when_request_executes(cx: &mut TestAppContext) {
+        let async_app = cx.update(|cx| cx.to_async());
+        let app_request =
+            cx.update(|cx| cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| Empty)));
+        let async_request =
+            async_app.open_window(WindowOptions::default(), |_, cx| cx.new(|_| Empty));
+        cx.update(|cx| cx.quitting = true);
+        assert_eq!(
+            app_request.await.unwrap_err().to_string(),
+            "app is quitting"
+        );
+        assert_eq!(
+            async_request.await.unwrap_err().to_string(),
+            "app is quitting"
+        );
+        assert!(cx.windows().is_empty());
+        cx.update(|cx| cx.quitting = false);
+    }
 
     #[gpui::test]
     fn app_borrow_diagnostics(cx: &mut TestAppContext) {

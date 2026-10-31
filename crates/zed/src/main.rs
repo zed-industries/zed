@@ -124,29 +124,33 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
     build_application()
         .with_quit_mode(QuitMode::Explicit)
         .run(move |cx| {
-            if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
+            let open_window = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
                 cx.new(|_| gpui::Empty)
-            }) {
-                window
-                    .update(cx, |_, window, cx| {
-                        let response = window.prompt(
-                            gpui::PromptLevel::Critical,
-                            message,
-                            Some(&error_details),
-                            &["Exit"],
-                            cx,
-                        );
+            });
+            cx.spawn(async move |cx| {
+                if let Ok(window) = open_window.await {
+                    window
+                        .update(cx, |_, window, cx| {
+                            let response = window.prompt(
+                                gpui::PromptLevel::Critical,
+                                &message,
+                                Some(&error_details),
+                                &["Exit"],
+                                cx,
+                            );
 
-                        cx.spawn_in(window, async move |_, cx| {
-                            response.await?;
-                            cx.update(|_, cx| cx.quit())
+                            cx.spawn_in(window, async move |_, cx| {
+                                response.await?;
+                                cx.update(|_, cx| cx.quit())
+                            })
+                            .detach_and_log_err(cx);
                         })
-                        .detach_and_log_err(cx);
-                    })
-                    .log_err();
-            } else {
-                fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
-            }
+                        .log_err();
+                } else {
+                    fail_to_open_window_async(anyhow::anyhow!("{message}: {error_details}"), cx)
+                }
+            })
+            .detach();
         })
 }
 

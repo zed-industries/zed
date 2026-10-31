@@ -282,7 +282,7 @@ fn run_example() {
                 image_cache: RetainAllImageCache::new(ctx),
             })
         })
-        .unwrap();
+        .detach_and_log_err(cx);
     });
 }
 

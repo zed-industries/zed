@@ -1567,9 +1567,6 @@ pub(crate) struct ElementStateBox {
 }
 
 fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
-    // TODO, BUG: if you open a window with the currently active window
-    // on the stack, this will erroneously fallback to `None`
-    //
     // TODO these should be the initial window bounds not considering maximized/fullscreen
     let active_window_bounds = cx
         .active_window()
@@ -7976,6 +7973,7 @@ mod tests {
         time::Duration,
     };
 
+    use crate::executor::TaskExt as _;
     use crate::{
         AnyWindowHandle, AppContext as _, BackGestureEvent, BackGesturePhase, Bounds, ContentMask,
         Context, DispatchPhase, DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths,
@@ -7984,7 +7982,7 @@ mod tests {
         MouseMoveEvent, ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions,
         ScaledPixels, StatefulInteractiveElement as _, Styled, TestAppContext, ThermalState,
         TouchDragEvent, TouchEvent, TouchId, TouchPhase, Underline, UnderlineStyle, Window,
-        WindowAppearance, WindowOptions, canvas, div, hsla, point, px, size,
+        WindowAppearance, WindowBounds, WindowOptions, canvas, div, hsla, point, px, size,
     };
 
     #[gpui::test]
@@ -8162,7 +8160,7 @@ mod tests {
             let window = cx
                 .app
                 .borrow_mut()
-                .open_window(
+                .open_window_sync(
                     WindowOptions {
                         inactive_frame_interval: Some(Duration::from_secs(3600)),
                         ..Default::default()
@@ -8635,52 +8633,139 @@ mod tests {
 
     struct OpensWindowOnPaint {
         opened: Rc<Cell<bool>>,
+        synchronous: bool,
     }
 
     impl Render for OpensWindowOnPaint {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             let opened = self.opened.clone();
+            let synchronous = self.synchronous;
             div()
                 .size_full()
                 .child(canvas(
                     |_, _, _| {},
                     move |_, _, _window, cx| {
                         if !opened.replace(true) {
-                            cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| EmptyView))
-                                .unwrap();
+                            if synchronous {
+                                cx.open_window_sync(WindowOptions::default(), |_, cx| {
+                                    cx.new(|_| EmptyView)
+                                })
+                                .expect("open nested window");
+                            } else {
+                                cx.open_window(WindowOptions::default(), |_, cx| {
+                                    cx.new(|_| EmptyView)
+                                })
+                                .detach_and_log_err(cx);
+                            }
                         }
                     },
                 ))
-                // Siblings painted after the canvas: their elements were
-                // allocated in the arena before the nested draw, so they detect
-                // a mid-draw arena clear when painted afterwards.
                 .child(div().child("after"))
         }
     }
 
-    /// Opening a window synchronously draws it and requests an element arena
-    /// clear. When that happens from within another window's draw (here: from
-    /// an element's paint), the clear must be deferred until the outer draw
-    /// finishes, or the outer draw's arena-allocated elements would be freed
-    /// out from under it.
     #[test]
-    fn test_window_opened_during_draw_defers_arena_clear() {
+    fn test_window_requested_during_draw() {
         let mut cx = TestAppContext::single();
 
         let opened = Rc::new(Cell::new(false));
-        // add_window draws once, which runs the nested open_window mid-draw.
+        // add_window draws once, which requests the second window mid-draw.
         let window = cx.add_window({
             let opened = opened.clone();
-            move |_, _| OpensWindowOnPaint { opened }
+            move |_, _| OpensWindowOnPaint {
+                opened,
+                synchronous: false,
+            }
+        });
+
+        assert!(opened.get());
+        assert_eq!(cx.windows().len(), 1);
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 2);
+
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+    }
+
+    #[test]
+    fn test_window_opened_during_draw_defers_arena_clear() {
+        let mut cx = TestAppContext::single();
+        let opened = Rc::new(Cell::new(false));
+        let window = cx.add_window({
+            let opened = opened.clone();
+            move |_, _| OpensWindowOnPaint {
+                opened,
+                synchronous: true,
+            }
         });
 
         assert!(opened.get());
         assert_eq!(cx.windows().len(), 2);
-
-        // The deferred clear must actually run once the outer draw unwinds:
-        // subsequent draws of both windows work against a fresh arena.
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_window_cascades_after_active_window_update(cx: &mut TestAppContext) {
+        let first = cx.open_window(size(px(300.), px(300.)), |_, _| EmptyView);
+        first
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("first window exists");
+        let first_bounds = first
+            .update(cx, |_, window, _| window.window_bounds())
+            .expect("first window exists");
+        let task = first
+            .update(cx, |_, _, cx| {
+                assert_eq!(cx.active_window(), Some(first.into()));
+                let task = cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| EmptyView));
+                assert_eq!(cx.windows().len(), 1);
+                task
+            })
+            .expect("first window exists");
+        let second = task.await.expect("second window opens");
+        assert_eq!(cx.windows().len(), 2);
+        let second_bounds = second
+            .update(cx, |_, window, _| window.window_bounds())
+            .expect("second window exists");
+
+        assert!(matches!(second_bounds, WindowBounds::Windowed(_)));
+        assert_eq!(
+            second_bounds.get_bounds().size,
+            first_bounds.get_bounds().size
+        );
+        assert_eq!(
+            second_bounds.get_bounds().origin,
+            first_bounds.get_bounds().origin + point(px(25.), px(25.))
+        );
+    }
+
+    #[gpui::test]
+    fn test_dropped_open_window_task_does_not_create_window(cx: &mut TestAppContext) {
+        let task =
+            cx.update(|cx| cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| EmptyView)));
+        drop(task);
+        cx.run_until_parked();
+        assert!(cx.windows().is_empty());
+    }
+
+    #[gpui::test]
+    fn test_dropping_completed_open_window_task_keeps_window(cx: &mut TestAppContext) {
+        let task =
+            cx.update(|cx| cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| EmptyView)));
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        drop(task);
+        assert_eq!(cx.windows().len(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_async_app_open_window(cx: &mut TestAppContext) {
+        let async_app = cx.update(|cx| cx.to_async());
+        let task = async_app.open_window(WindowOptions::default(), |_, cx| cx.new(|_| EmptyView));
+        drop(async_app);
+        assert!(cx.windows().is_empty());
+        let window = task.await.expect("window opens without retaining AsyncApp");
+        assert_eq!(cx.windows(), vec![window.into()]);
     }
 
     #[test]

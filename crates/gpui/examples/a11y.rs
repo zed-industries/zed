@@ -249,7 +249,7 @@ fn run_example() {
             },
             |window, cx| cx.new(|cx| A11yDemo::new(window, cx)),
         )
-        .unwrap();
+        .detach_and_log_err(cx);
 
         cx.activate(true);
     });

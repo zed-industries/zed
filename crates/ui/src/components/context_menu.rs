@@ -2563,27 +2563,27 @@ mod tests {
             theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
 
-        let window = cx
-            .update(|cx| {
-                cx.open_window(Default::default(), |window, cx| {
-                    let build_menu =
-                        |menu: ContextMenu, _: &mut Window, _: &mut Context<ContextMenu>| {
-                            menu.header("Options")
-                                .entry("First", None, |_, _| {})
-                                .separator()
-                                .item(
-                                    ContextMenuEntry::new("Checked")
-                                        .toggleable(IconPosition::Start, true),
-                                )
-                        };
-                    if persistent {
-                        ContextMenu::build_persistent(window, cx, build_menu)
-                    } else {
-                        ContextMenu::build(window, cx, build_menu)
-                    }
-                })
+        let open_window = cx.update(|cx| {
+            cx.open_window(Default::default(), move |window, cx| {
+                let build_menu = |menu: ContextMenu,
+                                  _: &mut Window,
+                                  _: &mut Context<ContextMenu>| {
+                    menu.header("Options")
+                        .entry("First", None, |_, _| {})
+                        .separator()
+                        .item(
+                            ContextMenuEntry::new("Checked").toggleable(IconPosition::Start, true),
+                        )
+                };
+                if persistent {
+                    ContextMenu::build_persistent(window, cx, build_menu)
+                } else {
+                    ContextMenu::build(window, cx, build_menu)
+                }
             })
-            .expect("open menu window");
+        });
+        cx.run_until_parked();
+        let window = gpui::block_on(open_window).expect("open menu window");
         let menu = window.root(cx).expect("menu root");
         let mut cx = VisualTestContext::from_window(window.into(), cx);
         let focus_events = Rc::new(Cell::new(0));

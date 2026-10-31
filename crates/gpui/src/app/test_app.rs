@@ -156,7 +156,7 @@ impl TestApp {
     ) -> TestAppWindow<V> {
         let bounds = self.read(|cx| Bounds::maximized(None, cx));
         let handle = self.update(|cx| {
-            cx.open_window(
+            cx.open_window_sync(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
@@ -181,7 +181,7 @@ impl TestApp {
         build_view: impl FnOnce(&mut Window, &mut Context<V>) -> V,
     ) -> TestAppWindow<V> {
         let handle = self.update(|cx| {
-            cx.open_window(options, |window, cx| cx.new(|cx| build_view(window, cx)))
+            cx.open_window_sync(options, |window, cx| cx.new(|cx| build_view(window, cx)))
                 .unwrap()
         });
 

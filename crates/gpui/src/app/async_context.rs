@@ -199,16 +199,13 @@ impl AsyncApp {
     pub fn open_window<V>(
         &self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
-    ) -> Result<WindowHandle<V>>
+        build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V> + 'static,
+    ) -> Task<Result<WindowHandle<V>>>
     where
         V: 'static + Render,
     {
         let app = self.app();
         let mut lock = app.borrow_mut();
-        if lock.quitting {
-            bail!("app is quitting");
-        }
         lock.open_window(options, build_root_view)
     }
 

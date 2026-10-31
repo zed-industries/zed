@@ -1104,14 +1104,10 @@ fn test_clone(cx: &mut TestAppContext) {
         );
     });
 
-    let cloned_editor = editor
-        .update(cx, |editor, _, cx| {
-            cx.open_window(Default::default(), |window, cx| {
-                cx.new(|cx| editor.clone(window, cx))
-            })
-        })
-        .unwrap()
-        .unwrap();
+    let original_editor = editor.root(cx).unwrap();
+    let cloned_editor = cx.add_window(move |window, cx| {
+        original_editor.update(cx, |editor, cx| editor.clone(window, cx))
+    });
 
     let snapshot = editor
         .update(cx, |e, window, cx| e.snapshot(window, cx))
@@ -27318,6 +27314,7 @@ async fn test_following(cx: &mut TestAppContext) {
     });
     let leader = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
     let follower = cx.update(|cx| {
+        let buffer = buffer.clone();
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::from_corners(
@@ -27326,10 +27323,10 @@ async fn test_following(cx: &mut TestAppContext) {
                 ))),
                 ..Default::default()
             },
-            |window, cx| cx.new(|cx| build_editor(buffer.clone(), window, cx)),
+            move |window, cx| cx.new(|cx| build_editor(buffer, window, cx)),
         )
-        .unwrap()
     });
+    let follower = follower.await.unwrap();
 
     let is_still_following = Rc::new(RefCell::new(true));
     let follower_edit_event_count = Rc::new(RefCell::new(0));

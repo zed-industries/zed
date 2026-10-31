@@ -192,7 +192,7 @@ fn run_example() {
             ..Default::default()
         };
 
-        cx.open_window(window_options, |_, cx| {
+        cx.open_window(window_options, move |_, cx| {
             cx.new(|_| ImageShowcase {
                 // Relative path to your root project path
                 local_resource: manifest_dir
@@ -202,7 +202,7 @@ fn run_example() {
                 asset_resource: "image/color.svg".into(),
             })
         })
-        .unwrap();
+        .detach_and_log_err(cx);
     });
 }
 

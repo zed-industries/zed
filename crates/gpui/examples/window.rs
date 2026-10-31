@@ -81,7 +81,7 @@ impl Render for SubWindow {
                                     })
                                 },
                             )
-                            .unwrap();
+                            .detach_and_log_err(cx);
                         }))
                     })
                     .child(button("Close", |window, _| {
@@ -120,7 +120,7 @@ impl Render for WindowDemo {
                         })
                     },
                 )
-                .unwrap();
+                .detach_and_log_err(cx);
             }))
             .child(button("Popup", move |_, cx| {
                 cx.open_window(
@@ -136,7 +136,7 @@ impl Render for WindowDemo {
                         })
                     },
                 )
-                .unwrap();
+                .detach_and_log_err(cx);
             }))
             .child(button("Floating", move |_, cx| {
                 cx.open_window(
@@ -152,7 +152,7 @@ impl Render for WindowDemo {
                         })
                     },
                 )
-                .unwrap();
+                .detach_and_log_err(cx);
             }))
             .child(button("Dialog", move |_, cx| {
                 cx.open_window(
@@ -168,7 +168,7 @@ impl Render for WindowDemo {
                         })
                     },
                 )
-                .unwrap();
+                .detach_and_log_err(cx);
             }))
             .child(button("Custom Titlebar", move |_, cx| {
                 cx.open_window(
@@ -184,7 +184,7 @@ impl Render for WindowDemo {
                         })
                     },
                 )
-                .unwrap();
+                .detach_and_log_err(cx);
             }))
             .child(button("Invisible", move |_, cx| {
                 cx.open_window(
@@ -200,7 +200,7 @@ impl Render for WindowDemo {
                         })
                     },
                 )
-                .unwrap();
+                .detach_and_log_err(cx);
             }))
             .child(button("Unmovable", move |_, cx| {
                 cx.open_window(
@@ -217,7 +217,7 @@ impl Render for WindowDemo {
                         })
                     },
                 )
-                .unwrap();
+                .detach_and_log_err(cx);
             }))
             .child(button("Unresizable", move |_, cx| {
                 cx.open_window(
@@ -233,7 +233,7 @@ impl Render for WindowDemo {
                         })
                     },
                 )
-                .unwrap();
+                .detach_and_log_err(cx);
             }))
             .child(button("Unminimizable", move |_, cx| {
                 cx.open_window(
@@ -249,7 +249,7 @@ impl Render for WindowDemo {
                         })
                     },
                 )
-                .unwrap();
+                .detach_and_log_err(cx);
             }))
             .child(button("Hide Application", |window, cx| {
                 cx.hide();
@@ -334,7 +334,7 @@ fn run_example() {
                 })
             },
         )
-        .unwrap();
+        .detach_and_log_err(cx);
 
         cx.activate(true);
         cx.on_action(|_: &Quit, cx| cx.quit());

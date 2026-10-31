@@ -966,6 +966,8 @@ struct AgentTerminal {
     search_bar: Option<Entity<BufferSearchBar>>,
     notification_windows: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: Vec<Subscription>,
+    notification_generation: u64,
+    notification_pending: usize,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2262,6 +2264,8 @@ impl AgentPanel {
             search_bar: None,
             notification_windows: Vec::new(),
             notification_subscriptions: Vec::new(),
+            notification_generation: 0,
+            notification_pending: 0,
             _subscriptions: vec![view_subscription, terminal_subscription],
         };
         if self.pending_terminal_spawn == Some(terminal_id) {
@@ -2680,7 +2684,7 @@ impl AgentPanel {
         let Some(terminal) = self.terminals.get(&terminal_id) else {
             return;
         };
-        if !terminal.notification_windows.is_empty() {
+        if terminal.notification_pending > 0 || !terminal.notification_windows.is_empty() {
             return;
         }
         let title = terminal.title(cx);
@@ -2724,108 +2728,194 @@ impl AgentPanel {
                 .map(|worktree| worktree.read(cx).root_name_str().to_string())
         });
         let title = title.clone();
-        let Ok(screen_window) = cx.open_window(options, |_window, cx| {
-            cx.new(|_cx| AgentNotification::new(title, None, IconName::Terminal, project_name))
-        }) else {
-            return;
-        };
-        let Ok(pop_up) = screen_window.entity(cx) else {
-            return;
-        };
-
-        let event_subscription = cx.subscribe_in(&pop_up, window, {
-            move |this, _, event: &AgentNotificationEvent, window, cx| match event {
-                AgentNotificationEvent::Accepted => {
-                    let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
-                        log::error!("root view should be a MultiWorkspace");
-                        return;
-                    };
-                    cx.activate(true);
-
-                    let workspace = this.workspace.clone();
-                    cx.defer(move |cx| {
-                        handle
-                            .update(cx, |multi_workspace, window, cx| {
-                                window.activate_window();
-
-                                let Some(workspace) = workspace.upgrade() else {
-                                    return;
-                                };
-                                multi_workspace.activate(workspace.clone(), None, window, cx);
-
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace.reveal_panel::<AgentPanel>(window, cx);
-                                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                                        panel.update(cx, |panel, cx| {
-                                            panel.activate_terminal(terminal_id, true, window, cx);
-                                        });
-                                    }
-                                    workspace.focus_panel::<AgentPanel>(window, cx);
-                                });
-                            })
-                            .log_err();
-                    });
-
-                    this.dismiss_terminal_notifications(terminal_id, cx);
-                }
-                AgentNotificationEvent::Dismissed => {
-                    this.dismiss_terminal_notifications(terminal_id, cx);
-                }
-            }
-        });
-
-        let pop_up_weak = pop_up.downgrade();
-        let window_activation_subscription = cx.observe_window_activation(window, {
-            let pop_up_weak = pop_up_weak.clone();
-            move |this, window, cx| {
-                this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
-            }
-        });
-
-        let multi_workspace_subscription = {
-            let pop_up_weak = pop_up_weak.clone();
-            window.root::<MultiWorkspace>().flatten().map(|mw| {
-                cx.observe_in(&mw, window, move |this, _, window, cx| {
-                    this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
-                })
-            })
-        };
-
-        let this_panel = cx.entity();
-        let agent_panel_subscription = cx.subscribe_in(&this_panel, window, {
-            move |this, _, event: &AgentPanelEvent, window, cx| match event {
-                AgentPanelEvent::ActiveViewChanged | AgentPanelEvent::ActiveViewFocused => {
-                    this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
-                }
-                AgentPanelEvent::EntryChanged
-                | AgentPanelEvent::TerminalCloseRequested { .. }
-                | AgentPanelEvent::ThreadInteracted { .. } => {}
-            }
-        });
-
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
-            screen_window
-                .update(cx, |_, window, _| window.remove_window())
-                .ok();
             return;
         };
-        terminal.notification_windows.push(screen_window);
-        terminal.notification_subscriptions.push(event_subscription);
-        terminal
-            .notification_subscriptions
-            .push(window_activation_subscription);
-        terminal
-            .notification_subscriptions
-            .push(agent_panel_subscription);
-        if let Some(subscription) = multi_workspace_subscription {
-            terminal.notification_subscriptions.push(subscription);
-        }
+        terminal.notification_pending += 1;
+        let generation = terminal.notification_generation;
+        let open_window = cx.open_window(options, move |_window, cx| {
+            cx.new(|_cx| AgentNotification::new(title, None, IconName::Terminal, project_name))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let screen_window = match open_window.await {
+                Ok(screen_window) => screen_window,
+                Err(error) => {
+                    gpui::AsyncApp::update(cx, |cx| {
+                        this.update(cx, |this, _| {
+                            if let Some(terminal) = this.terminals.get_mut(&terminal_id)
+                                && terminal.notification_generation == generation
+                            {
+                                terminal.notification_pending -= 1;
+                            }
+                        })
+                    })
+                    .log_err();
+                    return Err(error);
+                }
+            };
+            let registration = cx
+                .update(|window, cx| {
+                    this.update(cx, |this, cx| {
+                        if this.terminal_status_visible(terminal_id, window, cx)
+                            || !this.terminals.get(&terminal_id).is_some_and(|terminal| {
+                                terminal.notification_generation == generation
+                                    && terminal.has_notification
+                            })
+                        {
+                            return false;
+                        }
+                        let Some(pop_up) = screen_window.entity(cx).log_err() else {
+                            return false;
+                        };
+
+                        let event_subscription = cx.subscribe_in(&pop_up, window, {
+                            move |this, _, event: &AgentNotificationEvent, window, cx| match event {
+                                AgentNotificationEvent::Accepted => {
+                                    let Some(handle) =
+                                        window.window_handle().downcast::<MultiWorkspace>()
+                                    else {
+                                        log::error!("root view should be a MultiWorkspace");
+                                        return;
+                                    };
+                                    cx.activate(true);
+
+                                    let workspace = this.workspace.clone();
+                                    cx.defer(move |cx| {
+                                        handle
+                                            .update(cx, |multi_workspace, window, cx| {
+                                                window.activate_window();
+
+                                                let Some(workspace) = workspace.upgrade() else {
+                                                    return;
+                                                };
+                                                multi_workspace.activate(
+                                                    workspace.clone(),
+                                                    None,
+                                                    window,
+                                                    cx,
+                                                );
+
+                                                workspace.update(cx, |workspace, cx| {
+                                                    workspace
+                                                        .reveal_panel::<AgentPanel>(window, cx);
+                                                    if let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                    {
+                                                        panel.update(cx, |panel, cx| {
+                                                            panel.activate_terminal(
+                                                                terminal_id,
+                                                                true,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }
+                                                    workspace.focus_panel::<AgentPanel>(window, cx);
+                                                });
+                                            })
+                                            .log_err();
+                                    });
+
+                                    this.dismiss_terminal_notifications(terminal_id, cx);
+                                }
+                                AgentNotificationEvent::Dismissed => {
+                                    this.dismiss_terminal_notifications(terminal_id, cx);
+                                }
+                            }
+                        });
+
+                        let pop_up_weak = pop_up.downgrade();
+                        let window_activation_subscription =
+                            cx.observe_window_activation(window, {
+                                let pop_up_weak = pop_up_weak.clone();
+                                move |this, window, cx| {
+                                    this.dismiss_terminal_pop_up_if_visible(
+                                        terminal_id,
+                                        &pop_up_weak,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            });
+
+                        let multi_workspace_subscription = {
+                            let pop_up_weak = pop_up_weak.clone();
+                            window.root::<MultiWorkspace>().flatten().map(|mw| {
+                                cx.observe_in(&mw, window, move |this, _, window, cx| {
+                                    this.dismiss_terminal_pop_up_if_visible(
+                                        terminal_id,
+                                        &pop_up_weak,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                            })
+                        };
+
+                        let this_panel = cx.entity();
+                        let agent_panel_subscription = cx.subscribe_in(&this_panel, window, {
+                            move |this, _, event: &AgentPanelEvent, window, cx| match event {
+                                AgentPanelEvent::ActiveViewChanged
+                                | AgentPanelEvent::ActiveViewFocused => {
+                                    this.dismiss_terminal_pop_up_if_visible(
+                                        terminal_id,
+                                        &pop_up_weak,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                                AgentPanelEvent::EntryChanged
+                                | AgentPanelEvent::TerminalCloseRequested { .. }
+                                | AgentPanelEvent::ThreadInteracted { .. } => {}
+                            }
+                        });
+
+                        let Some(terminal) = this.terminals.get_mut(&terminal_id) else {
+                            return false;
+                        };
+                        terminal.notification_pending -= 1;
+                        terminal.notification_windows.push(screen_window);
+                        terminal.notification_subscriptions.push(event_subscription);
+                        terminal
+                            .notification_subscriptions
+                            .push(window_activation_subscription);
+                        terminal
+                            .notification_subscriptions
+                            .push(agent_panel_subscription);
+                        if let Some(subscription) = multi_workspace_subscription {
+                            terminal.notification_subscriptions.push(subscription);
+                        }
+                        true
+                    })
+                })
+                .and_then(|result| result);
+            if !registration.as_ref().is_ok_and(|registered| *registered) {
+                screen_window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .log_err();
+                gpui::AsyncApp::update(cx, |cx| {
+                    this.update(cx, |this, _| {
+                        if let Some(terminal) = this.terminals.get_mut(&terminal_id)
+                            && terminal.notification_generation == generation
+                        {
+                            terminal.notification_pending -= 1;
+                        }
+                    })
+                })
+                .log_err();
+            }
+            registration?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn dismiss_terminal_notifications(&mut self, terminal_id: TerminalId, cx: &mut App) {
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
+        terminal.notification_generation = terminal.notification_generation.wrapping_add(1);
+        terminal.notification_pending = 0;
         let windows = std::mem::take(&mut terminal.notification_windows);
         terminal.notification_subscriptions.clear();
         for window in windows {
@@ -2849,10 +2939,9 @@ impl AgentPanel {
         for conversation_view in self.conversation_views() {
             dismissed |= conversation_view.update(cx, |view, cx| view.dismiss_notifications(cx));
         }
-        let had_terminal_notifications = self
-            .terminals
-            .values()
-            .any(|t| !t.notification_windows.is_empty());
+        let had_terminal_notifications = self.terminals.values().any(|terminal| {
+            terminal.notification_pending > 0 || !terminal.notification_windows.is_empty()
+        });
         if had_terminal_notifications {
             self.dismiss_all_terminal_notifications(cx);
             dismissed = true;
@@ -11340,6 +11429,85 @@ mod tests {
                 .expect("terminal should remain in the panel");
             assert!(!terminal.has_notification);
         });
+        assert!(
+            cx.windows()
+                .iter()
+                .all(|window| window.downcast::<AgentNotification>().is_none())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_pending_terminal_notification_dismissed_before_window_opens(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::PrimaryScreen,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Claude", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel
+                .terminals
+                .get_mut(&terminal_id)
+                .expect("test terminal")
+                .has_notification = true;
+            panel.show_terminal_notification(terminal_id, window, cx);
+            assert!(panel.dismiss_all_notifications(cx));
+        });
+        cx.run_until_parked();
+
+        assert!(
+            cx.windows()
+                .iter()
+                .all(|window| window.downcast::<AgentNotification>().is_none())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_pending_terminal_notification_closed_when_panel_dropped(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::PrimaryScreen,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Claude", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel
+                .terminals
+                .get_mut(&terminal_id)
+                .expect("test terminal")
+                .has_notification = true;
+            panel.show_terminal_notification(terminal_id, window, cx);
+        });
+        let weak_panel = panel.downgrade();
+        drop(panel);
+        cx.update(|_window, _cx| {});
+        cx.run_until_parked();
+
+        assert!(!weak_panel.is_upgradable());
         assert!(
             cx.windows()
                 .iter()

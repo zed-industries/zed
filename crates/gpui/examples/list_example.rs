@@ -158,7 +158,7 @@ fn run_example() {
             },
             |_, cx| cx.new(|_| BottomListDemo::new()),
         )
-        .unwrap();
+        .detach_and_log_err(cx);
         cx.activate(true);
     });
 }

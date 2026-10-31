@@ -48,7 +48,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                 window_bounds: Some(WindowBounds::centered(size(px(1000.), px(700.)), cx)),
                 ..Default::default()
             },
-            |window, cx| {
+            move |window, cx| {
                 window.set_window_title("Debug Filesystem Watching");
                 let view = cx.new(|cx| WatcherDebug::new(app_state, window, cx));
                 window.activate_window();
@@ -56,7 +56,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                 view
             },
         )
-        .log_err();
+        .detach_and_log_err(cx);
     });
 }
 

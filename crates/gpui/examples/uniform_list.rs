@@ -54,7 +54,7 @@ fn run_example() {
             },
             |_, cx| cx.new(|_| UniformListExample {}),
         )
-        .unwrap();
+        .detach_and_log_err(cx);
     });
 }
 
