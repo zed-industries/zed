@@ -16,7 +16,6 @@ use crate::{
     MAX_LINE_LEN, MINIMAP_FONT_SIZE, PageDown, PageUp, Point, RowExt, RowRangeExt, Selection,
     SelectionDragState, SizingBehavior, SoftWrap, ToPoint,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
-    column_pixels,
     cursor_animation::{CursorViewport, LogicalCursorPosition, animated_corners_overlap_target},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -1149,7 +1148,6 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         line_height: Pixels,
-        em_width: Pixels,
         em_advance: Pixels,
         autoscroll_containing_element: bool,
         redacted_ranges: &[Range<DisplayPoint>],
@@ -1307,7 +1305,7 @@ impl EditorElement {
                                     - scroll_position.x
                                     - 3.)
                                     .max(0.)
-                                    * ScrollPixelOffset::from(em_width))
+                                    * ScrollPixelOffset::from(em_advance))
                                 .into();
 
                             let bottom = text_hitbox.origin.y
@@ -1317,7 +1315,7 @@ impl EditorElement {
                             let right = text_hitbox.origin.x
                                 + ((cursor_position.column() as ScrollOffset - scroll_position.x
                                     + 4.)
-                                    * ScrollPixelOffset::from(em_width))
+                                    * ScrollPixelOffset::from(em_advance))
                                 .into();
 
                             autoscroll_bounds =
@@ -1911,6 +1909,7 @@ impl EditorElement {
         end_row: DisplayRow,
         line_height: Pixels,
         em_width: Pixels,
+        em_advance: Pixels,
         style: &EditorStyle,
         window: &mut Window,
         cx: &mut App,
@@ -1973,14 +1972,11 @@ impl EditorElement {
         };
 
         let padding = ProjectSettings::get_global(cx).diagnostics.inline.padding as f32 * em_width;
-        let min_x = column_pixels(
-            &self.style,
-            ProjectSettings::get_global(cx)
-                .diagnostics
-                .inline
-                .min_column as usize,
-            window,
-        );
+        let min_x = ProjectSettings::get_global(cx)
+            .diagnostics
+            .inline
+            .min_column as f32
+            * em_advance;
 
         let mut elements = HashMap::default();
         for (row, mut diagnostics) in diagnostics_by_rows {
@@ -2136,6 +2132,7 @@ impl EditorElement {
         line_layout: &LineWithInvisibles,
         crease_trailer: Option<&CreaseTrailerLayout>,
         em_width: Pixels,
+        em_advance: Pixels,
         content_origin: gpui::Point<Pixels>,
         scroll_position: gpui::Point<ScrollOffset>,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
@@ -2192,11 +2189,8 @@ impl EditorElement {
 
             let padded_line_end = line_end + padding;
 
-            let min_column_in_pixels = column_pixels(
-                &self.style,
-                ProjectSettings::get_global(cx).git.inline_blame.min_column as usize,
-                window,
-            );
+            let min_column_in_pixels =
+                ProjectSettings::get_global(cx).git.inline_blame.min_column as f32 * em_advance;
             let min_start = Pixels::from(
                 ScrollPixelOffset::from(content_origin.x + min_column_in_pixels)
                     - scroll_pixel_position.x,
@@ -2397,6 +2391,7 @@ impl EditorElement {
         visible_buffer_range: Range<MultiBufferRow>,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         line_height: Pixels,
+        em_advance: Pixels,
         snapshot: &DisplaySnapshot,
         window: &mut Window,
         cx: &mut App,
@@ -2416,8 +2411,7 @@ impl EditorElement {
                 .into_iter()
                 .enumerate()
                 .filter_map(|(i, indent_guide)| {
-                    let single_indent_width =
-                        column_pixels(&self.style, indent_guide.tab_size as usize, window);
+                    let single_indent_width = indent_guide.tab_size as f32 * em_advance;
                     let total_width = single_indent_width * indent_guide.depth as f32;
                     let start_x = Pixels::from(
                         ScrollOffset::from(content_origin.x + total_width)
@@ -2477,10 +2471,9 @@ impl EditorElement {
         scrollbar_layout: Option<&EditorScrollbars>,
         vertical_scrollbar_width: Pixels,
         hitbox: &Hitbox,
-        window: &Window,
         cx: &App,
     ) -> SmallVec<[(Pixels, bool); 2]> {
-        let scroll_left = scroll_position.x as f32 * em_advance;
+        let scroll_left = px((scroll_position.x * f64::from(em_advance)) as f32);
         let content_origin = content_origin.x;
         let horizontal_offset = content_origin - scroll_left;
         let vertical_scrollbar_width = scrollbar_layout
@@ -2492,7 +2485,7 @@ impl EditorElement {
             .wrap_guides(cx)
             .into_iter()
             .flat_map(|(guide, active)| {
-                let wrap_position = column_pixels(&self.style, guide, window);
+                let wrap_position = (guide as f32 * em_advance).ceil();
                 let wrap_guide_x = wrap_position + horizontal_offset;
                 let display_wrap_guide = wrap_guide_x >= content_origin
                     && wrap_guide_x <= hitbox.bounds.right() - vertical_scrollbar_width;
@@ -8607,7 +8600,6 @@ impl Element for EditorElement {
                         underline_y_offset(line_height, ascent, descent);
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
-                    let em_layout_width = window.text_system().em_layout_width(font_id, font_size);
                     let glyph_grid_cell = size(em_advance, line_height);
 
                     let gutter_dimensions =
@@ -8662,7 +8654,7 @@ impl Element for EditorElement {
                             let wrap_width = calculate_wrap_width(
                                 editor.soft_wrap_mode(cx),
                                 editor_width,
-                                em_layout_width,
+                                em_advance,
                             );
 
                             if editor.set_wrap_width(wrap_width, cx) {
@@ -9270,7 +9262,7 @@ impl Element for EditorElement {
                     let end_buffer_row = MultiBufferRow(end_anchor.to_point(&buffer).row);
 
                     let preliminary_scroll_pixel_position = point(
-                        scroll_position.x * f64::from(em_layout_width),
+                        scroll_position.x * f64::from(em_advance),
                         scroll_position.y * f64::from(line_height),
                     );
                     let indent_guides = self.layout_indent_guides(
@@ -9279,6 +9271,7 @@ impl Element for EditorElement {
                         start_buffer_row..end_buffer_row,
                         preliminary_scroll_pixel_position,
                         line_height,
+                        em_advance,
                         &snapshot,
                         window,
                         cx,
@@ -9367,7 +9360,7 @@ impl Element for EditorElement {
 
                     let scroll_max: gpui::Point<ScrollPixelOffset> = point(
                         ScrollPixelOffset::from(
-                            ((scroll_width - editor_width) / em_layout_width).max(0.0),
+                            ((scroll_width - editor_width) / em_advance).max(0.0),
                         ),
                         max_scroll_top,
                     );
@@ -9393,14 +9386,14 @@ impl Element for EditorElement {
                         }
                     });
 
-                    if !em_layout_width.is_zero() {
+                    if !em_advance.is_zero() {
                         scroll_position.x = window
-                            .pixel_snap_f64(scroll_position.x * f64::from(em_layout_width))
-                            / f64::from(em_layout_width);
+                            .pixel_snap_f64(scroll_position.x * f64::from(em_advance))
+                            / f64::from(em_advance);
                     }
 
                     let scroll_pixel_position = point(
-                        scroll_position.x * f64::from(em_layout_width),
+                        scroll_position.x * f64::from(em_advance),
                         scroll_position.y * f64::from(line_height),
                     );
                     let sticky_headers = if !is_minimap
@@ -9434,6 +9427,7 @@ impl Element for EditorElement {
                                 start_buffer_row..end_buffer_row,
                                 scroll_pixel_position,
                                 line_height,
+                                em_advance,
                                 &snapshot,
                                 window,
                                 cx,
@@ -9494,6 +9488,7 @@ impl Element for EditorElement {
                         end_row,
                         line_height,
                         em_width,
+                        em_advance,
                         style,
                         window,
                         cx,
@@ -9530,6 +9525,7 @@ impl Element for EditorElement {
                                     line_layout,
                                     crease_trailer_layout,
                                     em_width,
+                                    em_advance,
                                     content_origin,
                                     scroll_position,
                                     scroll_pixel_position,
@@ -9621,7 +9617,6 @@ impl Element for EditorElement {
                         scroll_position,
                         scroll_pixel_position,
                         line_height,
-                        em_width,
                         em_advance,
                         autoscroll_containing_element,
                         &redacted_ranges,
@@ -9888,7 +9883,6 @@ impl Element for EditorElement {
                         scrollbars_layout.as_ref(),
                         vertical_scrollbar_width,
                         &hitbox,
-                        window,
                         cx,
                     );
 
@@ -10012,7 +10006,6 @@ impl Element for EditorElement {
                         line_layouts,
                         line_height,
                         em_advance,
-                        em_layout_width,
                         snapshot,
                         text_align: self.style.text.text_align,
                         content_width: text_hitbox.size.width,
@@ -10773,7 +10766,6 @@ pub(crate) struct PositionMap {
     pub scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
     pub scroll_max: gpui::Point<ScrollOffset>,
     pub em_advance: Pixels,
-    pub em_layout_width: Pixels,
     pub visible_row_range: Range<DisplayRow>,
     pub line_layouts: Vec<LineWithInvisibles>,
     pub snapshot: EditorSnapshot,
@@ -10845,7 +10837,7 @@ impl PositionMap {
         let row = ((position.y / self.line_height) as f64 + self.scroll_position.y) as u32;
         let line_index = row.checked_sub(self.visible_row_range.start.0)?;
         let line = self.line_layouts.get(line_index as usize)?;
-        let x = position.x + (self.scroll_position.x as f32 * self.em_layout_width)
+        let x = position.x + (self.scroll_position.x as f32 * self.em_advance)
             - line.alignment_offset(self.text_align, self.content_width);
         if x < Pixels::ZERO {
             return None;
@@ -10859,7 +10851,7 @@ impl PositionMap {
         let scroll_position = self.scroll_position;
         let position = position - text_bounds.origin;
         let y = position.y.max(px(0.)).min(self.size.height);
-        let x = position.x + (scroll_position.x as f32 * self.em_layout_width);
+        let x = position.x + (scroll_position.x as f32 * self.em_advance);
         let row = ((y / self.line_height) as f64 + scroll_position.y) as u32;
 
         let (column, x_overshoot_after_line_end) = if let Some(line_index) =
@@ -10891,8 +10883,7 @@ impl PositionMap {
             }
         };
 
-        let column_overshoot_after_line_end =
-            (x_overshoot_after_line_end / self.em_layout_width) as u32;
+        let column_overshoot_after_line_end = (x_overshoot_after_line_end / self.em_advance) as u32;
         *exact_unclipped.column_mut() += column_overshoot_after_line_end;
         PointForPosition {
             previous_valid,
@@ -10912,7 +10903,7 @@ impl PositionMap {
         let text_bounds = self.text_hitbox.bounds;
         let scroll_position = self.scroll_position;
         let position = position - text_bounds.origin;
-        let x = position.x + (scroll_position.x as f32 * self.em_layout_width);
+        let x = position.x + (scroll_position.x as f32 * self.em_advance);
 
         let alignment_offset = line.alignment_offset(self.text_align, self.content_width);
         let x_relative_to_text = x - alignment_offset;
@@ -10937,8 +10928,7 @@ impl PositionMap {
             }
         };
 
-        let column_overshoot_after_line_end =
-            (x_overshoot_after_line_end / self.em_layout_width) as u32;
+        let column_overshoot_after_line_end = (x_overshoot_after_line_end / self.em_advance) as u32;
         *exact_unclipped.column_mut() += column_overshoot_after_line_end;
         PointForPosition {
             previous_valid,
@@ -11375,9 +11365,9 @@ fn register_action_erased(
 fn calculate_wrap_width(
     soft_wrap: SoftWrap,
     editor_width: Pixels,
-    em_width: Pixels,
+    em_advance: Pixels,
 ) -> Option<Pixels> {
-    let wrap_width_for = |column: u32| (column as f32 * em_width).ceil();
+    let wrap_width_for = |column: u32| (column as f32 * em_advance).ceil();
 
     match soft_wrap {
         SoftWrap::GitDiff => None,
@@ -11412,6 +11402,10 @@ fn compute_auto_height_layout(
     let font_size = style.text.font_size.to_pixels(window.rem_size());
     let line_height = style.text.line_height_in_pixels(window.rem_size());
     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
+    let em_advance = window
+        .text_system()
+        .em_advance(font_id, font_size)
+        .expect("resolved editor font must have an em advance");
 
     let mut snapshot = editor.snapshot(window, cx);
     let gutter_dimensions = snapshot.gutter_dimensions(font_id, font_size, style, window, cx);
@@ -11421,7 +11415,7 @@ fn compute_auto_height_layout(
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    let wrap_width = calculate_wrap_width(editor.soft_wrap_mode(cx), editor_width, em_width)
+    let wrap_width = calculate_wrap_width(editor.soft_wrap_mode(cx), editor_width, em_advance)
         .map(|width| width.min(editor_width));
     if wrap_width.is_some() && editor.set_wrap_width(wrap_width, cx) {
         snapshot = editor.snapshot(window, cx);

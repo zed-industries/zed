@@ -533,7 +533,7 @@ impl EditorElement {
 
                         editor.update(cx, |editor, cx| {
                             let line_height = position_map.line_height;
-                            let glyph_width = position_map.em_layout_width;
+                            let glyph_width = position_map.em_advance;
                             let delta = match delta {
                                 gpui::ScrollDelta::Pixels(mut pixels) => {
                                     //Trackpad
@@ -1078,18 +1078,9 @@ impl EditorElement {
                 scroll_delta.y = scale_vertical_mouse_autoscroll_delta(event.position.y - bottom);
             }
 
-            // We need horizontal width of text
-            let style = editor.style.clone().unwrap_or_default();
-            let font_id = window.text_system().resolve_font(&style.text.font());
-            let font_size = style.text.font_size.to_pixels(window.rem_size());
-            let em_width = window
-                .text_system()
-                .em_width(font_id, font_size)
-                .unwrap_or(font_size);
-
             let scroll_margin_x = EditorSettings::get_global(cx).horizontal_scroll_margin;
 
-            let scroll_space: Pixels = scroll_margin_x * em_width;
+            let scroll_space: Pixels = scroll_margin_x * position_map.em_advance;
 
             let left = text_bounds.origin.x + scroll_space;
             let right = text_bounds.top_right().x - scroll_space;

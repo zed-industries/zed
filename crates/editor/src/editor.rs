@@ -173,7 +173,7 @@ use gpui::{
     FocusOutEvent, Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, IsZero,
     KeyContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled,
-    Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
     UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point, prelude::*,
     pulsating_between, px, relative, size,
 };
@@ -11234,7 +11234,10 @@ impl Editor {
         let font_size = style.text.font_size.to_pixels(window.rem_size());
         let line_height = style.text.line_height_in_pixels(window.rem_size());
         let em_width = window.text_system().em_width(font_id, font_size).unwrap();
-        let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
+        let em_advance = window
+            .text_system()
+            .em_advance(font_id, font_size)
+            .expect("resolved editor font must have an em advance");
 
         CharacterDimensions {
             em_width,
@@ -12501,7 +12504,13 @@ impl EditorSnapshot {
 
     pub fn max_line_number_width(&self, style: &EditorStyle, window: &mut Window) -> Pixels {
         let digit_count = self.widest_line_number().ilog10() + 1;
-        column_pixels(style, digit_count as usize, window)
+        let font_size = style.text.font_size.to_pixels(window.rem_size());
+        let text_system = window.text_system();
+        let font_id = text_system.resolve_font(&style.text.font());
+        digit_count as f32
+            * text_system
+                .em_advance(font_id, font_size)
+                .expect("resolved editor font must have an em advance")
     }
 
     pub fn gutter_dimensions(
@@ -12691,23 +12700,6 @@ impl EditorSnapshot {
             })
             .collect()
     }
-}
-
-pub fn column_pixels(style: &EditorStyle, column: usize, window: &Window) -> Pixels {
-    let font_size = style.text.font_size.to_pixels(window.rem_size());
-    let layout = window.text_system().shape_line(
-        SharedString::from(" ".repeat(column)),
-        font_size,
-        &[TextRun {
-            len: column,
-            font: style.text.font(),
-            color: Hsla::default(),
-            ..Default::default()
-        }],
-        None,
-    );
-
-    layout.width
 }
 
 impl Deref for EditorSnapshot {
