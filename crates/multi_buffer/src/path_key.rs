@@ -412,9 +412,9 @@ impl MultiBuffer {
             snapshot.buffers.remove(&old_buffer_id);
             remove_diff_state(&mut snapshot.diffs, old_buffer_id);
             self.diffs.remove(&old_buffer_id);
-            let before = cursor.position.1;
+            let before = cursor.start().1;
             cursor.seek_forward(&path_key, Bias::Right);
-            let after = cursor.position.1;
+            let after = cursor.start().1;
             patch.push(Edit {
                 old: before..after,
                 new: new_excerpts.summary().len()..new_excerpts.summary().len(),
@@ -443,7 +443,7 @@ impl MultiBuffer {
                         if !prev_excerpt.has_trailing_newline {
                             prev_excerpt.has_trailing_newline = true;
                             patch.push(Edit {
-                                old: cursor.position.1..cursor.position.1,
+                                old: cursor.start().1..cursor.start().1,
                                 new: before..before + MultiBufferOffset(1),
                             });
                         }
@@ -462,7 +462,7 @@ impl MultiBuffer {
                     reused_excerpt
                 } else {
                     let context = next_excerpt.context.to_offset(buffer_snapshot);
-                    let old_start = cursor.position.1;
+                    let old_start = cursor.start().1;
                     let new_start = new_excerpts.summary().len();
                     let text_len = context.end - context.start;
                     let first_char_len = buffer_snapshot
@@ -505,9 +505,9 @@ impl MultiBuffer {
                 .is_le()
             {
                 // remove old excerpt
-                let before = cursor.position.1;
+                let before = cursor.start().1;
                 cursor.next();
-                let after = cursor.position.1;
+                let after = cursor.start().1;
                 patch.push(Edit {
                     old: before..after,
                     new: new_excerpts.summary().len()..new_excerpts.summary().len(),
@@ -535,16 +535,16 @@ impl MultiBuffer {
                 );
                 let after = new_excerpts.summary().len();
                 patch.push_maybe_empty(Edit {
-                    old: cursor.position.1..cursor.position.1,
+                    old: cursor.start().1..cursor.start().1,
                     new: before..after,
                 });
             }
         }
 
         // remove any further trailing excerpts
-        let mut before = cursor.position.1;
+        let mut before = cursor.start().1;
         cursor.seek_forward(&path_key, Bias::Right);
-        let after = cursor.position.1;
+        let after = cursor.start().1;
         // if we removed the previous last excerpt, remove the trailing newline from the new last excerpt
         if cursor.item().is_none() && to_insert.peek().is_none() {
             new_excerpts.update_last(
@@ -587,12 +587,12 @@ impl MultiBuffer {
             );
             let after = new_excerpts.summary().len();
             patch.push_maybe_empty(Edit {
-                old: cursor.position.1..cursor.position.1,
+                old: cursor.start().1..cursor.start().1,
                 new: before..after,
             });
         }
 
-        let suffix_start = cursor.position.1;
+        let suffix_start = cursor.start().1;
         let suffix = cursor.suffix();
         let changed_trailing_excerpt = suffix.is_empty();
         if !suffix.is_empty() {
@@ -751,9 +751,9 @@ impl MultiBuffer {
                 continue;
             }
             removed_buffer_ids.push(excerpt.buffer_id);
-            let edit_start = cursor.position.1;
+            let edit_start = cursor.start().1;
             cursor.seek_forward(path, Bias::Right);
-            let edit_end = cursor.position.1;
+            let edit_end = cursor.start().1;
             match excerpt_edits.last_mut() {
                 Some(last_edit) if last_edit.old.end == edit_start => {
                     last_edit.old.end = edit_end;
@@ -842,7 +842,7 @@ impl MultiBuffer {
             .cursor::<Dimensions<PathKey, ExcerptOffset>>(());
         let mut new_excerpts = SumTree::new(());
         new_excerpts.append(cursor.slice(&path, Bias::Left), ());
-        let mut edit_start = cursor.position.1;
+        let mut edit_start = cursor.start().1;
         let mut buffer_id = None;
         if let Some(excerpt) = cursor.item()
             && excerpt.path_key == path
@@ -850,7 +850,7 @@ impl MultiBuffer {
             buffer_id = Some(excerpt.buffer_id);
         }
         cursor.seek(&path, Bias::Right);
-        let edit_end = cursor.position.1;
+        let edit_end = cursor.start().1;
         let suffix = cursor.suffix();
         let changed_trailing_excerpt = suffix.is_empty();
         new_excerpts.append(suffix, ());
