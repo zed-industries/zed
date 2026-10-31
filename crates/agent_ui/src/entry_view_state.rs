@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk, ToolCall};
 use agent::ThreadStore;
-use agent_client_protocol::schema::v1 as acp_v1;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -25,6 +25,10 @@ use workspace::Workspace;
 
 use crate::message_editor::{MessageEditor, MessageEditorEvent, SharedSessionCapabilities};
 
+/// Top padding, in rems, inside agent terminals. The tool card adds it to the
+/// scrollable terminal's height so the number of visible rows doesn't change.
+pub(crate) const TERMINAL_CONTENT_TOP_PADDING: f32 = 0.5;
+
 /// Maps an entry index through the removal of `removed` (a contiguous range of
 /// entries), returning `None` if the index referred to a removed entry.
 fn reindex_after_removal(index: usize, removed: &Range<usize>) -> Option<usize> {
@@ -35,6 +39,18 @@ fn reindex_after_removal(index: usize, removed: &Range<usize>) -> Option<usize> 
     } else {
         Some(index - removed.len())
     }
+}
+
+/// How much of a tool call's content to materialize while syncing an entry.
+#[derive(Clone, Copy)]
+enum ToolCallSync {
+    /// Live updates: materialize visible content and run terminal lifecycle.
+    Live,
+    /// Thread restore: skip content that is not visible.
+    Restore,
+    /// First view after expansion: materialize without re-running terminal
+    /// lifecycle, which would collapse the card again.
+    Materialize,
 }
 
 pub struct EntryViewState {
@@ -48,7 +64,9 @@ pub struct EntryViewState {
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
     expanded_compactions: HashSet<usize>,
-    expanded_tool_calls: HashSet<acp_v1::ToolCallId>,
+    expanded_tool_calls: HashSet<acp_v2::ToolCallId>,
+    /// Subagent cards shown for an ACP parent's outgoing session messages.
+    expanded_session_message_cards: HashSet<acp_v2::MessageId>,
 }
 
 impl EntryViewState {
@@ -71,28 +89,40 @@ impl EntryViewState {
             user_toggled_thinking_blocks: HashSet::default(),
             expanded_compactions: HashSet::default(),
             expanded_tool_calls: HashSet::default(),
+            expanded_session_message_cards: HashSet::default(),
         }
     }
 
-    pub(crate) fn is_tool_call_expanded(&self, tool_call_id: &acp_v1::ToolCallId) -> bool {
+    pub(crate) fn is_tool_call_expanded(&self, tool_call_id: &acp_v2::ToolCallId) -> bool {
         self.expanded_tool_calls.contains(tool_call_id)
     }
 
     pub(crate) fn is_tool_call_content_visible(&self, tool_call: &ToolCall) -> bool {
-        self.is_tool_call_expanded(&tool_call.id) || tool_call.authorization().is_some()
+        self.is_tool_call_expanded(&tool_call.id) || tool_call.authorization_id().is_some()
     }
 
-    pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp_v1::ToolCallId) {
+    pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp_v2::ToolCallId) {
         self.expanded_tool_calls.insert(tool_call_id);
     }
 
-    pub(crate) fn collapse_tool_call(&mut self, tool_call_id: &acp_v1::ToolCallId) {
+    pub(crate) fn collapse_tool_call(&mut self, tool_call_id: &acp_v2::ToolCallId) {
         self.expanded_tool_calls.remove(tool_call_id);
     }
 
-    pub(crate) fn toggle_tool_call_expansion(&mut self, tool_call_id: &acp_v1::ToolCallId) {
+    pub(crate) fn toggle_tool_call_expansion(&mut self, tool_call_id: &acp_v2::ToolCallId) {
         if !self.expanded_tool_calls.remove(tool_call_id) {
             self.expanded_tool_calls.insert(tool_call_id.clone());
+        }
+    }
+
+    pub(crate) fn is_session_message_card_expanded(&self, message_id: &acp_v2::MessageId) -> bool {
+        self.expanded_session_message_cards.contains(message_id)
+    }
+
+    pub(crate) fn toggle_session_message_card_expansion(&mut self, message_id: &acp_v2::MessageId) {
+        if !self.expanded_session_message_cards.remove(message_id) {
+            self.expanded_session_message_cards
+                .insert(message_id.clone());
         }
     }
 
@@ -236,22 +266,62 @@ impl EntryViewState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.sync_entry_inner(index, thread, window, ToolCallSync::Live, cx);
+    }
+
+    /// Like [`Self::sync_entry`], but skips the views of tool calls that are not
+    /// visible. Used when restoring a thread's history.
+    pub fn sync_entry_initial(
+        &mut self,
+        index: usize,
+        thread: &Entity<AcpThread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_entry_inner(index, thread, window, ToolCallSync::Restore, cx);
+    }
+
+    /// Materializes a tool call's diff and terminal views without running the
+    /// terminal lifecycle, which would collapse an expanded card again.
+    pub fn materialize_entry(
+        &mut self,
+        index: usize,
+        thread: &Entity<AcpThread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_entry_inner(index, thread, window, ToolCallSync::Materialize, cx);
+    }
+
+    fn sync_entry_inner(
+        &mut self,
+        index: usize,
+        thread: &Entity<AcpThread>,
+        window: &mut Window,
+        tool_call_sync: ToolCallSync,
+        cx: &mut Context<Self>,
+    ) {
+        let materialize_tool_calls = matches!(
+            tool_call_sync,
+            ToolCallSync::Live | ToolCallSync::Materialize
+        );
+        let run_terminal_lifecycle =
+            matches!(tool_call_sync, ToolCallSync::Live | ToolCallSync::Restore);
         let Some(thread_entry) = thread.read(cx).entries().get(index) else {
             return;
         };
 
         match thread_entry {
             AgentThreadEntry::UserMessage(message) => {
-                let can_rewind = thread.read(cx).supports_truncate(cx);
-                let has_client_id = message.client_id.is_some();
-                let is_subagent = thread.read(cx).parent_session_id().is_some();
+                let can_rewind = thread
+                    .read(cx)
+                    .can_rewind_to(message.client_id.as_ref(), cx);
                 let source_blocks = message.content.source_blocks();
                 let source_version = message.content.source_version();
                 let source_is_representable = source_blocks
                     .iter()
                     .all(acp_thread::content::can_convert_to_v1);
-                let is_editable =
-                    can_rewind && has_client_id && !is_subagent && source_is_representable;
+                let is_editable = can_rewind && source_is_representable;
                 if let Some(Entry::UserMessage {
                     editor,
                     synced_source_version,
@@ -312,6 +382,8 @@ impl EntryViewState {
             }
             AgentThreadEntry::ToolCall(tool_call) => {
                 let id = tool_call.id.clone();
+                let materialize_content =
+                    materialize_tool_calls || self.is_tool_call_content_visible(tool_call);
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
                 let patch_hunk_buffers = tool_call
@@ -331,117 +403,152 @@ impl EntryViewState {
                     .map(|buffer| buffer.entity_id())
                     .collect();
 
-                let views = if let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) {
-                    &mut tool_call.content
-                } else {
-                    self.set_entry(
-                        index,
-                        Entry::ToolCall(ToolCallEntry {
-                            content: HashMap::default(),
-                            patch_hunk_ids: HashSet::default(),
-                            focus_handle: cx.focus_handle(),
-                        }),
-                    );
-                    let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) else {
-                        unreachable!()
+                let tool_call_entry =
+                    if let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) {
+                        tool_call
+                    } else {
+                        self.set_entry(
+                            index,
+                            Entry::ToolCall(ToolCallEntry {
+                                content: HashMap::default(),
+                                patch_hunk_ids: HashSet::default(),
+                                restored_view_ids: HashSet::default(),
+                                focus_handle: cx.focus_handle(),
+                            }),
+                        );
+                        let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) else {
+                            unreachable!()
+                        };
+                        tool_call
                     };
-                    &mut tool_call.content
-                };
+                let ToolCallEntry {
+                    content: views,
+                    restored_view_ids,
+                    ..
+                } = tool_call_entry;
 
                 let is_tool_call_completed =
                     matches!(tool_call.status(), acp_thread::ToolCallStatus::Completed);
+                let emit_new_view_events = matches!(tool_call_sync, ToolCallSync::Live);
 
-                for terminal in terminals {
-                    match views.entry(terminal.entity_id()) {
-                        collections::hash_map::Entry::Vacant(entry) => {
-                            let element = create_terminal(
-                                self.workspace.clone(),
-                                self.project.clone(),
-                                terminal.clone(),
-                                window,
-                                cx,
-                            )
-                            .into_any();
-                            cx.emit(EntryViewEvent {
-                                entry_index: index,
-                                view_event: ViewEvent::NewTerminal(id.clone()),
-                            });
-                            entry.insert(element);
-                        }
-                        collections::hash_map::Entry::Occupied(_entry) => {
-                            let terminal = terminal.read(cx);
-                            if is_tool_call_completed
-                                && terminal.is_process_backed()
-                                && terminal.output().is_none()
-                            {
-                                cx.emit(EntryViewEvent {
-                                    entry_index: index,
-                                    view_event: ViewEvent::TerminalMovedToBackground(id.clone()),
-                                });
+                if materialize_content {
+                    for terminal in terminals {
+                        let terminal_id = terminal.entity_id();
+                        match views.entry(terminal_id) {
+                            collections::hash_map::Entry::Vacant(entry) => {
+                                let element = create_terminal(
+                                    self.workspace.clone(),
+                                    self.project.clone(),
+                                    terminal.clone(),
+                                    window,
+                                    cx,
+                                )
+                                .into_any();
+                                let was_restored = restored_view_ids.remove(&terminal_id);
+                                if emit_new_view_events && !was_restored {
+                                    cx.emit(EntryViewEvent {
+                                        entry_index: index,
+                                        view_event: ViewEvent::NewTerminal(id.clone()),
+                                    });
+                                }
+                                entry.insert(element);
+                            }
+                            collections::hash_map::Entry::Occupied(_entry) => {
+                                let terminal = terminal.read(cx);
+                                if run_terminal_lifecycle
+                                    && is_tool_call_completed
+                                    && terminal.is_process_backed()
+                                    && terminal.output().is_none()
+                                {
+                                    cx.emit(EntryViewEvent {
+                                        entry_index: index,
+                                        view_event: ViewEvent::TerminalMovedToBackground(
+                                            id.clone(),
+                                        ),
+                                    });
+                                }
                             }
                         }
                     }
-                }
 
-                for diff in diffs {
-                    views.entry(diff.entity_id()).or_insert_with(|| {
-                        let editor = create_editor_diff(diff.clone(), window, cx);
-                        cx.subscribe(&editor, {
-                            let diff = diff.clone();
-                            let entry_index = index;
-                            move |_this, _editor, event: &EditorEvent, cx| {
-                                if let EditorEvent::OpenExcerptsRequested {
-                                    selections_by_buffer,
-                                    split,
-                                } = event
-                                {
-                                    let multibuffer = diff.read(cx).multibuffer();
-                                    if let Some((buffer_id, (ranges, _))) =
-                                        selections_by_buffer.iter().next()
+                    for diff in diffs {
+                        let diff_id = diff.entity_id();
+                        if let collections::hash_map::Entry::Vacant(entry) = views.entry(diff_id) {
+                            let multibuffer = diff.update(cx, |diff, cx| diff.multibuffer(cx));
+                            let editor =
+                                create_multibuffer_diff_editor(multibuffer.clone(), window, cx);
+                            cx.subscribe(&editor, {
+                                let diff = diff.clone();
+                                let entry_index = index;
+                                move |_this, _editor, event: &EditorEvent, cx| {
+                                    if let EditorEvent::OpenExcerptsRequested {
+                                        selections_by_buffer,
+                                        split,
+                                    } = event
                                     {
-                                        if let Some(buffer) =
-                                            multibuffer.read(cx).buffer(*buffer_id)
+                                        if let Some((buffer_id, (ranges, _))) =
+                                            selections_by_buffer.iter().next()
                                         {
-                                            if let Some(range) = ranges.first() {
-                                                let point =
-                                                    buffer.read(cx).offset_to_point(range.start.0);
-                                                if let Some(path) = diff.read(cx).file_path(cx) {
-                                                    cx.emit(EntryViewEvent {
-                                                        entry_index,
-                                                        view_event: ViewEvent::OpenDiffLocation {
-                                                            path,
-                                                            position: point,
-                                                            split: *split,
-                                                        },
-                                                    });
+                                            if let Some(buffer) =
+                                                multibuffer.read(cx).buffer(*buffer_id)
+                                            {
+                                                if let Some(range) = ranges.first() {
+                                                    let point = buffer
+                                                        .read(cx)
+                                                        .offset_to_point(range.start.0);
+                                                    if let Some(path) = diff.read(cx).file_path(cx)
+                                                    {
+                                                        cx.emit(EntryViewEvent {
+                                                            entry_index,
+                                                            view_event:
+                                                                ViewEvent::OpenDiffLocation {
+                                                                    path,
+                                                                    position: point,
+                                                                    split: *split,
+                                                                },
+                                                        });
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
+                            })
+                            .detach();
+                            let was_restored = restored_view_ids.remove(&diff_id);
+                            if emit_new_view_events && !was_restored {
+                                cx.emit(EntryViewEvent {
+                                    entry_index: index,
+                                    view_event: ViewEvent::NewDiff(id.clone()),
+                                });
                             }
-                        })
-                        .detach();
-                        cx.emit(EntryViewEvent {
-                            entry_index: index,
-                            view_event: ViewEvent::NewDiff(id.clone()),
-                        });
-                        editor.into_any()
-                    });
-                }
-                for buffer in patch_hunk_buffers {
-                    views.entry(buffer.entity_id()).or_insert_with(|| {
-                        let editor = create_multibuffer_diff_editor(buffer, window, cx);
-                        cx.emit(EntryViewEvent {
-                            entry_index: index,
-                            view_event: ViewEvent::NewDiff(id.clone()),
-                        });
-                        editor.into_any()
-                    });
+                            entry.insert(editor.into_any());
+                        }
+                    }
+                    for buffer in patch_hunk_buffers {
+                        let buffer_id = buffer.entity_id();
+                        if let collections::hash_map::Entry::Vacant(entry) = views.entry(buffer_id)
+                        {
+                            let editor = create_multibuffer_diff_editor(buffer, window, cx);
+                            let was_restored = restored_view_ids.remove(&buffer_id);
+                            if emit_new_view_events && !was_restored {
+                                cx.emit(EntryViewEvent {
+                                    entry_index: index,
+                                    view_event: ViewEvent::NewDiff(id.clone()),
+                                });
+                            }
+                            entry.insert(editor.into_any());
+                        }
+                    }
+                } else {
+                    restored_view_ids.extend(terminals.iter().map(|terminal| terminal.entity_id()));
+                    restored_view_ids.extend(diffs.iter().map(|diff| diff.entity_id()));
+                    restored_view_ids.extend(patch_hunk_ids.iter().copied());
                 }
                 if let Some(Entry::ToolCall(entry)) = self.entries.get_mut(index) {
                     for stale_id in entry.patch_hunk_ids.difference(&patch_hunk_ids) {
                         entry.content.remove(stale_id);
+                        entry.restored_view_ids.remove(stale_id);
                     }
                     entry.patch_hunk_ids = patch_hunk_ids;
                 }
@@ -451,6 +558,16 @@ impl EntryViewState {
                     self.set_entry(
                         index,
                         Entry::Elicitation {
+                            focus_handle: cx.focus_handle(),
+                        },
+                    );
+                }
+            }
+            AgentThreadEntry::SessionMessage(_) => {
+                if !matches!(self.entries.get(index), Some(Entry::SessionMessage { .. })) {
+                    self.set_entry(
+                        index,
+                        Entry::SessionMessage {
                             focus_handle: cx.focus_handle(),
                         },
                     );
@@ -527,6 +644,7 @@ impl EntryViewState {
             match entry {
                 Entry::UserMessage { .. }
                 | Entry::AssistantMessage { .. }
+                | Entry::SessionMessage { .. }
                 | Entry::Elicitation { .. }
                 | Entry::ContextCompaction => {}
                 Entry::ToolCall(ToolCallEntry { content, .. }) => {
@@ -554,9 +672,9 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
-    NewDiff(acp_v1::ToolCallId),
-    NewTerminal(acp_v1::ToolCallId),
-    TerminalMovedToBackground(acp_v1::ToolCallId),
+    NewDiff(acp_v2::ToolCallId),
+    NewTerminal(acp_v2::ToolCallId),
+    TerminalMovedToBackground(acp_v2::ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
     OpenDiffLocation {
         path: String,
@@ -594,6 +712,7 @@ impl AssistantMessageEntry {
 pub struct ToolCallEntry {
     content: HashMap<EntityId, AnyEntity>,
     patch_hunk_ids: HashSet<EntityId>,
+    restored_view_ids: HashSet<EntityId>,
     focus_handle: FocusHandle,
 }
 
@@ -604,6 +723,9 @@ pub enum Entry {
         synced_source_version: acp_thread::MessageContentVersion,
     },
     AssistantMessage(AssistantMessageEntry),
+    SessionMessage {
+        focus_handle: FocusHandle,
+    },
     ToolCall(ToolCallEntry),
     Elicitation {
         focus_handle: FocusHandle,
@@ -616,6 +738,7 @@ impl Entry {
         match self {
             Self::UserMessage { editor, .. } => Some(editor.read(cx).focus_handle(cx)),
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
+            Self::SessionMessage { focus_handle } => Some(focus_handle.clone()),
             Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
             Self::Elicitation { focus_handle } => Some(focus_handle.clone()),
             Self::ContextCompaction => None,
@@ -626,6 +749,7 @@ impl Entry {
         match self {
             Self::UserMessage { editor, .. } => Some(editor),
             Self::AssistantMessage(_)
+            | Self::SessionMessage { .. }
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
             | Self::ContextCompaction => None,
@@ -663,6 +787,7 @@ impl Entry {
         match self {
             Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
             Self::UserMessage { .. }
+            | Self::SessionMessage { .. }
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
             | Self::ContextCompaction => None,
@@ -682,6 +807,7 @@ impl Entry {
             Self::ToolCall(ToolCallEntry { content, .. }) => !content.is_empty(),
             Self::UserMessage { .. }
             | Self::AssistantMessage(_)
+            | Self::SessionMessage { .. }
             | Self::Elicitation { .. }
             | Self::ContextCompaction => false,
         }
@@ -699,6 +825,7 @@ impl Focusable for Entry {
         match self {
             Self::UserMessage { editor, .. } => editor.read(cx).focus_handle(cx),
             Self::AssistantMessage(message) => message.focus_handle.clone(),
+            Self::SessionMessage { focus_handle } => focus_handle.clone(),
             Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
             Self::Elicitation { focus_handle } => focus_handle.clone(),
             Self::ContextCompaction => cx.focus_handle(),
@@ -740,17 +867,10 @@ fn create_terminal(
             cx,
         );
 
+        view.set_content_top_padding(gpui::rems(TERMINAL_CONTENT_TOP_PADDING), cx);
         view.set_embedded_mode(Some(1000), cx);
         view
     })
-}
-
-fn create_editor_diff(
-    diff: Entity<acp_thread::Diff>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Entity<Editor> {
-    create_multibuffer_diff_editor(diff.read(cx).multibuffer().clone(), window, cx)
 }
 
 fn create_multibuffer_diff_editor(
@@ -806,19 +926,20 @@ fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::path::Path;
     use std::rc::Rc;
     use std::sync::Arc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent_client_protocol::schema::v1 as acp_v1;
+    use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
     use gpui::{AppContext as _, TestAppContext};
     use parking_lot::RwLock;
 
-    use crate::entry_view_state::{Entry, EntryViewState};
+    use crate::entry_view_state::{Entry, EntryViewEvent, EntryViewState, ToolCallSync, ViewEvent};
     use crate::message_editor::SessionCapabilities;
     use multi_buffer::MultiBufferRow;
     use pretty_assertions::assert_matches;
@@ -846,7 +967,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_diff_sync(cx: &mut TestAppContext) {
+    async fn test_legacy_diff_sync(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -862,92 +983,127 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
-        let tool_call = acp_v1::ToolCall::new("tool", "Tool call")
-            .status(acp_v1::ToolCallStatus::InProgress)
-            .content(vec![acp_v1::ToolCallContent::Diff(
-                acp_v1::Diff::new("/project/hello.txt", "hello world").old_text("hi world"),
-            )]);
-        let connection = Rc::new(StubAgentConnection::new());
-        let thread = cx
-            .update(|_, cx| {
-                connection.clone().new_session(
-                    project.clone(),
-                    PathList::new(&[Path::new(path!("/project"))]),
-                    cx,
+        for sync_mode in [ToolCallSync::Live, ToolCallSync::Materialize] {
+            let tool_call = acp_v1::ToolCall::new("tool", "Tool call")
+                .status(acp_v1::ToolCallStatus::InProgress)
+                .content(vec![acp_v1::ToolCallContent::Diff(
+                    acp_v1::Diff::new("/project/hello.txt", "hello world").old_text("hi world"),
+                )]);
+            let connection = Rc::new(StubAgentConnection::new());
+            let thread = cx
+                .update(|_, cx| {
+                    connection.clone().new_session(
+                        project.clone(),
+                        PathList::new(&[Path::new(path!("/project"))]),
+                        cx,
+                    )
+                })
+                .await
+                .unwrap();
+            let session_id = thread.update(cx, |thread, _| thread.session_id().clone());
+
+            cx.update(|_, cx| {
+                connection.send_update(session_id, acp_v1::SessionUpdate::ToolCall(tool_call), cx)
+            });
+
+            let view_state = cx.new(|_cx| {
+                EntryViewState::new(
+                    workspace.downgrade(),
+                    project.downgrade(),
+                    None,
+                    Arc::new(RwLock::new(SessionCapabilities::default())),
+                    "Test Agent".into(),
                 )
-            })
-            .await
-            .unwrap();
-        let session_id = thread.update(cx, |thread, _| thread.session_id().clone());
+            });
 
-        cx.update(|_, cx| {
-            connection.send_update(session_id, acp_v1::SessionUpdate::ToolCall(tool_call), cx)
-        });
+            view_state.update_in(cx, |view_state, window, cx| {
+                view_state.sync_entry_initial(0, &thread, window, cx)
+            });
 
-        let thread_store = None;
+            let diff = thread.read_with(cx, |thread, _| {
+                thread
+                    .entries()
+                    .get(0)
+                    .unwrap()
+                    .diffs()
+                    .next()
+                    .unwrap()
+                    .clone()
+            });
 
-        let view_state = cx.new(|_cx| {
-            EntryViewState::new(
-                workspace.downgrade(),
-                project.downgrade(),
-                thread_store,
-                Arc::new(RwLock::new(SessionCapabilities::default())),
-                "Test Agent".into(),
-            )
-        });
+            view_state.read_with(cx, |view_state, _cx| {
+                assert!(
+                    view_state
+                        .entry(0)
+                        .unwrap()
+                        .editor_for_diff(&diff)
+                        .is_none(),
+                    "restoring history should not build a diff editor for a collapsed tool call"
+                );
+            });
 
-        view_state.update_in(cx, |view_state, window, cx| {
-            view_state.sync_entry(0, &thread, window, cx)
-        });
+            let saw_new_diff = Rc::new(Cell::new(false));
+            let _subscription = cx.update(|_, cx| {
+                let saw_new_diff = saw_new_diff.clone();
+                cx.subscribe(&view_state, move |_, event: &EntryViewEvent, _| {
+                    if matches!(event.view_event, ViewEvent::NewDiff(_)) {
+                        saw_new_diff.set(true);
+                    }
+                })
+            });
 
-        let diff = thread.read_with(cx, |thread, _| {
-            thread
-                .entries()
-                .get(0)
-                .unwrap()
-                .diffs()
-                .next()
-                .unwrap()
-                .clone()
-        });
+            view_state.update_in(cx, |view_state, window, cx| {
+                view_state.sync_entry_inner(0, &thread, window, sync_mode, cx)
+            });
 
-        cx.run_until_parked();
+            cx.run_until_parked();
 
-        let diff_editor = view_state.read_with(cx, |view_state, _cx| {
-            view_state.entry(0).unwrap().editor_for_diff(&diff).unwrap()
-        });
-        assert_eq!(
-            diff_editor.read_with(cx, |editor, cx| editor.text(cx)),
-            "hi world\nhello world"
-        );
-        let row_infos = diff_editor.read_with(cx, |editor, cx| {
-            let multibuffer = editor.buffer().read(cx);
-            multibuffer
-                .snapshot(cx)
-                .row_infos(MultiBufferRow(0))
-                .collect::<Vec<_>>()
-        });
-        assert_matches!(
-            row_infos.as_slice(),
-            [
-                RowInfo {
-                    multibuffer_row: Some(MultiBufferRow(0)),
-                    diff_status: Some(DiffHunkStatus {
-                        kind: DiffHunkStatusKind::Deleted,
+            assert!(
+                !saw_new_diff.get(),
+                "materializing a restored diff must not emit NewDiff"
+            );
+
+            let diff_editor = view_state.read_with(cx, |view_state, _cx| {
+                let entry = view_state.entry(0).unwrap();
+                let Entry::ToolCall(tool_call) = entry else {
+                    panic!("expected tool call");
+                };
+                assert!(tool_call.restored_view_ids.is_empty());
+                entry.editor_for_diff(&diff).unwrap()
+            });
+            assert_eq!(
+                diff_editor.read_with(cx, |editor, cx| editor.text(cx)),
+                "hi world\nhello world"
+            );
+            let row_infos = diff_editor.read_with(cx, |editor, cx| {
+                let multibuffer = editor.buffer().read(cx);
+                multibuffer
+                    .snapshot(cx)
+                    .row_infos(MultiBufferRow(0))
+                    .collect::<Vec<_>>()
+            });
+            assert_matches!(
+                row_infos.as_slice(),
+                [
+                    RowInfo {
+                        multibuffer_row: Some(MultiBufferRow(0)),
+                        diff_status: Some(DiffHunkStatus {
+                            kind: DiffHunkStatusKind::Deleted,
+                            ..
+                        }),
                         ..
-                    }),
-                    ..
-                },
-                RowInfo {
-                    multibuffer_row: Some(MultiBufferRow(1)),
-                    diff_status: Some(DiffHunkStatus {
-                        kind: DiffHunkStatusKind::Added,
+                    },
+                    RowInfo {
+                        multibuffer_row: Some(MultiBufferRow(1)),
+                        diff_status: Some(DiffHunkStatus {
+                            kind: DiffHunkStatusKind::Added,
+                            ..
+                        }),
                         ..
-                    }),
-                    ..
-                }
-            ]
-        );
+                    }
+                ]
+            );
+        }
     }
 
     #[gpui::test]
@@ -978,10 +1134,10 @@ mod tests {
         let _response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id.clone()),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(session_id.clone()),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -989,14 +1145,14 @@ mod tests {
                 )
                 .unwrap()
         });
-        cx.update(|_, cx| {
-            connection.send_update(
-                session_id,
-                acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
-                    acp_v1::ContentBlock::Text(acp_v1::TextContent::new("hello")),
-                )),
-                cx,
-            );
+        thread.update(cx, |thread, cx| {
+            thread
+                .append_message_chunk(
+                    acp_thread::MessageKind::Assistant,
+                    acp_v2::ContentChunk::new("hello".into(), "after-elicitation"),
+                    cx,
+                )
+                .expect("append current message after elicitation");
         });
 
         let view_state = cx.new(|_cx| {

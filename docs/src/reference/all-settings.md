@@ -319,6 +319,22 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Suggest Extensions
+
+- Description: Whether to suggest installing extensions based on the files you open.
+- Setting: `suggest_extensions`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+```json [settings]
+{
+  "suggest_extensions": false
+}
+```
+
 ## Auto Update extensions
 
 - Description: Disable auto-updates for specific extensions.
@@ -2492,7 +2508,7 @@ When set to `expanded`, symbolic links are only scanned after you explicitly exp
       "**/Zed/**/*.json",
       "**/.vscode/**/*.json"
     ],
-    "Shell Script": [".env.*"]
+    "Env": [".env.*"]
   }
 }
 ```
@@ -2881,6 +2897,35 @@ Example:
   }
 }
 ```
+
+### Auto Fetch
+
+- Description: Whether and how often to automatically fetch the default branch's remote and the current branch's upstream remote in the background. If the default branch is local, its upstream remote is used. If both refer to the same remote, it is fetched only once. Other remotes are not fetched. Auto-fetch never prompts for credentials, so it relies on credentials that can be supplied without interaction, such as an SSH agent or a credential helper answering from a keychain. It is also disabled for repositories in worktrees you have not trusted.
+- Setting: `auto_fetch`
+- Default:
+
+```json [settings]
+{
+  "git": {
+    "auto_fetch": {
+      "enabled": false,
+      "interval_secs": 60
+    }
+  }
+}
+```
+
+**Options**
+
+- `enabled`: Whether to automatically fetch in the background. Disabling it stops future fetches without interrupting a fetch already queued or running.
+- `interval_secs`: How long to wait between automatic fetches, in seconds, starting after the previous fetch completes. Only applies when `enabled` is `true`. Values below 15 are clamped to 15.
+
+In remote development, auto-fetch runs on the host that owns the checkout and
+sends repository updates to your local Zed window. Your user settings are forwarded
+to the SSH server; server settings override them. In a shared project, the host's
+settings control auto-fetch for all collaborators. Configure `git.auto_fetch` in
+user or server settings; Git settings are not read from project `.zed/settings.json`
+files.
 
 ## Go to Definition Fallback
 
@@ -3411,7 +3456,7 @@ The following settings can be overridden for each specific language:
 - [`soft_wrap`](#soft-wrap)
 - [`soft_wrap_indent`](#soft-wrap-indent)
 - [`tab_size`](#tab-size)
-- [`use_autoclose`](#use-autoclose)
+- [`use_autoclose`](#auto-close)
 - [`always_treat_brackets_as_autoclosed`](#always-treat-brackets-as-autoclosed)
 
 These values take in the same options as the root-level settings with the same name.
@@ -3547,6 +3592,16 @@ Positive `integer` values or `null` for unlimited tabs
 
 `boolean` values
 
+## Modeline Lines
+
+- Description: Number of lines to search for [modelines](../modelines.md) at the beginning and end of files
+- Setting: `modeline_lines`
+- Default: `5`
+
+**Options**
+
+Positive `integer` values, or `0` to disable modeline parsing
+
 ## Multi Cursor Modifier
 
 - Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it does not conflict with the multicursor modifier.
@@ -3664,6 +3719,8 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 - Setting: `on_new_window`
 - Default: `"launchpad"`
 
+In the Settings Editor, search for `On New Window` and choose an option.
+
 **Options**
 
 1. Show an empty untitled buffer:
@@ -3681,6 +3738,29 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
   "on_new_window": "launchpad"
 }
 ```
+
+3. Open a README when a new or reopened project has no open items:
+
+In the Settings Editor, set `On New Window` to `Readme`.
+
+Or add this to your settings.json:
+
+```json [settings]
+{
+  "on_new_window": "readme"
+}
+```
+
+Zed opens one README from the first project root with a match.
+Zed checks `README.md`, `readme.md`, `Readme.md`, `README`, `readme`, `Readme`, `README.txt`, `readme.txt`, and `Readme.txt`, in that order.
+These are direct root-level file checks, not a directory scan.
+Other spellings do not match, even on case-insensitive filesystems.
+File-index exclusions do not affect README discovery.
+Adding a folder to an already open project does not open a README.
+Files passed when opening the project and restored tabs take precedence.
+The README opens in a temporary [preview tab](#preview-tabs) when `preview_tabs.enabled` is `true`, or a regular tab otherwise.
+Zed uses your existing file opener settings, without forcing a rendered Markdown preview.
+If no matching README exists, Zed leaves the project's pane empty.
 
 ## Instrumentation
 
@@ -5998,6 +6078,16 @@ Available variables:
 }
 ```
 
+5. Files are grouped by their last extension (case-insensitive) in ascending order, with extensionless files, including dotfiles such as `.gitignore`, first. Dotfiles with a further suffix, such as `.config.json`, keep that extension. Files with the same extension are sorted by name using natural sort, and directories are placed according to `sort_mode`.
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "extension"
+  }
+}
+```
+
 ### Auto Open
 
 - Description: Control whether files are opened automatically after different creation flows in the project panel.
@@ -6035,6 +6125,11 @@ Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more 
 **Options**
 
 `boolean` values
+
+### Subagent Model {#agent-subagent-model}
+
+- Description: The model, reasoning, and speed settings for new Zed Agent subagents. This setting does not configure external agents. See [Subagent Models](../ai/agent-settings.md#subagent-models).
+- Setting: `agent.subagent_model`
 
 ## Collaboration Panel
 
@@ -6124,6 +6219,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `tree_view`: Whether to show entries in tree or flat view in the panel
 - `scrollbar`: When to show the scrollbar in the git panel
 - `starts_open`: Whether the git panel should open on startup
+- `commit_editor`: Whether the commit message editor is shown in the git panel by default. Can be `expanded` or `collapsed`
 - `show_count_badge`: Whether to show a badge on the git panel icon with the count of uncommitted changes
 - `diff_stats`: Whether to show the addition/deletion change count next to each file in the git panel
 - `commit_title_max_length`: Maximum length of the commit message title before a warning is shown. Set to `0` to disable

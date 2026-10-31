@@ -79,6 +79,9 @@
   "agent_buffer_font_size": 12,
   // The default font size for the commit editor in the git panel and commit modal.
   "git_commit_buffer_font_size": 12,
+  // The font family for Mermaid diagrams in the agent panel and markdown preview.
+  // Falls back to the UI font family if unset.
+  "mermaid_font_family": null,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -118,6 +121,8 @@
     "font_family": null,
     // The font family for code blocks in the markdown preview. Falls back to the editor font family if unset.
     "code_font_family": null,
+    // The font weight for headings in the markdown preview, in CSS units from 100 to 900.
+    "heading_font_weight": 600,
     // Whether to automatically open Markdown files in the preview.
     "open_markdown_files_in_preview": false,
     // Whether to limit the width of the rendered markdown content. When
@@ -213,11 +218,14 @@
   //         "when_closing_with_no_tabs": "keep_window_open",
   "when_closing_with_no_tabs": "platform_default",
   // What to show when opening a new window.
-  // May take 2 values:
+  // May take 3 values:
   //  1. Show an empty untitled buffer
   //         "on_new_window": "empty_tab"
   //  2. Show the launchpad with recent projects
   //         "on_new_window": "launchpad"
+  //  3. Open a root-level README in a preview tab when the project has no open items.
+  //     Leave the pane empty if no README is found.
+  //         "on_new_window": "readme"
   "on_new_window": "launchpad",
   // What to do when the last window is closed.
   // May take 2 values:
@@ -235,6 +243,8 @@
   //  3. Use grayscale text rendering:
   //         "text_rendering_mode": "grayscale"
   "text_rendering_mode": "platform_default",
+  // Whether to render windows using the Display P3 color space (macOS only).
+  "use_display_p3": false,
   // Whether to show padding for zoomed panels.
   // When enabled, zoomed center panels (e.g. code editor) will have padding all around,
   // while zoomed bottom/left/right panels will have padding to the top/right/left (respectively).
@@ -960,7 +970,7 @@
     //    "files_first"
     "sort_mode": "directories_first",
     // Whether to sort file and folder names case-sensitively in the project panel.
-    // This setting can take four values:
+    // This setting can take five values:
     //
     // 1. Case-insensitive natural sort with lowercase preferred in ties (default):
     //    "default"
@@ -973,6 +983,10 @@
     // 4. Pure Unicode codepoint comparison.
     //    No case folding, no natural number sorting:
     //    "unicode"
+    // 5. Files are grouped by extension, with extensionless files (including
+    //    dotfiles such as ".gitignore") first and natural sort by name within
+    //    each group:
+    //    "extension"
     "sort_order": "default",
     // Whether to show error and warning count badges next to file names in the project panel.
     "diagnostic_badges": false,
@@ -1145,6 +1159,11 @@
     // Choices: project_diff, file_diff, view_file
     // Default: project_diff
     "entry_primary_click_action": "project_diff",
+    // Whether the commit message editor is shown in the git panel by default.
+    //
+    // Choices: expanded, collapsed
+    // Default: expanded
+    "commit_editor": "expanded",
   },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
@@ -1287,30 +1306,30 @@
         "name": "Write",
         "enable_all_context_servers": true,
         "tools": {
+          "apply_code_action": true,
+          "ask_user": false,
           "copy_path": true,
           "create_directory": true,
           "create_thread": true,
           "delete_path": true,
           "diagnostics": true,
-          "apply_code_action": true,
-          "ask_user": false,
           "edit_file": true,
-          "write_file": true,
           "fetch": true,
           "find_path": true,
           "find_references": true,
           "get_code_actions": true,
           "go_to_definition": true,
+          "grep": true,
           "list_agents_and_models": true,
           "list_directory": true,
           "move_path": true,
-          "rename_symbol": true,
           "read_file": true,
-          "grep": true,
+          "rename_symbol": true,
+          "search_web": true,
           "skill": true,
           "spawn_agent": true,
           "terminal": true,
-          "search_web": true,
+          "write_file": true,
         },
       },
       "ask": {
@@ -1318,21 +1337,21 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
+          "ask_user": false,
           "create_thread": true,
           "diagnostics": true,
-          "ask_user": false,
           "fetch": true,
-          "list_agents_and_models": true,
-          "list_directory": true,
           "find_path": true,
           "find_references": true,
           "get_code_actions": true,
           "go_to_definition": true,
-          "read_file": true,
           "grep": true,
+          "list_agents_and_models": true,
+          "list_directory": true,
+          "read_file": true,
+          "search_web": true,
           "skill": true,
           "spawn_agent": true,
-          "search_web": true,
         },
       },
       "minimal": {
@@ -1465,6 +1484,13 @@
     // When disabled, all tabs appear in a single row (default behavior).
     "show_pinned_tabs_in_separate_row": false,
   },
+  // Settings related to the tab switcher (Ctrl-Tab).
+  "tab_switcher": {
+    // When false, files are not shown while cycling through the tab switcher.
+    // Only the confirmed file (when the modifier key is released) is shown and
+    // recorded in the MRU history.
+    "show_file_preview": true,
+  },
   // Settings related to the editor's tabs
   "tabs": {
     // Show git status colors in the editor tabs.
@@ -1580,6 +1606,11 @@
     "include_ignored": "smart",
     // Whether to include text channels in file finder results.
     "include_channels": false,
+    // Whether to pre-fill the file finder's query with the text selected in the
+    // focused item (e.g. an editor or a terminal) when it is opened.
+    //
+    // Default: true
+    "prefill_query_from_selection": true,
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -1875,6 +1906,14 @@
     //
     // Trailing slashes are ignored.
     "worktree_directory": "../worktrees",
+    // Settings for automatically fetching the default branch's remote and the current branch's upstream remote.
+    "auto_fetch": {
+      // Whether to automatically fetch in the background.
+      "enabled": false,
+      // How long to wait between automatic fetches, in seconds.
+      // Only applies when auto fetch is enabled. (min: 15)
+      "interval_secs": 60,
+    },
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [
@@ -1930,7 +1969,6 @@
     "mode": "eager",
     // Copilot-specific settings
     // "copilot": {
-    //   "enterprise_uri": "",
     //   "proxy": "",
     //   "proxy_no_verify": false,
     //   "enable_next_edit_suggestions": true,
@@ -1939,7 +1977,6 @@
     //   "prediction_debounce": 75
     // },
     "copilot": {
-      "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
       "enable_next_edit_suggestions": true,
@@ -2304,7 +2341,7 @@
       "tsconfig*.json",
     ],
     "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
-    "Shell Script": [".env.*"],
+    "Env": [".env.*"],
   },
   // Settings for which version of Node.js and NPM to use when installing
   // language servers and Copilot.
@@ -2329,6 +2366,8 @@
   "auto_install_extensions": {
     "html": true,
   },
+  // Whether to suggest installing extensions based on the files you open.
+  "suggest_extensions": true,
   // The capabilities granted to extensions.
   //
   // This list can be customized to restrict what extensions are able to do.
@@ -2637,6 +2676,10 @@
       "format_on_save": "on",
       "language_servers": ["zls", "..."],
     },
+  },
+  // Settings shared by Copilot Chat and edit predictions.
+  "copilot": {
+    "enterprise_uri": null,
   },
   // Different settings for specific language models.
   "language_models": {

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+feature_tree="$(cargo tree --locked -p agent_ui_benchmarks -e normal,build,dev,features)"
+if grep -F 'feature "test-support"' <<< "$feature_tree"; then
+    echo "The model search benchmark must not enable test-support." >&2
+    exit 1
+fi
+
+cargo bench --locked -p agent_ui_benchmarks --bench model_search --profile release-fast -- "$@"

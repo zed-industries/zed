@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use collections::HashMap;
 use gpui_util::{ResultExt, maybe};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use smallvec::SmallVec;
 use windows::{
     Win32::{
         Foundation::*,
@@ -70,7 +71,9 @@ struct GPUState {
 }
 
 struct DirectWriteState {
-    gpu_state: GPUState,
+    /// Used to rasterize color glyphs. `None` while the platform is headless: shaping and
+    /// layout don't need a GPU, and nothing is drawn.
+    gpu_state: Option<GPUState>,
     system_font_collection: IDWriteFontCollection1,
     custom_font_collection: IDWriteFontCollection1,
     fonts: Vec<FontInfo>,
@@ -163,7 +166,8 @@ impl GPUState {
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new(directx_devices: &DirectXDevices) -> Result<Self> {
+    /// Creates the text system, able to rasterize color glyphs once it has `directx_devices`.
+    pub(crate) fn new(directx_devices: Option<&DirectXDevices>) -> Result<Self> {
         let factory: IDWriteFactory5 = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
         // The `IDWriteInMemoryFontFileLoader` here is supported starting from
         // Windows 10 Creators Update, which consequently requires the entire
@@ -176,7 +180,7 @@ impl DirectWriteTextSystem {
         let locale = HSTRING::from_wide(&locale);
         let text_renderer = TextRendererWrapper::new(locale.clone());
 
-        let gpu_state = GPUState::new(directx_devices)?;
+        let gpu_state = directx_devices.map(GPUState::new).transpose()?;
 
         let system_subpixel_rendering = get_system_subpixel_rendering();
         let system_ui_font_name = get_system_ui_font_name();
@@ -218,8 +222,15 @@ impl DirectWriteTextSystem {
         })
     }
 
+    /// Uses `directx_devices` to rasterize color glyphs, replacing any previous devices, for
+    /// example after the device was lost.
     pub(crate) fn handle_gpu_lost(&self, directx_devices: &DirectXDevices) -> Result<()> {
         self.state.write().handle_gpu_lost(directx_devices)
+    }
+
+    /// Releases the GPU state, when the platform switches to headless mode.
+    pub(crate) fn release_gpu(&self) {
+        self.state.write().gpu_state = None;
     }
 }
 
@@ -512,6 +523,73 @@ impl DirectWriteState {
     }
 
     fn layout_line(
+        &mut self,
+        components: &DirectWriteComponents,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+    ) -> Result<LineLayout> {
+        if !text.contains(is_line_separator) {
+            return self.layout_line_without_separators(components, text, font_size, font_runs);
+        }
+
+        // DirectWrite honors mandatory breaks even without wrapping. Keep each
+        // separator at a segment's end so no subsequent text moves to a new baseline.
+        let mut layout = LineLayout {
+            font_size,
+            len: text.len(),
+            ..Default::default()
+        };
+        let mut remaining_runs = font_runs;
+        let mut run_offset = 0;
+        let mut text_offset = 0;
+        let mut segment_runs = SmallVec::<[FontRun; 4]>::new();
+        for segment in text.split_inclusive(is_line_separator) {
+            segment_runs.clear();
+            let mut remaining_bytes = segment.len();
+            while remaining_bytes > 0 {
+                let Some(run) = remaining_runs.first() else {
+                    break;
+                };
+                let len = remaining_bytes.min(run.len - run_offset);
+                if len > 0 {
+                    segment_runs.push(FontRun {
+                        len,
+                        font_id: run.font_id,
+                    });
+                }
+                remaining_bytes -= len;
+                run_offset += len;
+                if run_offset == run.len {
+                    remaining_runs = &remaining_runs[1..];
+                    run_offset = 0;
+                }
+            }
+
+            let segment_layout =
+                self.layout_line_without_separators(components, segment, font_size, &segment_runs)?;
+            for mut run in segment_layout.runs {
+                for glyph in &mut run.glyphs {
+                    glyph.index += text_offset;
+                    glyph.position.x += layout.width;
+                }
+                if let Some(last) = layout.runs.last_mut()
+                    && last.font_id == run.font_id
+                {
+                    last.glyphs.append(&mut run.glyphs);
+                } else {
+                    layout.runs.push(run);
+                }
+            }
+            layout.width += segment_layout.width;
+            layout.ascent = layout.ascent.max(segment_layout.ascent);
+            layout.descent = layout.descent.max(segment_layout.descent);
+            text_offset += segment.len();
+        }
+        Ok(layout)
+    }
+
+    fn layout_line_without_separators(
         &mut self,
         components: &DirectWriteComponents,
         text: &str,
@@ -885,6 +963,10 @@ impl DirectWriteState {
         // (`Map`/`Unmap`/`Draw`/`CopyResource`), which `DirectXRenderer` and `DirectXAtlas` also
         // touch. An immediate `ID3D11DeviceContext` is not thread-safe, so this must only run on
         // the main UI thread (which it always is; text rasterization never leaves that thread).
+        let gpu_state = self
+            .gpu_state
+            .as_ref()
+            .context("rasterizing color glyphs needs a GPU, which headless mode has none of")?;
         let bitmap_size = glyph_bounds.size;
         let subpixel_shift = params
             .subpixel_variant
@@ -981,7 +1063,7 @@ impl DirectWriteState {
                     };
                     let bounds = bounds(point(color_bounds.left, color_bounds.top), color_size);
                     glyph_layers.push(GlyphLayerTexture::new(
-                        &self.gpu_state,
+                        gpu_state,
                         run_color,
                         bounds,
                         &alpha_data,
@@ -996,8 +1078,6 @@ impl DirectWriteState {
                 break;
             }
         }
-
-        let gpu_state = &self.gpu_state;
 
         let render_target_texture = {
             let mut texture = None;
@@ -1284,7 +1364,7 @@ impl DirectWriteState {
         try_to_recover_from_device_lost(|| {
             GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite")
         })
-        .map(|gpu_state| self.gpu_state = gpu_state)
+        .map(|gpu_state| self.gpu_state = Some(gpu_state))
     }
 }
 
@@ -1948,6 +2028,10 @@ fn is_color_glyph(
 
 const DEFAULT_LOCALE_NAME: PCWSTR = windows::core::w!("en-US");
 
+fn is_line_separator(character: char) -> bool {
+    matches!(character, '\u{2028}' | '\u{2029}')
+}
+
 #[cfg(test)]
 mod tests {
     use super::{DirectWriteState, DirectWriteTextSystem, GPUState, GlyphLayerTexture};
@@ -1955,15 +2039,123 @@ mod tests {
     use crate::directx_devices::DirectXDevices;
     use anyhow::Result;
     use gpui::{
-        DevicePixels, Font, PlatformTextSystem, RenderGlyphParams, Rgba, bounds, point, px, size,
+        DevicePixels, Font, FontWeight, PlatformTextSystem, RenderGlyphParams, Rgba, TextRun,
+        TextSystem, WindowTextSystem, bounds, point, px, size,
     };
-    use std::ffi::c_void;
+    use std::{ffi::c_void, sync::Arc};
     use windows::Win32::Graphics::Direct3D11::{
         D3D11_BIND_RENDER_TARGET, D3D11_RENDER_TARGET_VIEW_DESC, D3D11_RENDER_TARGET_VIEW_DESC_0,
         D3D11_RTV_DIMENSION_TEXTURE2D, D3D11_SUBRESOURCE_DATA, D3D11_TEX2D_RTV,
         D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
     };
     use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+
+    #[test]
+    fn unicode_line_separators_preserve_shaped_line_cursor() -> Result<()> {
+        check_unicode_separator_cursor('\u{2028}')
+    }
+
+    #[test]
+    fn unicode_paragraph_separators_preserve_shaped_line_cursor() -> Result<()> {
+        check_unicode_separator_cursor('\u{2029}')
+    }
+
+    fn check_unicode_separator_cursor(separator: char) -> Result<()> {
+        let platform_text_system = Arc::new(DirectWriteTextSystem::new(None)?);
+        let font = Font {
+            family: "Segoe UI".into(),
+            ..Default::default()
+        };
+        platform_text_system.font_id(&font)?;
+        let text_system = WindowTextSystem::new(Arc::new(TextSystem::new(platform_text_system)));
+
+        let separated_letters = ["a", "b", "c", "d", "e", "f"].join(&separator.to_string());
+        for text in [
+            separated_letters,
+            format!("{separator}ab{separator}{separator}cd{separator}"),
+            format!("{separator}{separator}{separator}{separator}{separator}"),
+            format!("é{separator}𐐀{separator}z"),
+        ] {
+            for multiple_fonts in [false, true] {
+                let mut runs = vec![TextRun {
+                    len: text.len(),
+                    font: font.clone(),
+                    ..Default::default()
+                }];
+                if multiple_fonts {
+                    let first_len = text.chars().next().map_or(0, char::len_utf8);
+                    runs[0].len = first_len;
+                    let mut bold_font = font.clone();
+                    bold_font.weight = FontWeight::BOLD;
+                    runs.push(TextRun {
+                        len: text.len() - first_len,
+                        font: bold_font,
+                        ..Default::default()
+                    });
+                }
+                let shaped = text_system.shape_line(text.clone().into(), px(14.0), &runs, None);
+                let mut reference_runs = runs.clone();
+                let mut offset = 0;
+                for run in &mut reference_runs {
+                    let end = offset + run.len;
+                    run.len = text[offset..end]
+                        .chars()
+                        .filter(|character| *character != separator)
+                        .map(char::len_utf8)
+                        .sum();
+                    offset = end;
+                }
+                let reference_text: String = text
+                    .chars()
+                    .filter(|character| *character != separator)
+                    .collect();
+                let reference =
+                    text_system.shape_line(reference_text.into(), px(14.0), &reference_runs, None);
+                assert!(
+                    (shaped.width - reference.width).abs() < px(0.001),
+                    "{text:?}, multiple_fonts={multiple_fonts}"
+                );
+
+                let visible_glyphs: Vec<_> = shaped
+                    .runs
+                    .iter()
+                    .flat_map(|run| run.glyphs.iter().map(|glyph| (run.font_id, glyph)))
+                    .filter(|(_, glyph)| !text[glyph.index..].starts_with(separator))
+                    .collect();
+                let reference_glyphs: Vec<_> = reference
+                    .runs
+                    .iter()
+                    .flat_map(|run| run.glyphs.iter().map(|glyph| (run.font_id, glyph)))
+                    .collect();
+                assert_eq!(visible_glyphs.len(), reference_glyphs.len(), "{text:?}");
+                for ((actual_font, actual), (expected_font, expected)) in
+                    visible_glyphs.into_iter().zip(reference_glyphs)
+                {
+                    assert_eq!(actual_font, expected_font, "{text:?}");
+                    assert_eq!(actual.id, expected.id, "{text:?}");
+                    assert!((actual.position.x - expected.position.x).abs() < px(0.001));
+                    assert!((actual.position.y - expected.position.y).abs() < px(0.001));
+                    let reference_index: usize = text[..actual.index]
+                        .chars()
+                        .filter(|character| *character != separator)
+                        .map(char::len_utf8)
+                        .sum();
+                    assert_eq!(reference_index, expected.index, "{text:?}");
+                }
+
+                let mut cursor = shaped.cursor();
+                for (index, character) in text.char_indices() {
+                    let piece = cursor.take_until(index + character.len_utf8());
+                    assert_eq!(piece.text.as_ref(), character.to_string());
+                    assert_eq!(piece.len(), character.len_utf8());
+                    if character == separator {
+                        assert_eq!(piece.width, px(0.0));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_cluster_map() {
@@ -2005,7 +2197,7 @@ mod tests {
     #[test]
     fn color_emoji_rasterization_is_stable_across_batches() -> Result<()> {
         let devices = DirectXDevices::new()?;
-        let text_system = DirectWriteTextSystem::new(&devices)?;
+        let text_system = DirectWriteTextSystem::new(Some(&devices))?;
 
         let font = Font {
             family: "Segoe UI Emoji".into(),

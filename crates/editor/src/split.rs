@@ -495,7 +495,7 @@ impl RenderOnce for DiffStyleControls {
                                     .text_ui_sm(cx)
                                     .text_color(Color::Muted.color(cx))
                                     .children(render_modifiers(
-                                        &gpui::Modifiers::secondary_key(),
+                                        &gpui::Modifiers::secondary_key(cx),
                                         PlatformStyle::platform(),
                                         None,
                                         Some(TextSize::Small.rems(cx).into()),
@@ -508,7 +508,7 @@ impl RenderOnce for DiffStyleControls {
                     .on_click({
                         let splittable_editor = self.splittable_editor.clone();
                         move |_, window, cx| {
-                            if window.modifiers().secondary() {
+                            if window.modifiers().secondary(cx) {
                                 window.dispatch_action(
                                     OpenSettingsAt {
                                         path: "minimum_split_diff_width".to_string(),
@@ -782,6 +782,12 @@ impl SplittableEditor {
                     }
                 }
 
+                EditorEvent::BufferFoldToggled { .. } => {
+                    this.rhs_editor.update(cx, |editor, cx| {
+                        editor.inlay_hint_visibility_changed(cx);
+                    });
+                    cx.emit(event.clone());
+                }
                 EditorEvent::OpenExcerptsRequested {
                     selections_by_buffer,
                     split,
@@ -859,6 +865,9 @@ impl SplittableEditor {
 
         rhs_display_map.update(cx, |dm, cx| {
             dm.set_companion(Some((lhs_display_map, companion.clone())), cx);
+        });
+        self.rhs_editor.update(cx, |editor, cx| {
+            editor.inlay_hint_visibility_changed(cx);
         });
 
         let lhs = self.lhs.as_ref().unwrap();
@@ -1175,6 +1184,7 @@ impl SplittableEditor {
             rhs.display_map.update(cx, |dm, cx| {
                 dm.set_companion(None, cx);
             });
+            rhs.inlay_hint_visibility_changed(cx);
         });
         cx.notify();
     }

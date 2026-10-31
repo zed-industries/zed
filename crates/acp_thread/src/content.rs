@@ -1,6 +1,25 @@
 use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
 use anyhow::{Result, bail};
 
+pub fn validate_prompt_content_for_v1(content: &[acp_v2::ContentBlock]) -> Result<()> {
+    if !content.iter().all(can_convert_to_v1) {
+        bail!("This prompt contains content not supported by ACP v1");
+    }
+    Ok(())
+}
+
+pub fn prompt_to_v1(request: acp_v2::PromptRequest) -> Result<acp_v1::PromptRequest> {
+    let prompt = request
+        .prompt
+        .into_iter()
+        .map(to_v1)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(
+        acp_v1::PromptRequest::new(acp_v1::SessionId::new(request.session_id.0), prompt)
+            .meta(request.meta),
+    )
+}
+
 pub fn from_v1(block: acp_v1::ContentBlock) -> Result<acp_v2::ContentBlock> {
     Ok(match block {
         acp_v1::ContentBlock::Text(content) => acp_v2::ContentBlock::Text(
@@ -24,7 +43,8 @@ pub fn from_v1(block: acp_v1::ContentBlock) -> Result<acp_v2::ContentBlock> {
                 .title(content.title)
                 .description(content.description)
                 .mime_type(content.mime_type.map(acp_v2::MediaType::new))
-                .size(content.size)
+                // v2 sizes are byte counts, so a negative v1 size is unknown.
+                .size(content.size.and_then(|size| u64::try_from(size).ok()))
                 .annotations(annotations_from_v1(content.annotations)?)
                 .meta(content.meta),
         ),
@@ -88,7 +108,7 @@ pub fn to_v1(block: acp_v2::ContentBlock) -> Result<acp_v1::ContentBlock> {
                     .title(content.title)
                     .description(content.description)
                     .mime_type(content.mime_type.map(|mime_type| mime_type.0.to_string()))
-                    .size(content.size)
+                    .size(content.size.and_then(|size| i64::try_from(size).ok()))
                     .annotations(annotations_to_v1(content.annotations)?)
                     .meta(content.meta),
             )
@@ -248,6 +268,47 @@ mod tests {
     }
 
     #[test]
+    fn legacy_prompt_conversion_preserves_envelope_and_rejects_unsupported_content() -> Result<()> {
+        let request = acp_v2::PromptRequest::new(
+            "opaque-session",
+            vec![acp_v2::ContentBlock::Text(
+                acp_v2::TextContent::new("prompt").meta(acp_v2::Meta::from_iter([(
+                    "block".into(),
+                    json!({"value": 1}),
+                )])),
+            )],
+        )
+        .meta(acp_v2::Meta::from_iter([(
+            "request".into(),
+            json!([null, true]),
+        )]));
+        validate_prompt_content_for_v1(&request.prompt)?;
+        assert_eq!(
+            serde_json::to_value(prompt_to_v1(request)?)?,
+            json!({
+                "sessionId": "opaque-session",
+                "prompt": [{"type": "text", "text": "prompt", "_meta": {"block": {"value": 1}}}],
+                "_meta": {"request": [null, true]}
+            })
+        );
+
+        let request = acp_v2::PromptRequest::new(
+            "opaque-session",
+            vec![
+                "visible text".into(),
+                acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
+                    "_future",
+                    BTreeMap::from([("payload".into(), json!("private-payload"))]),
+                )),
+            ],
+        );
+        assert!(validate_prompt_content_for_v1(&request.prompt).is_err());
+        let error = prompt_to_v1(request).expect_err("the entire prompt must be representable");
+        assert!(!error.to_string().contains("private-payload"));
+        Ok(())
+    }
+
+    #[test]
     fn preserves_all_v1_content_variants_and_metadata() {
         round_trip(acp_v1::ContentBlock::Text(
             acp_v1::TextContent::new("Hello \0 世界")
@@ -387,6 +448,18 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn negative_v1_resource_link_size_is_unknown_in_v2() {
+        let converted = from_v1(acp_v1::ContentBlock::ResourceLink(
+            acp_v1::ResourceLink::new("negative size", "file:///negative").size(-1),
+        ))
+        .expect("v1 resource link converts to v2");
+        let acp_v2::ContentBlock::ResourceLink(link) = converted else {
+            panic!("expected a resource link");
+        };
+        assert_eq!(link.size, None);
+    }
+
     fn round_trip_from_v2(block: acp_v2::ContentBlock) {
         assert!(can_convert_to_v1(&block), "{block:?}");
         let original_wire = serde_json::to_value(&block).expect("serialize original v2 block");
@@ -499,11 +572,8 @@ mod tests {
             acp_v2::ContentBlock::Audio(acp_v2::AudioContent::new("", "")),
             acp_v2::ContentBlock::ResourceLink(
                 acp_v2::ResourceLink::new("", "")
-                    .size(i64::MAX)
+                    .size(i64::MAX.unsigned_abs())
                     .annotations(acp_v2::Annotations::new().priority(0.125)),
-            ),
-            acp_v2::ContentBlock::ResourceLink(
-                acp_v2::ResourceLink::new("negative size", "file:///negative").size(-1),
             ),
             acp_v2::ContentBlock::Resource(acp_v2::EmbeddedResource::new(
                 acp_v2::EmbeddedResourceResource::TextResourceContents(

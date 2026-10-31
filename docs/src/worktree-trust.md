@@ -27,6 +27,8 @@ This feature works locally and on SSH and WSL remote hosts. Zed tracks trust inf
 Restricted Mode prevents:
 
 - Project settings (`.zed/settings.json`) from being parsed and applied
+- Project tasks (`.zed/tasks.json`, `.vscode/tasks.json`) and debug configurations (`.zed/debug.json`, `.vscode/launch.json`) from being applied
+- Automatic task hooks from running, including hooks defined in global tasks
 - Language servers from being installed and spawned
 - MCP servers from being installed and spawned
 

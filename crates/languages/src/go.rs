@@ -2,8 +2,8 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
+use github_releases::latest_github_release;
 use gpui::{App, AsyncApp, Entity, Task};
-use http_client::github::latest_github_release;
 pub use language::*;
 use language::{
     LanguageName, LanguageToolchainStore, LspAdapterDelegate, LspInstaller,
@@ -30,7 +30,12 @@ use std::{
     },
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
+use util::{
+    ResultExt,
+    fs::remove_matching,
+    maybe, merge_json_value_into,
+    paths::{PathStyle, UrlExt as _},
+};
 
 pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
     let content = grammars::get_file("go/semantic_token_rules.json")
@@ -278,8 +283,10 @@ impl LspAdapter for GoLspAdapter {
         match completion.kind.zip(completion.detail.as_ref()) {
             Some((lsp::CompletionItemKind::MODULE, detail)) => {
                 let text = format!("{label} {detail}");
-                let source = Rope::from(format!("import {text}").as_str());
-                let runs = language.highlight_text(&source, 7..7 + text[name_offset..].len());
+                let source = format!("import {text}");
+                let runs = language
+                    .highlight_text(source.as_str(), 7..7 + text[name_offset..].len())
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -295,11 +302,10 @@ impl LspAdapter for GoLspAdapter {
                 detail,
             )) => {
                 let text = format!("{label} {detail}");
-                let source =
-                    Rope::from(format!("var {} {}", &text[name_offset..], detail).as_str());
+                let source = format!("var {} {}", &text[name_offset..], detail);
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 4..4 + text[name_offset..].len()),
+                    language.highlight_text(source.as_str(), 4..4 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -313,10 +319,10 @@ impl LspAdapter for GoLspAdapter {
             }
             Some((lsp::CompletionItemKind::STRUCT, _)) => {
                 let text = format!("{label} struct {{}}");
-                let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
+                let source = format!("type {}", &text[name_offset..]);
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 5..5 + text[name_offset..].len()),
+                    language.highlight_text(source.as_str(), 5..5 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -330,10 +336,10 @@ impl LspAdapter for GoLspAdapter {
             }
             Some((lsp::CompletionItemKind::INTERFACE, _)) => {
                 let text = format!("{label} interface {{}}");
-                let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
+                let source = format!("type {}", &text[name_offset..]);
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 5..5 + text[name_offset..].len()),
+                    language.highlight_text(source.as_str(), 5..5 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -347,11 +353,10 @@ impl LspAdapter for GoLspAdapter {
             }
             Some((lsp::CompletionItemKind::FIELD, detail)) => {
                 let text = format!("{label} {detail}");
-                let source =
-                    Rope::from(format!("type T struct {{ {} }}", &text[name_offset..]).as_str());
+                let source = format!("type T struct {{ {} }}", &text[name_offset..]);
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 16..16 + text[name_offset..].len()),
+                    language.highlight_text(source.as_str(), 16..16 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -366,10 +371,10 @@ impl LspAdapter for GoLspAdapter {
             Some((lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD, detail)) => {
                 if let Some(signature) = detail.strip_prefix("func") {
                     let text = format!("{label}{signature}");
-                    let source = Rope::from(format!("func {} {{}}", &text[name_offset..]).as_str());
+                    let source = format!("func {} {{}}", &text[name_offset..]);
                     let runs = adjust_runs(
                         name_offset,
-                        language.highlight_text(&source, 5..5 + text[name_offset..].len()),
+                        language.highlight_text(source.as_str(), 5..5 + text[name_offset..].len()),
                     );
                     let filter_range = completion
                         .filter_text
@@ -442,7 +447,9 @@ impl LspAdapter for GoLspAdapter {
         Some(CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language
+                .highlight_text(text.as_str(), display_range)
+                .collect(),
         ))
     }
 
@@ -450,9 +457,10 @@ impl LspAdapter for GoLspAdapter {
         &self,
         command_name: &str,
         arguments: &[serde_json::Value],
+        path_style: PathStyle,
     ) -> Option<ClientCommand> {
         if let "gopls.run_tests" = command_name {
-            let template = go_test_task_template(arguments.first()?)?;
+            let template = go_test_task_template(arguments.first()?, path_style)?;
             Some(ClientCommand::ScheduleTask(template))
         } else {
             None
@@ -478,7 +486,10 @@ fn json_string_array(value: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn go_test_task_template(arg: &serde_json::Value) -> Option<task::TaskTemplate> {
+fn go_test_task_template(
+    arg: &serde_json::Value,
+    path_style: PathStyle,
+) -> Option<task::TaskTemplate> {
     let tests = json_string_array(arg, "Tests");
     let benchmarks = json_string_array(arg, "Benchmarks");
     if tests.is_empty() && benchmarks.is_empty() {
@@ -521,9 +532,10 @@ fn go_test_task_template(arg: &serde_json::Value) -> Option<task::TaskTemplate> 
     let cwd = arg
         .get("URI")
         .and_then(|v| v.as_str())
-        .and_then(|uri| uri.strip_prefix("file://"))
-        .and_then(|path| std::path::Path::new(path).parent())
-        .map(|p| p.to_string_lossy().into_owned());
+        .and_then(|uri| uri.parse::<lsp::Uri>().ok())
+        .and_then(|uri| uri.to_file_path_ext(path_style).ok())
+        .and_then(|path| path_style.parent(&path).map(|parent| parent.to_owned()))
+        .map(|path| path.to_string_lossy().into_owned());
 
     Some(task::TaskTemplate {
         label,
@@ -575,13 +587,10 @@ async fn get_cached_server_binary(container_dir: &Path) -> Option<LanguageServer
 
 fn adjust_runs(
     delta: usize,
-    mut runs: Vec<(Range<usize>, HighlightId)>,
+    runs: impl Iterator<Item = (Range<usize>, HighlightId)>,
 ) -> Vec<(Range<usize>, HighlightId)> {
-    for (range, _) in &mut runs {
-        range.start += delta;
-        range.end += delta;
-    }
-    runs
+    runs.map(|(range, highlight_id)| (range.start + delta..range.end + delta, highlight_id))
+        .collect()
 }
 
 pub(crate) struct GoContextProvider;
@@ -823,6 +832,14 @@ impl ContextProvider for GoContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
+                label: format!("go test {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
+                command: "go".into(),
+                args: vec!["test".into()],
+                cwd: package_cwd.clone(),
+                tags: vec!["go-package-test".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
                 label: "go test ./...".into(),
                 command: "go".into(),
                 args: vec!["test".into(), "./...".into()],
@@ -954,6 +971,38 @@ mod tests {
                 .unwrap()
                 .with_context_provider(Some(Arc::new(GoContextProvider))),
         )
+    }
+
+    #[test]
+    fn test_go_test_task_template_cwd() {
+        for (path_style, uri, expected_cwd) in [
+            (
+                PathStyle::Windows,
+                "file:///C:/my%20repo/main_test.go",
+                r"C:\my repo",
+            ),
+            (
+                PathStyle::Windows,
+                "file://server/share/pkg/main_test.go",
+                r"\\server\share\pkg",
+            ),
+            (PathStyle::Windows, "file:///C:/main_test.go", r"C:\"),
+            (PathStyle::Unix, "file:///C:/repo/main_test.go", "/C:/repo"),
+            (
+                PathStyle::Unix,
+                "file:///my%20repo/main_test.go",
+                "/my repo",
+            ),
+        ] {
+            let template =
+                go_test_task_template(&json!({ "URI": uri, "Tests": ["TestExample"] }), path_style)
+                    .expect("test task should be generated");
+            assert_eq!(
+                template.cwd.as_deref(),
+                Some(expected_cwd),
+                "{path_style:?}: {uri}"
+            );
+        }
     }
 
     #[gpui::test]
@@ -2101,6 +2150,36 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    async fn test_go_method_type_parameters_highlighted_as_type() {
+        let language = go_language();
+
+        let theme =
+            SyntaxTheme::new_test([("type", Hsla::default()), ("variable", Hsla::default())]);
+        language.set_theme(&theme);
+
+        let grammar = language.grammar().unwrap();
+        let highlight_type = grammar.highlight_id_for_name("type").unwrap();
+
+        // The `T` inside `[T any]` is a method type parameter declaration. It is
+        // only parsed as such by the regenerated tree-sitter-go fork; upstream
+        // 0.25 has no `type_parameters` field on `method_declaration`.
+        let source = "package main\n\ntype Recv struct{}\n\nfunc (r Recv) Do[T any](value T) {}\n";
+        let type_parameter_offset = source.find("[T any]").expect("type parameter present") + 1;
+
+        let runs = language.highlight_text(&Rope::from(source), 0..source.len());
+        let type_parameter_highlight = runs
+            .into_iter()
+            .find(|(range, _)| range.contains(&type_parameter_offset))
+            .map(|(_, highlight_id)| highlight_id);
+
+        assert_eq!(
+            type_parameter_highlight,
+            Some(highlight_type),
+            "method type parameter should be highlighted as a type, not a variable"
+        );
+    }
+
     #[test]
     fn test_extract_subtest_name() {
         // Interpreted string literal
@@ -2136,5 +2215,46 @@ mod tests {
         let input_with_double_quotes = r#"`test with "double quotes"`"#;
         let result = extract_subtest_name(input_with_double_quotes);
         assert_eq!(result, Some(r#"test_with_\"double_quotes\""#.to_string()));
+    }
+
+    #[gpui::test]
+    fn test_go_package_test_detection(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let source = r#"
+        package main
+
+        import "testing"
+
+        func TestExample(t *testing.T) {
+            // test code
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(source, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..source.len()).collect()
+        });
+
+        let tag_strings: Vec<_> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            tag_strings.contains(&"go-package-test".to_string()),
+            "Should find go-package-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
     }
 }

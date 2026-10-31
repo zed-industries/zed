@@ -27,6 +27,7 @@ dap.workspace = true
 extension.workspace = true
 fs.workspace = true
 futures.workspace = true
+github_releases.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
 http_client.workspace = true
@@ -47,7 +48,7 @@ settings.workspace = true
 task.workspace = true
 telemetry.workspace = true
 tempfile.workspace = true
-toml.workspace = true
+toml = { workspace = true, features = ["display"] }
 tracing.workspace = true
 url.workspace = true
 util.workspace = true

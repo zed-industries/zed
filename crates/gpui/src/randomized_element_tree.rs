@@ -1,3 +1,4 @@
+//! A seeded, mutable element tree for benchmarks and tests of GPUI rendering.
 use crate::{
     AnyElement, AppContext as _, Context, ElementId, Entity, Hsla, InteractiveElement, IntoElement,
     ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px,
@@ -1446,7 +1447,7 @@ mod tests {
                     .element_states
                     .keys()
                     .filter_map(|(global_id, _)| {
-                        let ElementId::NamedInteger(name, element_id) = global_id.0.last()? else {
+                        let ElementId::NamedInteger(name, element_id) = global_id.last()? else {
                             return None;
                         };
                         (name.as_ref() == "randomized-element").then_some(*element_id)
