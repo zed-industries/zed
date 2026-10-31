@@ -16,6 +16,7 @@ members = [
     "crates/askpass",
     "crates/assets",
     "crates/audio",
+    "crates/audio_viewer",
     "crates/auto_update",
     "crates/auto_update_helper",
     "crates/auto_update_ui",
@@ -297,6 +298,7 @@ anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
 audio = { path = "crates/audio" }
+audio_viewer = { path = "crates/audio_viewer" }
 bench_metrics = { path = "crates/bench_metrics" }
 auto_update = { path = "crates/auto_update" }
 auto_update_ui = { path = "crates/auto_update_ui" }

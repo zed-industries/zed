@@ -1694,6 +1694,15 @@
     },
   },
   {
+    "context": "AudioViewer",
+    "bindings": {
+      "space": "audio_viewer::TogglePlayback",
+      "left": "audio_viewer::SeekBackward",
+      "right": "audio_viewer::SeekForward",
+      "m": "audio_viewer::ToggleMute",
+    },
+  },
+  {
     "context": "RunModal",
     "bindings": {
       "cmd-1": "new_process_modal::ActivateTaskTab",
