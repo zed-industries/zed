@@ -1,0 +1,44 @@
+[package]
+name = "gpui_cosmic_text"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_cosmic_text.rs"
+doctest = false
+
+[features]
+default = []
+font-kit = ["dep:font-kit"]
+test-support = ["gpui/test-support"]
+
+[dependencies]
+gpui.workspace = true
+anyhow.workspace = true
+collections.workspace = true
+cosmic-text = "0.19.0"
+itertools.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+profiling.workspace = true
+smallvec.workspace = true
+swash.workspace = true
+unicode-bidi.workspace = true
+unicode-segmentation.workspace = true
+
+# Optional: only needed on platforms with multiple font sources (e.g. Linux)
+# WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
+font-kit = { workspace = true, optional = true }
+
+[dev-dependencies]
+criterion.workspace = true
+gpui = { workspace = true, features = ["bench-support"] }
+
+[[bench]]
+name = "layout_line"
+harness = false

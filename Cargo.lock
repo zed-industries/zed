@@ -7461,6 +7461,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui_cosmic_text"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "cosmic-text",
+ "criterion",
+ "gpui",
+ "itertools 0.14.0",
+ "log",
+ "parking_lot",
+ "profiling",
+ "smallvec",
+ "swash",
+ "unicode-bidi",
+ "unicode-segmentation",
+ "zed-font-kit",
+]
+
+[[package]]
 name = "gpui_ios"
 version = "0.1.0"
 dependencies = [
@@ -7498,6 +7518,7 @@ dependencies = [
  "filedescriptor",
  "futures 0.3.34",
  "gpui",
+ "gpui_cosmic_text",
  "gpui_util",
  "gpui_wgpu",
  "http_client",
@@ -7631,6 +7652,7 @@ dependencies = [
  "console_error_panic_hook",
  "futures 0.3.34",
  "gpui",
+ "gpui_cosmic_text",
  "gpui_wgpu",
  "http_client",
  "js-sys",
@@ -7657,25 +7679,18 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "collections",
- "cosmic-text",
- "criterion",
  "etagere",
  "gpui",
  "gpui_util",
  "image",
- "itertools 0.14.0",
  "log",
  "naga",
  "parking_lot",
  "profiling",
  "raw-window-handle",
  "smallvec",
- "swash",
- "unicode-bidi",
- "unicode-segmentation",
  "web-sys",
  "wgpu",
- "zed-font-kit",
 ]
 
 [[package]]
