@@ -270,6 +270,8 @@ pub struct Diagnostic {
     pub is_disk_based: bool,
     /// Whether this diagnostic marks unnecessary code.
     pub is_unnecessary: bool,
+    /// Whether this diagnostic marks deprecated or obsolete code.
+    pub is_deprecated: bool,
     /// Quick separation of diagnostics groups based by their source.
     pub source_kind: DiagnosticSourceKind,
     /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
@@ -339,6 +341,7 @@ impl Default for Diagnostic {
             is_primary: false,
             is_disk_based: false,
             is_unnecessary: false,
+            is_deprecated: false,
             underline: true,
             data: None,
             registration_id: None,
