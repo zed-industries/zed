@@ -991,6 +991,14 @@ async fn do_create_worktree(
             .worktree_directory
             .clone()
     })?;
+    let worktree_directory_setting = if let Some(repo) = git_repos.first() {
+        repo.read_with(cx, |repo, cx| {
+            repo.resolve_worktree_directory_setting(worktree_directory_setting, cx)
+        })
+        .await?
+    } else {
+        worktree_directory_setting
+    };
 
     let mut existing_worktree_names = Vec::new();
     let mut existing_worktree_paths = HashSet::default();

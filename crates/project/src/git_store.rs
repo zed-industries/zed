@@ -9215,6 +9215,40 @@ impl Repository {
             .then_some(&self.work_directory_abs_path)
     }
 
+    pub fn resolve_worktree_directory_setting(
+        &self,
+        setting: String,
+        cx: &App,
+    ) -> Task<Result<String>> {
+        match worktree_directory_home_suffix(&setting, self.path_style) {
+            Ok(None) => return Task::ready(Ok(setting)),
+            Err(error) => return Task::ready(Err(error)),
+            Ok(Some(_)) => {}
+        }
+
+        let repository_state = self.repository_state.clone();
+        let path_style = self.path_style;
+        cx.background_spawn(async move {
+            let state = repository_state.await.map_err(|error| anyhow!(error))?;
+            let home = match state {
+                RepositoryState::Local(_) => home_dir().clone(),
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    // Resolve only the home directory: the configured destination may not exist yet.
+                    let response = client
+                        .request(proto::GetPathMetadata {
+                            project_id: project_id.0,
+                            path: "~".into(),
+                            canonicalize: false,
+                        })
+                        .await
+                        .context("failed to resolve the remote home directory for git.worktree_directory")?;
+                    PathBuf::from(response.path)
+                }
+            };
+            expand_worktree_directory(&setting, &home, path_style)
+        })
+    }
+
     pub fn worktrees(&mut self) -> oneshot::Receiver<Result<Vec<GitWorktree>>> {
         let id = self.id;
         self.send_job("worktrees", None, move |repo, _| async move {
@@ -9590,12 +9624,15 @@ impl Repository {
 
                         let managed_worktree_base = cx.update(|cx| {
                             let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
-                            worktrees_directory_for_repo(
-                                &repository_anchor_path,
-                                setting,
-                                PathStyle::local(),
-                            )
-                            .log_err()
+                            expand_worktree_directory(setting, home_dir(), PathStyle::local())
+                                .and_then(|setting| {
+                                    worktrees_directory_for_repo(
+                                        &repository_anchor_path,
+                                        &setting,
+                                        PathStyle::local(),
+                                    )
+                                })
+                                .log_err()
                         });
 
                         if let Some(managed_worktree_base) = managed_worktree_base {
@@ -10704,36 +10741,61 @@ pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Opti
     Some(repo_identity_path(&common_dir, PathStyle::local()).to_path_buf())
 }
 
-/// Validates that the resolved worktree directory is acceptable:
-/// - The setting must not be an absolute path.
-/// - The resolved path must be either a subdirectory of the working
-///   directory or a subdirectory of its parent (i.e., a sibling).
-///
-/// Returns `Ok(resolved_path)` or an error with a user-facing message.
+fn worktree_directory_home_suffix(setting: &str, path_style: PathStyle) -> Result<Option<&str>> {
+    if setting == "~" {
+        Ok(Some(""))
+    } else if let Some(suffix) = setting.strip_prefix("~/") {
+        Ok(Some(suffix))
+    } else if path_style.is_windows()
+        && let Some(suffix) = setting.strip_prefix("~\\")
+    {
+        Ok(Some(suffix))
+    } else if setting.starts_with('~') {
+        anyhow::bail!("git.worktree_directory supports only ~ or ~/ paths, not ~user paths");
+    } else {
+        Ok(None)
+    }
+}
+
+fn expand_worktree_directory(setting: &str, home: &Path, path_style: PathStyle) -> Result<String> {
+    let Some(suffix) = worktree_directory_home_suffix(setting, path_style)? else {
+        return Ok(setting.to_owned());
+    };
+    anyhow::ensure!(
+        path_style.is_absolute(home),
+        "could not resolve an absolute home directory for git.worktree_directory"
+    );
+    path_style
+        .normalize_lexically(path_style.join(
+            home,
+            suffix.trim_start_matches(path_style.separators_ch()),
+        ))
+        .into_os_string()
+        .into_string()
+        .map_err(|_| anyhow!("home directory contains invalid UTF-8"))
+}
+
 pub fn worktrees_directory_for_repo(
     repository_anchor_path: &Path,
     worktree_directory_setting: &str,
     path_style: PathStyle,
 ) -> Result<PathBuf> {
-    // Check the original setting before trimming, since a path like "///"
-    // is absolute but becomes "" after stripping trailing separators.
-    // Use `has_root` here because `/tmp/worktrees` is also not a relative path
-    if path_style.has_root(Path::new(worktree_directory_setting)) {
-        anyhow::bail!(
-            "git.worktree_directory must be a relative path, got: {worktree_directory_setting:?}"
+    anyhow::ensure!(
+        !worktree_directory_setting.starts_with('~'),
+        "git.worktree_directory home directory must be expanded on the repository's host"
+    );
+    let directory = Path::new(worktree_directory_setting);
+    let resolved = if path_style.is_absolute(directory) {
+        path_style.normalize_lexically(worktree_directory_setting)
+    } else {
+        let is_drive_relative =
+            path_style.is_windows() && worktree_directory_setting.as_bytes().get(1) == Some(&b':');
+        anyhow::ensure!(
+            !path_style.has_root(directory) && !is_drive_relative,
+            "git.worktree_directory must be an absolute or repository-relative path, got: {worktree_directory_setting:?}"
         );
-    }
-
-    if worktree_directory_setting.is_empty() {
-        anyhow::bail!("git.worktree_directory must not be empty");
-    }
-
-    let trimmed = worktree_directory_setting.trim_end_matches(['/', '\\']);
-    if trimmed == ".." {
-        anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
-    }
-
-    let resolved = path_style.normalize_lexically(path_style.join(repository_anchor_path, trimmed));
+        path_style.normalize_lexically(path_style.join(repository_anchor_path, directory))
+    };
     let resolved = if path_style.starts_with(resolved.as_path(), repository_anchor_path) {
         resolved
     } else if let Some(repo_dir_name) = path_style.file_name(repository_anchor_path) {
@@ -10742,16 +10804,11 @@ pub fn worktrees_directory_for_repo(
         resolved
     };
 
-    let parent = path_style
-        .parent(repository_anchor_path)
-        .unwrap_or(repository_anchor_path);
-
-    if !path_style.starts_with(resolved.as_path(), parent) {
-        anyhow::bail!(
-            "git.worktree_directory resolved to {resolved:?}, which is outside \
-             the project root and its parent directory. It must resolve to a \
-             subdirectory of {repository_anchor_path:?} or a sibling of it."
-        );
+    if path_style
+        .strip_prefix(&resolved, repository_anchor_path)
+        .is_ok_and(|relative_path| relative_path.as_os_str().is_empty())
+    {
+        anyhow::bail!("git.worktree_directory must not resolve to the repository directory");
     }
 
     Ok(resolved)
@@ -12355,6 +12412,298 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fs.load(&path).await.unwrap(), "*.log\nbuild/\n");
+    }
+
+    #[test]
+    fn test_expand_worktree_directory_uses_supplied_home() {
+        for (path_style, home, setting, expected) in [
+            (PathStyle::Unix, "/remote/home", "~", "/remote/home"),
+            (
+                PathStyle::Unix,
+                "/remote/home",
+                "~/worktrees",
+                "/remote/home/worktrees",
+            ),
+            (
+                PathStyle::Unix,
+                "/remote/home",
+                "~//worktrees/../trees",
+                "/remote/home/trees",
+            ),
+            (
+                PathStyle::Windows,
+                r"D:\Users\remote",
+                "~",
+                r"D:\Users\remote",
+            ),
+            (
+                PathStyle::Windows,
+                r"D:\Users\remote",
+                "~/worktrees",
+                r"D:\Users\remote\worktrees",
+            ),
+            (
+                PathStyle::Windows,
+                r"D:\Users\remote",
+                r"~\worktrees",
+                r"D:\Users\remote\worktrees",
+            ),
+            (
+                PathStyle::Windows,
+                r"\\server\homes\remote",
+                "~/worktrees",
+                r"\\server\homes\remote\worktrees",
+            ),
+            (
+                PathStyle::Unix,
+                "/remote/home",
+                "../worktrees",
+                "../worktrees",
+            ),
+            (
+                PathStyle::Unix,
+                "/remote/home",
+                "/tmp/~literal",
+                "/tmp/~literal",
+            ),
+        ] {
+            assert_eq!(
+                expand_worktree_directory(setting, Path::new(home), path_style).unwrap(),
+                expected,
+                "{setting:?} with {path_style:?} home {home:?}",
+            );
+        }
+
+        for (path_style, home, setting) in [
+            (PathStyle::Unix, "/remote/home", "~other/worktrees"),
+            (PathStyle::Unix, "/remote/home", r"~\worktrees"),
+            (PathStyle::Windows, r"D:\Users\remote", r"~other\worktrees"),
+            (PathStyle::Unix, "~", "~/worktrees"),
+            (PathStyle::Unix, "relative/home", "~/worktrees"),
+            (PathStyle::Windows, r"\Users\remote", "~/worktrees"),
+        ] {
+            assert!(expand_worktree_directory(setting, Path::new(home), path_style).is_err());
+        }
+    }
+
+    struct WorktreeHomeClient {
+        home: Mutex<Result<String, String>>,
+        requests: AtomicU64,
+        handlers: Mutex<rpc::ProtoMessageHandlerSet>,
+    }
+
+    impl rpc::ProtoClient for WorktreeHomeClient {
+        fn request(
+            &self,
+            envelope: proto::Envelope,
+            _: &'static str,
+        ) -> BoxFuture<'static, Result<proto::Envelope>> {
+            use rpc::proto::EnvelopedMessage as _;
+            let request = proto::GetPathMetadata::from_envelope(envelope).unwrap();
+            assert_eq!(request.project_id, 42);
+            assert_eq!(request.path, "~");
+            assert!(!request.canonicalize);
+            self.requests.fetch_add(1, atomic::Ordering::SeqCst);
+            let home = self.home.lock().clone();
+            async move {
+                Ok(proto::GetPathMetadataResponse {
+                    path: home.map_err(|error| anyhow!(error))?,
+                    exists: false,
+                    is_dir: false,
+                }
+                .into_envelope(0, None, None))
+            }
+            .boxed()
+        }
+
+        fn send(&self, _: proto::Envelope, _: &'static str) -> Result<()> {
+            anyhow::bail!("unexpected notification")
+        }
+
+        fn send_response(&self, _: proto::Envelope, _: &'static str) -> Result<()> {
+            anyhow::bail!("unexpected response")
+        }
+
+        fn message_handler_set(&self) -> &Mutex<rpc::ProtoMessageHandlerSet> {
+            &self.handlers
+        }
+
+        fn is_via_collab(&self) -> bool {
+            false
+        }
+        fn has_wsl_interop(&self) -> bool {
+            false
+        }
+    }
+
+    #[gpui::test]
+    async fn test_resolve_remote_worktree_directory_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let git_store = project.read_with(cx, |project, _| project.git_store().downgrade());
+
+        for (path_style, anchor, home, expected) in [
+            (
+                PathStyle::Unix,
+                "/code/project",
+                "/remote/home",
+                "/remote/home/trees/project/feature/project",
+            ),
+            (
+                PathStyle::Windows,
+                r"C:\code\project",
+                r"D:\Users\remote",
+                r"D:\Users\remote\trees\project\feature\project",
+            ),
+        ] {
+            let client = Arc::new(WorktreeHomeClient {
+                home: Mutex::new(Ok(home.into())),
+                requests: AtomicU64::new(0),
+                handlers: Mutex::default(),
+            });
+            let repository = cx.new(|cx| {
+                Repository::remote(
+                    RepositoryId(0),
+                    Path::new(anchor).into(),
+                    None,
+                    None,
+                    path_style,
+                    ProjectId(42),
+                    client.clone().into(),
+                    git_store.clone(),
+                    Arc::new(Semaphore::new(1)),
+                    cx,
+                )
+            });
+
+            for setting in ["../worktrees", "/absolute/path"] {
+                let resolved = repository
+                    .read_with(cx, |repository, cx| {
+                        repository.resolve_worktree_directory_setting(setting.into(), cx)
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(resolved, setting);
+            }
+            assert_eq!(client.requests.load(atomic::Ordering::SeqCst), 0);
+
+            let setting = repository
+                .read_with(cx, |repository, cx| {
+                    repository.resolve_worktree_directory_setting("~/trees".into(), cx)
+                })
+                .await
+                .unwrap();
+            let path = repository.read_with(cx, |repository, _| {
+                repository
+                    .path_for_new_linked_worktree("feature", &setting)
+                    .unwrap()
+            });
+            assert_eq!(path, PathBuf::from(expected));
+            assert_eq!(client.requests.load(atomic::Ordering::SeqCst), 1);
+
+            *client.home.lock() = Err("connection lost".into());
+            let error = repository
+                .read_with(cx, |repository, cx| {
+                    repository.resolve_worktree_directory_setting("~/trees".into(), cx)
+                })
+                .await
+                .unwrap_err();
+            assert!(format!("{error:#}").contains("connection lost"));
+
+            *client.home.lock() = Ok("~".into());
+            assert!(
+                repository
+                    .read_with(cx, |repository, cx| {
+                        repository.resolve_worktree_directory_setting("~/trees".into(), cx)
+                    })
+                    .await
+                    .is_err()
+            );
+
+            let requests = client.requests.load(atomic::Ordering::SeqCst);
+            assert!(
+                repository
+                    .read_with(cx, |repository, cx| {
+                        repository.resolve_worktree_directory_setting("~other/trees".into(), cx)
+                    })
+                    .await
+                    .is_err()
+            );
+            assert_eq!(client.requests.load(atomic::Ordering::SeqCst), requests);
+        }
+    }
+
+    #[test]
+    fn test_worktree_directory_normalization_and_validation() {
+        let anchor = Path::new("/code/my-project");
+        for (setting, expected) in [
+            ("/tmp/trees/../worktrees/", "/tmp/worktrees/my-project"),
+            ("/code/my-project/./worktrees", "/code/my-project/worktrees"),
+            (
+                "/code/my-project-other",
+                "/code/my-project-other/my-project",
+            ),
+            ("../../../worktrees", "/worktrees/my-project"),
+            ("worktrees/", "/code/my-project/worktrees"),
+        ] {
+            assert_eq!(
+                worktrees_directory_for_repo(anchor, setting, PathStyle::Unix).unwrap(),
+                PathBuf::from(expected),
+            );
+        }
+        for setting in [
+            "",
+            ".",
+            "..",
+            "../",
+            "/code",
+            "/code/my-project",
+            "/code/my-project/worktrees/..",
+            "~/worktrees",
+        ] {
+            assert!(
+                worktrees_directory_for_repo(anchor, setting, PathStyle::Unix).is_err(),
+                "{setting:?}"
+            );
+        }
+
+        let anchor = Path::new(r"C:\code/my-project");
+        for (setting, expected) in [
+            (r"D:\trees\..\worktrees\", r"D:\worktrees\my-project"),
+            (
+                r"\\server\share\worktrees",
+                r"\\server\share\worktrees\my-project",
+            ),
+            (
+                "C:/code/my-project/worktrees/",
+                r"C:\code\my-project\worktrees",
+            ),
+            (
+                r"C:\code\my-project-other",
+                r"C:\code\my-project-other\my-project",
+            ),
+        ] {
+            assert_eq!(
+                worktrees_directory_for_repo(anchor, setting, PathStyle::Windows).unwrap(),
+                PathBuf::from(expected),
+            );
+        }
+        for setting in [
+            r"\worktrees",
+            "/worktrees",
+            "D:worktrees",
+            "D:",
+            "C:/code/my-project/",
+            r"C:\code",
+            r"..\",
+            "~/worktrees",
+        ] {
+            assert!(
+                worktrees_directory_for_repo(anchor, setting, PathStyle::Windows).is_err(),
+                "{setting:?}"
+            );
+        }
     }
 
     #[test]
