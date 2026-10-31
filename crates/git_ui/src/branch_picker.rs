@@ -27,7 +27,7 @@ use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-use crate::branch_picker;
+use crate::{branch_name::normalize_branch_name, branch_picker};
 use git_ui_core::notifications::show_error_toast;
 
 actions!(
@@ -910,13 +910,6 @@ impl Render for DeleteBranchTooltip {
 
 fn branch_matches_ref(branch: &Branch, branch_ref: &SharedString) -> bool {
     branch.ref_name.as_ref() == branch_ref.as_ref() || branch.name() == branch_ref.as_ref()
-}
-
-// Git branch names can't contain whitespace, so we replace spaces with dashes,
-// but we need to first trim because a branch name can't start or end with a
-// dash.
-fn normalize_branch_name(query: &str) -> String {
-    query.trim().replace(' ', "-")
 }
 
 fn branch_remote_name(branch: &Branch) -> Option<&str> {
@@ -3250,13 +3243,6 @@ mod tests {
             &format!("refs/heads/{NEW_BRANCH}"),
             "branch ref_name should not have duplicate refs/heads/ prefix"
         );
-    }
-
-    #[test]
-    fn test_normalize_branch_name() {
-        assert_eq!(normalize_branch_name(" branch-name "), "branch-name");
-        assert_eq!(normalize_branch_name("branch name"), "branch-name");
-        assert_eq!(normalize_branch_name("  branch  name  "), "branch--name");
     }
 
     #[gpui::test]
