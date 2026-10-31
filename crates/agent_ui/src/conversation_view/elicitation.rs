@@ -5,6 +5,7 @@ use component::{Component, ComponentScope, example_group_with_title, single_exam
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{AnyElement, App, Div, Empty, Entity, Focusable, Role, SharedString, Window, div};
+use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use ui::{
@@ -384,7 +385,10 @@ impl ElicitationFormSubmission {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{KeyUpEvent, Keystroke, PlatformInput, TestAppContext, VisualTestContext};
+    use gpui::{
+        KeyUpEvent, Keystroke, Modifiers, MouseButton, PlatformInput, TestAppContext,
+        VisualTestContext, point,
+    };
     use std::cell::RefCell;
 
     struct TestElicitationView {
@@ -546,6 +550,103 @@ mod tests {
         });
         press_keys(cx, "enter");
         assert_eq!(events.borrow().len(), 3);
+    }
+
+    #[gpui::test]
+    fn message_can_be_selected_and_copied(cx: &mut TestAppContext) {
+        init_keyboard_test(cx);
+        // Mirrors Codex's device code sign-in, which shows the code in an accepted URL request.
+        let message = "Sign in to ChatGPT and enter this code: ABCD-1234";
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let mut view = TestElicitationView::new(acp::ElicitationSchema::new(), window, cx);
+            view.elicitation.request = acp::CreateElicitationRequest::new(
+                acp::ElicitationUrlMode::new(
+                    preview_request_scope(0),
+                    acp::ElicitationId::new("device-code"),
+                    "https://auth.openai.com/codex/device",
+                ),
+                message,
+            );
+            view.elicitation.status = ElicitationStatus::Accepted;
+            view
+        });
+        cx.run_until_parked();
+
+        let bounds = cx
+            .debug_bounds("inner")
+            .expect("message should be rendered as markdown");
+        let start = point(bounds.left() + px(1.), bounds.center().y);
+        let end = point(bounds.right() - px(1.), bounds.center().y);
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+
+        // The selection must survive the card being rebuilt on the next render.
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        cx.simulate_keystrokes("ctrl-c");
+
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(message.to_string())
+        );
+    }
+
+    #[gpui::test]
+    fn tab_navigation_continues_from_selected_message(cx: &mut TestAppContext) {
+        struct Cards {
+            url: Entity<TestElicitationView>,
+            form: Entity<TestElicitationView>,
+        }
+
+        impl Render for Cards {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                v_flex().child(self.url.clone()).child(self.form.clone())
+            }
+        }
+
+        init_keyboard_test(cx);
+        let (cards, cx) = cx.add_window_view(|window, cx| Cards {
+            url: cx.new(|cx| {
+                let mut view = TestElicitationView::new(acp::ElicitationSchema::new(), window, cx);
+                view.elicitation.id = ElicitationEntryId("url-test".into());
+                view.elicitation.request = acp::CreateElicitationRequest::new(
+                    acp::ElicitationUrlMode::new(
+                        preview_request_scope(1),
+                        acp::ElicitationId::new("url-test"),
+                        "https://example.com/authorize",
+                    ),
+                    "Authorize access.",
+                );
+                view
+            }),
+            form: cx.new(|cx| {
+                TestElicitationView::new(
+                    acp::ElicitationSchema::new().string("other", false),
+                    window,
+                    cx,
+                )
+            }),
+        });
+        cx.run_until_parked();
+        let editor = cards.read_with(cx, |cards, cx| cards.form.read(cx).editor("other"));
+
+        // The form card is painted last, so this is its message.
+        let bounds = cx
+            .debug_bounds("inner")
+            .expect("message should be rendered as markdown");
+        let start = point(bounds.left() + px(1.), bounds.center().y);
+        let end = point(bounds.right() - px(1.), bounds.center().y);
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+
+        press_keys(cx, "tab");
+        cx.update(|window, cx| assert!(editor.focus_handle(cx).is_focused(window)));
     }
 
     #[gpui::test]
@@ -1952,6 +2053,32 @@ fn is_url_display_segment_boundary(character: char) -> bool {
     matches!(character, '/' | '?' | '&' | '#')
 }
 
+// Rendered as Markdown rather than a `Label` so users can select and copy parts of the
+// message, such as a device code.
+#[derive(IntoElement)]
+struct ElicitationMessage {
+    id: ElicitationEntryId,
+    message: SharedString,
+}
+
+impl RenderOnce for ElicitationMessage {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let markdown = window.use_keyed_state(
+            SharedString::from(format!("elicitation-message-{}", self.id.0)),
+            cx,
+            |_, cx| Markdown::new_text(self.message, cx),
+        );
+        let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+        style.container_style.text.font_size = Some(TextSize::Small.rems(cx).into());
+
+        // Tracking the focus handle gives the selected message a place in the tab order, so Tab
+        // continues from this card instead of jumping to the start of the window.
+        div()
+            .track_focus(&markdown.focus_handle(cx))
+            .child(MarkdownElement::new(markdown, style))
+    }
+}
+
 pub(crate) struct ElicitationCard<'a> {
     entry_ix: usize,
     elicitation: &'a Elicitation,
@@ -2001,10 +2128,10 @@ impl<'a> ElicitationCard<'a> {
             ElicitationStatus::Completed => ("Completed", IconName::Check, Color::Success),
         };
 
-        let body = v_flex()
-            .gap_2()
-            .p_3()
-            .child(Label::new(self.elicitation.request.message.clone()).size(LabelSize::Small));
+        let body = v_flex().gap_2().p_3().child(ElicitationMessage {
+            id: self.elicitation.id.clone(),
+            message: self.elicitation.request.message.clone().into(),
+        });
         let body = match &self.elicitation.request.mode {
             acp::ElicitationMode::Form(mode) if is_pending => {
                 body.child(self.render_form(mode, cx))
