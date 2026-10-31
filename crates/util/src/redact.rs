@@ -1,23 +1,33 @@
 use std::sync::LazyLock;
 
+const REDACTED_SUFFIXES: &[&str] = &[
+    "KEY",
+    "TOKEN",
+    "PASSWORD",
+    "SECRET",
+    "PASS",
+    "CREDENTIALS",
+    "LICENSE",
+];
+
 static REDACT_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r#"([A-Z_][A-Z0-9_]*)=("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\S+)"#).unwrap()
+    // Only match sensitive names so a non-sensitive assignment does not
+    // consume a nested or adjacent secret assignment as part of its value.
+    // Use ASCII-only case folding for names; util does not enable regex's unicode-case feature.
+    // Stop unquoted values at shell separators, unless they are escaped.
+    regex::Regex::new(&format!(
+        r#"(?i-u:((?:[a-z_][a-z0-9_]*)?(?:{})))=(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?:\\.|[^\s;&|\\])+)"#,
+        REDACTED_SUFFIXES.join("|"),
+    ))
+    .unwrap()
 });
 
 /// Whether a given environment variable name should have its value redacted
 pub fn should_redact(env_var_name: &str) -> bool {
-    const REDACTED_SUFFIXES: &[&str] = &[
-        "KEY",
-        "TOKEN",
-        "PASSWORD",
-        "SECRET",
-        "PASS",
-        "CREDENTIALS",
-        "LICENSE",
-    ];
+    let name = env_var_name.to_ascii_uppercase();
     REDACTED_SUFFIXES
         .iter()
-        .any(|suffix| env_var_name.ends_with(suffix))
+        .any(|suffix| name.ends_with(suffix))
 }
 
 pub fn is_valid_environment_name(name: &str) -> bool {
@@ -30,15 +40,7 @@ pub fn is_valid_environment_name(name: &str) -> bool {
 /// Redact a string which could include a command with environment variables
 pub fn redact_command(command: &str) -> String {
     REDACT_REGEX
-        .replace_all(command, |caps: &regex::Captures| {
-            let var_name = &caps[1];
-            let value = &caps[2];
-            if should_redact(var_name) {
-                format!(r#"{}="[REDACTED]""#, var_name)
-            } else {
-                format!("{}={}", var_name, value)
-            }
-        })
+        .replace_all(command, r#"${1}="[REDACTED]""#)
         .to_string()
 }
 
@@ -52,5 +54,98 @@ mod tests {
         let result = redact_command(input);
         let expected = r#"failed to spawn command cd "/code/something" && ANTHROPIC_API_KEY="[REDACTED]" COMMAND_MODE="unix2003" GEMINI_API_KEY="[REDACTED]" HOME="/Users/foo""#;
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_should_redact_case_insensitive_names() {
+        for name in ["api_key", "Access_Token", "clientSecret", "db_password"] {
+            assert!(should_redact(name), "{name} should be redacted");
+        }
+        for name in ["home", "Log_Level", "command_mode"] {
+            assert!(!should_redact(name), "{name} should not be redacted");
+        }
+    }
+
+    #[test]
+    fn test_redact_command_with_mixed_case_environment_variables() {
+        let input = r#"command api_key="lower-secret" OpenAi_Access_Token='mixed-secret' clientSecret=plain-secret HOME="/home/me" log_level=debug"#;
+        let expected = r#"command api_key="[REDACTED]" OpenAi_Access_Token="[REDACTED]" clientSecret="[REDACTED]" HOME="/home/me" log_level=debug"#;
+        assert_eq!(redact_command(input), expected);
+    }
+
+    #[test]
+    fn test_redact_command_with_nested_environment_assignments() {
+        for (input, expected) in [
+            (
+                "docker run --env=API_KEY=synthetic-secret image",
+                r#"docker run --env=API_KEY="[REDACTED]" image"#,
+            ),
+            (
+                "mode=debug;API_KEY=synthetic-secret command",
+                r#"mode=debug;API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                "docker run --env=api_key=lower-secret image",
+                r#"docker run --env=api_key="[REDACTED]" image"#,
+            ),
+            (
+                "mode=debug;Access_Token='mixed-secret' command",
+                r#"mode=debug;Access_Token="[REDACTED]" command"#,
+            ),
+            (
+                "docker run --env=HOME=/home/me image",
+                "docker run --env=HOME=/home/me image",
+            ),
+            (
+                "KEY=standalone TOKEN=standalone",
+                r#"KEY="[REDACTED]" TOKEN="[REDACTED]""#,
+            ),
+        ] {
+            assert_eq!(redact_command(input), expected, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn test_redact_command_with_adjacent_quoted_secret_assignments() {
+        for (input, expected) in [
+            (
+                "access_token=public;API_KEY='synthetic secret' command",
+                r#"access_token="[REDACTED]";API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                r#"access_token=public;API_KEY="synthetic secret" command"#,
+                r#"access_token="[REDACTED]";API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                "mode=debug;API_KEY='synthetic secret' command",
+                r#"mode=debug;API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                "Access_Token=public&&api_key='synthetic secret' command",
+                r#"Access_Token="[REDACTED]"&&api_key="[REDACTED]" command"#,
+            ),
+            (
+                "access_token=public||API_KEY='synthetic secret' command",
+                r#"access_token="[REDACTED]"||API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                "access_token=public|API_KEY='synthetic secret' command",
+                r#"access_token="[REDACTED]"|API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                r"access_token=public\;escaped;API_KEY='synthetic secret' command",
+                r#"access_token="[REDACTED]";API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                r"access_token=public\ with\ spaces;API_KEY='synthetic secret' command",
+                r#"access_token="[REDACTED]";API_KEY="[REDACTED]" command"#,
+            ),
+            (
+                "API_KEY='secret with; semicolon';access_token=plain",
+                r#"API_KEY="[REDACTED]";access_token="[REDACTED]""#,
+            ),
+        ] {
+            assert_eq!(redact_command(input), expected, "input: {input}");
+        }
     }
 }
