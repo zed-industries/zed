@@ -715,7 +715,7 @@ impl EditorElement {
                                 row: MultiBufferRow(multi_buffer_row),
                                 line_offset_from_top,
                             }),
-                            false,
+                            modifiers.secondary(cx),
                             window,
                             cx,
                         );
@@ -751,7 +751,7 @@ impl EditorElement {
                         row: MultiBufferRow(multi_buffer_row),
                         line_offset_from_top,
                     }),
-                    modifiers.alt,
+                    modifiers.alt || modifiers.secondary(cx),
                     window,
                     cx,
                 );

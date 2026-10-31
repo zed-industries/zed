@@ -796,11 +796,21 @@ impl SplittableEditor {
                         let translated =
                             translate_lhs_selections_to_rhs(selections_by_buffer, this, cx);
                         if !translated.is_empty() {
-                            let workspace = this.workspace.clone();
-                            let split = *split;
-                            Editor::open_buffers_in_workspace(
-                                workspace, translated, split, window, cx,
-                            );
+                            if this.rhs_editor.read(cx).delegate_open_excerpts {
+                                cx.emit(EditorEvent::OpenExcerptsRequested {
+                                    selections_by_buffer: translated
+                                        .into_iter()
+                                        .map(|(buffer, value)| (buffer.read(cx).remote_id(), value))
+                                        .collect(),
+                                    split: *split,
+                                });
+                            } else {
+                                let workspace = this.workspace.clone();
+                                let split = *split;
+                                Editor::open_buffers_in_workspace(
+                                    workspace, translated, split, window, cx,
+                                );
+                            }
                         }
                     }
                 }
