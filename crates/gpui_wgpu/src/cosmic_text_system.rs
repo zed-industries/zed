@@ -63,8 +63,11 @@ struct CosmicTextSystemState {
 
 struct LoadedFont {
     font: Arc<CosmicTextFont>,
+    face_index: u32,
     features: CosmicFontFeatures,
     is_known_emoji_font: bool,
+    /// Whether the font contains any color glyphs (for example, color emoji).
+    is_color_font: bool,
     /// resolved at load time so `layout_line` shares one chain across faces.
     /// `Arc` keeps clone cheap on the per-run hot path.
     user_fallback_chain: Arc<[(FontId, SharedString)]>,
@@ -418,6 +421,11 @@ impl CosmicTextSystemState {
                 "Segoe Fluent Icons",
             ];
 
+            let face = self.font_system.db().face(database_id);
+            let face_index = face.map(|f| f.index).unwrap_or(0);
+            let is_color_font =
+                font_has_color_glyphs(&font, face_index, &mut self.swash_scale_context);
+
             // This only decides whether a face can be a primary font. The
             // editor measures layout with the width of 'm' and would panic
             // without it.
@@ -425,8 +433,10 @@ impl CosmicTextSystemState {
             // Don't remove the face from the font database. Arabic, Devanagari
             // and emoji fonts often have no Latin glyphs, and they are exactly
             // what cosmic-text falls back to when the primary font lacks a
-            // glyph.
+            // glyph. Color fonts (such as emoji fonts) should not be dropped here.
             if font.as_swash().charmap().map('m') == 0
+                && !is_color_font
+                && !check_is_known_emoji_font(&postscript_name)
                 && !allowed_bad_font_names.contains(&postscript_name.as_str())
             {
                 continue;
@@ -436,8 +446,10 @@ impl CosmicTextSystemState {
             loaded_font_ids.push(font_id);
             self.loaded_fonts.push(LoadedFont {
                 font,
+                face_index,
                 features: cosmic_features.clone(),
                 is_known_emoji_font: check_is_known_emoji_font(&postscript_name),
+                is_color_font,
                 user_fallback_chain: Arc::clone(&user_fallback_chain),
             });
             self.loaded_font_ids_by_key.insert(key, font_id);
@@ -515,6 +527,26 @@ impl CosmicTextSystemState {
         params: &RenderGlyphParams,
     ) -> Result<swash::scale::image::Image> {
         let loaded_font = &self.loaded_fonts[params.font_id.0];
+        let glyph_id: u16 = params.glyph_id.0.try_into()?;
+
+        if loaded_font.is_color_font
+            && crate::colrv1::has_colrv1_glyph(
+                loaded_font.font.data(),
+                loaded_font.face_index,
+                glyph_id,
+            )
+        {
+            if let Some(image) = crate::colrv1::render_colrv1_glyph(
+                loaded_font.font.data(),
+                loaded_font.face_index,
+                glyph_id,
+                f32::from(params.font_size),
+                params.scale_factor,
+            ) {
+                return Ok(image);
+            }
+        }
+
         let font_ref = loaded_font.font.as_swash();
         let pixel_size = f32::from(params.font_size);
 
@@ -550,7 +582,6 @@ impl CosmicTextSystemState {
             renderer.format(Format::Alpha).offset(subpixel_offset);
         }
 
-        let glyph_id: u16 = params.glyph_id.0.try_into()?;
         renderer
             .render(&mut scaler, glyph_id)
             .with_context(|| format!("unable to render glyph via swash for {params:?}"))
@@ -581,12 +612,17 @@ impl CosmicTextSystemState {
                 .db()
                 .face(id)
                 .context("fallback font face not found in cosmic-text database")?;
+            let face_index = face.index;
+            let is_color_font =
+                font_has_color_glyphs(&font, face_index, &mut self.swash_scale_context);
 
             let font_id = FontId(self.loaded_fonts.len());
             self.loaded_fonts.push(LoadedFont {
                 font,
+                face_index,
                 features: CosmicFontFeatures::new(),
                 is_known_emoji_font: check_is_known_emoji_font(&face.post_script_name),
+                is_color_font,
                 user_fallback_chain: Arc::from(Vec::new()),
             });
 
@@ -1204,6 +1240,19 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
     postscript_name == "NotoColorEmoji"
 }
 
+/// Detects whether a font contains color glyphs (for example, color emoji)
+/// from its tables.
+fn font_has_color_glyphs(
+    font: &CosmicTextFont,
+    face_index: u32,
+    scale_context: &mut ScaleContext,
+) -> bool {
+    let scaler = scale_context.builder(font.as_swash()).build();
+    scaler.has_color_outlines()
+        || scaler.has_color_bitmaps()
+        || crate::colrv1::font_has_colrv1(font.data(), face_index)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1357,6 +1406,46 @@ mod tests {
                 (gpui::FontWeight::NORMAL, gpui::FontStyle::Normal)
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn colrv1_font_renders_color_glyph() -> Result<()> {
+        let path = std::path::Path::new("/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf");
+        if !path.exists() {
+            return Ok(());
+        }
+
+        let text_system = text_system()?;
+        let font_data = std::fs::read(path)?;
+        text_system.add_fonts(vec![std::borrow::Cow::Owned(font_data)])?;
+
+        let font_id = text_system.font_id(&gpui::font("Noto Color Emoji"))?;
+        let glyph_id = text_system
+            .glyph_for_char(font_id, '😀')
+            .context("Noto Color Emoji should have glyph for emoji")?;
+
+        let params = RenderGlyphParams {
+            font_id,
+            glyph_id,
+            font_size: gpui::px(20.),
+            subpixel_variant: Default::default(),
+            scale_factor: 1.0,
+            is_emoji: true,
+            subpixel_rendering: false,
+            dilation: 0,
+        };
+
+        let bounds = text_system.glyph_raster_bounds(&params)?;
+        assert!(!bounds.is_zero(), "bounds should not be zero");
+
+        let (size, bytes) = text_system.rasterize_glyph(&params, bounds)?;
+        assert!(size.width.0 > 0 && size.height.0 > 0, "size should be non-zero");
+        assert_eq!(bytes.len(), (size.width.0 * size.height.0 * 4) as usize);
+
+        let has_non_zero = bytes.iter().any(|&b| b > 0);
+        assert!(has_non_zero, "rendered glyph image should contain pixels");
+
         Ok(())
     }
 

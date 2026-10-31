@@ -908,6 +908,7 @@ shellexpand = "3.1"
 shlex = "2.0"
 similar = "2.7"
 simplelog = { version = "0.12", default-features = false }
+skrifa = "0.37.0"
 slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union", "const_new"] }
 spin = { version = "0.10", default-features = false, features = ["mutex", "spin_mutex", "lock_api"] }
@@ -934,6 +935,7 @@ time = { version = "0.3", features = [
     "formatting",
     "local-offset",
 ] }
+tiny-skia = "0.11.4"
 tiny_http = "0.12"
 tokio = "1"
 tokio-rustls = { version = "0.26", default-features = false }
