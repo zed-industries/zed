@@ -60,7 +60,7 @@ To edit the title of the active Terminal Thread from the Agent Panel, custom-map
 
 ## Notifications {#terminal-thread-notifications}
 
-When a terminal produces a bell character while not in focus, Zed notifies you the same way it does when an agent finishes: with a visual pop-up and an optional sound. Clicking the notification brings the terminal into focus and clears the indicator.
+When a terminal produces a bell character while not in focus, Zed notifies you the same way it does when an agent finishes: with an operating system notification and an optional sound. Clicking the notification brings the terminal into focus and clears the indicator.
 
 The same `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings apply.
 

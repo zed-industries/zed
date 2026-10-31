@@ -1360,13 +1360,12 @@
         "tools": {},
       },
     },
-    // Where to show notifications when the agent has either completed
+    // Whether to show operating system notifications when a hidden agent has completed
     // its response, or else needs confirmation before it can run a
     // tool action.
-    // "primary_screen" - Show the notification only on your primary screen (default)
-    // "all_screens" - Show these notifications on all screens
+    // "always" - Show notifications using the operating system (default)
     // "never" - Never show these notifications
-    "notify_when_agent_waiting": "primary_screen",
+    "notify_when_agent_waiting": "always",
     // When to play a sound when the agent has either completed
     // its response, or needs user input.
     // "never" - Never play the sound
