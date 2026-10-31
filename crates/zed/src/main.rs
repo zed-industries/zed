@@ -1455,7 +1455,13 @@ pub(crate) async fn restore_or_create_workspace(
                             connection_options,
                             paths,
                             app_state.clone(),
-                            workspace::OpenOptions::default(),
+                            workspace::OpenOptions {
+                                // Each saved window must retain its own project roots,
+                                // even when some roots also appear in another window.
+                                workspace_matching: workspace::WorkspaceMatching::None,
+                                open_mode: workspace::OpenMode::NewWindow,
+                                ..Default::default()
+                            },
                             cx,
                         )
                         .await?;
