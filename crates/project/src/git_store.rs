@@ -236,6 +236,7 @@ pub struct CommitFile {
     pub old_text: Option<String>,
     pub new_text: Option<String>,
     pub is_binary: bool,
+    pub is_generated: bool,
 }
 
 impl CommitFile {
@@ -258,6 +259,7 @@ fn decode_commit_diff(diff: git::repository::CommitDiff) -> CommitDiff {
                 old_content,
                 new_content,
                 mut is_binary,
+                is_generated,
             } = file;
 
             if is_binary {
@@ -266,6 +268,7 @@ fn decode_commit_diff(diff: git::repository::CommitDiff) -> CommitDiff {
                     old_text: old_content.map(|_| String::new()),
                     new_text: new_content.map(|_| String::new()),
                     is_binary,
+                    is_generated,
                 };
             }
 
@@ -294,6 +297,7 @@ fn decode_commit_diff(diff: git::repository::CommitDiff) -> CommitDiff {
                 old_text,
                 new_text,
                 is_binary,
+                is_generated,
             }
         })
         .collect();
@@ -4439,6 +4443,7 @@ impl GitStore {
                     old_text: file.old_text,
                     new_text: file.new_text,
                     is_binary: file.is_binary,
+                    is_generated: file.is_generated,
                 })
                 .collect(),
             is_shallow_boundary: commit_diff.is_shallow_boundary,
@@ -7195,6 +7200,7 @@ impl Repository {
                                     old_text: file.old_text,
                                     new_text: file.new_text,
                                     is_binary: file.is_binary,
+                                    is_generated: file.is_generated,
                                 })
                             })
                             .collect::<Result<Vec<_>>>()?,
