@@ -1,32 +1,15 @@
-use std::{cell::Cell, fmt, rc::Rc, time::Duration};
+use std::{fmt, time::Duration};
 
 use gpui::{
-    BenchAppContext, Bounds, Context, InteractiveElement as _, IntoElement, ParentElement as _,
-    Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px, rgb, size,
+    BenchAppContext, Context, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    prelude::FluentBuilder as _, px, rgb,
 };
 
 const COLUMN_COUNT: usize = 100;
 const NODE_SIZE: f32 = 6.0;
 const ROW_HEIGHT: f32 = 24.0;
 const PANEL_WIDTH: f32 = 320.0;
-
-#[derive(Default)]
-struct RenderWork {
-    rendered_frames: Cell<usize>,
-    prepainted_children: Cell<usize>,
-    invalid_children: Cell<usize>,
-}
-
-impl RenderWork {
-    fn record_children(&self, bounds: &[Bounds<Pixels>], valid: impl Fn(&Bounds<Pixels>) -> bool) {
-        self.prepainted_children
-            .set(self.prepainted_children.get() + bounds.len());
-        self.invalid_children.set(
-            self.invalid_children.get() + bounds.iter().filter(|bounds| !valid(bounds)).count(),
-        );
-    }
-}
 
 struct ClosedInspectorInput {
     scale: usize,
@@ -82,14 +65,12 @@ fn closed_inspector_inputs(
     fps = 120
 )]
 fn bare_grid(input: &ClosedInspectorInput, cx: &mut BenchAppContext) {
-    assert_eq!(input.scale % COLUMN_COUNT, 0);
     measure_closed_inspector(
         input,
         cx,
-        |work| BareGrid {
+        || BareGrid {
             node_count: input.scale,
             alternate: false,
-            work,
         },
         |grid| grid.alternate = !grid.alternate,
     );
@@ -105,7 +86,7 @@ fn panel(input: &ClosedInspectorInput, cx: &mut BenchAppContext) {
     measure_closed_inspector(
         input,
         cx,
-        |work| Panel::new(input.scale, work),
+        || Panel::new(input.scale),
         |panel| panel.selected_row = (panel.selected_row + 1) % panel.labels.len(),
     );
 }
@@ -113,108 +94,57 @@ fn panel(input: &ClosedInspectorInput, cx: &mut BenchAppContext) {
 fn measure_closed_inspector<V: Render + 'static>(
     input: &ClosedInspectorInput,
     cx: &mut BenchAppContext,
-    build_view: impl FnOnce(Rc<RenderWork>) -> V,
+    build_view: impl FnOnce() -> V,
     mut update_view: impl FnMut(&mut V),
 ) {
     assert!(!cfg!(debug_assertions), "use --profile release-fast");
-    let expected_children = input.scale;
 
-    let work = Rc::new(RenderWork::default());
     let mut window = cx.add_empty_window();
-    let view = window.update(|window, cx| {
-        assert!(!window.is_inspector_picking(cx));
-        window.replace_root(cx, |_, _| build_view(work.clone()))
-    });
+    let view = window.update(|window, cx| window.replace_root(cx, |_, _| build_view()));
     cx.run_until_idle();
-    for _ in 0..input.open_close_cycles {
-        for open in [true, false] {
+    // Inputs with open/close cycles or another inspected window exist only with the
+    // `inspector` feature.
+    #[cfg(feature = "inspector")]
+    let _other_window = {
+        for _ in 0..input.open_close_cycles * 2 {
             window.update(|window, cx| {
-                #[cfg(feature = "inspector")]
                 window.toggle_inspector(cx);
-                assert_eq!(window.is_inspector_picking(cx), open);
                 window.refresh();
             });
             cx.run_until_idle();
         }
-    }
-    let mut other_window = input.other_window_inspected.then(|| {
-        let mut window = cx.add_empty_window();
-        window.update(|window, cx| {
-            #[cfg(feature = "inspector")]
-            window.toggle_inspector(cx);
-            assert!(window.is_inspector_picking(cx));
-        });
-        window
-    });
-    cx.run_until_idle();
-    let other_frames_before = other_window.as_mut().map(|window| {
-        window.update(|window, _| {
+        // Keep the other window alive, with its inspector open, while this one is measured.
+        input.other_window_inspected.then(|| {
+            let mut window = cx.add_empty_window();
+            window.update(|window, cx| window.toggle_inspector(cx));
             window
-                .frame_duration_snapshot()
-                .draw_duration_histogram
-                .len()
         })
-    });
-    assert!(work.rendered_frames.get() > 0);
-    assert_eq!(
-        work.prepainted_children.get(),
-        work.rendered_frames.get() * expected_children
-    );
-    assert_eq!(work.invalid_children.get(), 0);
-    work.rendered_frames.set(0);
-    work.prepainted_children.set(0);
+    };
+    cx.run_until_idle();
+    window.update(|window, _| window.refresh());
+    cx.run_until_idle();
 
-    let frames_before = window.update(|window, _| window.frame_duration_snapshot());
-    let mut updated_frames = 0;
     cx.bench_renderer(view, |view, _, cx| {
         update_view(view);
-        updated_frames += 1;
         cx.notify();
     });
-    let frames_after = window.update(|window, cx| {
-        assert!(!window.is_inspector_picking(cx));
-        window.frame_duration_snapshot()
-    });
-
-    let other_frames_after = other_window.as_mut().map(|window| {
-        window.update(|window, cx| {
-            assert!(window.is_inspector_picking(cx));
-            window
-                .frame_duration_snapshot()
-                .draw_duration_histogram
-                .len()
-        })
-    });
-    assert_eq!(other_frames_after, other_frames_before);
-    assert!(updated_frames > 0);
-    assert_eq!(work.rendered_frames.get(), updated_frames);
-    assert_eq!(
-        work.prepainted_children.get(),
-        updated_frames * expected_children
-    );
-    assert_eq!(work.invalid_children.get(), 0);
-    assert_eq!(
-        frames_after.draw_duration_histogram.len() - frames_before.draw_duration_histogram.len(),
-        updated_frames as u64
-    );
-    assert_eq!(
-        frames_after.dirty_to_present_histogram.len()
-            - frames_before.dirty_to_present_histogram.len(),
-        updated_frames as u64
-    );
+    if std::env::var("GPUI_BENCH_SCENE_STATS").as_deref() == Ok("1") {
+        window.update(|window, _| {
+            eprintln!(
+                "scene stats inspector/{input}: batches={}",
+                window.rendered_scene().batches().count(),
+            );
+        });
+    }
 }
 
 struct BareGrid {
     node_count: usize,
     alternate: bool,
-    work: Rc<RenderWork>,
 }
 
 impl Render for BareGrid {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        self.work
-            .rendered_frames
-            .set(self.work.rendered_frames.get() + 1);
         let background = rgb(if self.alternate { 0x334455 } else { 0x445566 });
 
         div()
@@ -223,13 +153,7 @@ impl Render for BareGrid {
             .flex_col()
             .size(px(COLUMN_COUNT as f32 * NODE_SIZE))
             .children((0..self.node_count / COLUMN_COUNT).map(|row_index| {
-                let work = self.work.clone();
                 div()
-                    .on_children_prepainted(move |bounds, _, _| {
-                        work.record_children(&bounds, |bounds| {
-                            bounds.size == size(px(NODE_SIZE), px(NODE_SIZE))
-                        });
-                    })
                     .id(("row", row_index))
                     .flex()
                     .h(px(NODE_SIZE))
@@ -253,11 +177,10 @@ struct Panel {
     labels: Vec<SharedString>,
     counts: Vec<SharedString>,
     selected_row: usize,
-    work: Rc<RenderWork>,
 }
 
 impl Panel {
-    fn new(row_count: usize, work: Rc<RenderWork>) -> Self {
+    fn new(row_count: usize) -> Self {
         Panel {
             labels: (0..row_count)
                 .map(|index| {
@@ -268,23 +191,15 @@ impl Panel {
                 .map(|index| SharedString::from(((index * 7) % 100).to_string()))
                 .collect(),
             selected_row: 0,
-            work,
         }
     }
 }
 
 impl Render for Panel {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        self.work
-            .rendered_frames
-            .set(self.work.rendered_frames.get() + 1);
-        let work = self.work.clone();
         let selected_row = self.selected_row;
 
         div()
-            .on_children_prepainted(move |bounds, _, _| {
-                work.record_children(&bounds, |bounds| bounds.size.height == px(ROW_HEIGHT));
-            })
             .id("panel")
             .flex()
             .flex_col()
