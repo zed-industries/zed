@@ -7104,6 +7104,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "buffer_diff",
+ "clock",
  "collections",
  "db",
  "editor",
