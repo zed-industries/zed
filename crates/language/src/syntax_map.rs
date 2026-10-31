@@ -1466,7 +1466,7 @@ impl<'a> SyntaxMapMatches<'a> {
 
 impl SyntaxMapCapturesLayer<'_> {
     fn advance(&mut self) {
-        self.next_capture = self.captures.next().map(|(mat, ix)| mat.captures[*ix]);
+        self.next_capture = self.captures.next().map(|(mat, ix)| mat.captures()[*ix]);
     }
 
     fn sort_key(&self) -> (usize, Reverse<usize>, usize) {
@@ -1487,7 +1487,7 @@ impl SyntaxMapMatchesLayer<'_> {
                     continue;
                 }
                 self.next_captures.clear();
-                self.next_captures.extend_from_slice(mat.captures);
+                self.next_captures.extend_from_slice(mat.captures());
                 self.next_pattern_index = mat.pattern_index;
                 self.has_next = true;
                 return;
@@ -1546,7 +1546,7 @@ fn has_parent(args: &[QueryPredicateArg], mat: &QueryMatch) -> bool {
         return false;
     };
 
-    let Some(capture) = mat.captures.iter().find(|c| c.index == *capture_ix) else {
+    let Some(capture) = mat.captures().iter().find(|c| c.index == *capture_ix) else {
         return false;
     };
 
@@ -2002,7 +2002,7 @@ impl<'a> SyntaxLayer<'a> {
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
         let mut matches = query_cursor.matches(&config.query, self.node(), text);
         while let Some(mat) = matches.next() {
-            for capture in mat.captures {
+            for capture in mat.captures() {
                 let Some(override_entry) = config.values.get(&capture.index) else {
                     continue;
                 };

@@ -809,8 +809,8 @@ impl nodejs::Host for WasmState {
 #[async_trait]
 impl lsp::Host for WasmState {}
 
-impl From<::http_client::github::GithubRelease> for github::GithubRelease {
-    fn from(value: ::http_client::github::GithubRelease) -> Self {
+impl From<::github_releases::GithubRelease> for github::GithubRelease {
+    fn from(value: ::github_releases::GithubRelease) -> Self {
         Self {
             version: value.tag_name,
             assets: value.assets.into_iter().map(Into::into).collect(),
@@ -818,8 +818,8 @@ impl From<::http_client::github::GithubRelease> for github::GithubRelease {
     }
 }
 
-impl From<::http_client::github::GithubReleaseAsset> for github::GithubReleaseAsset {
-    fn from(value: ::http_client::github::GithubReleaseAsset) -> Self {
+impl From<::github_releases::GithubReleaseAsset> for github::GithubReleaseAsset {
+    fn from(value: ::github_releases::GithubReleaseAsset) -> Self {
         Self {
             name: value.name,
             download_url: value.browser_download_url,
@@ -835,7 +835,7 @@ impl github::Host for WasmState {
         options: github::GithubReleaseOptions,
     ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
         maybe!(async {
-            let release = ::http_client::github::latest_github_release(
+            let release = ::github_releases::latest_github_release(
                 &repo,
                 options.require_assets,
                 options.pre_release,
@@ -854,7 +854,7 @@ impl github::Host for WasmState {
         tag: String,
     ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
         maybe!(async {
-            let release = ::http_client::github::get_release_by_tag_name(
+            let release = ::github_releases::get_release_by_tag_name(
                 &repo,
                 &tag,
                 self.host.http_client.clone(),

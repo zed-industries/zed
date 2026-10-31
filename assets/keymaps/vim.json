@@ -474,7 +474,7 @@
       "shift-g": "vim::HelixGotoLine",
 
       // Changes
-      "shift-r": "editor::Paste",
+      "shift-r": "vim::HelixReplaceWithYanked",
       "`": "vim::ConvertToLowerCase",
       "alt-`": "vim::ConvertToUpperCase",
       "insert": "vim::InsertBefore", // not a helix default
@@ -1007,6 +1007,20 @@
       "space w l": "workspace::ActivatePaneRight",
       "space w q": "pane::CloseActiveItem",
     },
+  },
+  {
+    "context": "Editor && DebuggerHover && VimControl && (vim_mode == normal || vim_mode == helix_normal)",
+    "bindings": {
+      "escape": "editor::Cancel",
+      "h": "editor::DebuggerHoverCollapseSelected",
+      "j": "editor::DebuggerHoverSelectNext",
+      "k": "editor::DebuggerHoverSelectPrevious",
+      "l": "editor::DebuggerHoverExpandSelected",
+      "left": "editor::DebuggerHoverCollapseSelected",
+      "down": "editor::DebuggerHoverSelectNext",
+      "up": "editor::DebuggerHoverSelectPrevious",
+      "right": "editor::DebuggerHoverExpandSelected"
+    }
   },
   {
     // netrw compatibility

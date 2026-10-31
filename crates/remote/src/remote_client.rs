@@ -1,7 +1,7 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::transport::mock::ConnectGuard;
 use crate::{
-    SshConnectionOptions,
+    RemoteConnectionIdentity, SshConnectionOptions,
     command::RemoteCommand,
     protocol::MessageId,
     proxy::ProxyLaunchError,
@@ -1032,8 +1032,8 @@ impl RemoteClient {
         self.client.clone().into()
     }
 
-    pub fn connection_options(&self) -> RemoteConnectionOptions {
-        self.connection_options.clone()
+    pub fn connection_options(&self) -> &RemoteConnectionOptions {
+        &self.connection_options
     }
 
     pub fn connection(&self) -> Option<Arc<dyn RemoteConnection>> {
@@ -1145,7 +1145,7 @@ impl RemoteClient {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_disconnect(&self, client_cx: &mut App) -> Task<()> {
-        let opts = self.connection_options();
+        let opts = self.connection_options().clone();
         client_cx.spawn(async move |cx| {
             let connection = cx.update_global(|c: &mut ConnectionPool, _| {
                 if let Some(ConnectionPoolEntry::Connected(c)) = c.connections.get(&opts) {
@@ -1367,6 +1367,36 @@ pub enum RemoteConnectionOptions {
 }
 
 impl RemoteConnectionOptions {
+    pub fn identity(&self) -> RemoteConnectionIdentity<'_> {
+        self.into()
+    }
+
+    /// The connection key prefix used in created worktree registry.
+    pub fn host_key(&self) -> String {
+        match self {
+            Self::Ssh(options) => format!(
+                "ssh:{}@{}:{}",
+                options.username.as_deref().unwrap_or_default(),
+                options.host.to_string(),
+                options
+                    .port
+                    .map(|port| port.to_string())
+                    .unwrap_or_default()
+            ),
+            Self::Wsl(options) => format!(
+                "wsl:{}@{}",
+                options.user.as_deref().unwrap_or_default(),
+                options.distro_name
+            ),
+            Self::Docker(options) => format!(
+                "docker:{}@{}:{}",
+                options.remote_user, options.name, options.container_id
+            ),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Mock(options) => format!("mock:{}", options.id),
+        }
+    }
+
     pub fn display_name(&self) -> String {
         match self {
             RemoteConnectionOptions::Ssh(opts) => opts

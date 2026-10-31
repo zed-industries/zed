@@ -417,7 +417,7 @@ pub fn python_env_kernel_specifications(
         .remote_connection_options(cx)
         .and_then(|opts| {
             if let RemoteConnectionOptions::Wsl(wsl) = opts {
-                Some(wsl.distro_name)
+                Some(wsl.distro_name.clone())
             } else {
                 None
             }

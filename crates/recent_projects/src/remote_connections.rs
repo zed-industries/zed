@@ -9,7 +9,7 @@ use editor::Editor;
 use futures::{FutureExt as _, channel::oneshot, select};
 use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
 
-use project::trusted_worktrees;
+use project::{ProjectHost, trusted_worktrees};
 use remote::{
     DockerConnectionOptions, Interactive, RemoteConnection, RemoteConnectionOptions,
     SshConnectionOptions,
@@ -17,10 +17,7 @@ use remote::{
 pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
 use util::paths::PathWithPosition;
-use workspace::{
-    AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation, Workspace,
-    find_existing_workspace,
-};
+use workspace::{AppState, MultiWorkspace, OpenOptions, Workspace, find_existing_workspace};
 
 pub use remote_connection::{
     RemoteClientDelegate, RemoteConnectionModal, RemoteConnectionPrompt, SshConnectionHeader,
@@ -45,11 +42,9 @@ impl RemoteSettings {
     }
 
     pub fn fill_connection_options_from_settings(&self, options: &mut SshConnectionOptions) {
+        let host = options.host.to_string();
         for conn in self.ssh_connections() {
-            if conn.host == options.host.to_string()
-                && conn.username == options.username
-                && conn.port == options.port
-            {
+            if conn.host == host && conn.username == options.username && conn.port == options.port {
                 options.nickname = conn.nickname;
                 options.upload_binary_over_ssh = conn.upload_binary_over_ssh.unwrap_or_default();
                 options.args = Some(conn.args);
@@ -134,15 +129,17 @@ pub async fn open_remote_project(
 ) -> Result<WindowHandle<MultiWorkspace>> {
     let created_new_window = open_options.requesting_window.is_none();
 
-    let (existing, open_visible) = find_existing_workspace(
+    let existing = find_existing_workspace(
         &paths,
         &open_options,
-        &SerializedWorkspaceLocation::Remote(connection_options.clone()),
+        &ProjectHost::Remote(&connection_options),
         cx,
-    )
-    .await;
+    );
 
-    if let Some((existing_window, existing_workspace)) = existing {
+    if let Some(existing) = existing {
+        let existing_window = existing.window;
+        let existing_workspace = existing.workspace;
+
         let remote_connection = cx.update(|cx| {
             existing_workspace
                 .read(cx)
@@ -164,7 +161,7 @@ pub async fn open_remote_project(
                         workspace.open_paths(
                             resolved_paths,
                             OpenOptions {
-                                visible: Some(open_visible),
+                                visible: Some(existing.visible),
                                 ..Default::default()
                             },
                             None,
@@ -501,7 +498,7 @@ mod tests {
     use super::*;
     use extension::ExtensionHostProxy;
     use fs::FakeFs;
-    use gpui::{AppContext, TestAppContext};
+    use gpui::{AppContext, Entity, TestAppContext};
     use http_client::BlockedHttpClient;
     use node_runtime::NodeRuntime;
     use project::Project;
@@ -593,14 +590,10 @@ mod tests {
             .unwrap();
     }
 
-    #[gpui::test]
-    async fn test_find_existing_workspace_does_not_reuse_workspace_from_another_remote(
+    async fn init_remote_server(
         cx: &mut TestAppContext,
         server_cx: &mut TestAppContext,
-    ) {
-        let app_state = init_test(cx);
-        let executor = cx.executor();
-
+    ) -> (RemoteConnectionOptions, Entity<HeadlessProject>) {
         cx.update(|cx| {
             release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
@@ -630,7 +623,7 @@ mod tests {
         let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
         let proxy = Arc::new(ExtensionHostProxy::new());
 
-        let _headless = server_cx.new(|cx| {
+        let headless = server_cx.new(|cx| {
             HeadlessProject::new(
                 HeadlessAppState {
                     session: server_session,
@@ -647,6 +640,18 @@ mod tests {
         });
 
         drop(connect_guard);
+
+        (opts, headless)
+    }
+
+    #[gpui::test]
+    async fn test_find_existing_workspace_does_not_reuse_workspace_from_another_remote(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let executor = cx.executor();
+        let (opts, _headless) = init_remote_server(cx, server_cx).await;
 
         // First open: create a new window for the remote project.
         let paths = vec![PathBuf::from(path!("/project"))];
@@ -704,38 +709,37 @@ mod tests {
             .unwrap();
 
         let search_paths = vec![PathBuf::from(path!("/project/src/lib.rs"))];
-        let (found, _) = find_existing_workspace(
+        let found = find_existing_workspace(
             &search_paths,
             &workspace::OpenOptions::default(),
-            &SerializedWorkspaceLocation::Remote(other_opts),
+            &ProjectHost::Remote(&other_opts),
             &mut async_cx,
-        )
-        .await;
+        );
+
         assert!(
             found.is_none(),
             "a matching path on another remote must not satisfy the request"
         );
 
         // Verify find_existing_workspace discovers the remote workspace.
-        let (found, _open_visible) = find_existing_workspace(
+        let found = find_existing_workspace(
             &search_paths,
             &workspace::OpenOptions::default(),
-            &SerializedWorkspaceLocation::Remote(opts.clone()),
+            &ProjectHost::Remote(&opts),
             &mut async_cx,
-        )
-        .await;
+        );
 
         assert!(
             found.is_some(),
             "find_existing_workspace should locate the existing remote workspace"
         );
-        let (found_window, found_workspace) = found.unwrap();
+        let found = found.unwrap();
         assert_eq!(
-            found_window, first_window,
+            found.window, first_window,
             "find_existing_workspace should return the same window"
         );
         assert_eq!(
-            found_workspace, first_workspace,
+            found.workspace, first_workspace,
             "find_existing_workspace should return the workspace for the requested remote"
         );
 
@@ -765,6 +769,65 @@ mod tests {
             still_first_window, first_window,
             "The window handle should be the same after reuse"
         );
+    }
+
+    #[gpui::test]
+    async fn test_local_file_reuses_local_workspace_when_remote_workspace_is_active(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let (opts, _headless) = init_remote_server(cx, server_cx).await;
+        let window = open_remote_project(
+            opts,
+            vec![PathBuf::from(path!("/project"))],
+            app_state.clone(),
+            workspace::OpenOptions::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({ "src": { "lib.rs": "" } }))
+            .await;
+        let local_workspace = window
+            .update(cx, |multi_workspace, window, cx| {
+                assert!(
+                    multi_workspace
+                        .workspace()
+                        .read(cx)
+                        .project()
+                        .read(cx)
+                        .is_via_remote_server()
+                );
+                window.activate_window();
+                multi_workspace
+                    .workspaces()
+                    .find(|workspace| workspace.read(cx).project().read(cx).is_local())
+                    .cloned()
+                    .expect("remote connection setup should retain the initial local workspace")
+            })
+            .unwrap();
+
+        let result = cx
+            .update(|cx| {
+                workspace::open_paths(
+                    &[PathBuf::from(path!("/project/src/lib.rs"))],
+                    app_state,
+                    workspace::OpenOptions::default(),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.window, window);
+        assert_eq!(result.workspace, local_workspace);
+        assert_eq!(cx.windows().len(), 1);
+        assert!(matches!(result.opened_items.as_slice(), [Some(Ok(_))]));
     }
 
     #[gpui::test]

@@ -3,10 +3,11 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use futures::lock::OwnedMutexGuard;
+use github_releases::{
+    AssetKind, GitHubLspBinaryVersion, GithubBinaryMetadata, download_server_binary,
+    latest_github_release,
+};
 use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task};
-use http_client::github::AssetKind;
-use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
-use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
 use project::lsp_store::lsp_ext_command;
@@ -30,6 +31,7 @@ use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::command::{Stdio, new_command};
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
+use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
@@ -731,6 +733,7 @@ impl LspAdapter for RustLspAdapter {
         &self,
         command_name: &str,
         arguments: &[serde_json::Value],
+        _path_style: PathStyle,
     ) -> Option<ClientCommand> {
         match command_name {
             "rust-analyzer.showReferences" => Some(ClientCommand::ShowLocations),
@@ -895,7 +898,8 @@ impl LspInstaller for RustLspAdapter {
             }
 
             download_server_binary(
-                &*delegate.http_client(),
+                delegate.background_executor(),
+                delegate.http_client(),
                 &url,
                 expected_digest.as_deref(),
                 &destination_path,

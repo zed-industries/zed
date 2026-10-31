@@ -101,6 +101,11 @@ pub trait AgentConnection {
         None
     }
 
+    /// Initiate shutdown of connection-owned resources when their shared UI owner ends.
+    /// This is independent of session close and may leave retained models alive.
+    /// It does not wait for process exit or a complete protocol drain.
+    fn shutdown(&self) {}
+
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -127,6 +132,12 @@ pub trait AgentConnection {
 
     /// Whether this agent supports explicitly closing existing sessions.
     fn supports_close_session(&self) -> bool {
+        false
+    }
+
+    /// Whether subagents follow the ACP subagents RFD on this connection: they are discovered
+    /// only through their parent's announcements, and must never be loaded or resumed.
+    fn announces_subagents(&self) -> bool {
         false
     }
 
@@ -381,6 +392,11 @@ pub trait AgentSessionConfigOptions {
     /// Get all current config options with their state
     fn config_options(&self) -> Vec<acp_v2::SessionConfigOption>;
 
+    /// Agent-owned sessions may report configuration without allowing the client to change it.
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
     /// Set a config option value
     /// Returns the full updated list of config options
     fn set_config_option(
@@ -443,15 +459,29 @@ impl AgentSessionInfo {
         }
     }
 
-    pub fn apply_update(&mut self, update: acp_v2::SessionInfoUpdate) -> bool {
+    pub fn apply_update(&mut self, update: impl Into<AgentSessionInfoUpdate>) -> bool {
+        let (title, updated_at, metadata) = match update.into() {
+            AgentSessionInfoUpdate::V1(update) => (
+                update.title,
+                update.updated_at,
+                crate::MetadataUpdate::V1(
+                    update.meta.map(MaybeUndefined::Value).unwrap_or_default(),
+                ),
+            ),
+            AgentSessionInfoUpdate::V2(update) => (
+                update.title,
+                update.updated_at,
+                crate::MetadataUpdate::V2(update.meta),
+            ),
+        };
         let mut changed = false;
-        if !update.title.is_undefined() {
-            let title = update.title.take().map(SharedString::from);
+        if !title.is_undefined() {
+            let title = title.take().map(SharedString::from);
             changed |= self.title != title;
             self.title = title;
         }
 
-        let updated_at = match update.updated_at {
+        let updated_at = match updated_at {
             MaybeUndefined::Undefined => None,
             MaybeUndefined::Null => Some(None),
             MaybeUndefined::Value(updated_at) => match DateTime::parse_from_rfc3339(&updated_at) {
@@ -467,23 +497,37 @@ impl AgentSessionInfo {
             self.updated_at = updated_at;
         }
 
-        if !update.meta.is_undefined() {
-            let meta = update.meta.take();
-            changed |= self.meta != meta;
-            self.meta = meta;
-        }
+        changed |= metadata.apply(&mut self.meta);
         changed
     }
 }
 
-pub fn session_info_update_from_v1(update: acp_v1::SessionInfoUpdate) -> acp_v2::SessionInfoUpdate {
-    let mut converted = acp_v2::SessionInfoUpdate::new()
-        .title(update.title)
-        .updated_at(update.updated_at);
-    if let Some(meta) = update.meta {
-        converted = converted.meta(meta);
+/// Retains wire provenance because v1 metadata replaces while v2 metadata patches.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentSessionInfoUpdate {
+    V1(acp_v1::SessionInfoUpdate),
+    V2(acp_v2::SessionInfoUpdate),
+}
+
+impl AgentSessionInfoUpdate {
+    pub(crate) fn has_title(&self) -> bool {
+        match self {
+            Self::V1(update) => !update.title.is_undefined(),
+            Self::V2(update) => !update.title.is_undefined(),
+        }
     }
-    converted
+}
+
+impl From<acp_v1::SessionInfoUpdate> for AgentSessionInfoUpdate {
+    fn from(update: acp_v1::SessionInfoUpdate) -> Self {
+        Self::V1(update)
+    }
+}
+
+impl From<acp_v2::SessionInfoUpdate> for AgentSessionInfoUpdate {
+    fn from(update: acp_v2::SessionInfoUpdate) -> Self {
+        Self::V2(update)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -491,7 +535,7 @@ pub enum SessionListUpdate {
     Refresh,
     SessionInfo {
         session_id: acp_v2::SessionId,
-        update: acp_v2::SessionInfoUpdate,
+        update: AgentSessionInfoUpdate,
     },
 }
 
@@ -877,7 +921,7 @@ mod test_support {
     use action_log::ActionLog;
     use collections::{HashMap, VecDeque};
     use futures::{channel::oneshot, future::try_join_all};
-    use gpui::{AppContext as _, WeakEntity};
+    use gpui::{AppContext as _, Entity, WeakEntity};
     use parking_lot::Mutex;
 
     use crate::AuthorizationKind;
@@ -933,6 +977,9 @@ mod test_support {
         permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<StubPromptUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
+        auth_methods: Vec<acp_v2::AuthMethod>,
+        next_authenticate_response: Arc<Mutex<Option<oneshot::Receiver<Result<()>>>>>,
+        next_load_error: Arc<Mutex<Option<anyhow::Error>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
         receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
@@ -941,14 +988,17 @@ mod test_support {
         next_close_responses: Arc<Mutex<VecDeque<oneshot::Receiver<Result<()>>>>>,
         set_title_calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
         cancel_calls: Arc<Mutex<Vec<acp_v2::SessionId>>>,
+        shutdown_calls: Arc<AtomicUsize>,
         next_cancel_error: Arc<Mutex<Option<anyhow::Error>>>,
         supports_receipt_submissions: bool,
         supports_retry: bool,
         supports_load_session: bool,
         supports_close_session: bool,
+        announces_subagents: bool,
         close_sessions_on_release: bool,
         supports_session_additional_directories: bool,
         supports_set_title: bool,
+        supports_truncate: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
         prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
@@ -977,6 +1027,9 @@ mod test_support {
             Self {
                 next_prompt_updates: Default::default(),
                 next_prompt_response: Default::default(),
+                auth_methods: Vec::new(),
+                next_authenticate_response: Default::default(),
+                next_load_error: Default::default(),
                 next_receipt_response: Default::default(),
                 receipt_prompt: Default::default(),
                 next_truncate: Default::default(),
@@ -984,6 +1037,7 @@ mod test_support {
                 next_close_responses: Default::default(),
                 set_title_calls: Default::default(),
                 cancel_calls: Default::default(),
+                shutdown_calls: Default::default(),
                 next_cancel_error: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
@@ -991,9 +1045,11 @@ mod test_support {
                 supports_retry: false,
                 supports_load_session: false,
                 supports_close_session: false,
+                announces_subagents: false,
                 close_sessions_on_release: true,
                 supports_session_additional_directories: false,
                 supports_set_title: true,
+                supports_truncate: true,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
                 prompt_capabilities_rx: watch::Receiver::constant(
@@ -1003,6 +1059,14 @@ mod test_support {
                         .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                 ),
             }
+        }
+
+        pub fn set_next_load_error(&self, error: anyhow::Error) {
+            *self.next_load_error.lock() = Some(error);
+        }
+
+        pub fn shutdown_calls(&self) -> usize {
+            self.shutdown_calls.load(Ordering::SeqCst)
         }
 
         pub fn set_next_prompt_updates(&self, updates: Vec<acp_v1::SessionUpdate>) {
@@ -1027,6 +1091,22 @@ mod test_support {
         ) -> oneshot::Sender<Result<acp_v1::PromptResponse>> {
             let (sender, receiver) = oneshot::channel();
             assert!(self.next_prompt_response.lock().replace(receiver).is_none());
+            sender
+        }
+
+        pub fn with_auth_methods(mut self, methods: Vec<acp_v2::AuthMethod>) -> Self {
+            self.auth_methods = methods;
+            self
+        }
+
+        pub fn defer_next_authenticate_response(&self) -> oneshot::Sender<Result<()>> {
+            let (sender, receiver) = oneshot::channel();
+            assert!(
+                self.next_authenticate_response
+                    .lock()
+                    .replace(receiver)
+                    .is_none()
+            );
             sender
         }
 
@@ -1061,6 +1141,18 @@ mod test_support {
             sender
         }
 
+        /// Makes a session this connection did not create, such as an ACP subagent, known to
+        /// it, as a real connection knows the subagents it announced.
+        pub fn track_session(&self, thread: &Entity<AcpThread>, cx: &App) {
+            self.sessions.lock().insert(
+                thread.read(cx).session_id().clone(),
+                Session {
+                    thread: thread.downgrade(),
+                    response_tx: None,
+                },
+            );
+        }
+
         pub fn take_cancel_calls(&self) -> Vec<acp_v2::SessionId> {
             std::mem::take(&mut *self.cancel_calls.lock())
         }
@@ -1090,6 +1182,11 @@ mod test_support {
 
         pub fn with_supports_close_session(mut self, supports_close_session: bool) -> Self {
             self.supports_close_session = supports_close_session;
+            self
+        }
+
+        pub fn with_announced_subagents(mut self, announces_subagents: bool) -> Self {
+            self.announces_subagents = announces_subagents;
             self
         }
 
@@ -1126,6 +1223,11 @@ mod test_support {
 
         pub fn with_supports_set_title(mut self, supports_set_title: bool) -> Self {
             self.supports_set_title = supports_set_title;
+            self
+        }
+
+        pub fn with_supports_truncate(mut self, supports_truncate: bool) -> Self {
+            self.supports_truncate = supports_truncate;
             self
         }
 
@@ -1207,6 +1309,10 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
+        fn shutdown(&self) {
+            self.shutdown_calls.fetch_add(1, Ordering::SeqCst);
+        }
+
         fn agent_id(&self) -> AgentId {
             self.agent_id.clone()
         }
@@ -1216,7 +1322,7 @@ mod test_support {
         }
 
         fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
-            &[]
+            &self.auth_methods
         }
 
         fn model_selector(
@@ -1243,6 +1349,10 @@ mod test_support {
 
         fn supports_close_session(&self) -> bool {
             self.supports_close_session
+        }
+
+        fn announces_subagents(&self) -> bool {
+            self.announces_subagents
         }
 
         fn should_close_sessions_on_release(&self) -> bool {
@@ -1280,6 +1390,9 @@ mod test_support {
                 return Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")));
             }
 
+            if let Some(error) = self.next_load_error.lock().take() {
+                return Task::ready(Err(error));
+            }
             let thread = self.create_session(session_id, project, work_dirs, title, cx);
             Task::ready(Ok(thread))
         }
@@ -1287,9 +1400,14 @@ mod test_support {
         fn authenticate(
             &self,
             _method_id: acp_v2::AuthMethodId,
-            _cx: &mut App,
+            cx: &mut App,
         ) -> Task<gpui::Result<()>> {
-            unimplemented!()
+            match self.next_authenticate_response.lock().take() {
+                Some(response) => cx.spawn(async move |_| response.await?),
+                None => Task::ready(Err(anyhow::Error::msg(
+                    "No deferred authentication response",
+                ))),
+            }
         }
 
         fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
@@ -1436,9 +1554,11 @@ mod test_support {
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             // Capability checks also call this; only run may consume the gate.
-            Some(Rc::new(StubAgentSessionEditor {
-                next_truncate: self.next_truncate.clone(),
-            }))
+            self.supports_truncate.then(|| {
+                Rc::new(StubAgentSessionEditor {
+                    next_truncate: self.next_truncate.clone(),
+                }) as Rc<dyn AgentSessionTruncate>
+            })
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -1650,6 +1770,13 @@ mod tests {
                 true,
             ),
             (
+                json!({"_meta": {"literal": null}}),
+                original.title.clone(),
+                original.updated_at,
+                Some(acp_v2::Meta::from_iter([("literal".into(), json!(null))])),
+                true,
+            ),
+            (
                 json!({"_meta": null}),
                 original.title.clone(),
                 original.updated_at,
@@ -1659,14 +1786,8 @@ mod tests {
         ] {
             let legacy: acp_v1::SessionInfoUpdate =
                 serde_json::from_value(wire).expect("legacy patch");
-            let converted = session_info_update_from_v1(legacy.clone());
-            assert_eq!(
-                serde_json::to_value(&converted).expect("shared patch wire"),
-                serde_json::to_value(&legacy).expect("normalized legacy patch wire")
-            );
-
             let mut info = original.clone();
-            assert_eq!(info.apply_update(converted.clone()), changed);
+            assert_eq!(info.apply_update(legacy.clone()), changed);
             assert_eq!(
                 info,
                 AgentSessionInfo {
@@ -1676,7 +1797,7 @@ mod tests {
                     ..original.clone()
                 }
             );
-            assert!(!info.apply_update(converted), "identical patch is a no-op");
+            assert!(!info.apply_update(legacy), "identical patch is a no-op");
         }
 
         let mut info = original.clone();
@@ -1688,7 +1809,7 @@ mod tests {
                 ..original.clone()
             }
         );
-        assert!(info.apply_update(acp_v2::SessionInfoUpdate::new().meta(acp_v2::Meta::new())));
+        assert!(!info.apply_update(acp_v2::SessionInfoUpdate::new().meta(acp_v2::Meta::new())));
         assert_eq!(info.meta, Some(acp_v2::Meta::new()));
 
         let mut info = original.clone();
@@ -1709,5 +1830,45 @@ mod tests {
         assert!(!info.apply_update(
             acp_v2::SessionInfoUpdate::new().updated_at("invalid private timestamp")
         ));
+    }
+
+    #[test]
+    fn session_info_v2_metadata_patches_report_only_effective_changes() {
+        let mut info = AgentSessionInfo::new("metadata");
+        for (patch, expected, changed) in [
+            (json!({"_meta": {"missing": null}}), json!({}), false),
+            (json!({"_meta": {}}), json!({}), false),
+            (
+                json!({"_meta": {"keep": 1, "nested": {"old": true, "literal": null}}}),
+                json!({"keep": 1, "nested": {"old": true, "literal": null}}),
+                true,
+            ),
+            (
+                json!({"_meta": {"nested": {"new": true, "literal": null}}}),
+                json!({"keep": 1, "nested": {"new": true, "literal": null}}),
+                true,
+            ),
+            (
+                json!({"_meta": {"unknown": null}}),
+                json!({"keep": 1, "nested": {"new": true, "literal": null}}),
+                false,
+            ),
+            (
+                json!({"_meta": {"keep": null}}),
+                json!({"nested": {"new": true, "literal": null}}),
+                true,
+            ),
+            (json!({"_meta": null}), json!(null), true),
+            (json!({"_meta": null}), json!(null), false),
+        ] {
+            let update: acp_v2::SessionInfoUpdate =
+                serde_json::from_value(patch).expect("v2 session information");
+            assert_eq!(info.apply_update(update.clone()), changed);
+            assert_eq!(
+                serde_json::to_value(&info.meta).expect("metadata JSON"),
+                expected
+            );
+            assert!(!info.apply_update(update), "repeated patch is a no-op");
+        }
     }
 }

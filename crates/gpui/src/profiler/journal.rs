@@ -165,6 +165,8 @@ pub enum FrameSkipReason {
     InactiveFrameRateLimit,
     /// Thermal throttling deferred drawing.
     ThermalFrameRateLimit,
+    /// Low power mode deferred drawing.
+    LowPowerFrameRateLimit,
 }
 
 /// A completed frame request that returned without drawing a new frame.
@@ -1712,7 +1714,7 @@ mod tests {
         cx.update(|cx| {
             cx.system_wake_observers
                 .clone()
-                .retain(&(), |callback| callback(cx))
+                .retain(|callback| callback(cx))
         });
         cx.run_until_parked();
         handle
