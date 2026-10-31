@@ -50,6 +50,7 @@ pub struct Call {
     pub target: Location,
     pub site_count: usize,
     pub label: Option<Arc<CodeLabel>>,
+    pub label_includes_detail: bool,
     pub display: CallDisplay,
 }
 
@@ -60,6 +61,7 @@ pub struct CallDisplay {
     pub path: Option<SharedString>,
     pub full_signature: SharedString,
     pub label_text: Option<SharedString>,
+    pub separate_detail: Option<SharedString>,
     pub needs_tooltip: bool,
 }
 
@@ -127,6 +129,7 @@ pub async fn fetch_calls(
                         target,
                         site_count,
                         label: None,
+                        label_includes_detail: false,
                         display: CallDisplay::default(),
                     }
                 })
@@ -762,6 +765,7 @@ impl PickerDelegate for CallHierarchyDelegate {
         let tooltip_max_width = self.modal_width;
         let full_signature = call.display.full_signature.clone();
         let full_path = call.display.path.clone();
+        let separate_detail = call.display.separate_detail.clone();
 
         Some(
             ListItem::new(ix)
@@ -773,6 +777,7 @@ impl PickerDelegate for CallHierarchyDelegate {
                         .text_ui(cx)
                         .child(
                             h_flex()
+                                .gap_1()
                                 .overflow_x_hidden()
                                 .text_size(ThemeSettings::get_global(cx).buffer_font_size(cx))
                                 .child(name_styled)
@@ -790,6 +795,7 @@ impl PickerDelegate for CallHierarchyDelegate {
                         AnyView::from(cx.new(|_| CallSignatureTooltip {
                             label: tooltip_label.clone(),
                             full_signature: full_signature.clone(),
+                            separate_detail: separate_detail.clone(),
                             path: full_path.clone(),
                             max_width: tooltip_max_width,
                         }))
@@ -802,6 +808,7 @@ impl PickerDelegate for CallHierarchyDelegate {
 struct CallSignatureTooltip {
     label: Option<(Arc<CodeLabel>, SharedString)>,
     full_signature: SharedString,
+    separate_detail: Option<SharedString>,
     path: Option<SharedString>,
     max_width: Pixels,
 }
@@ -811,8 +818,9 @@ impl Render for CallSignatureTooltip {
         let mut signature_style = buffer_text_style(cx);
         signature_style.line_height =
             relative(ThemeSettings::get_global(cx).buffer_line_height.value());
+        let separate_detail = self.separate_detail.clone();
         let signature = match &self.label {
-            Some((label, label_text)) => StyledText::new(label_text.clone())
+            Some((label, label_text)) => StyledText::new(label_text)
                 .with_default_highlights(
                     &signature_style,
                     cx.theme().syntax().resolve_runs(&label.runs),
@@ -823,10 +831,26 @@ impl Render for CallSignatureTooltip {
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         let max_width = self.max_width;
         let path = self.path.clone();
+        let detail_styled = separate_detail.map(|detail| {
+            let mut detail_style = signature_style.clone();
+            detail_style.color = cx.theme().colors().text_muted;
+            StyledText::new(detail).with_default_highlights(&detail_style, std::iter::empty())
+        });
+
         tooltip_container(cx, move |el, _| {
             el.max_w(max_width)
                 .gap_0p5()
-                .child(div().text_size(buffer_font_size).child(signature))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .flex_wrap()
+                        .text_size(buffer_font_size)
+                        .child(div().min_w_0().max_w(max_width).child(signature))
+                        .children(
+                            detail_styled
+                                .map(|detail| div().min_w_0().max_w(max_width).child(detail)),
+                        ),
+                )
                 .children(
                     path.map(|path| Label::new(path).size(LabelSize::Small).color(Color::Muted)),
                 )
@@ -883,6 +907,7 @@ async fn attach_labels(calls: &mut [Call], project: &Entity<Project>, cx: &mut A
         };
         if let Some(label) = signature_label(&call.item, &language) {
             call.label = Some(Arc::new(label));
+            call.label_includes_detail = true;
             continue;
         }
         match fallback_groups
@@ -948,17 +973,37 @@ async fn load_and_apply_calls(
             let buffer_font_size = settings.buffer_font_size(cx);
             let path_font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
             for call in calls.iter_mut() {
-                let signature = call
+                let name_text = call
                     .display
                     .label_text
-                    .clone()
-                    .unwrap_or_else(|| call.display.full_signature.clone());
-                let signature_width = shaped_width(
-                    signature,
+                    .as_ref()
+                    .unwrap_or(&call.display.name);
+                let detail_text = if call.label_includes_detail {
+                    None
+                } else {
+                    call.display.detail.as_ref()
+                };
+
+                let gap = rems(0.25).to_pixels(window.rem_size());
+                let name_width = shaped_width(
+                    name_text.clone(),
                     settings.buffer_font.clone(),
                     buffer_font_size,
                     window,
                 );
+                let detail_width = match detail_text {
+                    Some(detail) => {
+                        shaped_width(
+                            detail.clone(),
+                            settings.buffer_font.clone(),
+                            buffer_font_size,
+                            window,
+                        ) + gap
+                    }
+                    None => px(0.),
+                };
+                let signature_width = name_width + detail_width;
+
                 let path_width = call
                     .display
                     .path
@@ -1111,13 +1156,18 @@ fn compute_call_display(call: &Call, cx: &App) -> CallDisplay {
 
     let detail = extract_call_detail(call).map(SharedString::from);
     let full_signature = SharedString::from(match &detail {
-        Some(detail) => format!("{}{detail}", call.item.name),
+        Some(detail) => format!("{} {detail}", call.item.name),
         None => call.item.name.clone(),
     });
     let label_text = call
         .label
         .as_ref()
         .map(|label| SharedString::from(label.text.clone()));
+    let separate_detail = if label_text.is_some() && !call.label_includes_detail {
+        detail.clone()
+    } else {
+        None
+    };
 
     CallDisplay {
         name: SharedString::from(call.item.name.clone()),
@@ -1125,6 +1175,7 @@ fn compute_call_display(call: &Call, cx: &App) -> CallDisplay {
         path,
         full_signature,
         label_text,
+        separate_detail,
         needs_tooltip: false,
     }
 }
@@ -1194,11 +1245,7 @@ fn render_item(
         ..HighlightStyle::default()
     };
 
-    let label_carries_detail = call_item
-        .label
-        .as_ref()
-        .is_some_and(|label| detail_from_label_suffix(label).is_some());
-    let detail_styled = if label_carries_detail {
+    let detail_styled = if call_item.label_includes_detail {
         None
     } else {
         call_item.display.detail.clone().map(|detail| {
@@ -1543,6 +1590,51 @@ mod tests {
                 (39..41, lifetime),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_tooltip_appends_detail_only_when_label_lacks_it(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({"src": {"main.rs": source()}}))
+            .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+        let language = rust_lang();
+
+        let cases = [
+            ("helper", "github.com/foo/bar", true), // Go: name-only label
+            ("helper", "fn helper(&self) -> i32", false), // Rust: complete signature
+            ("Widget", "ns::Widget", false),        // C++: prefix-only label
+        ];
+
+        for (name, detail, should_append) in cases {
+            let mut call = make_call(
+                name,
+                path!("/test/src/main.rs").as_ref(),
+                5,
+                Some(detail.to_string()),
+                &project,
+                cx,
+            )
+            .await;
+
+            // Identical behavior with attach_labels(): use the signature label when it succeeds,
+            // otherwise the adapter's name-only fallback.
+            let primary_label = signature_label(&call.item, &language);
+            call.label_includes_detail = primary_label.is_some();
+            call.label = Some(Arc::new(primary_label.unwrap_or_else(|| {
+                CodeLabel::new(format!("fn {name}"), 3..3 + name.len(), Vec::new())
+            })));
+
+            let display = cx.update(|cx| compute_call_display(&call, cx));
+
+            assert_eq!(
+                display.separate_detail.is_some(),
+                should_append,
+                "case: name={name}, detail={detail}"
+            );
+        }
     }
 
     #[test]
@@ -2468,6 +2560,7 @@ mod tests {
             target,
             site_count: 1,
             label: None,
+            label_includes_detail: false,
             display: CallDisplay::default(),
         }
     }
