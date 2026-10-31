@@ -805,10 +805,10 @@ impl GitListEntry {
     }
 }
 
-/// The identity a row contributes to the multi-selection: files select their
-/// own row, directories select as a unit covering their descendants.
+/// The identity a row contributes to the multi-selection: files select by
+/// repo path, directories select as a unit covering their descendants.
 enum RowMark {
-    File(TreeKey),
+    File(GitPanelEntryId),
     Directory(TreeKey),
 }
 
@@ -826,8 +826,51 @@ enum SelectionTargetKind {
 /// reversing direction shrinks the range instead of growing it.
 struct MarkRangeGesture {
     anchor_ix: usize,
-    base_files: HashSet<TreeKey>,
+    base_files: HashSet<GitPanelEntryId>,
     base_directories: HashSet<TreeKey>,
+}
+
+/// Whether a selectable row is a file status entry or a directory row.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+enum GitPanelEntryKind {
+    Status,
+    Directory,
+}
+
+/// Stable identity of a selectable row across entry-list rebuilds. The same
+/// path can appear under multiple projections (for example staged and
+/// unstaged), so identity carries the section and row kind in addition to the
+/// path.
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+struct GitPanelEntryId {
+    path: RepoPath,
+    section: Option<Section>,
+    kind: GitPanelEntryKind,
+}
+
+/// Reconciles the selection state after the entry list was rebuilt: drops
+/// marks whose identity is no longer visible, and re-anchors the range
+/// gesture at the selection. The selection itself is left to the caller's
+/// path-anchored restore, matching the pre-identity behavior.
+fn reconcile_selection(
+    selected: &mut Option<GitPanelEntryId>,
+    marked: &mut HashSet<GitPanelEntryId>,
+    anchor: &mut Option<GitPanelEntryId>,
+    visible: &[GitPanelEntryId],
+) {
+    let visible_set: HashSet<&GitPanelEntryId> = visible.iter().collect();
+    marked.retain(|entry| visible_set.contains(entry));
+
+    let selected_was_removed = selected
+        .as_ref()
+        .is_some_and(|entry| !visible_set.contains(entry));
+    if selected_was_removed
+        || anchor
+            .as_ref()
+            .is_some_and(|entry| !visible_set.contains(entry))
+    {
+        *anchor = selected.clone();
+    }
 }
 
 /// Tracks, while walking `entries` in display order, whether the current row
@@ -1205,8 +1248,10 @@ pub struct GitPanel {
     scroll_handle: UniformListScrollHandle,
     max_width_item_index: Option<usize>,
     selected_entry: Option<usize>,
-    marked_entries: HashSet<TreeKey>,
+    selected_entry_id: Option<GitPanelEntryId>,
+    marked_entries: HashSet<GitPanelEntryId>,
     marked_directories: HashSet<TreeKey>,
+    selection_anchor: Option<GitPanelEntryId>,
     mark_range_gesture: Option<MarkRangeGesture>,
     tracked_count: usize,
     tracked_staged_count: usize,
@@ -1552,8 +1597,10 @@ impl GitPanel {
                 scroll_handle,
                 max_width_item_index: None,
                 selected_entry: None,
+                selected_entry_id: None,
                 marked_entries: HashSet::default(),
                 marked_directories: HashSet::default(),
+                selection_anchor: None,
                 mark_range_gesture: None,
                 tracked_count: 0,
                 tracked_staged_count: 0,
@@ -1613,32 +1660,59 @@ impl GitPanel {
         self.marked_entries.clear();
         self.marked_directories.clear();
         self.mark_range_gesture = None;
+        self.selection_anchor = None;
     }
 
     fn clear_marks_and_select(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.clear_marks();
-        self.selected_entry = Some(ix);
+        self.set_selected_entry_index(ix);
         cx.notify();
     }
 
-    fn file_row_key(&self, ix: usize) -> Option<TreeKey> {
-        let path = &self.entries.get(ix)?.status_entry()?.repo_path;
-        let section = self
-            .projected_entries_by_path
-            .get(path)?
-            .iter()
-            .find(|entry| entry.index == ix)?
-            .section;
-        Some(TreeKey {
-            section,
-            path: path.clone(),
+    fn entry_identity(&self, index: usize) -> Option<GitPanelEntryId> {
+        let entry = self.entries.get(index)?;
+        let kind = match entry {
+            GitListEntry::Status(_) | GitListEntry::TreeStatus(_) => GitPanelEntryKind::Status,
+            GitListEntry::Directory(_) => GitPanelEntryKind::Directory,
+            _ => return None,
+        };
+        Some(GitPanelEntryId {
+            path: entry.repo_path()?.clone(),
+            section: self.section_for_entry_index(index),
+            kind,
         })
     }
+
+    /// Identities of every selectable row in display order, restricted to
+    /// rows that are actually visible (collapsed sections excluded), matching
+    /// what pointer selection can reach.
+    fn visible_selectable_entry_ids(&self) -> Vec<GitPanelEntryId> {
+        let visible_indices: Vec<usize> = match &self.view_mode {
+            GitPanelViewMode::Flat => self.visible_flat_entry_indices(),
+            GitPanelViewMode::Tree(state) => state.logical_indices.clone(),
+        };
+        visible_indices
+            .into_iter()
+            .filter(|&index| {
+                self.entries
+                    .get(index)
+                    .is_some_and(GitListEntry::is_selectable)
+            })
+            .filter_map(|index| self.entry_identity(index))
+            .collect()
+    }
+
+    fn set_selected_entry_index(&mut self, index: usize) {
+        self.selected_entry = Some(index);
+        self.selected_entry_id = self.entry_identity(index);
+        self.selection_anchor = self.selected_entry_id.clone();
+    }
+
 
     fn row_mark(&self, ix: usize) -> Option<RowMark> {
         match self.entries.get(ix)? {
             GitListEntry::Status(_) | GitListEntry::TreeStatus(_) => {
-                self.file_row_key(ix).map(RowMark::File)
+                self.entry_identity(ix).map(RowMark::File)
             }
             GitListEntry::Directory(directory) => Some(RowMark::Directory(directory.key.clone())),
             GitListEntry::Header(_) => None,
@@ -1648,8 +1722,8 @@ impl GitPanel {
 
     fn mark_row(&mut self, ix: usize) {
         match self.row_mark(ix) {
-            Some(RowMark::File(key)) => {
-                self.marked_entries.insert(key);
+            Some(RowMark::File(id)) => {
+                self.marked_entries.insert(id);
             }
             Some(RowMark::Directory(key)) => {
                 self.marked_directories.insert(key);
@@ -1667,9 +1741,9 @@ impl GitPanel {
                 self.mark_row(previous);
             }
             match mark {
-                RowMark::File(key) => {
-                    if !self.marked_entries.remove(&key) {
-                        self.marked_entries.insert(key);
+                RowMark::File(id) => {
+                    if !self.marked_entries.remove(&id) {
+                        self.marked_entries.insert(id);
                     }
                 }
                 RowMark::Directory(key) => {
@@ -1679,7 +1753,7 @@ impl GitPanel {
                 }
             }
         }
-        self.selected_entry = Some(ix);
+        self.set_selected_entry_index(ix);
         cx.notify();
     }
 
@@ -1825,7 +1899,7 @@ impl GitPanel {
     /// Checks whether the entry at `index` is explicitly marked.
     fn row_is_marked(&self, index: usize) -> bool {
         match self.row_mark(index) {
-            Some(RowMark::File(key)) => self.marked_entries.contains(&key),
+            Some(RowMark::File(id)) => self.marked_entries.contains(&id),
             Some(RowMark::Directory(key)) => self.marked_directories.contains(&key),
             None => false,
         }
@@ -2004,7 +2078,7 @@ impl GitPanel {
             return;
         };
 
-        self.selected_entry = Some(ix);
+        self.set_selected_entry_index(ix);
         self.scroll_to_selected_entry(cx);
     }
 
@@ -2270,7 +2344,7 @@ impl GitPanel {
         self.toggle_directory(&directory_key, window, cx);
 
         if let Some(index) = self.directory_entry_index(&directory_key) {
-            self.selected_entry = Some(index);
+            self.set_selected_entry_index(index);
             self.scroll_to_selected_entry(cx);
         }
     }
@@ -2300,7 +2374,7 @@ impl GitPanel {
 
         if let Some(first_entry) = first_entry {
             self.mark_range_gesture = None;
-            self.selected_entry = Some(first_entry);
+            self.set_selected_entry_index(first_entry);
             self.scroll_to_selected_entry(cx);
         }
     }
@@ -2385,7 +2459,7 @@ impl GitPanel {
             return;
         };
 
-        self.selected_entry = Some(candidate);
+        self.set_selected_entry_index(candidate);
         self.scroll_to_selected_entry(cx);
     }
 
@@ -2469,14 +2543,14 @@ impl GitPanel {
             return;
         };
 
-        self.selected_entry = Some(candidate);
+        self.set_selected_entry_index(candidate);
         self.scroll_to_selected_entry(cx);
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
         if self.entries.last().is_some() {
             self.mark_range_gesture = None;
-            self.selected_entry = Some(self.entries.len() - 1);
+            self.set_selected_entry_index(self.entries.len() - 1);
         }
 
         let last_entry = match &self.view_mode {
@@ -2491,7 +2565,7 @@ impl GitPanel {
         };
 
         if let Some(last_entry) = last_entry {
-            self.selected_entry = Some(last_entry);
+            self.set_selected_entry_index(last_entry);
             self.scroll_to_selected_entry(cx);
         }
     }
@@ -5710,10 +5784,9 @@ impl GitPanel {
 
     fn update_visible_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let path_style = self.project.read(cx).path_style(cx);
-        let selected_change = self.selected_entry.and_then(|index| {
-            let entry = self.entries.get(index)?.status_entry()?;
-            Some((entry.repo_path.clone(), self.section_for_entry_index(index)))
-        });
+        let selected_change = self
+            .selected_entry
+            .and_then(|index| self.entry_identity(index));
         let bulk_staging = self.bulk_staging.take();
         let last_staged_path_prev_index = bulk_staging
             .as_ref()
@@ -6088,19 +6161,35 @@ impl GitPanel {
             }
             GitPanelViewMode::Flat => self.marked_directories.clear(),
         }
-        if !self.marked_entries.is_empty() {
-            let present_rows: HashSet<TreeKey> = (0..self.entries.len())
-                .filter_map(|index| self.file_row_key(index))
-                .collect();
-            self.marked_entries.retain(|key| present_rows.contains(key));
-        }
+        let visible = self.visible_selectable_entry_ids();
+        reconcile_selection(
+            &mut self.selected_entry_id,
+            &mut self.marked_entries,
+            &mut self.selection_anchor,
+            &visible,
+        );
         // The rebuild may have reordered rows, invalidating the anchor index.
         self.mark_range_gesture = None;
 
-        if let Some((path, section)) = selected_change {
-            self.selected_entry = section
-                .and_then(|section| self.entry_by_path_in_section(&path, section))
-                .or_else(|| self.entry_by_path(&path));
+        if let Some(selected_id) = selected_change {
+            self.selected_entry = self
+                .entries
+                .iter()
+                .enumerate()
+                .position(|(index, _)| self.entry_identity(index).as_ref() == Some(&selected_id))
+                .or_else(|| {
+                    // The row may have moved between sections across the
+                    // rebuild; fall back to matching it by path alone, as the
+                    // pre-identity restore did.
+                    self.entries.iter().position(|entry| {
+                        entry
+                            .status_entry()
+                            .is_some_and(|status_entry| status_entry.repo_path == selected_id.path)
+                    })
+                });
+            self.selected_entry_id = self
+                .selected_entry
+                .and_then(|index| self.entry_identity(index));
         }
         self.select_first_entry_if_none(window, cx);
         self.select_last_entry_if_out_of_bounds(window, cx);
@@ -8748,7 +8837,7 @@ impl GitPanel {
             self.clear_marks();
         }
 
-        self.selected_entry = Some(ix);
+        self.set_selected_entry_index(ix);
 
         let Some(target_kind) = self.selection_target_kind() else {
             return;
@@ -9106,7 +9195,7 @@ impl GitPanel {
                     if event.modifiers().shift {
                         let anchor_ix = this.selected_entry.unwrap_or(ix);
                         this.apply_range_gesture(anchor_ix, ix);
-                        this.selected_entry = Some(ix);
+                        this.set_selected_entry_index(ix);
                         cx.notify();
                     } else if event.modifiers().secondary(cx) {
                         this.toggle_mark(ix, cx);
@@ -9305,13 +9394,13 @@ impl GitPanel {
                     if event.modifiers().shift {
                         let anchor_ix = this.selected_entry.unwrap_or(ix);
                         this.apply_range_gesture(anchor_ix, ix);
-                        this.selected_entry = Some(ix);
+                        this.set_selected_entry_index(ix);
                         cx.notify();
                     } else if event.modifiers().secondary(cx) {
                         this.toggle_mark(ix, cx);
                     } else {
                         this.clear_marks();
-                        this.selected_entry = Some(ix);
+                        this.set_selected_entry_index(ix);
                         this.toggle_directory(&key, window, cx);
                     }
                 })
@@ -10505,16 +10594,26 @@ mod tests {
     }
 
     fn mark_file_row(panel: &mut GitPanel, index: usize) {
-        let key = panel.file_row_key(index).expect("row should be a file row");
-        panel.marked_entries.insert(key);
+        let id = panel.entry_identity(index).expect("row should have an identity");
+        panel.marked_entries.insert(id);
     }
 
     fn marked_paths(panel: &GitPanel) -> HashSet<RepoPath> {
         panel
             .marked_entries
             .iter()
-            .map(|key| key.path.clone())
+            .map(|id| id.path.clone())
             .collect()
+    }
+
+    /// Builds the selection identity of the file row at `path`, for tests that
+    /// seed or assert the marked set.
+    fn file_id(panel: &GitPanel, path: &str) -> GitPanelEntryId {
+        let ix = entry_index_for_repo_path(panel, &repo_path(path))
+            .unwrap_or_else(|| panic!("no file entry for {path}"));
+        panel
+            .entry_identity(ix)
+            .unwrap_or_else(|| panic!("entry at {path} has no identity"))
     }
 
     fn directory_index_for_repo_path(panel: &GitPanel, repo_path: &RepoPath) -> Option<usize> {
