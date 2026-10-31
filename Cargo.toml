@@ -239,6 +239,7 @@ members = [
     "crates/web_search_providers",
     "crates/which_key",
     "crates/windows_resources",
+    "crates/word_count_indicator",
     "crates/workspace",
     "crates/worktree",
     "crates/worktree_benchmarks",
@@ -511,6 +512,7 @@ web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
 which_key = { path = "crates/which_key" }
 windows_resources = { path = "crates/windows_resources" }
+word_count_indicator = { path = "crates/word_count_indicator" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
