@@ -2858,6 +2858,7 @@ impl ContentBlock {
                 Some(language_registry.clone()),
                 None,
                 MarkdownOptions {
+                    parse_html: true,
                     render_mermaid_diagrams: true,
                     render_metadata_blocks: true,
                     defer_parsing: true,
@@ -9046,6 +9047,30 @@ mod tests {
             assert_eq!(
                 content.to_markdown(cx),
                 "hello world\n\n`Image`\n\n[@https://example.com/file](https://example.com/file)"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_message_content_renders_br_tags_as_line_breaks(cx: &mut TestAppContext) {
+        init_test(cx);
+        let markdown = cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            ContentBlock::create_markdown(
+                "| a |\n|---|\n| one<br>two |".to_string(),
+                &languages,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        markdown.read_with(cx, |markdown, _| {
+            assert!(
+                markdown
+                    .parsed_markdown()
+                    .events()
+                    .iter()
+                    .any(|(_, event)| matches!(event, markdown::parser::MarkdownEvent::HardBreak)),
+                "<br> in a table cell should become a hard break"
             );
         });
     }
