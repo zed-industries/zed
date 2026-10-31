@@ -11,8 +11,8 @@ use editor::{
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, Corners, DismissEvent, Entity, EventEmitter,
     ExternalPaths, FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton,
-    MouseDownEvent, Pixels, Point as GpuiPoint, Rems, Render, ScrollEvent, Styled, Subscription,
-    Task, TaskExt, WeakEntity, actions, anchored, deferred, div,
+    MouseDownEvent, Pixels, Point as GpuiPoint, Rems, Render, ScrollDelta, ScrollEvent, Styled,
+    Subscription, Task, TaskExt, WeakEntity, actions, anchored, deferred, div,
 };
 use menu;
 use persistence::TerminalDb;
@@ -769,6 +769,22 @@ impl TerminalView {
     }
 
     fn scroll_wheel(&mut self, event: &ScrollEvent, cx: &mut Context<Self>) {
+        if event.modifiers.secondary(cx)
+            && matches!(self.mode, TerminalMode::Standalone)
+            && EditorSettings::get_global(cx).mouse_wheel_zoom
+        {
+            let delta_y = match event.delta {
+                ScrollDelta::Pixels(pixels) => pixels.y.into(),
+                ScrollDelta::Lines(lines) => lines.y,
+            };
+            if delta_y > 0.0 {
+                theme_settings::increase_buffer_font_size(cx);
+            } else if delta_y < 0.0 {
+                theme_settings::decrease_buffer_font_size(cx);
+            }
+            return;
+        }
+
         let terminal_content = self.terminal.read(cx).last_content();
 
         if self.block_below_cursor.is_some() && terminal_content.display_offset == 0 {
@@ -2411,6 +2427,46 @@ mod tests {
             assert!(!view.blinking_terminal_enabled);
             assert!(terminal.read(cx).matches.is_empty());
         });
+    }
+
+    #[gpui::test]
+    async fn test_mouse_wheel_zoom(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_pane, _terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, false, cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.mouse_wheel_zoom = Some(true);
+                });
+            });
+        });
+
+        let scroll = |lines: f32, cx: &mut TestAppContext| {
+            terminal_view.update(cx, |terminal_view, cx| {
+                let event = ScrollEvent {
+                    delta: ScrollDelta::Lines(gpui::point(0., lines)),
+                    modifiers: gpui::Modifiers::secondary_key(cx),
+                    ..Default::default()
+                };
+                terminal_view.scroll_wheel(&event, cx);
+            });
+        };
+        let buffer_font_size = |cx: &mut TestAppContext| {
+            cx.update(|cx| theme_settings::ThemeSettings::get_global(cx).buffer_font_size(cx))
+        };
+
+        let initial_font_size = buffer_font_size(cx);
+        scroll(1., cx);
+        assert!(buffer_font_size(cx) > initial_font_size);
+        scroll(-1., cx);
+        assert_eq!(buffer_font_size(cx), initial_font_size);
+
+        terminal_view.update(cx, |terminal_view, cx| {
+            terminal_view.set_embedded_mode(None, cx);
+        });
+        scroll(1., cx);
+        assert_eq!(buffer_font_size(cx), initial_font_size);
     }
 
     #[gpui::test]
