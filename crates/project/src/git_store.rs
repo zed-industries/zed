@@ -3396,8 +3396,8 @@ impl GitStore {
                 client.send(update).log_err();
             }
             if this.active_repo_id == Some(id) {
-                this.active_repo_id = None;
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
+                this.active_repo_id = this.repositories.keys().next().copied();
+                cx.emit(GitStoreEvent::ActiveRepositoryChanged(this.active_repo_id));
             }
             cx.emit(GitStoreEvent::RepositoryRemoved(id));
         });
