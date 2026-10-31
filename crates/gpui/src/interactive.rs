@@ -535,6 +535,16 @@ pub struct ScrollEvent {
 
     /// The kind of input that produced this scroll.
     pub source: ScrollSource,
+
+    /// The gesture's velocity at release, in logical pixels per second, for
+    /// platforms that do not decelerate scrolling themselves.
+    ///
+    /// Set only on the event that ends a continuous gesture. GPUI continues
+    /// such a gesture with the same momentum it gives touch flings, targeting
+    /// this event's position. `None` for wheel steps, for platforms that
+    /// deliver their own momentum events (such as macOS), and for scrolls GPUI
+    /// synthesizes.
+    pub release_velocity: Option<Point<Pixels>>,
 }
 
 /// The former name of [`ScrollEvent`].

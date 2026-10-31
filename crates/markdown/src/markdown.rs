@@ -5591,6 +5591,7 @@ mod tests {
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
             source: gpui::ScrollSource::Pointer,
+            release_velocity: None,
         });
         cx.run_until_parked();
         let rendered = rendered_text
@@ -7995,6 +7996,7 @@ mod tests {
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
             source: gpui::ScrollSource::Pointer,
+            release_velocity: None,
         });
         cx.run_until_parked();
 
@@ -8092,6 +8094,7 @@ mod tests {
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
             source: gpui::ScrollSource::Pointer,
+            release_velocity: None,
         });
         cx.run_until_parked();
 

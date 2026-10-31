@@ -176,6 +176,7 @@ impl DirectManipulationEventHandler {
                         modifiers,
                         touch_phase: TouchPhase::Ended,
                         source: ScrollSource::Pointer,
+                        release_velocity: None,
                     }));
             }
             GestureKind::Pinch => {
@@ -331,6 +332,7 @@ impl IDirectManipulationViewportEventHandler_Impl for DirectManipulationEventHan
                         modifiers,
                         touch_phase,
                         source: ScrollSource::Pointer,
+                        release_velocity: None,
                     }));
             }
             GestureKind::Pinch => {

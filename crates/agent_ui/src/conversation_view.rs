@@ -7274,6 +7274,7 @@ pub(crate) mod tests {
             modifiers: gpui::Modifiers::default(),
             touch_phase: gpui::TouchPhase::Moved,
             source: gpui::ScrollSource::Pointer,
+            release_velocity: None,
         });
         cx.run_until_parked();
 

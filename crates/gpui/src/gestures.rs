@@ -600,9 +600,12 @@ struct CompletedTap {
 /// exactly frame-rate independent: a stalled frame simply resumes further
 /// along the same curve.
 struct Momentum {
-    /// Where the pan started; synthesized scroll events keep hit-testing
-    /// there so momentum stays with the container the gesture began on.
+    /// Where the released gesture targeted; synthesized scroll events keep
+    /// hit-testing there so momentum stays with the container the gesture
+    /// scrolled.
     position: Point<Pixels>,
+    modifiers: Modifiers,
+    source: ScrollSource,
     /// Unit vector of the release velocity.
     direction: Point<f32>,
     /// Release speed in pixels per second.
@@ -611,6 +614,19 @@ struct Momentum {
     duration: Duration,
     /// Distance already emitted along `direction`, in pixels.
     emitted_distance: f32,
+}
+
+impl Momentum {
+    fn scroll_event(&self, delta: Point<Pixels>, touch_phase: TouchPhase) -> ScrollEvent {
+        ScrollEvent {
+            position: self.position,
+            delta: ScrollDelta::Pixels(delta),
+            modifiers: self.modifiers,
+            touch_phase,
+            source: self.source,
+            release_velocity: None,
+        }
+    }
 }
 
 impl TouchGestureRecognizer {
@@ -639,11 +655,9 @@ impl TouchGestureRecognizer {
         match event.phase {
             TouchPhase::Started => {
                 let caught_fling = if let Some(momentum) = self.momentum.take() {
-                    recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
-                        momentum.position,
-                        Point::default(),
-                        TouchPhase::Ended,
-                    )));
+                    recognized.push(RecognizedTouchGesture::Scroll(
+                        momentum.scroll_event(Point::default(), TouchPhase::Ended),
+                    ));
                     true
                 } else {
                     false
@@ -851,40 +865,32 @@ impl TouchGestureRecognizer {
                         Axis::Vertical => velocity.x = 0.,
                         Axis::Horizontal => velocity.y = 0.,
                     }
-                    let speed = (velocity.x.powi(2) + velocity.y.powi(2)).sqrt();
                     let mut release_delta = event.position - touch.emitted_position;
                     lock_delta_to_axis(&mut release_delta, axis);
-                    if speed >= self.tuning.min_fling_velocity {
-                        let direction = point(velocity.x / speed, velocity.y / speed);
-                        let speed = speed.min(MAX_FLING_VELOCITY);
-                        let duration = self.tuning.scroll_physics.fling_duration(speed);
-                        if !duration.is_zero() {
-                            let total_distance =
-                                self.tuning.scroll_physics.fling_distance(speed, duration);
-                            // Prediction may have left the content ahead of
-                            // the raw release position. Emitting that
-                            // correction here would visibly snap the content
-                            // backwards just as the fling launches, so fold
-                            // it into the fling instead: start the curve
-                            // already advanced by the overshoot, keeping the
-                            // total travel exact while staying monotonic.
-                            let overshoot = -(f32::from(release_delta.x) * direction.x
-                                + f32::from(release_delta.y) * direction.y);
-                            let emitted_distance = if overshoot > 0. && overshoot < total_distance {
-                                release_delta +=
-                                    point(px(direction.x * overshoot), px(direction.y * overshoot));
-                                overshoot
-                            } else {
-                                0.
-                            };
-                            self.momentum = Some(Momentum {
-                                position: touch.start_position,
-                                direction,
-                                speed,
-                                started_at: now,
-                                duration,
-                                emitted_distance,
-                            });
+                    let physics = self.tuning.scroll_physics;
+                    if let Some(momentum) = self.launch_momentum(
+                        velocity,
+                        touch.start_position,
+                        Modifiers::default(),
+                        ScrollSource::Touch,
+                        now,
+                    ) {
+                        let direction = momentum.direction;
+                        let total_distance =
+                            physics.fling_distance(momentum.speed, momentum.duration);
+                        // Prediction may have left the content ahead of the
+                        // raw release position. Emitting that correction
+                        // here would visibly snap the content backwards just
+                        // as the fling launches, so fold it into the fling
+                        // instead: start the curve already advanced by the
+                        // overshoot, keeping the total travel exact while
+                        // staying monotonic.
+                        let overshoot = -(f32::from(release_delta.x) * direction.x
+                            + f32::from(release_delta.y) * direction.y);
+                        if overshoot > 0. && overshoot < total_distance {
+                            release_delta +=
+                                point(px(direction.x * overshoot), px(direction.y * overshoot));
+                            momentum.emitted_distance = overshoot;
                         }
                     }
                     recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
@@ -1027,6 +1033,64 @@ impl TouchGestureRecognizer {
         self.momentum.is_some()
     }
 
+    pub(crate) fn cancel_momentum(&mut self) {
+        self.momentum = None;
+    }
+
+    /// Continues a released platform scroll gesture with momentum.
+    ///
+    /// Uses the same tuning as touch flings: nothing starts unless `release`
+    /// carries a [`ScrollEvent::release_velocity`] that clears the fling
+    /// threshold. Touch recognition state is left untouched, so the release
+    /// can never be recognized as a tap, long press, or drag.
+    pub(crate) fn start_scroll_momentum(&mut self, release: &ScrollEvent) {
+        self.start_scroll_momentum_at(release, Instant::now());
+    }
+
+    fn start_scroll_momentum_at(&mut self, release: &ScrollEvent, now: Instant) {
+        if let Some(velocity) = release.release_velocity {
+            self.launch_momentum(
+                velocity.map(f32::from),
+                release.position,
+                release.modifiers,
+                release.source,
+                now,
+            );
+        }
+    }
+
+    /// Replaces any momentum with a fling at `velocity`, in pixels per
+    /// second, when it is fast enough to coast.
+    fn launch_momentum(
+        &mut self,
+        velocity: Point<f32>,
+        position: Point<Pixels>,
+        modifiers: Modifiers,
+        source: ScrollSource,
+        now: Instant,
+    ) -> Option<&mut Momentum> {
+        let speed = velocity.x.hypot(velocity.y);
+        if !speed.is_finite() || speed < self.tuning.min_fling_velocity {
+            return None;
+        }
+        let direction = point(velocity.x / speed, velocity.y / speed);
+        let speed = speed.min(MAX_FLING_VELOCITY);
+        let duration = self.tuning.scroll_physics.fling_duration(speed);
+        if duration.is_zero() {
+            return None;
+        }
+        Some(self.momentum.insert(Momentum {
+            position,
+            modifiers,
+            source,
+            direction,
+            speed,
+            started_at: now,
+            duration,
+            emitted_distance: 0.,
+        }))
+    }
+
     /// Advances post-fling momentum by one frame, returning the scroll step
     /// to dispatch, or `None` when no momentum is in progress. The final step
     /// carries [`TouchPhase::Ended`] to close the synthetic scroll stream.
@@ -1049,20 +1113,14 @@ impl TouchGestureRecognizer {
             px(momentum.direction.x * step),
             px(momentum.direction.y * step),
         );
-        let position = momentum.position;
         if elapsed >= momentum.duration {
+            let event = momentum.scroll_event(delta, TouchPhase::Ended);
             self.momentum = None;
-            Some(RecognizedTouchGesture::Scroll(scroll_event(
-                position,
-                delta,
-                TouchPhase::Ended,
-            )))
+            Some(RecognizedTouchGesture::Scroll(event))
         } else {
-            Some(RecognizedTouchGesture::Scroll(scroll_event(
-                position,
-                delta,
-                TouchPhase::Moved,
-            )))
+            Some(RecognizedTouchGesture::Scroll(
+                momentum.scroll_event(delta, TouchPhase::Moved),
+            ))
         }
     }
 }
@@ -1078,6 +1136,7 @@ fn scroll_event(
         modifiers: Modifiers::default(),
         touch_phase,
         source: ScrollSource::Touch,
+        release_velocity: None,
     }
 }
 
@@ -2317,6 +2376,68 @@ mod tests {
 
         assert!(recognizer.offer_long_press(completed_touch).is_none());
         assert!(recognizer.offer_long_press(replacement_touch).is_some());
+    }
+
+    #[test]
+    fn release_velocity_coasts_with_recognizer_tuning_and_can_be_caught() {
+        let tuning = GestureTuning {
+            scroll_physics: ScrollPhysics::android(),
+            min_fling_velocity: 2000.,
+            ..GestureTuning::default()
+        };
+        let mut recognizer = TouchGestureRecognizer::new(tuning);
+        let now = Instant::now();
+        let modifiers = Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        };
+        let release = |velocity_y: f32| ScrollEvent {
+            position: point(px(40.), px(60.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-5.))),
+            modifiers,
+            touch_phase: TouchPhase::Ended,
+            source: ScrollSource::Pointer,
+            release_velocity: Some(point(px(0.), px(velocity_y))),
+        };
+
+        // Fast enough for the default threshold, but not this platform's.
+        recognizer.start_scroll_momentum_at(&release(-1500.), now);
+        assert!(!recognizer.has_momentum());
+
+        recognizer.start_scroll_momentum_at(&release(-3000.), now);
+        let elapsed = Duration::from_millis(16);
+        let Some(RecognizedTouchGesture::Scroll(step)) = recognizer.tick_momentum_at(now + elapsed)
+        else {
+            panic!("expected a momentum step");
+        };
+        assert_eq!(step.position, point(px(40.), px(60.)));
+        assert_eq!(step.modifiers, modifiers);
+        assert_eq!(step.source, ScrollSource::Pointer);
+        assert_eq!(step.release_velocity, None);
+        assert_eq!(
+            step.delta.pixel_delta(px(16.)),
+            point(
+                px(0.),
+                px(-tuning.scroll_physics.fling_distance(3000., elapsed))
+            )
+        );
+
+        // A finger catches the fling through the touch path, so it pans from
+        // its first pixel and is never a tap.
+        let caught = recognizer.handle_event_at(
+            &touch_event(TouchId(1), TouchPhase::Started, 40., 60.),
+            now + Duration::from_millis(32),
+        );
+        let [
+            RecognizedTouchGesture::Scroll(closing),
+            RecognizedTouchGesture::Scroll(_),
+        ] = caught.as_slice()
+        else {
+            panic!("expected closing and opening scrolls, got {caught:?}");
+        };
+        assert_eq!(closing.touch_phase, TouchPhase::Ended);
+        assert_eq!(closing.source, ScrollSource::Pointer);
+        assert!(!recognizer.has_momentum());
     }
 
     fn touch_event(id: TouchId, phase: TouchPhase, x: f32, y: f32) -> TouchEvent {
