@@ -3674,6 +3674,33 @@ impl Workspace {
         self.project.read(cx).visible_worktrees(cx)
     }
 
+    /// Called only after the final tab has been removed from all panes.
+    fn should_close_window_after_last_tab(&self, cx: &App) -> bool {
+        if WorkspaceSettings::get_global(cx)
+            .window_closing
+            .on_last_tab_closed
+            != settings::LastTabCloseBehavior::CloseWindowIfNoProject
+        {
+            return false;
+        }
+
+        if self
+            .visible_worktrees(cx)
+            .any(|worktree| !worktree.read(cx).is_single_file())
+        {
+            return false;
+        }
+
+        match self.multi_workspace() {
+            Some(multi_workspace) => multi_workspace
+                .read_with(cx, |multi_workspace, _| {
+                    multi_workspace.workspaces().count() == 1
+                })
+                .unwrap_or(false),
+            None => true,
+        }
+    }
+
     pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static + use<> {
         let futures = self
             .worktrees(cx)
@@ -6368,6 +6395,10 @@ impl Workspace {
                 cx.emit(Event::ItemRemoved {
                     item_id: item.item_id(),
                 });
+                let was_last_tab = self.panes.iter().all(|pane| pane.read(cx).items_len() == 0);
+                if was_last_tab && self.should_close_window_after_last_tab(cx) {
+                    cx.defer_in(window, |_, window, _| window.remove_window());
+                }
             }
             pane::Event::Focus => {
                 window.invalidate_character_coordinates();
@@ -19256,6 +19287,168 @@ mod tests {
         workspace.read_with(cx, |workspace, cx| {
             let visible = workspace.status_bar_visible(cx);
             assert!(visible, "Status bar should be visible when show is true");
+        });
+    }
+
+    fn set_last_tab_close_behavior(
+        cx: &mut TestAppContext,
+        behavior: settings::LastTabCloseBehavior,
+    ) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .workspace
+                    .window_closing
+                    .get_or_insert_default()
+                    .on_last_tab_closed = Some(behavior);
+            });
+        });
+    }
+
+    // Run the real pane-close action so the workspace removal event is exercised.
+    async fn close_active_tab_with_items(
+        pane: &Entity<Pane>,
+        item_count: usize,
+        cx: &mut TestAppContext,
+    ) {
+        pane.update_in(cx, |pane, window, cx| {
+            for _ in 0..item_count {
+                pane.add_item(
+                    Box::new(cx.new(TestItem::new)),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            }
+        });
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(&pane::CloseActiveItem::default(), window, cx)
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_last_tab_close_keeps_window_open_when_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_last_tab_close_behavior(cx, settings::LastTabCloseBehavior::KeepWindowOpen);
+
+        let project = Project::test(FakeFs::new(cx.executor()), None, cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        close_active_tab_with_items(&pane, 1, cx).await;
+
+        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+    }
+
+    #[gpui::test]
+    async fn test_last_tab_close_keeps_window_open_with_other_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_last_tab_close_behavior(cx, settings::LastTabCloseBehavior::CloseWindowIfNoProject);
+
+        let project = Project::test(FakeFs::new(cx.executor()), None, cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        close_active_tab_with_items(&pane, 2, cx).await;
+
+        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+        pane.read_with(cx, |pane, _| assert_eq!(pane.items_len(), 1));
+    }
+
+    #[gpui::test]
+    async fn test_last_tab_close_in_workspace_without_project(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_last_tab_close_behavior(cx, settings::LastTabCloseBehavior::CloseWindowIfNoProject);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        close_active_tab_with_items(&pane, 1, cx).await;
+
+        assert_eq!(cx.read(|cx| cx.windows().len()), 0);
+    }
+
+    #[gpui::test]
+    async fn test_last_tab_close_in_single_file_workspace(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_last_tab_close_behavior(cx, settings::LastTabCloseBehavior::CloseWindowIfNoProject);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "file.txt": "" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/root/file.txt").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        close_active_tab_with_items(&pane, 1, cx).await;
+
+        assert_eq!(cx.read(|cx| cx.windows().len()), 0);
+    }
+
+    #[gpui::test]
+    async fn test_last_tab_close_keeps_project_workspace_open(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_last_tab_close_behavior(cx, settings::LastTabCloseBehavior::CloseWindowIfNoProject);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "file.txt": "" })).await;
+
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        close_active_tab_with_items(&pane, 1, cx).await;
+
+        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_last_tab_close_keeps_multi_workspace_window_open(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_last_tab_close_behavior(cx, settings::LastTabCloseBehavior::CloseWindowIfNoProject);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "file.txt": "" })).await;
+
+        let scratch_project = Project::test(fs.clone(), None, cx).await;
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(scratch_project, window, cx));
+        let scratch_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.open_sidebar(cx);
+            multi_workspace.test_add_workspace(project, window, cx);
+            multi_workspace.activate(scratch_workspace.clone(), window, cx);
+        });
+
+        let pane = scratch_workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        close_active_tab_with_items(&pane, 1, cx).await;
+
+        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+        multi_workspace.read_with(cx, |multi_workspace, _| {
+            assert_eq!(multi_workspace.workspaces().count(), 2);
         });
     }
 

@@ -208,15 +208,20 @@
   // E.g. 0.25 == If you drop onto the top/bottom quarter of the pane a new vertical split will be used
   //              If you drop onto the left/right quarter of the pane a new horizontal split will be used
   "drop_target_size": 0.2,
-  // Whether the window should be closed when using 'close active item' on a window with no tabs.
-  // May take 3 values:
-  //  1. Use the current platform's convention
-  //         "when_closing_with_no_tabs": "platform_default"
-  //  2. Always close the window:
-  //         "when_closing_with_no_tabs": "close_window",
-  //  3. Never close the window
-  //         "when_closing_with_no_tabs": "keep_window_open",
-  "when_closing_with_no_tabs": "platform_default",
+  // Controls actions when closing tabs and windows.
+  "window_closing": {
+    // Closing when no tabs are currently open.
+    // "platform_default" closes on macOS, keeps open elsewhere.
+    // Alternatives: "close_window", "keep_window_open".
+    "on_close_with_no_tabs": "platform_default",
+    // After the final tab is closed, keep the window open by default.
+    // "close_window_if_no_project" closes a window containing no project folders,
+    // unless it contains multiple workspaces.
+    "on_last_tab_closed": "keep_window_open",
+    // What to do after the last window closes.
+    // "platform_default" quits outside macOS; "quit_app" always quits.
+    "on_last_window_closed": "platform_default"
+  },
   // What to show when opening a new window.
   // May take 3 values:
   //  1. Show an empty untitled buffer
@@ -227,13 +232,6 @@
   //     Leave the pane empty if no README is found.
   //         "on_new_window": "readme"
   "on_new_window": "launchpad",
-  // What to do when the last window is closed.
-  // May take 2 values:
-  //  1. Use the current platform's convention
-  //         "on_last_window_closed": "platform_default"
-  //  2. Always quit the application
-  //         "on_last_window_closed": "quit_app",
-  "on_last_window_closed": "platform_default",
   // The text rendering mode to use.
   // May take 3 values:
   //  1. Use platform default behavior:

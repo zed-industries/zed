@@ -388,3 +388,9 @@ pub(crate) mod m_2026_09_29 {
 
     pub(crate) use settings::move_copilot_enterprise_uri;
 }
+
+pub(crate) mod m_2026_10_31 {
+    mod settings;
+
+    pub(crate) use settings::nest_window_closing_settings;
+}

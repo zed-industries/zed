@@ -337,6 +337,7 @@ fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
     #[cfg(target_os = "macos")]
     {
         WorkspaceSettings::get_global(cx)
+            .window_closing
             .on_last_window_closed
             .is_quit_app()
             .then(|| {

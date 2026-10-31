@@ -3689,30 +3689,6 @@ Or to set a `socks5` proxy:
 
 If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` environment variable. This accepts a comma-separated list of hostnames, host suffixes, IPv4/IPv6 addresses or blocks that should not use the proxy. For example if your environment included `NO_PROXY="google.com, 192.168.1.0/24"` all hosts in `192.168.1.*`, `google.com` and `*.google.com` would bypass the proxy. See [reqwest NoProxy docs](https://docs.rs/reqwest/latest/reqwest/struct.NoProxy.html#method.from_string) for more.
 
-## On Last Window Closed
-
-- Description: What to do when the last window is closed
-- Setting: `on_last_window_closed`
-- Default: `"platform_default"`
-
-**Options**
-
-1. Use platform default behavior:
-
-```json [settings]
-{
-  "on_last_window_closed": "platform_default"
-}
-```
-
-2. Always quit the application:
-
-```json [settings]
-{
-  "on_last_window_closed": "quit_app"
-}
-```
-
 ## On New Window
 
 - Description: What to show when opening a new window.
@@ -5669,37 +5645,29 @@ Available variables:
 - `enabled`: Whether to show the which-key menu. When enabled, the pending keystrokes indicator remains visible, but its binding preview popover is disabled.
 - `delay_ms`: How long Zed waits before showing the menu, in milliseconds.
 
-## When Closing With No Tabs
+## Window Closing
 
-- Description: Whether the window should be closed when using 'close active item' on a window with no tabs
-- Setting: `when_closing_with_no_tabs`
-- Default: `"platform_default"`
+- Description: Controls how Zed closes windows after tab and window close actions.
+- Setting: `window_closing`
+- Default:
+
+```json [settings]
+{
+  "window_closing": {
+    "on_close_with_no_tabs": "platform_default",
+    "on_last_tab_closed": "keep_window_open",
+    "on_last_window_closed": "platform_default"
+  }
+}
+```
 
 **Options**
 
-1. Use platform default behavior:
+- `on_close_with_no_tabs`: What to do when Close is invoked while no tabs are open. Options are `platform_default` (close window on macOS, keep it open otherwise), `close_window`, and `keep_window_open`.
+- `on_last_tab_closed`: What to do after the final tab is closed. Options are `keep_window_open` (default) and `close_window_if_no_project`. The latter closes a window with no project folder or only individual files open, but not windows containing multiple workspaces.
+- `on_last_window_closed`: What to do after the last window closes. Options are `platform_default` (quit Zed outside macOS) and `quit_app`.
 
-```json [settings]
-{
-  "when_closing_with_no_tabs": "platform_default"
-}
-```
-
-2. Always close the window:
-
-```json [settings]
-{
-  "when_closing_with_no_tabs": "close_window"
-}
-```
-
-3. Never close the window:
-
-```json [settings]
-{
-  "when_closing_with_no_tabs": "keep_window_open"
-}
-```
+Previously configured top-level `when_closing_with_no_tabs` and `on_last_window_closed` values are automatically migrated into this object, including platform and profile overrides.
 
 ## Project Panel
 
