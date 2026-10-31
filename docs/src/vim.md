@@ -32,7 +32,8 @@ When you first open Zed, you'll see a checkbox on the welcome screen that allows
 
 If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command {#action workspace::ToggleVimMode}.
 
-> **Note**: This command toggles the following property in your user settings:
+> **Note**: This command toggles the following
+> [`vim_mode` setting](./reference/all-settings.md#vim) in your user settings:
 >
 > ```json [settings]
 > {
@@ -164,8 +165,7 @@ Zed's vim mode includes features commonly provided by plugins in the Vim ecosyst
 - You can use `gR` to do [ReplaceWithRegister](https://github.com/vim-scripts/ReplaceWithRegister).
 - You can use `cx` for [vim-exchange](https://github.com/tommcdo/vim-exchange) functionality. Note that it does not have a default binding in visual mode, but you can add one to your keymap (refer to the [optional key bindings](#optional-key-bindings) section).
 - You can navigate to indent depths relative to your cursor with the [indent wise](https://github.com/jeetsukumaran/vim-indentwise) plugin `[-`, `]-`, `[+`, `]+`, `[=`, `]=`.
-- You can select quoted text with AnyQuotes and bracketed text with AnyBrackets text objects. Zed also provides MiniQuotes and MiniBrackets which offer alternative selection behavior based on the [mini.ai](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-ai.md) Neovim plugin. See the [Quote and Bracket text objects](#quote-and-bracket-text-objects) section below for details.
-- You can configure AnyQuotes, AnyBrackets, MiniQuotes, and MiniBrackets text objects for selecting quoted and bracketed text using different selection strategies. See the [Any Bracket Functionality](#any-bracket-functionality) section below for details.
+- You can select quoted text with AnyQuotes and bracketed text with AnyBrackets text objects. Zed also provides MiniQuotes and MiniBrackets, which offer alternative selection behavior based on the [mini.ai](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-ai.md) Neovim plugin. These text objects are not bound by default; see the [Any Bracket Functionality](#any-bracket-functionality) section below for how to configure them.
 
 ### Any Bracket Functionality
 
@@ -297,11 +297,11 @@ These ex commands open Zed's various panels and windows.
 
 These commands navigate diagnostics.
 
-| Command                  | Description                    |
-| ------------------------ | ------------------------------ |
-| `:cn[ext]` or `:ln[ext]` | Go to the next diagnostic      |
-| `:cp[rev]` or `:lp[rev]` | Go to the previous diagnostics |
-| `:cc` or `:ll`           | Open the errors page           |
+| Command                  | Description                   |
+| ------------------------ | ----------------------------- |
+| `:cn[ext]` or `:ln[ext]` | Go to the next diagnostic     |
+| `:cp[rev]` or `:lp[rev]` | Go to the previous diagnostic |
+| `:cc` or `:ll`           | Open the errors page          |
 
 ### Git
 
@@ -388,7 +388,7 @@ With this configuration, you can use commands like:
 
 ### Selecting the correct context
 
-Zed's key bindings are evaluated only when the `"context"` property matches your location in the editor. For example, if you add key bindings to the `"Editor"` context, they will only work when you're editing a file. If you add key bindings to the `"Workspace"` context, they will work everywhere in Zed. Here's an example of a key binding that saves when you're editing a file:
+Zed's [key bindings](./key-bindings.md) are evaluated only when the `"context"` property matches your location in the editor. For example, if you add key bindings to the `"Editor"` context, they will only work when you're editing a file. If you add key bindings to the `"Workspace"` context, they will work everywhere in Zed. Here's an example of a key binding that saves when you're editing a file:
 
 ```json [keymap]
 {
@@ -425,6 +425,7 @@ Vim mode adds several contexts to the `"Editor"` context:
 | vim_mode == waiting  | Waiting for an arbitrary key (e.g., after typing `f` or `t`)                                                                                                                       |
 | vim_mode == operator | Waiting for another binding to trigger (e.g., after typing `c` or `d`)                                                                                                             |
 | vim_operator         | Set to `none` unless `vim_mode == operator`, in which case it is set to the current operator's default keybinding (e.g., after typing `d`, `vim_operator == d`)                    |
+| helix_mode           | Set when the current mode is a Helix mode (`helix_normal` or `helix_select`), including while an operator is pending and `vim_mode` reports `operator` or `waiting`                |
 
 > **Note**: Contexts are matched only on one level at a time. So it is possible to use the expression `"Editor && vim_mode == normal"`, but `"Workspace && vim_mode == normal"` will never match because we set the vim context at the `"Editor"` level.
 

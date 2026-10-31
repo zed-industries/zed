@@ -377,7 +377,7 @@ impl SyntaxTreeView {
         row.child(if node.is_named() {
             Label::new(node.kind()).color(Color::Default)
         } else {
-            Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
+            Label::new(format_anonymous_node_kind(node.kind())).color(Color::Created)
         })
         .child(
             div()
@@ -719,6 +719,10 @@ fn format_node_range(node: Node) -> String {
     )
 }
 
+fn format_anonymous_node_kind(kind: &str) -> String {
+    format!("\"{}\"", kind.escape_debug())
+}
+
 impl Render for SyntaxTreeToolbarItemView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
@@ -747,5 +751,18 @@ impl ToolbarItemView for SyntaxTreeToolbarItemView {
         self.tree_view = None;
         self.subscription = None;
         ToolbarItemLocation::Hidden
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anonymous_node_kinds_escape_control_characters() {
+        assert_eq!(format_anonymous_node_kind("\n"), "\"\\n\"");
+        assert_eq!(format_anonymous_node_kind("\r\n"), "\"\\r\\n\"");
+        assert_eq!(format_anonymous_node_kind("\t"), "\"\\t\"");
+        assert_eq!(format_anonymous_node_kind(","), "\",\"");
     }
 }

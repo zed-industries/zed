@@ -83,7 +83,6 @@ impl TestExtension {
             version = release.version,
             arch = match arch {
                 zed::Architecture::Aarch64 => "aarch64",
-                zed::Architecture::X86 => "x86",
                 zed::Architecture::X8664 => "x86_64",
             },
             os = match platform {

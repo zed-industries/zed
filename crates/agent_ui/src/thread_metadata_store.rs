@@ -4,7 +4,7 @@ use std::{
 };
 
 use agent::{ThreadStore, ZED_AGENT_ID};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v2 as acp;
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
@@ -23,9 +23,9 @@ use futures::{FutureExt, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task, TaskExt};
 pub use project::WorktreePaths;
 use project::{AgentId, linked_worktree_short_name};
-use remote::{RemoteConnectionOptions, same_remote_connection_identity};
+use remote::RemoteConnectionOptions;
 use ui::{App, Context, SharedString, ThreadItemWorktreeInfo, WorktreeKind};
-use util::ResultExt as _;
+use util::{ResultExt as _, paths::PathStyle};
 use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
 
 use crate::DEFAULT_THREAD_TITLE;
@@ -359,7 +359,8 @@ impl ThreadMetadata {
         &self,
         remote_connection: Option<&RemoteConnectionOptions>,
     ) -> bool {
-        same_remote_connection_identity(self.remote_connection.as_ref(), remote_connection)
+        self.remote_connection.as_ref().map(|o| o.identity())
+            == remote_connection.map(|o| o.identity())
     }
 }
 
@@ -384,7 +385,8 @@ pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
         let is_linked = main_path != folder_path;
 
         if is_linked {
-            let short_name = linked_worktree_short_name(main_path, folder_path).unwrap_or_default();
+            let short_name = linked_worktree_short_name(main_path, folder_path, PathStyle::local())
+                .unwrap_or_default();
             let project_name = main_path
                 .file_name()
                 .map(|n| SharedString::from(n.to_string_lossy().to_string()))
@@ -718,6 +720,26 @@ impl ThreadMetadataStore {
         self.save(metadata, cx);
     }
 
+    pub fn set_generated_title(
+        &mut self,
+        thread_id: ThreadId,
+        title: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(existing) = self.entry(thread_id) else {
+            return;
+        };
+        if existing.title.as_ref() == Some(&title) && existing.title_override.is_none() {
+            return;
+        }
+        let metadata = ThreadMetadata {
+            title: Some(title),
+            title_override: None,
+            ..existing.clone()
+        };
+        self.save(metadata, cx);
+    }
+
     fn save_internal(&mut self, metadata: ThreadMetadata) {
         if let Some(thread) = self.threads.get(&metadata.thread_id) {
             if thread.folder_paths() != metadata.folder_paths() {
@@ -968,13 +990,9 @@ impl ThreadMetadataStore {
             .into_iter()
             .flatten()
             .filter(|id| {
-                self.threads.get(id).is_some_and(|t| {
-                    !t.archived
-                        && same_remote_connection_identity(
-                            t.remote_connection.as_ref(),
-                            remote_connection,
-                        )
-                })
+                self.threads
+                    .get(id)
+                    .is_some_and(|t| !t.archived && t.matches_remote_connection(remote_connection))
             })
             .copied()
             .collect();
@@ -1297,7 +1315,7 @@ impl ThreadMetadataStore {
             } else {
                 let project = thread_ref.project().read(cx);
                 let worktree_paths = project.worktree_paths(cx);
-                let remote_connection = project.remote_connection_options(cx);
+                let remote_connection = project.remote_connection_options(cx).cloned();
 
                 (worktree_paths, remote_connection)
             };
@@ -1804,7 +1822,7 @@ mod tests {
     use acp_thread::StubAgentConnection;
     use action_log::ActionLog;
     use agent::DbThread;
-    use agent_client_protocol::schema as acp;
+    use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp};
     use gpui::{TestAppContext, VisualTestContext};
     use project::FakeFs;
     use project::Project;
@@ -1824,7 +1842,6 @@ mod tests {
             request_token_usage: Default::default(),
             model: None,
             profile: None,
-            imported: false,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
@@ -1832,6 +1849,7 @@ mod tests {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            sandbox_grants: Default::default(),
         }
     }
 
@@ -1927,6 +1945,52 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_database_preserves_legacy_session_ids(_cx: &mut TestAppContext) {
+        let legacy_session_id = acp_v1::SessionId::new("legacy/session:opaque-☃");
+        let thread_id = ThreadId::new();
+        let db = ThreadMetadataDb(gpui::block_on(db::open_test_db::<ThreadMetadataDb>(
+            "THREAD_METADATA_DB_LEGACY_SESSION_IDS",
+        )));
+
+        db.write({
+            let session_id = legacy_session_id.0.clone();
+            move |connection| {
+                connection.exec_bound::<(ThreadId, Arc<str>)>(
+                    "INSERT INTO sidebar_threads \
+                     (thread_id, session_id, title, updated_at, archived) \
+                     VALUES (?1, ?2, 'Legacy thread', '2025-01-15T10:00:00Z', 0)",
+                )?((thread_id, session_id))
+            }
+        })
+        .await
+        .expect("legacy session should be stored as plain text");
+
+        let mut metadata = db
+            .list()
+            .expect("legacy metadata should load")
+            .pop()
+            .expect("legacy thread should exist");
+        assert_eq!(
+            metadata.session_id,
+            Some(acp::SessionId::new(legacy_session_id.0.clone()))
+        );
+        assert_eq!(metadata.thread_id, thread_id);
+
+        metadata.title_override = Some("Renamed legacy thread".into());
+        db.save(metadata)
+            .await
+            .expect("v2 session metadata should save");
+        let stored_session_id = db
+            .select_row_bound::<ThreadId, Arc<str>>(
+                "SELECT session_id FROM sidebar_threads WHERE thread_id = ?1",
+            )
+            .expect("session ID query should prepare")(thread_id)
+        .expect("session ID query should succeed")
+        .expect("stored session ID should exist");
+        assert_eq!(acp_v1::SessionId::new(stored_session_id), legacy_session_id);
+    }
+
+    #[gpui::test]
     async fn test_database_round_trips_title_override(_cx: &mut TestAppContext) {
         let now = Utc::now();
         let mut metadata = make_metadata(
@@ -1982,6 +2046,39 @@ mod tests {
             assert_eq!(metadata.title.as_deref(), Some("Agent Generated Title"));
             assert_eq!(metadata.title_override.as_deref(), Some("User Title"));
             assert_eq!(metadata.display_title().as_ref(), "User Title");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_store_set_generated_title_clears_title_override(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut metadata = make_metadata(
+            "session-1",
+            "Old Generated Title",
+            Utc::now(),
+            PathList::default(),
+        );
+        metadata.title_override = Some("User Title".into());
+        let thread_id = metadata.thread_id;
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.set_generated_title(thread_id, "New Generated Title".into(), cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            let metadata = store.entry(thread_id).expect("metadata should be cached");
+            assert_eq!(metadata.title.as_deref(), Some("New Generated Title"));
+            assert_eq!(metadata.title_override, None);
+            assert_eq!(metadata.display_title().as_ref(), "New Generated Title");
         });
     }
 

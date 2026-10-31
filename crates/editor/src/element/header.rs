@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -8,11 +9,11 @@ use gpui::{
     Action, AnyElement, App, AvailableSpace, Bounds, ClickEvent, ClipboardItem, ContentMask,
     CursorStyle, DefiniteLength, Entity, Focusable as _, Hitbox, HitboxBehavior, Hsla, IntoElement,
     Length, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels,
-    ShapedLine, SharedString, Styled, TextAlign, Window, div, fill, linear_color_stop,
-    linear_gradient, point, px, size,
+    ShapedLine, SharedString, Styled, TextAlign, Window, WindowBackgroundAppearance, div, fill,
+    linear_color_stop, linear_gradient, point, px, size,
 };
 use language::language_settings::ShowWhitespaceSetting;
-use multi_buffer::{Anchor, ExcerptBoundaryInfo};
+use multi_buffer::{Anchor, ExcerptBoundaryInfo, MultiBuffer};
 use project::Entry;
 use settings::{RelativeLineNumbers, Settings};
 use smallvec::SmallVec;
@@ -20,8 +21,8 @@ use sum_tree::Bias;
 use text::BufferId;
 use theme::ActiveTheme;
 use ui::{
-    ButtonLike, ContextMenu, Indicator, KeyBinding, Tooltip, prelude::*, right_click_menu,
-    text_for_keystroke,
+    ButtonLike, ContextMenu, DiffStat, Indicator, KeyBinding, Tooltip, prelude::*,
+    right_click_menu, text_for_keystroke, utils::WithRemSize,
 };
 use util::ResultExt;
 use workspace::{ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel};
@@ -54,7 +55,7 @@ pub(super) struct StickyHeaders {
 pub(super) struct StickyHeaderLine {
     row: DisplayRow,
     pub(super) offset: Pixels,
-    line: Rc<LineWithInvisibles>,
+    pub(super) line: Rc<LineWithInvisibles>,
     line_number: Option<ShapedLine>,
     elements: SmallVec<[AnyElement; 1]>,
     available_text_width: Pixels,
@@ -69,10 +70,20 @@ impl EditorElement {
         let mut rows = Vec::<StickyHeader>::new();
 
         for item in editor.sticky_headers.iter().flatten() {
-            let start_point = item
+            let selection_start = item
+                .selection_range
+                .start
+                .to_point(snapshot.buffer_snapshot());
+            let source_text_start = item
                 .source_range_for_text
                 .start
                 .to_point(snapshot.buffer_snapshot());
+            let start_column = if source_text_start.row == selection_start.row {
+                source_text_start.column
+            } else {
+                0
+            };
+            let start_point = Point::new(selection_start.row, start_column);
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
 
             let sticky_row = snapshot
@@ -245,7 +256,7 @@ impl EditorElement {
             offset,
         } in rows.into_iter().rev()
         {
-            let line = layout_line(
+            let mut line = layout_line(
                 sticky_row,
                 snapshot,
                 &self.style,
@@ -274,12 +285,19 @@ impl EditorElement {
                 self.shape_line_number(SharedString::from(number.to_string()), color, window)
             });
 
+            self.populate_point_diagnostics(
+                snapshot,
+                sticky_row..sticky_row.next_row(),
+                std::slice::from_mut(&mut line),
+            );
+
             lines.push(StickyHeaderLine::new(
                 sticky_row,
                 line_height * offset as f32,
                 line,
                 line_number,
                 line_height,
+                self.style.text.text_align,
                 scroll_pixel_position,
                 content_origin,
                 gutter_hitbox,
@@ -463,6 +481,7 @@ impl StickyHeaderLine {
         mut line: LineWithInvisibles,
         line_number: Option<ShapedLine>,
         line_height: Pixels,
+        text_align: TextAlign,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
         gutter_hitbox: &Hitbox,
@@ -476,6 +495,8 @@ impl StickyHeaderLine {
             scroll_pixel_position,
             content_origin,
             offset,
+            text_align,
+            text_hitbox.size.width,
             &mut elements,
             window,
             cx,
@@ -614,6 +635,13 @@ pub(crate) fn render_buffer_header(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
+    let buffer_id = for_excerpt.buffer_id();
+    let header_hovered_state = window.use_keyed_state(
+        ("buffer-header-hovered", buffer_id.to_proto()),
+        cx,
+        |_, _| false,
+    );
+    let header_hovered = *header_hovered_state.read(cx);
     let editor_read = editor.read(cx);
     let multi_buffer = editor_read.buffer.read(cx);
     let is_read_only = editor_read.read_only(cx);
@@ -627,11 +655,16 @@ pub(crate) fn render_buffer_header(
         None
     };
 
-    let buffer_id = for_excerpt.buffer_id();
     let file_status = multi_buffer
         .all_diff_hunks_expanded()
         .then(|| editor_read.status_for_buffer_id(buffer_id, cx))
         .flatten();
+    let diff_stat = multi_buffer
+        .all_diff_hunks_expanded()
+        .then(|| multibuffer_snapshot.diff_for_buffer_id(buffer_id))
+        .flatten()
+        .map(|diff| diff.changed_row_counts())
+        .filter(|(added, removed)| *added > 0 || *removed > 0);
     let indicator = multi_buffer.buffer(buffer_id).and_then(|buffer| {
         let buffer = buffer.read(cx);
         let indicator_color = match (buffer.has_conflict(), buffer.is_dirty()) {
@@ -651,21 +684,46 @@ pub(crate) fn render_buffer_header(
     let can_open_excerpts = file.is_none_or(|file| file.can_open());
     let path_style = file.map(|file| file.path_style(cx));
     let relative_path = buffer.resolve_file_path(include_root, cx);
-    let (parent_path, filename) = if let Some(path) = &relative_path {
-        if let Some(path_style) = path_style {
-            let (dir, file_name) = path_style.split(path);
-            (dir.map(|dir| dir.to_owned()), Some(file_name.to_owned()))
-        } else {
-            (None, Some(path.clone()))
+    let (parent_path, filename) = match (&relative_path, path_style) {
+        (Some(path), Some(path_style)) => {
+            match path_style
+                .file_name(Path::new(path))
+                .and_then(OsStr::to_str)
+            {
+                Some(file_name) => (
+                    path.strip_suffix(file_name)
+                        .filter(|parent| !parent.is_empty())
+                        .map(ToOwned::to_owned),
+                    Some(file_name.to_owned()),
+                ),
+                None => (None, Some(path.clone())),
+            }
         }
-    } else {
-        (None, None)
+        (Some(path), None) => (None, Some(path.clone())),
+        (None, _) => (None, None),
     };
     let focus_handle = editor_read.focus_handle(cx);
     let colors = cx.theme().colors();
+    // On transparent windows, only render an opaque `editor_subheader_background` so it masks
+    // the editor content beneath it without creating a darker bar. Sticky shadows still require
+    // an opaque window to avoid rendering as a halo.
+    let opaque_window =
+        cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
+    let show_header_background = opaque_window || colors.editor_subheader_background.is_opaque();
+
+    let show_open_file_button =
+        can_open_excerpts && relative_path.is_some() && (is_selected || header_hovered);
 
     let header = div()
         .id(("buffer-header", buffer_id.to_proto()))
+        .on_hover(move |hovered, _window, cx| {
+            header_hovered_state.update(cx, |state, cx| {
+                if *state != *hovered {
+                    *state = *hovered;
+                    cx.notify();
+                }
+            });
+        })
         .p(BUFFER_HEADER_PADDING)
         .w_full()
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
@@ -678,7 +736,6 @@ pub(crate) fn render_buffer_header(
                 .pr_2()
                 .rounded_sm()
                 .gap_1p5()
-                .when(is_sticky, |el| el.shadow_md())
                 .border_1()
                 .map(|border| {
                     let border_color =
@@ -689,14 +746,17 @@ pub(crate) fn render_buffer_header(
                         };
                     border.border_color(border_color)
                 })
-                .bg(colors.editor_subheader_background)
-                .hover(|style| style.bg(colors.element_hover))
+                .when(is_sticky && opaque_window, |s| s.shadow_md())
+                .when(show_header_background, |s| {
+                    s.bg(colors.editor_subheader_background)
+                })
+                .hover(|s| s.bg(colors.element_hover))
                 .map(|header| {
                     let editor = editor.clone();
                     let buffer_id = for_excerpt.buffer_id();
                     let toggle_chevron_icon =
                         FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
-                    let button_size = rems_from_px(28.);
+                    let button_size = rems_from_px(28_f32);
 
                     header.child(
                         div()
@@ -783,7 +843,7 @@ pub(crate) fn render_buffer_header(
                             |path_header| {
                                 let filename = filename
                                     .map(SharedString::from)
-                                    .unwrap_or_else(|| "untitled".into());
+                                    .unwrap_or_else(|| MultiBuffer::DEFAULT_TITLE.into());
 
                                 let full_path = match parent_path.as_deref() {
                                     Some(parent) if !parent.is_empty() => {
@@ -827,7 +887,7 @@ pub(crate) fn render_buffer_header(
                                                 move |editor, e: &ClickEvent, window, cx| {
                                                     editor.open_excerpts_common(
                                                         Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
+                                                        e.modifiers().secondary(cx),
                                                         window,
                                                         cx,
                                                     );
@@ -869,15 +929,26 @@ pub(crate) fn render_buffer_header(
                                     })
                             },
                         ))
-                        .when(can_open_excerpts && relative_path.is_some(), |this| {
-                            this.child(
-                                div()
-                                    .when(!is_selected, |this| {
-                                        this.visible_on_hover("buffer-header-group")
-                                    })
-                                    .child(
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .when_some(diff_stat, |this, (added, removed)| {
+                                    let ui_font_size =
+                                        theme_settings::ThemeSettings::get_global(cx)
+                                            .ui_font_size(cx);
+                                    this.child(WithRemSize::new(ui_font_size).child(DiffStat::new(
+                                        ("buffer-header-diff-stat", buffer_id.to_proto()),
+                                        added as usize,
+                                        removed as usize,
+                                    )))
+                                })
+                                .when(show_open_file_button, |this| {
+                                    this.child(
                                         Button::new("open-file-button", "Open File")
-                                            .style(ButtonStyle::OutlinedGhost)
+                                            .style(ButtonStyle::OutlinedCustom(
+                                                cx.theme().colors().border.opacity(0.6),
+                                            ))
+                                            .layer(ui::ElevationIndex::ElevatedSurface)
                                             .when(is_selected, |this| {
                                                 this.key_binding(KeyBinding::for_action_in(
                                                     &OpenExcerpts,
@@ -890,15 +961,15 @@ pub(crate) fn render_buffer_header(
                                                 move |editor, e: &ClickEvent, window, cx| {
                                                     editor.open_excerpts_common(
                                                         Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
+                                                        e.modifiers().secondary(cx),
                                                         window,
                                                         cx,
                                                     );
                                                 }
                                             })),
-                                    ),
-                            )
-                        })
+                                    )
+                                }),
+                        )
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(window.listener_for(editor, {
                             let buffer_id = for_excerpt.buffer_id();
@@ -906,7 +977,7 @@ pub(crate) fn render_buffer_header(
                                 if e.modifiers().alt {
                                     editor.open_excerpts_common(
                                         Some(jump_data.clone()),
-                                        e.modifiers().secondary(),
+                                        e.modifiers().secondary(cx),
                                         window,
                                         cx,
                                     );
@@ -927,7 +998,7 @@ pub(crate) fn render_buffer_header(
     let editor = editor.clone();
     let buffer_snapshot = buffer.clone();
 
-    right_click_menu("buffer-header-context-menu")
+    right_click_menu(("buffer-header-context-menu", buffer_id.to_proto()))
         .trigger(move |_, _, _| header)
         .menu(move |window, cx| {
             let menu_context = focus_handle.clone();
@@ -1038,7 +1109,7 @@ pub(crate) fn render_buffer_header(
         })
 }
 
-fn file_status_label_color(file_status: Option<FileStatus>) -> Color {
+pub fn file_status_label_color(file_status: Option<FileStatus>) -> Color {
     file_status.map_or(Color::Default, |status| {
         if status.is_conflicted() {
             Color::Conflict

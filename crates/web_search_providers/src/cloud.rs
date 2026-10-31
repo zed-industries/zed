@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use client::{Client, UserStore, global_llm_token};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::OrganizationId;
@@ -69,6 +69,8 @@ async fn perform_web_search(
     organization_id: Option<OrganizationId>,
     body: WebSearchBody,
 ) -> Result<WebSearchResponse> {
+    let organization_id = organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
+
     let url = client.http_client().build_zed_llm_url("/web_search", &[])?;
     let body = serde_json::to_string(&body)?;
     let mut response = client

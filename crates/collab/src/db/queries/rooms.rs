@@ -679,6 +679,7 @@ impl Database {
                             // on number of files only. That shouldn't be a huge deal in practice.
                             size: None,
                             is_fifo: db_entry.is_fifo,
+                            is_unloaded: db_entry.is_unloaded,
                         });
                     }
                 }
@@ -824,6 +825,7 @@ impl Database {
                     id: language_server.id as u64,
                     name: language_server.name,
                     worktree_id: language_server.worktree_id.map(|id| id as u64),
+                    language_name: language_server.language_name,
                 },
                 capabilities: language_server.capabilities,
             })

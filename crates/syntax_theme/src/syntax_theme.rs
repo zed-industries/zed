@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeMap, btree_map::Entry},
+    ops::Range,
     sync::Arc,
 };
 
@@ -59,6 +60,14 @@ impl SyntaxTheme {
 
     pub fn get(&self, highlight_index: impl Into<usize>) -> Option<&HighlightStyle> {
         self.highlights.get(highlight_index.into())
+    }
+
+    pub fn resolve_runs<'a, Id: Into<usize> + Copy + 'a>(
+        &'a self,
+        runs: impl IntoIterator<Item = &'a (Range<usize>, Id)> + 'a,
+    ) -> impl Iterator<Item = (Range<usize>, HighlightStyle)> + 'a {
+        runs.into_iter()
+            .filter_map(|(range, highlight_id)| Some((range.clone(), *self.get(*highlight_id)?)))
     }
 
     pub fn style_for_name(&self, name: &str) -> Option<HighlightStyle> {

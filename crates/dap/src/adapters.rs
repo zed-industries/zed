@@ -6,8 +6,9 @@ use collections::HashMap;
 pub use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
 use fs::Fs;
 use futures::io::BufReader;
+pub use github_releases::latest_github_release;
 use gpui::{AsyncApp, SharedString};
-pub use http_client::{HttpClient, github::latest_github_release};
+pub use http_client::HttpClient;
 use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use schemars::JsonSchema;
@@ -294,7 +295,7 @@ pub async fn download_adapter_from_github(
     log::debug!(
         "Downloading adapter {} from {}",
         adapter_name,
-        &github_version.url,
+        github_version.url,
     );
     delegate.output_to_console(format!("Downloading from {}...", github_version.url));
 

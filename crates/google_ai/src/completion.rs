@@ -1,11 +1,11 @@
 use anyhow::Result;
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, TryStreamExt, stream::BoxStream};
 use language_model_core::{
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
+    GOOGLE_PROVIDER_NAME, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelRequest, LanguageModelRequestToolInput, LanguageModelToolChoice,
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role,
     StopReason, TokenUsage,
 };
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicU64};
 
@@ -20,20 +20,19 @@ pub fn into_google(
     mut request: LanguageModelRequest,
     model_id: String,
     mode: GoogleModelMode,
-) -> crate::GenerateContentRequest {
-    fn map_content(content: Vec<MessageContent>) -> Vec<Part> {
-        content
-            .into_iter()
-            .flat_map(|content| match content {
+) -> Result<crate::GenerateContentRequest> {
+    let nest_function_response_media = !crate::uses_sibling_function_response_media(&model_id);
+    let map_content = |content: Vec<MessageContent>| -> Result<Vec<Part>> {
+        let mut mapped_parts = Vec::new();
+        for content in content {
+            match content {
                 MessageContent::Text(text) => {
                     if !text.is_empty() {
-                        vec![Part::TextPart(TextPart {
+                        mapped_parts.push(Part::TextPart(TextPart {
                             text,
                             thought: false,
                             thought_signature: None,
-                        })]
-                    } else {
-                        vec![]
+                        }));
                     }
                 }
                 MessageContent::Thinking {
@@ -41,39 +40,37 @@ pub fn into_google(
                     signature: Some(signature),
                 } => {
                     if !signature.is_empty() {
-                        vec![Part::TextPart(TextPart {
+                        mapped_parts.push(Part::TextPart(TextPart {
                             text,
                             thought: true,
                             thought_signature: Some(signature),
-                        })]
-                    } else {
-                        vec![]
+                        }));
                     }
                 }
-                MessageContent::Thinking { .. } => {
-                    vec![]
-                }
-                MessageContent::RedactedThinking(_) => vec![],
+                MessageContent::Thinking { .. } => {}
+                MessageContent::RedactedThinking(_) | MessageContent::Compaction(_) => {}
                 MessageContent::Image(image) => {
-                    vec![Part::InlineDataPart(InlineDataPart {
+                    mapped_parts.push(Part::InlineDataPart(InlineDataPart {
                         inline_data: GenerativeContentBlob {
                             mime_type: "image/png".to_string(),
                             data: image.source.to_string(),
                         },
-                    })]
+                    }));
                 }
                 MessageContent::ToolUse(tool_use) => {
-                    // Normalize empty string signatures to None
                     let thought_signature = tool_use.thought_signature.filter(|s| !s.is_empty());
+                    let LanguageModelToolUseInput::Json(input) = tool_use.input else {
+                        anyhow::bail!("Google AI does not support custom tool calls");
+                    };
 
-                    vec![Part::FunctionCallPart(crate::FunctionCallPart {
+                    mapped_parts.push(Part::FunctionCallPart(crate::FunctionCallPart {
                         function_call: crate::FunctionCall {
                             name: tool_use.name.to_string(),
-                            args: tool_use.input,
+                            args: input,
                             id: Some(tool_use.id.to_string()),
                         },
                         thought_signature,
-                    })]
+                    }));
                 }
                 MessageContent::ToolResult(tool_result) => {
                     let mut text_output = String::new();
@@ -98,7 +95,12 @@ pub fn into_google(
                     } else {
                         text_output
                     };
-                    let mut parts = vec![Part::FunctionResponsePart(crate::FunctionResponsePart {
+                    let (nested_images, sibling_images) = if nest_function_response_media {
+                        (images, Vec::new())
+                    } else {
+                        (Vec::new(), images)
+                    };
+                    mapped_parts.push(Part::FunctionResponsePart(crate::FunctionResponsePart {
                         function_response: crate::FunctionResponse {
                             name: tool_result.tool_name.to_string(),
                             // The API expects a valid JSON object
@@ -106,16 +108,21 @@ pub fn into_google(
                                 "output": output
                             }),
                             id: Some(tool_result.tool_use_id.to_string()),
+                            parts: nested_images,
                         },
-                    })];
-                    parts.extend(images.into_iter().map(Part::InlineDataPart));
-                    parts
+                    }));
+                    mapped_parts.extend(sibling_images.into_iter().map(Part::InlineDataPart));
                 }
-            })
-            .collect()
-    }
+            }
+        }
+        Ok(mapped_parts)
+    };
 
     let thinking_config = thinking_config_for_request(&request, &model_id, mode);
+    let max_output_tokens = request
+        .effective_max_output_tokens(None)
+        .map(usize::try_from)
+        .transpose()?;
 
     let system_instructions = if request
         .messages
@@ -124,57 +131,72 @@ pub fn into_google(
     {
         let message = request.messages.remove(0);
         Some(SystemInstruction {
-            parts: map_content(message.content),
+            parts: map_content(message.content)?,
         })
     } else {
         None
     };
 
-    crate::GenerateContentRequest {
+    let tools = if request.tools.is_empty() {
+        None
+    } else {
+        Some(vec![crate::Tool {
+            function_declarations: request
+                .tools
+                .into_iter()
+                .map(|tool| match tool.input {
+                    LanguageModelRequestToolInput::Function { input_schema, .. } => {
+                        Ok(FunctionDeclaration {
+                            name: tool.name,
+                            description: tool.description,
+                            parameters: None,
+                            parameters_json_schema: Some(input_schema),
+                        })
+                    }
+                    LanguageModelRequestToolInput::Custom { .. } => {
+                        Err(anyhow::anyhow!("Google AI does not support custom tools"))
+                    }
+                })
+                .collect::<Result<_>>()?,
+        }])
+    };
+
+    Ok(crate::GenerateContentRequest {
         model: ModelName { model_id },
         system_instruction: system_instructions,
         contents: request
             .messages
             .into_iter()
-            .filter_map(|message| {
-                let parts = map_content(message.content);
+            .map(|message| {
+                let parts = map_content(message.content)?;
                 if parts.is_empty() {
-                    None
+                    Ok(None)
                 } else {
-                    Some(Content {
+                    Ok(Some(Content {
                         parts,
                         role: match message.role {
                             Role::User => crate::Role::User,
                             Role::Assistant => crate::Role::Model,
                             Role::System => crate::Role::User, // Google AI doesn't have a system role
                         },
-                    })
+                    }))
                 }
             })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
             .collect(),
         generation_config: Some(GenerationConfig {
             candidate_count: Some(1),
             stop_sequences: Some(request.stop),
-            max_output_tokens: None,
+            max_output_tokens,
             temperature: request.temperature.map(|t| t as f64),
             thinking_config,
             top_p: None,
             top_k: None,
         }),
         safety_settings: None,
-        tools: (!request.tools.is_empty()).then(|| {
-            vec![crate::Tool {
-                function_declarations: request
-                    .tools
-                    .into_iter()
-                    .map(|tool| FunctionDeclaration {
-                        name: tool.name,
-                        description: tool.description,
-                        parameters: tool.input_schema,
-                    })
-                    .collect(),
-            }]
-        }),
+        tools,
         tool_config: request.tool_choice.map(|choice| ToolConfig {
             function_calling_config: FunctionCallingConfig {
                 mode: match choice {
@@ -185,7 +207,7 @@ pub fn into_google(
                 allowed_function_names: None,
             },
         }),
-    }
+    })
 }
 
 fn thinking_config_for_request(
@@ -193,9 +215,7 @@ fn thinking_config_for_request(
     model_id: &str,
     mode: GoogleModelMode,
 ) -> Option<ThinkingConfig> {
-    let supports_thinking =
-        matches!(mode, GoogleModelMode::Thinking { .. }) || is_google_thinking_model(model_id);
-    if !supports_thinking {
+    if !matches!(mode, GoogleModelMode::Thinking { .. }) {
         return None;
     }
 
@@ -215,9 +235,9 @@ fn thinking_config_for_request(
         {
             config.thinking_budget = Some(budget_tokens);
         }
-    } else if let Some(thinking_level) = disabled_thinking_level(model_id) {
+    } else if let Some(thinking_level) = crate::lowest_thinking_level(model_id) {
         config.thinking_level = Some(thinking_level);
-    } else if supports_thinking_budget_disable(model_id) {
+    } else if crate::supports_disabling_thinking(model_id) {
         config.thinking_budget = Some(0);
     }
 
@@ -232,62 +252,40 @@ impl ThinkingConfig {
     }
 }
 
-fn is_google_thinking_model(model_id: &str) -> bool {
-    model_id.starts_with("gemini-2.5-") || model_id.starts_with("gemini-3")
-}
-
-fn disabled_thinking_level(model_id: &str) -> Option<ThinkingLevel> {
-    match model_id {
-        model_id if model_id.starts_with("gemini-3") && model_id.contains("-pro") => {
-            Some(ThinkingLevel::Low)
-        }
-        model_id if model_id.starts_with("gemini-3") => Some(ThinkingLevel::Minimal),
-        _ => None,
-    }
-}
-
-fn supports_thinking_budget_disable(model_id: &str) -> bool {
-    matches!(
-        model_id,
-        "gemini-2.5-flash"
-            | "gemini-2.5-flash-lite"
-            | "gemini-2.5-flash-preview-latest"
-            | "gemini-2.5-flash-preview-04-17"
-            | "gemini-2.5-flash-preview-05-20"
-            | "gemini-2.5-flash-lite-preview-06-17"
-    )
-}
-
 pub struct GoogleEventMapper {
     usage: UsageMetadata,
-    stop_reason: StopReason,
+    stop_emitted: bool,
 }
 
 impl GoogleEventMapper {
     pub fn new() -> Self {
         Self {
             usage: UsageMetadata::default(),
-            stop_reason: StopReason::EndTurn,
+            stop_emitted: false,
         }
     }
 
     pub fn map_stream(
-        mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
+        self,
+        events: BoxStream<'static, Result<GenerateContentResponse, LanguageModelCompletionError>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
-        events
-            .map(Some)
-            .chain(futures::stream::once(async { None }))
-            .flat_map(move |event| {
-                futures::stream::iter(match event {
-                    Some(Ok(event)) => self.map_event(event),
-                    Some(Err(error)) => {
-                        vec![Err(LanguageModelCompletionError::from(error))]
-                    }
-                    None => vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))],
-                })
-            })
+        futures::stream::try_unfold((self, events), |(mut mapper, mut events)| async move {
+            match events.next().await {
+                Some(event) => {
+                    let event = event?;
+                    Ok(Some((
+                        futures::stream::iter(mapper.map_event(event)),
+                        (mapper, events),
+                    )))
+                }
+                None if mapper.stop_emitted => Ok(None),
+                None => Err(LanguageModelCompletionError::StreamEndedUnexpectedly {
+                    provider: GOOGLE_PROVIDER_NAME,
+                }),
+            }
+        })
+        .try_flatten()
     }
 
     pub fn map_event(
@@ -298,17 +296,22 @@ impl GoogleEventMapper {
 
         let mut events: Vec<_> = Vec::new();
         let mut wants_to_use_tool = false;
+        let mut stop_reason = None;
         if let Some(usage_metadata) = event.usage_metadata {
             update_usage(&mut self.usage, &usage_metadata);
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
-                convert_usage(&self.usage),
-            )))
+            // Streamed chunks carry an empty `usageMetadata` until the final one.
+            // Reporting usage before the prompt count is known would show zero context.
+            if self.usage.prompt_token_count.is_some() {
+                events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
+                    convert_usage(&self.usage),
+                )))
+            }
         }
 
         if let Some(prompt_feedback) = event.prompt_feedback
             && let Some(block_reason) = prompt_feedback.block_reason.as_deref()
         {
-            self.stop_reason = match block_reason {
+            let stop_reason = match block_reason {
                 "SAFETY" | "OTHER" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "IMAGE_SAFETY" => {
                     StopReason::Refusal
                 }
@@ -317,7 +320,10 @@ impl GoogleEventMapper {
                     StopReason::Refusal
                 }
             };
-            events.push(Ok(LanguageModelCompletionEvent::Stop(self.stop_reason)));
+            if !self.stop_emitted {
+                self.stop_emitted = true;
+                events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
+            }
 
             return events;
         }
@@ -325,7 +331,7 @@ impl GoogleEventMapper {
         if let Some(candidates) = event.candidates {
             for candidate in candidates {
                 if let Some(finish_reason) = candidate.finish_reason.as_deref() {
-                    self.stop_reason = match finish_reason {
+                    stop_reason = Some(match finish_reason {
                         "STOP" => StopReason::EndTurn,
                         "MAX_TOKENS" => StopReason::MaxTokens,
                         "SAFETY"
@@ -349,7 +355,7 @@ impl GoogleEventMapper {
                             log::error!("Unexpected google finish_reason: {finish_reason}");
                             StopReason::EndTurn
                         }
-                    };
+                    });
                 }
                 candidate
                     .content
@@ -404,7 +410,9 @@ impl GoogleEventMapper {
                                     name,
                                     is_input_complete: true,
                                     raw_input: function_call_part.function_call.args.to_string(),
-                                    input: function_call_part.function_call.args,
+                                    input: LanguageModelToolUseInput::Json(
+                                        function_call_part.function_call.args,
+                                    ),
                                     thought_signature,
                                 },
                             )));
@@ -417,8 +425,13 @@ impl GoogleEventMapper {
         // Even when Gemini wants to use a Tool, the API
         // responds with `finish_reason: STOP`
         if wants_to_use_tool {
-            self.stop_reason = StopReason::ToolUse;
-            events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+            stop_reason = Some(StopReason::ToolUse);
+        }
+        if let Some(stop_reason) = stop_reason
+            && !self.stop_emitted
+        {
+            self.stop_emitted = true;
+            events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
         }
         events
     }
@@ -466,8 +479,89 @@ mod tests {
         Content, FunctionCall, FunctionCallPart, GenerateContentCandidate, GenerateContentResponse,
         Part, Role as GoogleRole,
     };
-    use language_model_core::LanguageModelRequestMessage;
+    use language_model_core::{
+        LanguageModelImage, LanguageModelRequestMessage, LanguageModelRequestTool,
+        LanguageModelToolResult, LanguageModelToolResultContent,
+    };
     use serde_json::json;
+
+    #[test]
+    fn completed_stream_emits_stop_once() {
+        for (response, expected_stop) in [
+            (
+                json!({"candidates": [{
+                    "content": {"role": "model", "parts": [{"text": "Answer"}]},
+                    "finishReason": "STOP"
+                }]}),
+                StopReason::EndTurn,
+            ),
+            (
+                json!({"candidates": [{
+                    "content": {"role": "model", "parts": [{
+                        "functionCall": {"name": "list_directory", "args": {}}
+                    }]},
+                    "finishReason": "STOP"
+                }]}),
+                StopReason::ToolUse,
+            ),
+            (
+                json!({"promptFeedback": {"blockReason": "SAFETY"}}),
+                StopReason::Refusal,
+            ),
+        ] {
+            let responses = vec![
+                Ok(serde_json::from_value(response).unwrap()),
+                Ok(serde_json::from_value(json!({"candidates": [{
+                    "content": {"role": "model", "parts": []},
+                    "finishReason": "STOP"
+                }]}))
+                .unwrap()),
+            ];
+            let events = futures::executor::block_on(
+                GoogleEventMapper::new()
+                    .map_stream(Box::pin(futures::stream::iter(responses)))
+                    .collect::<Vec<_>>(),
+            );
+            let stops = events
+                .into_iter()
+                .filter_map(|event| match event.unwrap() {
+                    LanguageModelCompletionEvent::Stop(reason) => Some(reason),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(stops, vec![expected_stop]);
+        }
+    }
+
+    #[test]
+    fn incomplete_stream_reports_unexpected_end() {
+        for has_content in [false, true] {
+            let mut responses = Vec::new();
+            if has_content {
+                responses.push(Ok(serde_json::from_value(json!({"candidates": [{
+                    "content": {"role": "model", "parts": [{"text": "Partial answer"}]}
+                }]}))
+                .unwrap()));
+            }
+            futures::executor::block_on(async {
+                let mut stream = GoogleEventMapper::new()
+                    .map_stream(Box::pin(futures::stream::iter(responses)))
+                    .boxed();
+                if has_content {
+                    assert!(matches!(
+                        stream.next().await,
+                        Some(Ok(LanguageModelCompletionEvent::Text(text))) if text == "Partial answer"
+                    ));
+                }
+                assert!(matches!(
+                    stream.next().await,
+                    Some(Err(LanguageModelCompletionError::StreamEndedUnexpectedly { provider }))
+                        if provider == language_model_core::GOOGLE_PROVIDER_NAME
+                ));
+                assert!(stream.next().await.is_none());
+            });
+        }
+    }
 
     fn text_request() -> LanguageModelRequest {
         LanguageModelRequest {
@@ -493,8 +587,14 @@ mod tests {
             GoogleModelMode::Thinking {
                 budget_tokens: None,
             },
-        );
+        )
+        .unwrap();
 
+        assert!(
+            serde_json::to_value(&request).unwrap()["generationConfig"]
+                .get("maxOutputTokens")
+                .is_none()
+        );
         let thinking_config = request.generation_config.unwrap().thinking_config.unwrap();
         assert_eq!(thinking_config.include_thoughts, Some(true));
         assert_eq!(thinking_config.thinking_level, Some(ThinkingLevel::Low));
@@ -505,9 +605,90 @@ mod tests {
     }
 
     #[test]
+    fn into_google_uses_json_schema_function_parameters() {
+        let input_schema = json!({
+            "type": "object",
+            "properties": {
+                "globs": {
+                    "anyOf": [
+                        { "type": "string" },
+                        {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
+                    ]
+                }
+            }
+        });
+        let mut request = text_request();
+        request.max_output_tokens = Some(1024);
+        request.tools = vec![LanguageModelRequestTool::function(
+            "grep".to_string(),
+            "Search files".to_string(),
+            input_schema.clone(),
+            false,
+        )];
+
+        let request = into_google(
+            request,
+            "gemini-3.5-flash".to_string(),
+            GoogleModelMode::Default,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(request).unwrap();
+        assert_eq!(serialized["generationConfig"]["maxOutputTokens"], 1024);
+        let declaration = &serialized["tools"][0]["functionDeclarations"][0];
+
+        assert_eq!(declaration["parametersJsonSchema"], input_schema);
+        assert_eq!(declaration.get("parameters"), None);
+    }
+
+    #[test]
+    fn into_google_nests_tool_result_images_in_function_response() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::ToolResult(LanguageModelToolResult {
+                    tool_use_id: "call-1".into(),
+                    tool_name: "read_file".into(),
+                    is_error: false,
+                    content: vec![
+                        LanguageModelToolResultContent::Text("Read image file shot.png".into()),
+                        LanguageModelToolResultContent::Image(LanguageModelImage {
+                            source: "aW1hZ2U=".into(),
+                        }),
+                    ],
+                    output: None,
+                })],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let request = into_google(
+            request,
+            "gemini-4-argon".to_string(),
+            GoogleModelMode::Default,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(request).unwrap();
+        assert_eq!(
+            serialized["contents"][0]["parts"],
+            json!([{"functionResponse": {
+                "name": "read_file",
+                "response": {"output": "Read image file shot.png"},
+                "id": "call-1",
+                "parts": [{"inlineData": {"mimeType": "image/png", "data": "aW1hZ2U="}}]
+            }}])
+        );
+    }
+
+    #[test]
     fn into_google_turns_off_budget_thinking_when_supported() {
         let mut request = text_request();
         request.thinking_allowed = false;
+        request.max_output_tokens = Some(0);
 
         let request = into_google(
             request,
@@ -515,8 +696,13 @@ mod tests {
             GoogleModelMode::Thinking {
                 budget_tokens: None,
             },
-        );
+        )
+        .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&request).unwrap()["generationConfig"]["maxOutputTokens"],
+            0
+        );
         let thinking_config = request.generation_config.unwrap().thinking_config.unwrap();
         assert_eq!(thinking_config.thinking_budget, Some(0));
         assert_eq!(thinking_config.include_thoughts, None);
@@ -533,7 +719,8 @@ mod tests {
             GoogleModelMode::Thinking {
                 budget_tokens: None,
             },
-        );
+        )
+        .unwrap();
 
         let thinking_config = request.generation_config.unwrap().thinking_config.unwrap();
         assert_eq!(thinking_config.thinking_level, Some(ThinkingLevel::Minimal));
@@ -561,7 +748,8 @@ mod tests {
             GoogleModelMode::Thinking {
                 budget_tokens: None,
             },
-        );
+        )
+        .unwrap();
 
         let Part::TextPart(text_part) = &request.contents[0].parts[0] else {
             panic!("expected text part");
@@ -605,6 +793,48 @@ mod tests {
                 if text == "checking the constraints"
                     && signature.as_deref() == Some("thought-signature")
         ));
+    }
+
+    #[test]
+    fn usage_is_reported_only_once_prompt_tokens_are_known() {
+        let mut mapper = GoogleEventMapper::new();
+        let chunks = [
+            json!({
+                "candidates": [{"content": {"parts": [{"text": "Let's check"}], "role": "model"}}],
+                "usageMetadata": {}
+            }),
+            json!({
+                "candidates": [{
+                    "content": {"parts": [{"text": ""}], "role": "model"},
+                    "finishReason": "STOP"
+                }],
+                "usageMetadata": {
+                    "promptTokenCount": 33732,
+                    "cachedContentTokenCount": 30436,
+                    "candidatesTokenCount": 107,
+                    "totalTokenCount": 33839
+                }
+            }),
+        ];
+
+        let usage_updates: Vec<TokenUsage> = chunks
+            .into_iter()
+            .flat_map(|chunk| mapper.map_event(serde_json::from_value(chunk).unwrap()))
+            .filter_map(|event| match event {
+                Ok(LanguageModelCompletionEvent::UsageUpdate(usage)) => Some(usage),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            usage_updates,
+            vec![TokenUsage {
+                input_tokens: 3296,
+                output_tokens: 107,
+                cache_read_input_tokens: 30436,
+                cache_creation_input_tokens: 0,
+            }]
+        );
     }
 
     #[test]
@@ -683,8 +913,10 @@ mod tests {
             usage_metadata: None,
         };
 
-        mapper.map_event(response);
-        assert_eq!(mapper.stop_reason, StopReason::Refusal);
+        assert!(matches!(
+            mapper.map_event(response).as_slice(),
+            [Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal))]
+        ));
     }
 
     #[test]

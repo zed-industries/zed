@@ -24,6 +24,8 @@ pub fn register_fake_definition_server(
         language::FakeLspAdapter {
             name: "fake-definition-lsp",
             initialization_options: None,
+            additional_initialization_options: HashMap::default(),
+            additional_workspace_configuration: HashMap::default(),
             prettier_plugins: Vec::new(),
             disk_based_diagnostics_progress_token: None,
             disk_based_diagnostics_sources: Vec::new(),
@@ -32,6 +34,7 @@ pub fn register_fake_definition_server(
                 arguments: Vec::new(),
                 env: None,
             },
+            opt_in_languages: Default::default(),
             capabilities: lsp::ServerCapabilities {
                 definition_provider: Some(lsp::OneOf::Left(true)),
                 type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
@@ -243,6 +246,12 @@ impl DefinitionIndex {
                 .or_insert_with(Vec::new)
                 .push(location);
         }
+        for (name, location) in extract_extra_definition_locations(content) {
+            self.definitions
+                .entry(name)
+                .or_insert_with(Vec::new)
+                .push(location);
+        }
 
         let type_annotations = extract_type_annotations(content)
             .into_iter()
@@ -301,6 +310,34 @@ impl DefinitionIndex {
 
         None
     }
+}
+
+fn extract_extra_definition_locations(content: &str) -> Vec<(String, lsp::Location)> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line
+                .trim()
+                .strip_prefix("// fake-definition-lsp-extra ")?
+                .split_whitespace();
+            let name = parts.next()?.to_string();
+            let path = PathBuf::from(parts.next()?);
+            let start_row = parts.next()?.parse().ok()?;
+            let start_column = parts.next()?.parse().ok()?;
+            let end_row = parts.next()?.parse().ok()?;
+            let end_column = parts.next()?.parse().ok()?;
+            Some((
+                name,
+                lsp::Location::new(
+                    Uri::from_file_path(path).ok()?,
+                    lsp::Range::new(
+                        lsp::Position::new(start_row, start_column),
+                        lsp::Position::new(end_row, end_column),
+                    ),
+                ),
+            ))
+        })
+        .collect()
 }
 
 /// Extracts `identifier_name -> type_name` mappings from field declarations
@@ -405,7 +442,7 @@ fn extract_declarations_from_tree(
         let mut name_range: Option<Range<usize>> = None;
         let mut has_item_range = false;
 
-        for capture in query_match.captures {
+        for capture in query_match.captures() {
             let range = capture.node.byte_range();
             if capture.index == outline_config.name_capture_ix {
                 name_range = Some(range);

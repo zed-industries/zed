@@ -1,29 +1,42 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
-#![allow(clippy::collapsible_else_if)] // False positives in platform specific code
-#![allow(unused_mut)] // False positives in platform specific code
+
+pub extern crate accesskit;
+pub extern crate http_client;
+#[cfg(any(test, feature = "test-support"))]
+pub extern crate proptest;
+/// Subsecond entry points for hot-patching callbacks outside GPUI's render boundaries.
+#[cfg(all(
+    feature = "hot-reload",
+    any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "ios"
+    )
+))]
+pub extern crate subsecond;
 
 extern crate self as gpui;
-#[doc(hidden)]
-pub static GPUI_MANIFEST_DIR: &'static str = env!("CARGO_MANIFEST_DIR");
+
+pub mod colors;
+pub mod prelude;
+pub mod profiler;
+
 #[macro_use]
 mod action;
 mod app;
-
 mod arena;
 mod asset_cache;
 mod assets;
 mod bounds_tree;
 mod color;
-/// The default colors used by GPUI.
-pub mod colors;
 mod element;
 mod elements;
 mod executor;
-mod platform_scheduler;
-pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
+mod gestures;
 mod global;
 mod input;
 mod inspector;
@@ -32,29 +45,52 @@ mod key_dispatch;
 mod keymap;
 mod path_builder;
 mod platform;
-pub mod prelude;
-/// Profiling utilities for task timing and thread performance tracking.
-pub mod profiler;
-#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
-#[expect(missing_docs)]
-pub mod queue;
+mod platform_scheduler;
 mod scene;
 mod shared_uri;
+mod spring;
 mod style;
 mod styled;
 mod subscription;
 mod svg_renderer;
 mod tab_stop;
 mod taffy;
-#[cfg(any(test, feature = "test-support"))]
-pub mod test;
 mod text_system;
 mod util;
 mod view;
 mod window;
 
+#[cfg(feature = "profiler")]
+mod debug_overlay;
+#[cfg(feature = "profiler")]
+pub use debug_overlay::*;
+
+#[cfg(gpui_hot_reload)]
+mod hot_reload;
+#[cfg(any(
+    test,
+    target_os = "windows",
+    target_os = "linux",
+    target_family = "wasm",
+    feature = "test-support",
+    feature = "bench-support"
+))]
+pub mod queue;
+
+#[cfg(any(test, feature = "bench-support"))]
+pub mod randomized_element_tree;
+
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+mod bench;
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+mod seeds;
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+pub use seeds::calculate_seeds;
+
 #[cfg(any(test, feature = "test-support"))]
-pub use proptest;
+pub mod test;
+#[cfg(any(test, feature = "test-support"))]
+pub use test::*;
 
 #[cfg(doc)]
 pub mod _accessibility;
@@ -66,68 +102,70 @@ pub mod _ownership_and_data_flow;
 pub mod private {
     pub use anyhow;
     pub use inventory;
+    pub use rand;
     pub use schemars;
     pub use serde;
     pub use serde_json;
 }
+
+#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
+
+pub use accesskit::{Action as AccessibleAction, Orientation, Role, Toggled};
+pub use action::*;
+pub use anyhow::Result;
+pub use app::*;
+pub use asset_cache::*;
+pub use assets::*;
+pub use color::*;
+pub use element::*;
+pub use elements::*;
+pub use executor::*;
+pub use geometry::*;
+pub use gestures::*;
+pub use global::*;
+pub use gpui_macros::{
+    AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,
+};
+pub use gpui_shared_string::*;
+pub use gpui_util::arc_cow::ArcCow;
+pub use input::*;
+pub use inspector::*;
+pub use interactive::*;
+pub use keymap::*;
+pub use path_builder::*;
+pub use platform::*;
+pub use profiler::*;
+pub use refineable::*;
+pub use scene::*;
+pub use shared_uri::*;
+pub use spring::*;
+pub use style::*;
+pub use styled::*;
+pub use subscription::*;
+pub use svg_renderer::*;
+pub use taffy::{AvailableSpace, LayoutId};
+pub use text_system::*;
+pub use util::{FutureExt, Timeout};
+pub use view::*;
+pub use window::*;
+
+#[cfg(not(target_family = "wasm"))]
+pub use pollster::block_on;
+
+pub(crate) use arena::*;
+pub(crate) use platform_scheduler::PlatformScheduler;
+pub(crate) use tab_stop::*;
+
+use std::{any::Any, future::Future};
+
+use key_dispatch::*;
 
 mod seal {
     /// A mechanism for restricting implementations of a trait to only those in GPUI.
     /// See: <https://predr.ag/blog/definitive-guide-to-sealed-traits-in-rust/>
     pub trait Sealed {}
 }
-
-pub use accesskit;
-pub use accesskit::Action as AccessibleAction;
-pub use accesskit::{Orientation, Role, Toggled};
-pub use action::*;
-pub use anyhow::Result;
-pub use app::*;
-pub(crate) use arena::*;
-pub use asset_cache::*;
-pub use assets::*;
-pub use color::*;
-pub use ctor::ctor;
-pub use element::*;
-pub use elements::*;
-pub use executor::*;
-pub use geometry::*;
-pub use global::*;
-pub use gpui_macros::{
-    AppContext, IntoElement, Render, VisualContext, property_test, register_action, test,
-};
-pub use gpui_shared_string::*;
-pub use gpui_util::arc_cow::ArcCow;
-pub use http_client;
-pub use input::*;
-pub use inspector::*;
-pub use interactive::*;
-use key_dispatch::*;
-pub use keymap::*;
-pub use path_builder::*;
-pub use platform::*;
-pub use profiler::*;
-#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
-pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
-pub use refineable::*;
-pub use scene::*;
-pub use shared_uri::*;
-use std::{any::Any, future::Future};
-pub use style::*;
-pub use styled::*;
-pub use subscription::*;
-pub use svg_renderer::*;
-pub(crate) use tab_stop::*;
-use taffy::TaffyLayoutEngine;
-pub use taffy::{AvailableSpace, LayoutId};
-#[cfg(any(test, feature = "test-support"))]
-pub use test::*;
-pub use text_system::*;
-pub use util::{FutureExt, Timeout};
-pub use view::*;
-pub use window::*;
-
-pub use pollster::block_on;
 
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.

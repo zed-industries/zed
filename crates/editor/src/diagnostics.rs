@@ -55,7 +55,7 @@ pub(super) struct InlineDiagnostic {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct ActiveDiagnosticGroup {
     active_range: Range<Anchor>,
-    active_message: String,
+    active_message: language::DiagnosticMessage,
     group_id: usize,
     blocks: HashSet<CustomBlockId>,
 }
@@ -191,7 +191,13 @@ impl Editor {
             s.select_ranges(vec![diagnostic.range.start..diagnostic.range.start])
         });
         self.activate_diagnostics(buffer_id, diagnostic, window, cx);
-        self.refresh_edit_prediction(false, true, window, cx);
+        self.refresh_edit_prediction(
+            true,
+            false,
+            EditPredictionRequestTrigger::DiagnosticNavigation,
+            window,
+            cx,
+        );
     }
 
     pub fn go_to_diagnostic_in_direction(
@@ -270,6 +276,7 @@ impl Editor {
 
     pub fn disable_diagnostics(&mut self, cx: &mut Context<Self>) {
         self.diagnostics_enabled = false;
+        self.set_max_diagnostics_severity(DiagnosticSeverity::Off, cx);
         self.dismiss_diagnostics(cx);
         self.inline_diagnostics_update = Task::ready(());
         self.inline_diagnostics.clear();
@@ -298,7 +305,11 @@ impl Editor {
     }
 
     pub fn set_max_diagnostics_severity(&mut self, severity: DiagnosticSeverity, cx: &mut App) {
-        self.diagnostics_max_severity = severity;
+        self.diagnostics_max_severity = if self.diagnostics_enabled() {
+            severity
+        } else {
+            DiagnosticSeverity::Off
+        };
         self.display_map.update(cx, |display_map, _| {
             display_map.diagnostics_max_severity = self.diagnostics_max_severity;
         });
@@ -325,13 +336,12 @@ impl Editor {
         self.set_max_diagnostics_severity(new_severity, cx);
         if self.diagnostics_enabled {
             self.active_diagnostics = ActiveDiagnostic::None;
+            self.refresh_inline_diagnostics(false, window, cx);
+        } else {
             self.inline_diagnostics_update = Task::ready(());
             self.inline_diagnostics.clear();
-        } else {
-            self.refresh_inline_diagnostics(false, window, cx);
+            cx.notify();
         }
-
-        cx.notify();
     }
 
     pub(super) fn all_diagnostics_active(&self) -> bool {
@@ -364,7 +374,10 @@ impl Editor {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
                         && entry.range.start == primary_range_start
-                        && entry.diagnostic.message == active_diagnostics.active_message
+                        && entry
+                            .diagnostic
+                            .message
+                            .rendered_eq(&active_diagnostics.active_message)
                 });
 
             if !is_valid {
@@ -458,6 +471,7 @@ impl Editor {
         {
             self.inline_diagnostics_update = Task::ready(());
             self.inline_diagnostics.clear();
+            cx.notify();
             return;
         }
 
@@ -489,11 +503,16 @@ impl Editor {
                         let message = diagnostic_entry
                             .diagnostic
                             .message
+                            .as_str()
                             .split_once('\n')
                             .map(|(line, _)| line)
                             .map(SharedString::new)
                             .unwrap_or_else(|| {
-                                SharedString::new(&*diagnostic_entry.diagnostic.message)
+                                diagnostic_entry
+                                    .diagnostic
+                                    .message
+                                    .as_shared_string()
+                                    .clone()
                             });
                         let start_anchor = snapshot.anchor_before(diagnostic_entry.range.start);
                         let (Ok(i) | Err(i)) = inline_diagnostics
@@ -525,6 +544,32 @@ impl Editor {
         });
     }
 
+    pub(super) fn remove_invalid_inline_diagnostics(
+        &mut self,
+        buffer_ids: &[BufferId],
+        buffers_removed: bool,
+        snapshot: &MultiBufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        if self.inline_diagnostics.is_empty() {
+            return;
+        }
+        let buffer_ids = buffer_ids.iter().copied().collect::<HashSet<_>>();
+        let previous_len = self.inline_diagnostics.len();
+        self.inline_diagnostics.retain(|(anchor, _)| {
+            anchor
+                .buffer_id()
+                .is_none_or(|buffer_id| !buffer_ids.contains(&buffer_id))
+                || !buffers_removed
+                    && anchor
+                        .raw_text_anchor()
+                        .is_none_or(|text_anchor| snapshot.anchor_in_excerpt(text_anchor).is_some())
+        });
+        if self.inline_diagnostics.len() != previous_len {
+            cx.notify();
+        }
+    }
+
     pub(super) fn pull_diagnostics(
         &mut self,
         buffer_id: BufferId,
@@ -547,23 +592,32 @@ impl Editor {
         let project = self.project()?.downgrade();
         let buffer = self.buffer().read(cx).buffer(buffer_id)?;
 
-        self.pull_diagnostics_task = cx.spawn(async move |_, cx| {
-            cx.background_executor().timer(debounce).await;
-            if let Ok(task) = project.update(cx, |project, cx| {
-                project.lsp_store().update(cx, |lsp_store, cx| {
-                    lsp_store.pull_diagnostics_for_buffer(buffer, cx)
+        self.spawn_lsp_data_tasks(
+            LspDataKind::PullDiagnostics,
+            Some(buffer_id),
+            vec![buffer],
+            cx,
+            |buffer, cx| {
+                let project = project.clone();
+                cx.spawn(async move |_, cx| {
+                    cx.background_executor().timer(debounce).await;
+                    if let Ok(task) = project.update(cx, |project, cx| {
+                        project.lsp_store().update(cx, |lsp_store, cx| {
+                            lsp_store.pull_diagnostics_for_buffer(buffer, cx)
+                        })
+                    }) {
+                        task.await.log_err();
+                    }
+                    project
+                        .update(cx, |project, cx| {
+                            project.lsp_store().update(cx, |lsp_store, cx| {
+                                lsp_store.pull_document_diagnostics_for_buffer_edit(buffer_id, cx);
+                            })
+                        })
+                        .log_err();
                 })
-            }) {
-                task.await.log_err();
-            }
-            project
-                .update(cx, |project, cx| {
-                    project.lsp_store().update(cx, |lsp_store, cx| {
-                        lsp_store.pull_document_diagnostics_for_buffer_edit(buffer_id, cx);
-                    })
-                })
-                .log_err();
-        });
+            },
+        );
 
         Some(())
     }
@@ -588,5 +642,440 @@ impl Editor {
             ActiveDiagnostic::All => true,
             ActiveDiagnostic::Group(_) => true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        Editor,
+        actions::{
+            ToggleCodeLens, ToggleDiagnostics, ToggleInlayHints, ToggleInlineDiagnostics,
+            ToggleSemanticHighlights,
+        },
+        editor_tests::init_test,
+        test::{build_editor_with_project, editor_test_context::EditorTestContext},
+    };
+    use gpui::{Action, AppContext as _, TestAppContext, UpdateGlobal};
+    use indoc::indoc;
+    use language::{Capability, DiagnosticSourceKind, Point};
+    use lsp::LanguageServerId;
+    use multi_buffer::{MultiBuffer, PathKey, ToPoint as _};
+    use project::{FakeFs, Project, project_settings::DiagnosticSeverity};
+    use serde_json::json;
+    use settings::{DelayMs, SettingsStore};
+    use std::sync::{
+        Arc,
+        atomic::{self, AtomicUsize},
+    };
+    use util::path;
+
+    fn setup_inline_diagnostics(cx: &mut EditorTestContext) {
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let inline = settings
+                        .diagnostics
+                        .get_or_insert_default()
+                        .inline
+                        .get_or_insert_default();
+                    inline.enabled = Some(true);
+                    inline.update_debounce_ms = Some(DelayMs(0));
+                });
+            });
+        });
+
+        cx.set_state(indoc! {"
+            fn func(abc dˇef: i32) -> u32 {
+            }
+        "});
+
+        let lsp_store =
+            cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
+        cx.update(|_, cx| {
+            lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store
+                    .update_diagnostics(
+                        LanguageServerId(0),
+                        lsp::PublishDiagnosticsParams {
+                            uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
+                            version: None,
+                            diagnostics: vec![lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 12),
+                                    lsp::Position::new(0, 15),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                message: lsp::DiagnosticMessage::from("cannot find value `def`"),
+                                ..Default::default()
+                            }],
+                        },
+                        None,
+                        DiagnosticSourceKind::Pushed,
+                        &[],
+                        cx,
+                    )
+                    .unwrap()
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _, _| {
+            assert_eq!(
+                editor.inline_diagnostics.len(),
+                1,
+                "inline diagnostics should appear after the language server publishes them"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_disabled_diagnostics_ignore_severity_changes(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.update_editor(|editor, _, cx| {
+            assert!(editor.display_snapshot(cx).diagnostics_visible());
+
+            editor.disable_diagnostics(cx);
+            assert!(!editor.display_snapshot(cx).diagnostics_visible());
+
+            editor.set_max_diagnostics_severity(DiagnosticSeverity::Hint, cx);
+            assert!(!editor.display_snapshot(cx).diagnostics_visible());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_diagnostics_refreshes_inline_diagnostics(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+        setup_inline_diagnostics(&mut cx);
+
+        cx.update_editor(|editor, window, cx| {
+            editor.toggle_diagnostics(&ToggleDiagnostics, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update_editor(|editor, _, _| {
+            assert_eq!(
+                editor.inline_diagnostics.len(),
+                0,
+                "inline diagnostics should be cleared after disabling diagnostics"
+            );
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.toggle_diagnostics(&ToggleDiagnostics, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update_editor(|editor, _, _| {
+            assert_eq!(
+                editor.inline_diagnostics.len(),
+                1,
+                "inline diagnostics should reappear after re-enabling diagnostics, without further editor events"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_inline_diagnostics_notifies_on_hide(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+        setup_inline_diagnostics(&mut cx);
+
+        let notify_count = Arc::new(AtomicUsize::new(0));
+        let editor = cx.editor.clone();
+        let _subscription = cx.update({
+            let notify_count = notify_count.clone();
+            move |_, cx| {
+                cx.observe(&editor, move |_, _| {
+                    notify_count.fetch_add(1, atomic::Ordering::SeqCst);
+                })
+            }
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.toggle_inline_diagnostics(&ToggleInlineDiagnostics, window, cx);
+        });
+        cx.update_editor(|editor, _, _| {
+            assert_eq!(
+                editor.inline_diagnostics.len(),
+                0,
+                "inline diagnostics should be cleared after toggling them off"
+            );
+        });
+        assert_eq!(
+            notify_count.load(atomic::Ordering::SeqCst),
+            1,
+            "toggling inline diagnostics off should notify to repaint the editor"
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            editor.toggle_inline_diagnostics(&ToggleInlineDiagnostics, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update_editor(|editor, _, _| {
+            assert_eq!(
+                editor.inline_diagnostics.len(),
+                1,
+                "inline diagnostics should reappear after toggling them back on"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_actions_gated_by_lsp_data(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+        let lsp_data_actions: [&dyn Action; 4] = [
+            &ToggleDiagnostics,
+            &ToggleInlayHints,
+            &ToggleCodeLens,
+            &ToggleSemanticHighlights,
+        ];
+
+        cx.update_editor(|editor, _, cx| {
+            editor.enable_lsp_data = false;
+            cx.notify();
+        });
+        cx.update(|window, cx| {
+            for action in lsp_data_actions {
+                assert!(
+                    !window.is_action_available(action, cx),
+                    "{} should not be available when LSP data is disabled",
+                    action.name()
+                );
+            }
+        });
+
+        cx.update_editor(|editor, _, cx| {
+            editor.enable_lsp_data = true;
+            cx.notify();
+        });
+        cx.update(|window, cx| {
+            for action in lsp_data_actions {
+                assert!(
+                    window.is_action_available(action, cx),
+                    "{} should be available again after re-enabling LSP data",
+                    action.name()
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_diagnostics_remains_available_after_disabling_diagnostics(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.dispatch_action(ToggleDiagnostics);
+        cx.update_editor(|editor, window, cx| {
+            assert!(
+                !editor.diagnostics_enabled(),
+                "diagnostics should be disabled after dispatching ToggleDiagnostics"
+            );
+            assert!(
+                window.is_action_available(&ToggleDiagnostics, cx),
+                "ToggleDiagnostics should still be available after disabling diagnostics, \
+                 so the user can re-enable it"
+            );
+        });
+
+        cx.dispatch_action(ToggleDiagnostics);
+        cx.update_editor(|editor, window, cx| {
+            assert!(
+                editor.diagnostics_enabled(),
+                "diagnostics should be re-enabled after a second dispatch of ToggleDiagnostics"
+            );
+            assert!(
+                window.is_action_available(&ToggleDiagnostics, cx),
+                "ToggleDiagnostics should be available again after re-enabling diagnostics"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_inline_diagnostics_availability(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.dispatch_action(ToggleDiagnostics);
+        cx.update(|window, cx| {
+            assert!(
+                !window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should not be available when diagnostics are disabled"
+            );
+        });
+
+        cx.dispatch_action(ToggleDiagnostics);
+        cx.update(|window, cx| {
+            assert!(
+                window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should be available again after re-enabling diagnostics"
+            );
+        });
+
+        let initial_show = cx.update_editor(|editor, _, _| editor.show_inline_diagnostics());
+        cx.dispatch_action(ToggleInlineDiagnostics);
+        cx.update_editor(|editor, window, cx| {
+            assert_eq!(
+                editor.show_inline_diagnostics(),
+                !initial_show,
+                "inline diagnostics visibility should flip after dispatching ToggleInlineDiagnostics"
+            );
+            assert!(
+                window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should still be available after toggling it, \
+                 so the user can toggle it back"
+            );
+        });
+
+        cx.dispatch_action(ToggleInlineDiagnostics);
+        cx.update_editor(|editor, window, cx| {
+            assert_eq!(
+                editor.show_inline_diagnostics(),
+                initial_show,
+                "inline diagnostics visibility should flip back after a second dispatch of ToggleInlineDiagnostics"
+            );
+            assert!(
+                window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should remain available after toggling it back"
+            );
+        });
+
+        cx.update_editor(|editor, _, cx| {
+            editor.disable_inline_diagnostics();
+            cx.notify();
+        });
+        cx.update(|window, cx| {
+            assert!(
+                !window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should not be available in editors with inline diagnostics permanently disabled"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_inline_diagnostics_removed_with_excerpts(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let inline = settings
+                        .diagnostics
+                        .get_or_insert_default()
+                        .inline
+                        .get_or_insert_default();
+                    inline.enabled = Some(true);
+                    inline.update_debounce_ms = Some(DelayMs(0));
+                });
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": "one\ntwo\nthree",
+                "b.rs": "four",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let first_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let second_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/b.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                first_buffer.clone(),
+                [Point::new(0, 0)..Point::new(2, 5)],
+                0,
+                cx,
+            );
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
+                second_buffer.clone(),
+                [Point::new(0, 0)..Point::new(0, 4)],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            build_editor_with_project(project, multibuffer.clone(), window, cx)
+        });
+        lsp_store.update(cx, |lsp_store, cx| {
+            for (path, row) in [(path!("/dir/a.rs"), 2), (path!("/dir/b.rs"), 0)] {
+                lsp_store
+                    .update_diagnostics(
+                        LanguageServerId(0),
+                        lsp::PublishDiagnosticsParams {
+                            uri: lsp::Uri::from_file_path(path).unwrap(),
+                            version: None,
+                            diagnostics: vec![lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(row, 0),
+                                    lsp::Position::new(row, 3),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                message: lsp::DiagnosticMessage::from(format!("error in {path}")),
+                                ..lsp::Diagnostic::default()
+                            }],
+                        },
+                        None,
+                        DiagnosticSourceKind::Pushed,
+                        &[],
+                        cx,
+                    )
+                    .unwrap();
+            }
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(inline_diagnostic_rows(editor, cx), vec![2, 3]);
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                first_buffer.clone(),
+                [Point::new(0, 0)..Point::new(0, 3)],
+                0,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(inline_diagnostic_rows(editor, cx), vec![1]);
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(second_buffer.read(cx).remote_id(), cx);
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(inline_diagnostic_rows(editor, cx), Vec::<u32>::new());
+        });
+    }
+
+    fn inline_diagnostic_rows(editor: &Editor, cx: &gpui::App) -> Vec<u32> {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        editor
+            .inline_diagnostics
+            .iter()
+            .map(|(anchor, _)| anchor.to_point(&snapshot).row)
+            .collect()
     }
 }

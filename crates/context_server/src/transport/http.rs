@@ -58,6 +58,10 @@ pub struct HttpTransport {
     /// When set, the transport attaches `Authorization: Bearer` headers and
     /// handles 401 responses with token refresh + retry.
     token_provider: Option<Arc<dyn OAuthTokenProvider>>,
+    /// The challenge from the last 401 this transport gave up on; cleared at
+    /// the start of each send so it always describes the most recent attempt.
+    /// See [`Transport::auth_challenge`].
+    auth_challenge: SyncMutex<Option<WwwAuthenticate>>,
 }
 
 impl HttpTransport {
@@ -92,6 +96,7 @@ impl HttpTransport {
             error_rx,
             headers,
             token_provider,
+            auth_challenge: SyncMutex::new(None),
         }
     }
 
@@ -133,8 +138,21 @@ impl HttpTransport {
         Ok(request_builder.body(AsyncBody::from(message.to_vec()))?)
     }
 
+    /// Record the challenge so it remains observable after the failed send
+    /// tears down the client (see [`Transport::auth_challenge`]), and build
+    /// the typed error for the send itself.
+    fn auth_required(&self, www_authenticate: WwwAuthenticate) -> anyhow::Error {
+        *self.auth_challenge.lock() = Some(www_authenticate.clone());
+        TransportError::AuthRequired { www_authenticate }.into()
+    }
+
     /// Send a message and handle the response based on content type.
     async fn send_message(&self, message: String) -> Result<()> {
+        // The same server instance can be restarted over this transport; a
+        // challenge recorded by a previous client generation must not be
+        // observed by the current one.
+        *self.auth_challenge.lock() = None;
+
         let is_notification =
             !message.contains("\"id\":") || message.contains("notifications/initialized");
 
@@ -174,13 +192,13 @@ impl HttpTransport {
 
                     // If still 401 after refresh, give up.
                     if response.status().as_u16() == 401 {
-                        return Err(TransportError::AuthRequired { www_authenticate }.into());
+                        return Err(self.auth_required(www_authenticate));
                     }
                 } else {
-                    return Err(TransportError::AuthRequired { www_authenticate }.into());
+                    return Err(self.auth_required(www_authenticate));
                 }
             } else {
-                return Err(TransportError::AuthRequired { www_authenticate }.into());
+                return Err(self.auth_required(www_authenticate));
             }
         }
 
@@ -282,7 +300,7 @@ impl HttpTransport {
                                     data_buffer.clear();
                                 }
                                 in_message = false;
-                            } else if let Some(data) = line.strip_prefix("data: ") {
+                            } else if let Some(data) = line.strip_prefix("data:") {
                                 // Handle data lines
                                 let data = data.trim();
                                 if !data.is_empty() {
@@ -334,6 +352,10 @@ impl Transport for HttpTransport {
 
     fn set_protocol_version(&self, version: &str) {
         *self.protocol_version.lock() = Some(version.to_string());
+    }
+
+    fn auth_challenge(&self) -> Option<WwwAuthenticate> {
+        self.auth_challenge.lock().clone()
     }
 }
 
@@ -390,9 +412,13 @@ impl Drop for HttpTransport {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use futures::FutureExt as _;
     use gpui::TestAppContext;
     use parking_lot::Mutex as SyncMutex;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::{
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+        time::Duration,
+    };
 
     /// A mock token provider that returns a configurable token and tracks
     /// refresh attempts.
@@ -468,6 +494,52 @@ mod tests {
             .header("Content-Type", "application/json")
             .body(AsyncBody::from(body.as_bytes().to_vec()))
             .unwrap())
+    }
+
+    #[gpui::test]
+    async fn test_sse_data_field(cx: &mut TestAppContext) {
+        for data_prefix in ["data:", "data: "] {
+            let body = format!(
+                "id:1\nevent:message\n{data_prefix}{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{}}}}\n\n"
+            );
+            let client = make_fake_http_client(move |_req| {
+                let body = body.clone();
+                Box::pin(async move {
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "text/event-stream;charset=UTF-8")
+                        .body(AsyncBody::from(body.into_bytes()))
+                        .unwrap())
+                })
+            });
+
+            let transport = HttpTransport::new(
+                client,
+                "http://mcp.example.com/mcp".to_string(),
+                HashMap::default(),
+                cx.background_executor.clone(),
+            );
+
+            transport
+                .send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#.to_string())
+                .await
+                .expect("send should succeed");
+
+            let mut responses = transport.receive();
+            let next_response = responses.next().fuse();
+            let timeout = cx.background_executor.timer(Duration::from_secs(1)).fuse();
+            futures::pin_mut!(next_response, timeout);
+
+            let response = futures::select_biased! {
+                response = next_response => response.expect("expected SSE response"),
+                _ = timeout => panic!("timed out waiting for SSE response with {data_prefix:?}"),
+            };
+
+            assert_eq!(
+                response, r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
+                "unexpected SSE response for {data_prefix:?}",
+            );
+        }
     }
 
     #[gpui::test]

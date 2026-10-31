@@ -731,7 +731,7 @@ impl ToolchainSelector {
 
 impl Render for ToolchainSelector {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("ToolchainSelector");
 
         v_flex()
@@ -864,7 +864,7 @@ impl ToolchainSelectorDelegate {
                 Some(())
             }
         });
-        let placeholder_text = "Select a toolchain…".to_string().into();
+        let placeholder_text = Arc::from("Select a toolchain…");
         Self {
             toolchain_selector,
             candidates: Default::default(),
@@ -897,6 +897,10 @@ impl ToolchainSelectorDelegate {
 
 impl PickerDelegate for ToolchainSelectorDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "toolchain selector"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         self.placeholder_text.clone()
@@ -953,7 +957,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.toolchain_selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn selected_index(&self) -> usize {

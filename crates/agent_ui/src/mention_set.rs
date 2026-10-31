@@ -1,7 +1,7 @@
 use crate::diagnostics::{DiagnosticsOptions, codeblock_fence_for_path, collect_diagnostics};
 use acp_thread::{MentionUri, selection_name};
 use agent::{ThreadStore, outline};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v2 as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -10,6 +10,7 @@ use editor::{
     display_map::{Crease, CreaseId, CreaseMetadata, FoldId},
     scroll::Autoscroll,
 };
+use fs::Fs;
 use futures::{AsyncReadExt as _, FutureExt as _, future::Shared};
 use gpui::{
     AppContext, ClipboardEntry, Context, Empty, Entity, EntityId, Image, ImageFormat, Img,
@@ -147,8 +148,10 @@ impl MentionSet {
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Skill {
-                skill_file_path, ..
-            } => self.confirm_mention_for_skill(skill_file_path, cx),
+                source,
+                skill_file_path,
+                ..
+            } => self.confirm_mention_for_skill(source, skill_file_path, cx),
             MentionUri::Diagnostics {
                 include_errors,
                 include_warnings,
@@ -166,7 +169,8 @@ impl MentionSet {
             ))),
             MentionUri::PastedImage { .. }
             | MentionUri::TerminalSelection { .. }
-            | MentionUri::MergeConflict { .. } => {
+            | MentionUri::MergeConflict { .. }
+            | MentionUri::Rule { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
             }
         }
@@ -262,7 +266,7 @@ impl MentionSet {
                 .read(cx)
                 .project_path_for_absolute_path(&abs_path, cx)
             else {
-                log::error!("project path not found");
+                log::error!("project path not found for image mention {abs_path:?}");
                 return Task::ready(());
             };
             let image_task = project.update(cx, |project, cx| project.open_image(project_path, cx));
@@ -320,8 +324,10 @@ impl MentionSet {
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Skill {
-                skill_file_path, ..
-            } => self.confirm_mention_for_skill(skill_file_path, cx),
+                source,
+                skill_file_path,
+                ..
+            } => self.confirm_mention_for_skill(source, skill_file_path, cx),
             MentionUri::Diagnostics {
                 include_errors,
                 include_warnings,
@@ -346,6 +352,10 @@ impl MentionSet {
             MentionUri::MergeConflict { .. } => {
                 debug_panic!("unexpected merge conflict URI");
                 Task::ready(Err(anyhow!("unexpected merge conflict URI")))
+            }
+            MentionUri::Rule { .. } => {
+                debug_panic!("unexpected rule URI");
+                Task::ready(Err(anyhow!("unexpected rule URI")))
             }
         };
         let task = cx
@@ -390,7 +400,9 @@ impl MentionSet {
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            return Task::ready(Err(anyhow!("project path not found")));
+            return Task::ready(Err(anyhow!(
+                "project path not found for file mention {abs_path:?}"
+            )));
         };
 
         if is_raster_image_path(&abs_path) {
@@ -417,7 +429,12 @@ impl MentionSet {
 
         let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
-            let buffer = buffer.await?;
+            let buffer = match buffer.await {
+                Ok(buffer) => buffer,
+                Err(_error) => {
+                    return Ok(Mention::Link);
+                }
+            };
             let buffer_content = outline::get_buffer_content_or_outline(
                 buffer.clone(),
                 Some(&abs_path.to_string_lossy()),
@@ -460,7 +477,9 @@ impl MentionSet {
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            return Task::ready(Err(anyhow!("project path not found")));
+            return Task::ready(Err(anyhow!(
+                "project path not found for symbol mention {abs_path:?}"
+            )));
         };
         let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
@@ -480,6 +499,7 @@ impl MentionSet {
 
     fn confirm_mention_for_skill(
         &self,
+        source: String,
         skill_file_path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
@@ -491,8 +511,26 @@ impl MentionSet {
                 tracked_buffers: Vec::new(),
             }));
         }
+        // Project skills may be on a remote machine, so read them through the project.
+        // Global skills stay local, even if a worktree contains their path.
+        if let Some(project) = self.project.upgrade()
+            && let Some(buffer) = project.update(cx, |project, cx| {
+                let project_path = project_path_for_skill(project, &source, &skill_file_path, cx)?;
+                Some(project.open_buffer(project_path, cx))
+            })
+        {
+            return cx.spawn(async move |_, cx| {
+                let buffer = buffer.await?;
+                let content = buffer.update(cx, |buffer, _cx| buffer.text());
+                Ok(Mention::Text {
+                    content,
+                    tracked_buffers: Vec::new(),
+                })
+            });
+        }
+        let fs = <dyn Fs>::global(cx);
         cx.background_spawn(async move {
-            let content = std::fs::read_to_string(&skill_file_path).map_err(|e| {
+            let content = fs.load(&skill_file_path).await.map_err(|e| {
                 anyhow!(
                     "Failed to read skill file {}: {}",
                     skill_file_path.display(),
@@ -511,6 +549,7 @@ impl MentionSet {
         source_range: Range<text::Anchor>,
         selections: Vec<(Entity<Buffer>, Range<text::Anchor>, Range<usize>)>,
         editor: Entity<Editor>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -550,6 +589,8 @@ impl MentionSet {
                 selection_name(abs_path.as_deref(), &line_range).into(),
                 uri.icon_path(cx),
                 uri.tooltip_text(),
+                Some(uri.clone()),
+                Some(workspace.clone()),
                 range,
                 editor.downgrade(),
             );
@@ -607,7 +648,7 @@ impl MentionSet {
             thread_store,
         ));
         let delegate =
-            AgentServerDelegate::new(project.read(cx).agent_server_store().clone(), None);
+            AgentServerDelegate::new(project.read(cx).agent_server_store().clone(), None, None);
         let connection = server.connect(delegate, project.clone(), cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
@@ -692,23 +733,65 @@ impl MentionSet {
     }
 }
 
-/// Computes disambiguated labels for a set of mentions. When multiple mentions
-/// share the same base name, their labels include extra context (additional
-/// parent path components for files/directories, source for skills) so the user
-/// can tell them apart. Driven by [`util::disambiguate::compute_disambiguation_details`],
-/// which is the same utility used for buffer tab titles and the sidebar.
+/// A project skill's source is its worktree's root name.
+fn project_path_for_skill(
+    project: &Project,
+    source: &str,
+    skill_file_path: &Path,
+    cx: &App,
+) -> Option<ProjectPath> {
+    project.worktrees(cx).find_map(|worktree| {
+        let worktree = worktree.read(cx);
+        if worktree.root_name_str() != source {
+            return None;
+        }
+        let path_style = worktree.path_style();
+        let relative_path = path_style
+            .strip_prefix(skill_file_path, worktree.abs_path())
+            .ok()?;
+        let relative_path = RelPath::new(relative_path, path_style).ok()?;
+        Some(ProjectPath {
+            worktree_id: worktree.id(),
+            path: relative_path.into_arc(),
+        })
+    })
+}
+
+/// Computes disambiguated labels for a set of mentions, so that mentions sharing
+/// a base name get extra context (parent path components, skill source) to tell
+/// them apart. Same approach as buffer tab titles and the sidebar.
 fn compute_disambiguated_labels<'a>(
     mentions: impl Iterator<Item = (CreaseId, &'a MentionUri)>,
 ) -> HashMap<CreaseId, SharedString> {
-    let mentions: Vec<_> = mentions.collect();
+    let (ids, uris): (Vec<CreaseId>, Vec<&MentionUri>) = mentions.unzip();
+    ids.into_iter()
+        .zip(disambiguated_labels_for_uris(&uris))
+        .collect()
+}
+
+/// Labels for each URI, in input order. Duplicate URIs are collapsed first, so a
+/// mention added twice keeps its base name instead of being escalated to its
+/// full path by the collision-resolution loop.
+fn disambiguated_labels_for_uris(uris: &[&MentionUri]) -> Vec<SharedString> {
+    let mut seen: HashSet<&MentionUri> = HashSet::default();
+    let unique_uris: Vec<&MentionUri> = uris
+        .iter()
+        .copied()
+        .filter(|&uri| seen.insert(uri))
+        .collect();
+
     let details =
-        util::disambiguate::compute_disambiguation_details(&mentions, |(_, uri), detail| {
+        util::disambiguate::compute_disambiguation_details(&unique_uris, |uri, detail| {
             uri.disambiguated_name(detail)
         });
-    mentions
-        .into_iter()
-        .zip(details)
-        .map(|((id, uri), detail)| (id, uri.disambiguated_name(detail).into()))
+
+    let uri_to_detail: HashMap<&MentionUri, usize> = unique_uris.into_iter().zip(details).collect();
+
+    uris.iter()
+        .map(|uri| {
+            let detail = uri_to_detail.get(uri).copied().unwrap_or(0);
+            uri.disambiguated_name(detail).into()
+        })
         .collect()
 }
 
@@ -801,6 +884,71 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    async fn test_global_skill_mention_inside_worktree_reads_from_host_fs(cx: &mut TestAppContext) {
+        let content = read_skill_mention_with_project_and_host_copies(
+            "global",
+            path!("/home/user"),
+            path!("/home/user/.agents/skills/my-skill/SKILL.md"),
+            cx,
+        )
+        .await;
+        assert_eq!(content, "host copy");
+    }
+
+    async fn read_skill_mention_with_project_and_host_copies(
+        source: &str,
+        worktree_root: &str,
+        skill_file_path: &str,
+        cx: &mut TestAppContext,
+    ) -> String {
+        init_test(cx);
+        let skill_directory = Path::new(skill_file_path).parent().unwrap();
+
+        let host_fs = FakeFs::new(cx.executor());
+        host_fs
+            .insert_tree(skill_directory, json!({ "SKILL.md": "host copy" }))
+            .await;
+        cx.update(|cx| <dyn Fs>::set_global(host_fs, cx));
+
+        let project_fs = FakeFs::new(cx.executor());
+        project_fs
+            .insert_tree(skill_directory, json!({ "SKILL.md": "project copy" }))
+            .await;
+        let project = Project::test(project_fs, [Path::new(worktree_root)], cx).await;
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None));
+
+        let mention_task = mention_set.update(cx, |mention_set, cx| {
+            let http_client = project.read(cx).client().http_client();
+            mention_set.confirm_mention_for_uri(
+                MentionUri::Skill {
+                    name: "my-skill".to_string(),
+                    source: source.to_string(),
+                    skill_file_path: skill_file_path.into(),
+                },
+                false,
+                http_client,
+                cx,
+            )
+        });
+        match mention_task.await.unwrap() {
+            Mention::Text { content, .. } => content,
+            other => panic!("Expected skill mention to resolve as text, got {other:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_mention_reads_through_project_fs(cx: &mut TestAppContext) {
+        let content = read_skill_mention_with_project_and_host_copies(
+            "project",
+            path!("/project"),
+            path!("/project/.agents/skills/my-skill/SKILL.md"),
+            cx,
+        )
+        .await;
+        assert_eq!(content, "project copy");
+    }
+
     #[test]
     fn test_is_raster_image_path_is_case_insensitive() {
         // Regression test for #54308: drag-and-dropping a file whose extension
@@ -818,6 +966,27 @@ mod tests {
         // Non-image extensions and paths with no extension.
         assert!(!is_raster_image_path(Path::new("/tmp/notes.txt")));
         assert!(!is_raster_image_path(Path::new("/tmp/README")));
+    }
+
+    #[test]
+    fn test_disambiguated_labels_dedupe_identical_uris() {
+        // Mentioning the same file twice must not escalate the duplicates to
+        // their full path. Distinct files sharing a base name still disambiguate.
+        let foo_a = MentionUri::File {
+            abs_path: path!("/project/a/foo.rs").into(),
+        };
+
+        let foo_b = MentionUri::File {
+            abs_path: path!("/project/b/foo.rs").into(),
+        };
+
+        let uris = vec![&foo_a, &foo_a, &foo_b];
+        let labels = disambiguated_labels_for_uris(&uris);
+
+        assert_eq!(labels[0].as_ref(), "a/foo.rs");
+        assert_eq!(labels[2].as_ref(), "b/foo.rs");
+        // The duplicate keeps the same label rather than escalating to full path.
+        assert_eq!(labels[1].as_ref(), "a/foo.rs");
     }
 }
 
@@ -994,6 +1163,10 @@ pub(crate) fn paste_images_as_context(
         return None;
     }
 
+    // When this handles the paste, the caller stops the editor's own text paste, so fall
+    // back to pasting the clipboard's text (e.g. non-image file paths) if no images load.
+    let fallback_text = clipboard.text();
+
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
         let default_name: SharedString = "Image".into();
@@ -1006,21 +1179,26 @@ pub(crate) fn paste_images_as_context(
             })
             .partition_map::<Vec<_>, Vec<_>, _, _, _>(std::convert::identity);
 
-        if !paths.is_empty() {
-            images.extend(
-                cx.background_spawn(async move {
+        // A bitmap and image files in the clipboard are usually the same image (e.g. a
+        // screenshot saved to a temporary file), so only load files when there's no bitmap.
+        if images.is_empty() && !paths.is_empty() {
+            images = cx
+                .background_spawn(async move {
                     paths
                         .into_iter()
                         .flat_map(|paths| paths.paths().to_owned())
                         .filter_map(|path| load_external_image_from_path(&path, &default_name))
                         .collect::<Vec<_>>()
                 })
-                .await,
-            );
+                .await;
         }
 
         if !images.is_empty() {
             insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
+        } else if let Some(text) = fallback_text {
+            editor
+                .update_in(cx, |editor, window, cx| editor.insert(&text, window, cx))
+                .ok();
         }
     }))
 }
@@ -1095,11 +1273,20 @@ pub(crate) fn crease_for_mention(
     label: SharedString,
     icon_path: SharedString,
     tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     range: Range<Anchor>,
     editor_entity: WeakEntity<Editor>,
 ) -> Crease<Anchor> {
     let placeholder = FoldPlaceholder {
-        render: render_fold_icon_button(icon_path.clone(), label.clone(), tooltip, editor_entity),
+        render: render_fold_icon_button(
+            icon_path.clone(),
+            label.clone(),
+            tooltip,
+            mention_uri,
+            workspace,
+            editor_entity,
+        ),
         merge_adjacent: false,
         ..Default::default()
     };
@@ -1114,6 +1301,8 @@ fn render_fold_icon_button(
     icon_path: SharedString,
     label: SharedString,
     tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     editor: WeakEntity<Editor>,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new({
@@ -1123,6 +1312,8 @@ fn render_fold_icon_button(
                 .unwrap_or_default();
 
             MentionCrease::new(fold_id, icon_path.clone(), label.clone())
+                .mention_uri(mention_uri.clone())
+                .workspace(workspace.clone())
                 .is_toggled(is_in_text_selection)
                 .when_some(tooltip.clone(), |this, tooltip_text| {
                     this.tooltip(tooltip_text)
@@ -1178,7 +1369,9 @@ fn full_mention_for_directory(
         .read(cx)
         .project_path_for_absolute_path(&abs_path, cx)
     else {
-        return Task::ready(Err(anyhow!("project path not found")));
+        return Task::ready(Err(anyhow!(
+            "project path not found for directory mention {abs_path:?}"
+        )));
     };
     let Some(entry) = project.read(cx).entry_for_path(&project_path, cx) else {
         return Task::ready(Err(anyhow!("project entry not found")));
@@ -1198,8 +1391,7 @@ fn full_mention_for_directory(
                 |(worktree_path, full_path): (Arc<RelPath>, String)| {
                     let rel_path = worktree_path
                         .strip_prefix(&directory_path)
-                        .log_err()
-                        .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
+                        .map_or_else(|_| worktree_path.clone(), |rel_path| rel_path.into());
 
                     let open_task = project.update(cx, |project, cx| {
                         project.buffer_store().update(cx, |buffer_store, cx| {

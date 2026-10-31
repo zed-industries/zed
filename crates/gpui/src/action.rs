@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use collections::HashMap;
+use collections::{HashMap, TypeIdHashMap};
 pub use gpui_macros::Action;
 pub use no_action::{NoAction, Unbind, is_no_action, is_unbind};
 use serde_json::json;
@@ -194,13 +194,13 @@ pub enum ActionBuildError {
     /// Indicates that an action with this name has not been registered.
     NotFound {
         /// Name of the action that was not found.
-        name: String,
+        name: Box<str>,
     },
     /// Indicates that an error occurred while building the action, typically a JSON deserialization
     /// error.
     BuildError {
         /// Name of the action that was attempting to be built.
-        name: String,
+        name: Box<str>,
         /// Error that occurred while building the action.
         error: anyhow::Error,
     },
@@ -232,7 +232,7 @@ type ActionBuilder = fn(json: serde_json::Value) -> anyhow::Result<Box<dyn Actio
 
 pub(crate) struct ActionRegistry {
     by_name: HashMap<&'static str, ActionData>,
-    names_by_type_id: HashMap<TypeId, &'static str>,
+    names_by_type_id: TypeIdHashMap<&'static str>,
     all_names: Vec<&'static str>, // So we can return a static slice.
     deprecated_aliases: HashMap<&'static str, &'static str>, // deprecated name -> preferred name
     deprecation_messages: HashMap<&'static str, &'static str>, // action name -> deprecation message
@@ -342,6 +342,11 @@ impl ActionRegistry {
         Ok(self.build_action(name, None)?)
     }
 
+    #[cfg(feature = "profiler")]
+    pub(crate) fn try_resolve_action(&self, type_id: &TypeId) -> Option<&'static str> {
+        self.names_by_type_id.get(type_id).copied()
+    }
+
     /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
     pub fn build_action(
         &self,
@@ -351,13 +356,11 @@ impl ActionRegistry {
         let build_action = self
             .by_name
             .get(name)
-            .ok_or_else(|| ActionBuildError::NotFound {
-                name: name.to_owned(),
-            })?
+            .ok_or_else(|| ActionBuildError::NotFound { name: name.into() })?
             .build;
         (build_action)(params.unwrap_or_else(|| json!({}))).map_err(|e| {
             ActionBuildError::BuildError {
-                name: name.to_owned(),
+                name: name.into(),
                 error: e,
             }
         })
