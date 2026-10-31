@@ -6059,29 +6059,65 @@ impl MultiBufferSnapshot {
     pub async fn enclosing_indent(
         &self,
         mut target_row: MultiBufferRow,
+        tab_size: u32,
     ) -> Option<(Range<MultiBufferRow>, LineIndent)> {
         let max_row = MultiBufferRow(self.max_point().row);
-        if target_row >= max_row {
+        if target_row > max_row {
             return None;
-        }
-
-        let mut target_indent = self.line_indent_for_row(target_row);
-
-        // If the current row is at the start of an indented block, we want to return this
-        // block as the enclosing indent.
-        if !target_indent.is_line_empty() && target_row < max_row {
-            let next_line_indent = self.line_indent_for_row(MultiBufferRow(target_row.0 + 1));
-            if !next_line_indent.is_line_empty()
-                && target_indent.raw_len() < next_line_indent.raw_len()
-            {
-                target_indent = next_line_indent;
-                target_row.0 += 1;
-            }
         }
 
         const SEARCH_ROW_LIMIT: u32 = 25000;
         const SEARCH_WHITESPACE_ROW_LIMIT: u32 = 2500;
         const YIELD_INTERVAL: u32 = 100;
+
+        let mut target_indent = self.line_indent_for_row(target_row);
+
+        // Like VS Code, a line starts (or ends) an indented block when the line after (or before)
+        // it is indented exactly one level deeper.
+        if !target_indent.is_line_blank() {
+            let tab_size = tab_size.max(1);
+            let level = |indent: &LineIndent| indent.len(tab_size) / tab_size;
+            let target_level = level(&target_indent);
+
+            // If the current row is at the start of an indented block, we want to return this
+            // block as the enclosing indent. Blank lines at the start of the block are skipped,
+            // in which case any deeper indent starts a block.
+            let block_start = (target_row < max_row)
+                .then(|| {
+                    self.line_indents(MultiBufferRow(target_row.0 + 1), |_| true)
+                        .take(SEARCH_WHITESPACE_ROW_LIMIT as usize)
+                        .find(|(_, indent, _)| !indent.is_line_blank())
+                })
+                .flatten()
+                .filter(|(row, indent, _)| {
+                    if row.0 == target_row.0 + 1 {
+                        level(indent) == target_level + 1
+                    } else {
+                        level(indent) > target_level
+                    }
+                });
+
+            // If the current row is at the end of an indented block (e.g. a closing `}` or `},`),
+            // we want to return this block as the enclosing indent, instead of its parent.
+            // Blank lines at the end of the block are not skipped, as that would select the
+            // previous block for the first statement after it in indentation-based languages.
+            let block_end = (target_row.0 > 0)
+                .then(|| {
+                    let row = MultiBufferRow(target_row.0 - 1);
+                    (row, self.line_indent_for_row(row))
+                })
+                .filter(|(_, indent)| {
+                    !indent.is_line_blank() && level(indent) == target_level + 1
+                });
+
+            if let Some((row, indent, _)) = block_start {
+                target_row = row;
+                target_indent = indent;
+            } else if let Some((row, indent)) = block_end {
+                target_row = row;
+                target_indent = indent;
+            }
+        }
 
         let mut accessed_row_counter = 0;
 
