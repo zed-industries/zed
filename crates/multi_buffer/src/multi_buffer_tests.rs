@@ -3912,10 +3912,19 @@ async fn test_enclosing_indent(cx: &mut TestAppContext) {
         buffer_row: u32,
         cx: &mut TestAppContext,
     ) -> Option<(Range<u32>, LineIndent)> {
+        enclosing_indent_with_tab_size(text, buffer_row, 4, cx).await
+    }
+
+    async fn enclosing_indent_with_tab_size(
+        text: &str,
+        buffer_row: u32,
+        tab_size: u32,
+        cx: &mut TestAppContext,
+    ) -> Option<(Range<u32>, LineIndent)> {
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
         let snapshot = cx.read(|cx| buffer.read(cx).snapshot(cx));
         let (range, indent) = snapshot
-            .enclosing_indent(MultiBufferRow(buffer_row))
+            .enclosing_indent(MultiBufferRow(buffer_row), tab_size)
             .await?;
         Some((range.start.0..range.end.0, indent))
     }
@@ -3992,6 +4001,219 @@ async fn test_enclosing_indent(cx: &mut TestAppContext) {
             LineIndent {
                 tabs: 0,
                 spaces: 4,
+                line_blank: false,
+            }
+        ))
+    );
+
+    // A closing line returns the block it closes, not its parent.
+    assert_eq!(
+        enclosing_indent(
+            indoc!(
+                "
+                fn b() {
+                    if c {
+                        let d = 2;
+                    }
+                }
+                "
+            ),
+            3,
+            cx,
+        )
+        .await,
+        Some((
+            1..2,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
+    );
+
+    // A closing line with trailing content (e.g. `},`).
+    assert_eq!(
+        enclosing_indent_with_tab_size(
+            indoc!(
+                "
+                const foo = {
+                  a: {
+                    b: \"c\",
+                  },
+                };
+                "
+            ),
+            3,
+            2,
+            cx,
+        )
+        .await,
+        Some((
+            1..2,
+            LineIndent {
+                tabs: 0,
+                spaces: 2,
+                line_blank: false,
+            }
+        ))
+    );
+
+    // The outermost closing line returns the outermost block.
+    assert_eq!(
+        enclosing_indent_with_tab_size(
+            indoc!(
+                "
+                const foo = {
+                  a: {
+                    b: \"c\",
+                  },
+                };
+                "
+            ),
+            4,
+            2,
+            cx,
+        )
+        .await,
+        Some((
+            0..3,
+            LineIndent {
+                tabs: 0,
+                spaces: 0,
+                line_blank: false,
+            }
+        ))
+    );
+
+    // A closing line on the last row, without a trailing newline.
+    assert_eq!(
+        enclosing_indent(
+            indoc!(
+                "
+                fn b() {
+                    if c {
+                        let d = 2;
+                    }
+                }"
+            ),
+            4,
+            cx,
+        )
+        .await,
+        Some((
+            0..3,
+            LineIndent {
+                tabs: 0,
+                spaces: 0,
+                line_blank: false,
+            }
+        ))
+    );
+
+    // A line that both closes and opens a block (e.g. `} else {`) returns the block it opens.
+    assert_eq!(
+        enclosing_indent(
+            indoc!(
+                "
+                fn b() {
+                    if c {
+                        let d = 2;
+                    } else {
+                        let e = 3;
+                    }
+                }
+                "
+            ),
+            3,
+            cx,
+        )
+        .await,
+        Some((
+            3..4,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
+    );
+
+    // Blank lines at the start of a block are skipped.
+    assert_eq!(
+        enclosing_indent(
+            indoc!(
+                "
+                fn b() {
+                    if c {
+
+                        let d = 2;
+                    }
+                }
+                "
+            ),
+            1,
+            cx,
+        )
+        .await,
+        Some((
+            1..3,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
+    );
+
+    // A line after a block that is more than one level deeper does not close that block.
+    assert_eq!(
+        enclosing_indent(
+            indoc!(
+                "
+                class A:
+                    def f(self):
+                        if x:
+                            a()
+                    b = 1
+                c = 2
+                "
+            ),
+            4,
+            cx,
+        )
+        .await,
+        Some((
+            0..4,
+            LineIndent {
+                tabs: 0,
+                spaces: 0,
+                line_blank: false,
+            }
+        ))
+    );
+
+    // A whitespace-only line before the current line does not close a block.
+    assert_eq!(
+        enclosing_indent("fn f() {\n    a();\n        \n    b();\n}\n", 3, cx).await,
+        Some((
+            0..3,
+            LineIndent {
+                tabs: 0,
+                spaces: 0,
+                line_blank: false,
+            }
+        ))
+    );
+
+    // A closing line indented with tabs.
+    assert_eq!(
+        enclosing_indent("fn b() {\n\tif c {\n\t\tlet d = 2;\n\t}\n}\n", 3, cx).await,
+        Some((
+            1..2,
+            LineIndent {
+                tabs: 1,
+                spaces: 0,
                 line_blank: false,
             }
         ))
