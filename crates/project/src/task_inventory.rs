@@ -194,6 +194,54 @@ impl TaskContexts {
             })
     }
 
+    /// Returns the first context, in the task picker's order of preference, in which the task resolves.
+    pub fn context_for_task(
+        &self,
+        kind: &TaskSourceKind,
+        template: &TaskTemplate,
+    ) -> Option<&TaskContext> {
+        let id_base = kind.to_id_base();
+        self.contexts_for_source(kind)
+            .find(|&context| template.resolve_task(&id_base, context).is_some())
+    }
+
+    pub fn resolve_task(
+        &self,
+        kind: &TaskSourceKind,
+        template: &TaskTemplate,
+    ) -> Option<ResolvedTask> {
+        let id_base = kind.to_id_base();
+        self.contexts_for_source(kind)
+            .find_map(|context| template.resolve_task(&id_base, context))
+            .or_else(|| template.resolve_task(&id_base, &TaskContext::default()))
+    }
+
+    /// Worktree tasks are only resolved with contexts of their own worktree, so that an active item
+    /// from an unrelated (e.g. invisible or single-file) worktree does not affect their variables.
+    fn contexts_for_source(&self, kind: &TaskSourceKind) -> impl Iterator<Item = &TaskContext> {
+        let source_worktree = match kind {
+            TaskSourceKind::Worktree { id, .. } => Some(*id),
+            _ => None,
+        };
+
+        let item_context = self
+            .active_item_context
+            .as_ref()
+            .filter(|(worktree_id, _, _)| {
+                source_worktree.is_none() || *worktree_id == source_worktree
+            })
+            .map(|(_, _, context)| context);
+
+        let worktree_context = match source_worktree {
+            Some(worktree_id) => self.task_context_for_worktree_id(worktree_id),
+            None => self
+                .active_worktree_context
+                .as_ref()
+                .map(|(_, context)| context),
+        };
+        item_context.into_iter().chain(worktree_context)
+    }
+
     pub fn location(&self) -> Option<&Location> {
         self.active_item_context
             .as_ref()
@@ -592,50 +640,10 @@ impl Inventory {
                 .chain(global_tasks);
 
             let new_resolved_tasks = worktree_tasks
-                .flat_map(|(kind, task)| {
-                    let id_base = kind.to_id_base();
-
-                    if let TaskSourceKind::Worktree { id, .. } = &kind {
-                        None.or_else(|| {
-                            let (_, _, item_context) =
-                                task_contexts.active_item_context.as_ref().filter(
-                                    |(worktree_id, _, _)| Some(id) == worktree_id.as_ref(),
-                                )?;
-                            task.resolve_task(&id_base, item_context)
-                        })
-                        .or_else(|| {
-                            let (_, worktree_context) = task_contexts
-                                .active_worktree_context
-                                .as_ref()
-                                .filter(|(worktree_id, _)| id == worktree_id)?;
-                            task.resolve_task(&id_base, worktree_context)
-                        })
-                        .or_else(|| {
-                            if let TaskSourceKind::Worktree { id, .. } = &kind {
-                                let worktree_context = task_contexts
-                                    .other_worktree_contexts
-                                    .iter()
-                                    .find(|(worktree_id, _)| worktree_id == id)
-                                    .map(|(_, context)| context)?;
-                                task.resolve_task(&id_base, worktree_context)
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        None.or_else(|| {
-                            let (_, _, item_context) =
-                                task_contexts.active_item_context.as_ref()?;
-                            task.resolve_task(&id_base, item_context)
-                        })
-                        .or_else(|| {
-                            let (_, worktree_context) =
-                                task_contexts.active_worktree_context.as_ref()?;
-                            task.resolve_task(&id_base, worktree_context)
-                        })
-                    }
-                    .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
-                    .map(move |resolved_task| (kind.clone(), resolved_task, not_used_score))
+                .filter_map(|(kind, task)| {
+                    task_contexts
+                        .resolve_task(&kind, &task)
+                        .map(move |resolved_task| (kind, resolved_task, not_used_score))
                 })
                 .filter(|(_, resolved_task, _)| {
                     match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
@@ -1065,12 +1073,14 @@ impl ContextProvider for BasicContextProvider {
                     .worktree_for_id(worktree_id, cx)
             });
 
-        if let Some(worktree) = worktree {
+        if let Some(worktree) = worktree
+            && let Some(worktree_root) = worktree.read(cx).root_dir()
+        {
             let worktree = worktree.read(cx);
             let path_style = worktree.path_style();
             task_variables.insert(
                 VariableName::WorktreeRoot,
-                worktree.abs_path().to_string_lossy().into_owned(),
+                worktree_root.to_string_lossy().into_owned(),
             );
             if let Some(current_file) = current_file.as_ref() {
                 let relative_path = current_file.path();
