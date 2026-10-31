@@ -289,6 +289,8 @@ pub fn into_open_ai_response(
         temperature,
         thinking_allowed,
         thinking_effort,
+        // Other backends share this conversion; only native OpenAI streaming opts into mode.
+        reasoning_mode: _,
         speed,
         compact_at_tokens,
         max_output_tokens: _,
@@ -370,17 +372,16 @@ pub fn into_open_ai_response(
     };
 
     let reasoning = reasoning_effort.map(|effort| crate::responses::ReasoningConfig {
-        effort,
+        effort: Some(effort),
         summary: if effort == ReasoningEffort::None {
             None
         } else {
             Some(crate::responses::ReasoningSummaryMode::Auto)
         },
+        mode: None,
     });
 
-    let include = if reasoning
-        .as_ref()
-        .is_some_and(|reasoning| reasoning.effort != ReasoningEffort::None)
+    let include = if reasoning_effort.is_some_and(|effort| effort != ReasoningEffort::None)
         || input_items
             .iter()
             .any(|item| matches!(item, ResponseInputItem::Reasoning(_)))
@@ -1536,12 +1537,48 @@ mod tests {
         LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelRequestToolInput,
         LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
         LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID,
-        OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, SharedString, Speed,
+        OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, ReasoningMode, SharedString, Speed,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn shared_response_conversion_ignores_reasoning_mode() -> Result<()> {
+        for provider_id in [
+            OPEN_AI_PROVIDER_ID,
+            language_model_core::ZED_CLOUD_PROVIDER_ID,
+        ] {
+            for thinking_allowed in [false, true] {
+                for reasoning_mode in [ReasoningMode::Standard, ReasoningMode::Pro] {
+                    let response = into_open_ai_response(
+                        LanguageModelRequest {
+                            thinking_allowed,
+                            thinking_effort: Some("high".into()),
+                            reasoning_mode,
+                            ..Default::default()
+                        },
+                        "gpt-6-astra",
+                        true,
+                        true,
+                        None,
+                        Some(ReasoningEffort::Medium),
+                        false,
+                        &provider_id,
+                    )?;
+                    let serialized = serde_json::to_value(response)?;
+                    assert_eq!(
+                        serialized.get("reasoning"),
+                        thinking_allowed
+                            .then(|| json!({ "effort": "high", "summary": "auto" }))
+                            .as_ref(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn prompt_cache_key_respects_override_fallback_and_capability() -> Result<()> {
@@ -1907,6 +1944,7 @@ mod tests {
             temperature: None,
             thinking_allowed: true,
             thinking_effort: Some("high".into()),
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -2096,6 +2134,7 @@ mod tests {
             temperature: None,
             thinking_allowed: false,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -2199,6 +2238,7 @@ mod tests {
             temperature: None,
             thinking_allowed: false,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -2286,6 +2326,7 @@ mod tests {
             temperature: None,
             thinking_allowed: false,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -2354,6 +2395,7 @@ mod tests {
             temperature: None,
             thinking_allowed: false,
             thinking_effort: Some("high".into()),
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -2419,7 +2461,7 @@ mod tests {
                 false,
             )?;
             assert_eq!(
-                response.reasoning.as_ref().map(|config| config.effort),
+                response.reasoning.as_ref().and_then(|config| config.effort),
                 effort
             );
             assert_eq!(chat.reasoning_effort, effort);
@@ -2465,6 +2507,7 @@ mod tests {
                 temperature: None,
                 thinking_allowed: false,
                 thinking_effort: None,
+                reasoning_mode: ReasoningMode::Standard,
                 speed,
                 compact_at_tokens: None,
                 max_output_tokens: None,
@@ -2519,6 +2562,7 @@ mod tests {
                 temperature: None,
                 thinking_allowed: false,
                 thinking_effort: None,
+                reasoning_mode: ReasoningMode::Standard,
                 speed,
                 compact_at_tokens: None,
                 max_output_tokens: None,
@@ -2566,6 +2610,7 @@ mod tests {
             temperature: None,
             thinking_allowed: false,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -2644,6 +2689,7 @@ mod tests {
             temperature: None,
             thinking_allowed: false,
             thinking_effort: Some("high".into()),
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -2687,6 +2733,7 @@ mod tests {
             temperature: None,
             thinking_allowed: true,
             thinking_effort: Some("none".into()),
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -2742,6 +2789,7 @@ mod tests {
             temperature: None,
             thinking_allowed: true,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -2836,6 +2884,7 @@ mod tests {
             temperature: None,
             thinking_allowed: true,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -2928,6 +2977,7 @@ mod tests {
             temperature: None,
             thinking_allowed: false,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -4233,6 +4283,7 @@ mod tests {
             temperature: None,
             thinking_allowed: true,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,

@@ -58,7 +58,7 @@ use itertools::Itertools;
 use language::{Buffer, BufferEvent, File};
 use language_model::{
     CompletionIntent, Event as LanguageModelEvent, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
+    LanguageModelRequestMessage, ReasoningMode, Role,
 };
 use menu;
 use multi_buffer::ExcerptBoundaryInfo;
@@ -4635,6 +4635,7 @@ impl GitPanel {
                     temperature,
                     thinking_allowed: false,
                     thinking_effort: None,
+                    reasoning_mode: ReasoningMode::Standard,
                     speed: None,
                     compact_at_tokens: None,
                     max_output_tokens: None,

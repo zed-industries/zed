@@ -9636,6 +9636,7 @@ dependencies = [
  "paths",
  "rand 0.9.4",
  "release_channel",
+ "reqwest_client",
  "schemars 1.0.4",
  "serde",
  "serde_json",

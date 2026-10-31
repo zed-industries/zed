@@ -381,8 +381,9 @@ fn open_ai_request(
     )?;
     if enable_thinking && let Some(effort) = effort {
         request.reasoning = Some(open_ai::responses::ReasoningConfig {
-            effort,
+            effort: Some(effort),
             summary: Some(open_ai::responses::ReasoningSummaryMode::Auto),
+            mode: None,
         });
     }
     Ok(request)
