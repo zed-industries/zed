@@ -1007,6 +1007,8 @@ impl VsCodeSettings {
             });
 
         ProjectTerminalSettingsContent {
+            profiles: None,
+            default_profile: None,
             // TODO: handle arguments
             shell: self
                 .read_string(&format!("terminal.integrated.{platform}Exec"))

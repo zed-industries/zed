@@ -7249,9 +7249,35 @@ fn debugger_page() -> SettingsPage {
 }
 
 fn terminal_page() -> SettingsPage {
-    fn environment_section() -> [SettingsPageItem; 5] {
+    fn environment_section() -> [SettingsPageItem; 7] {
         [
                 SettingsPageItem::SectionHeader("Environment"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER | PROJECT,
+                    title: "Profiles",
+                    description: "Named shells and commands available from the terminal panel's profile menu. Configure programs, arguments, environment variables, and working directories in JSON.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("terminal.profiles"),
+                        pick: |settings_content| Some(settings_content),
+                        write: |_settings_content, _value, _| {},
+                    }.unimplemented()),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER | PROJECT,
+                    title: "Default Profile",
+                    description: "The named profile to use when opening a new terminal. Leave empty to use the configured shell.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("terminal.default_profile"),
+                        pick: |settings_content| settings_content.terminal.as_ref()?.project.default_profile.as_ref(),
+                        write: |settings_content, value, _| {
+                            settings_content.terminal.get_or_insert_default().project.default_profile = value;
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
                         files: USER | PROJECT,
