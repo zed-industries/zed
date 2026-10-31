@@ -62,6 +62,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: existing_window
     pub default_open_behavior: Option<DefaultOpenBehavior>,
+    /// Whether to keep the previous project open in the window when switching
+    /// to another one, even when AI features are disabled.
+    ///
+    /// Default: false
+    pub keep_projects_in_window: Option<bool>,
     /// Whether to attempt to restore previous file's state when opening it again.
     /// The state is stored per pane.
     /// When disabled, defaults are applied instead of the state restoration.
