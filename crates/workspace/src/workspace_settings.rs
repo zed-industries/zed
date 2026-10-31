@@ -32,9 +32,8 @@ pub struct WorkspaceSettings {
     pub accessible_mode: bool,
     pub command_aliases: HashMap<String, CommandAliasTarget>,
     pub max_tabs: Option<NonZeroUsize>,
-    pub when_closing_with_no_tabs: settings::CloseWindowWhenNoItems,
+    pub window_closing: WindowClosingSettings,
     pub on_new_window: settings::OnNewWindow,
-    pub on_last_window_closed: settings::OnLastWindowClosed,
     pub text_rendering_mode: settings::TextRenderingMode,
     pub use_display_p3: bool,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
@@ -52,8 +51,15 @@ pub struct WorkspaceSettings {
 #[cfg(target_os = "macos")]
 pub fn closing_last_window_quits_app(cx: &App) -> bool {
     WorkspaceSettings::get_global(cx)
+        .window_closing
         .on_last_window_closed
         .is_quit_app()
+}
+
+pub struct WindowClosingSettings {
+    pub on_close_with_no_tabs: settings::CloseWindowWhenNoItems,
+    pub on_last_tab_closed: settings::LastTabCloseBehavior,
+    pub on_last_window_closed: settings::OnLastWindowClosed,
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -97,6 +103,7 @@ pub struct TabBarSettings {
 impl Settings for WorkspaceSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let workspace = &content.workspace;
+        let window_closing = workspace.window_closing.unwrap();
         Self {
             active_pane_modifiers: ActivePanelModifiers {
                 border_size: Some(
@@ -132,9 +139,12 @@ impl Settings for WorkspaceSettings {
             accessible_mode: workspace.accessible_mode.unwrap(),
             command_aliases: workspace.command_aliases.clone(),
             max_tabs: workspace.max_tabs,
-            when_closing_with_no_tabs: workspace.when_closing_with_no_tabs.unwrap(),
+            window_closing: WindowClosingSettings {
+                on_close_with_no_tabs: window_closing.on_close_with_no_tabs.unwrap(),
+                on_last_tab_closed: window_closing.on_last_tab_closed.unwrap(),
+                on_last_window_closed: window_closing.on_last_window_closed.unwrap(),
+            },
             on_new_window: workspace.on_new_window.unwrap(),
-            on_last_window_closed: workspace.on_last_window_closed.unwrap(),
             text_rendering_mode: workspace.text_rendering_mode.unwrap(),
             use_display_p3: workspace.use_display_p3.unwrap(),
             resize_all_panels_in_dock: workspace

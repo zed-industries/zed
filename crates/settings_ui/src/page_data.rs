@@ -135,9 +135,9 @@ fn developer_page(cx: &App) -> SettingsPage {
     }
 }
 
-fn general_page(cx: &App) -> SettingsPage {
-    fn general_settings_section(_cx: &App) -> Vec<SettingsPageItem> {
-        vec![
+fn general_page(_cx: &App) -> SettingsPage {
+    fn general_settings_section() -> [SettingsPageItem; 2] {
+        [
             SettingsPageItem::SectionHeader("General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Accessible Mode",
@@ -153,25 +153,11 @@ fn general_page(cx: &App) -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "When Closing With No Tabs",
-                description: "What to do when using the 'close active item' action with no tabs.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("when_closing_with_no_tabs"),
-                    pick: |settings_content| {
-                        settings_content
-                            .workspace
-                            .when_closing_with_no_tabs
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content.workspace.when_closing_with_no_tabs = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
+        ]
+    }
+    fn other_general_settings_section() -> Vec<SettingsPageItem> {
+        vec![
+            SettingsPageItem::SectionHeader("Other General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "On New Window",
                 description: "What to show when opening a new window; Readme opens a project's README when no items are open, leaving the pane empty if none is found.",
@@ -181,22 +167,6 @@ fn general_page(cx: &App) -> SettingsPage {
                     pick: |settings_content| settings_content.workspace.on_new_window.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.workspace.on_new_window = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "On Last Window Closed",
-                description: "What to do when the last window is closed.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("on_last_window_closed"),
-                    pick: |settings_content| {
-                        settings_content.workspace.on_last_window_closed.as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content.workspace.on_last_window_closed = value;
                     },
                 }),
                 metadata: None,
@@ -322,6 +292,84 @@ fn general_page(cx: &App) -> SettingsPage {
             }),
         ]
     }
+    fn window_closing_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("Window Closing"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "On Close With No Tabs",
+                description: "What to do when invoking Close while no tabs are open.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("window_closing.on_close_with_no_tabs"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .window_closing
+                            .as_ref()
+                            .and_then(|closing| closing.on_close_with_no_tabs.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .workspace
+                            .window_closing
+                            .get_or_insert_default()
+                            .on_close_with_no_tabs = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "On Last Tab Closed",
+                description: "What to do after closing the last tab. Project and multi-workspace windows remain open.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("window_closing.on_last_tab_closed"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .window_closing
+                            .as_ref()
+                            .and_then(|closing| closing.on_last_tab_closed.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .workspace
+                            .window_closing
+                            .get_or_insert_default()
+                            .on_last_tab_closed = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "On Last Window Closed",
+                description: "What to do when the last window closes.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("window_closing.on_last_window_closed"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .window_closing
+                            .as_ref()
+                            .and_then(|closing| closing.on_last_window_closed.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .workspace
+                            .window_closing
+                            .get_or_insert_default()
+                            .on_last_window_closed = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn security_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("Security"),
@@ -541,7 +589,9 @@ fn general_page(cx: &App) -> SettingsPage {
         title: "General",
         items: concat_sections!(
             @vec,
-            general_settings_section(cx),
+            general_settings_section(),
+            window_closing_section(),
+            other_general_settings_section(),
             security_section(),
             workspace_restoration_section(),
             scoped_settings_section(),
