@@ -33815,6 +33815,7 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut TestAppContext
         &mut cx,
     );
 
+    // The closing line of a block activates the guide of the block it closes.
     cx.update_editor(|editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(3, 0)..Point::new(3, 0)])
@@ -33828,7 +33829,77 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut TestAppContext
             indent_guide(buffer_id, 1, 3, 0),
             indent_guide(buffer_id, 2, 2, 1),
         ],
+        Some(vec![1]),
+        &mut cx,
+    );
+
+    // The closing line on the last row of the buffer, without a trailing newline.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(4, 0)..Point::new(4, 0)])
+        });
+    });
+    cx.run_until_parked();
+
+    assert_indent_guides(
+        0..4,
+        vec![
+            indent_guide(buffer_id, 1, 3, 0),
+            indent_guide(buffer_id, 2, 2, 1),
+        ],
         Some(vec![0]),
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_active_indent_guide_closing_line(cx: &mut TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+    fn main() {
+        let a = 1;
+        if a == 1 {
+            let b = 2;
+        }
+        let c = 3;
+    }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
+        });
+    });
+    cx.run_until_parked();
+
+    assert_indent_guides(
+        0..7,
+        vec![
+            indent_guide(buffer_id, 1, 5, 0),
+            indent_guide(buffer_id, 3, 3, 1),
+        ],
+        Some(vec![0]),
+        &mut cx,
+    );
+
+    // Moving within the outer block onto a closing line must not reuse the outer block.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(4, 0)..Point::new(4, 0)])
+        });
+    });
+    cx.run_until_parked();
+
+    assert_indent_guides(
+        0..7,
+        vec![
+            indent_guide(buffer_id, 1, 5, 0),
+            indent_guide(buffer_id, 3, 3, 1),
+        ],
+        Some(vec![1]),
         &mut cx,
     );
 }

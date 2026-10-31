@@ -96,9 +96,14 @@ impl Editor {
                 return None;
             }
 
+            let tab_size = snapshot
+                .buffer_snapshot()
+                .language_settings_at(Point::new(cursor_row.0, 0), cx)
+                .tab_size
+                .get();
             let snapshot = snapshot.clone();
 
-            let task = cx.background_spawn(resolve_indented_range(snapshot, cursor_row));
+            let task = cx.background_spawn(resolve_indented_range(snapshot, cursor_row, tab_size));
 
             // Try to resolve the indent in a short amount of time, otherwise move it to a background task.
             match cx
@@ -205,10 +210,11 @@ pub fn indent_guides_in_range(
 async fn resolve_indented_range(
     snapshot: DisplaySnapshot,
     buffer_row: MultiBufferRow,
+    tab_size: u32,
 ) -> Option<ActiveIndentedRange> {
     snapshot
         .buffer_snapshot()
-        .enclosing_indent(buffer_row)
+        .enclosing_indent(buffer_row, tab_size)
         .await
         .map(|(row_range, indent)| ActiveIndentedRange { row_range, indent })
 }
@@ -234,12 +240,20 @@ fn should_recalculate_indented_range(
             || new_line_indent.is_line_empty()
             || old_line_indent != new_line_indent
             || snapshot.buffer_snapshot().max_point().row == new_row.0
+            || new_row.0 == 0
         {
             return true;
         }
 
         let next_line_indent = snapshot.buffer_snapshot().line_indent_for_row(new_row + 1);
-        next_line_indent.is_line_empty() || next_line_indent != old_line_indent
+        if next_line_indent.is_line_empty() || next_line_indent != old_line_indent {
+            return true;
+        }
+
+        let prev_line_indent = snapshot
+            .buffer_snapshot()
+            .line_indent_for_row(MultiBufferRow(new_row.0 - 1));
+        prev_line_indent.is_line_empty() || prev_line_indent != old_line_indent
     } else {
         true
     }
