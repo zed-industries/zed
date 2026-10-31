@@ -23,7 +23,10 @@ use util::{ResultExt, TryFutureExt};
 use crate::{
     oauth::WwwAuthenticate,
     transport::{StdioTransport, Transport},
-    types::{CancelledParams, ClientNotification, Notification as _, notifications::Cancelled},
+    types::{
+        CancelledParams, ClientNotification, Notification as _, Request as _,
+        notifications::Cancelled, requests::Ping,
+    },
 };
 
 const JSON_RPC_VERSION: &str = "2.0";
@@ -110,7 +113,6 @@ struct AnyResponse<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-#[allow(dead_code)]
 pub(crate) struct Response<T> {
     pub jsonrpc: &'static str,
     pub id: RequestId,
@@ -123,7 +125,6 @@ pub(crate) struct Response<T> {
 pub(crate) enum CspResult<T> {
     #[serde(rename = "result")]
     Ok(Option<T>),
-    #[allow(dead_code)]
     Error(Option<Error>),
 }
 
@@ -223,9 +224,11 @@ impl Client {
             let response_handlers = response_handlers.clone();
             let request_handlers = request_handlers.clone();
             let transport = transport.clone();
+            let outbound_tx = outbound_tx.clone();
             async move |cx| {
                 Self::handle_input(
                     transport,
+                    outbound_tx,
                     subscription_set,
                     request_handlers,
                     response_handlers,
@@ -282,6 +285,7 @@ impl Client {
     /// to pending requests) and notifications (which trigger registered handlers).
     async fn handle_input(
         transport: Arc<dyn Transport>,
+        outbound_tx: async_channel::Sender<String>,
         subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
         request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
@@ -299,6 +303,24 @@ impl Client {
                         request.params.unwrap_or(RawValue::NULL),
                         cx.clone(),
                     );
+                } else {
+                    // Every request needs a response, or the server waits on it
+                    // forever. Answer pings, which either side may send at any
+                    // time, and reject methods we don't implement.
+                    let value = if request.method == Ping::METHOD {
+                        CspResult::Ok(Some(Value::Object(Default::default())))
+                    } else {
+                        CspResult::Error(Some(Error {
+                            message: format!("Method not found: {}", request.method),
+                            code: METHOD_NOT_FOUND,
+                        }))
+                    };
+                    let response = serde_json::to_string(&Response {
+                        jsonrpc: JSON_RPC_VERSION,
+                        id: request.id,
+                        value,
+                    })?;
+                    outbound_tx.try_send(response).log_err();
                 }
             } else if let Ok(response) = serde_json::from_str::<AnyResponse>(&message) {
                 if let Some(handlers) = response_handlers.lock().as_mut()
@@ -629,5 +651,64 @@ impl Drop for NotificationSubscription {
             handler_ids.retain(|id| *id != self.id);
             !handler_ids.is_empty()
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    struct ServerRequestTransport {
+        incoming: async_channel::Receiver<String>,
+        sent: async_channel::Sender<String>,
+    }
+
+    #[async_trait::async_trait]
+    impl Transport for ServerRequestTransport {
+        async fn send(&self, message: String) -> Result<()> {
+            self.sent.send(message).await?;
+            Ok(())
+        }
+
+        fn receive(&self) -> std::pin::Pin<Box<dyn futures::Stream<Item = String> + Send>> {
+            Box::pin(self.incoming.clone())
+        }
+
+        fn receive_err(&self) -> std::pin::Pin<Box<dyn futures::Stream<Item = String> + Send>> {
+            Box::pin(futures::stream::empty())
+        }
+    }
+
+    #[gpui::test]
+    async fn test_answers_server_requests(cx: &mut TestAppContext) {
+        let (incoming_tx, incoming) = async_channel::unbounded();
+        let (sent, sent_rx) = async_channel::unbounded();
+        let _client = Client::new(
+            ContextServerId("test".into()),
+            "test".into(),
+            Arc::new(ServerRequestTransport { incoming, sent }),
+            None,
+            cx.to_async(),
+        )
+        .unwrap();
+
+        incoming_tx
+            .send(r#"{"jsonrpc":"2.0","id":"ping-1","method":"ping"}"#.to_string())
+            .await
+            .unwrap();
+        let response: Value = serde_json::from_str(&sent_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(
+            response,
+            serde_json::json!({"jsonrpc": "2.0", "id": "ping-1", "result": {}})
+        );
+
+        incoming_tx
+            .send(r#"{"jsonrpc":"2.0","id":7,"method":"sampling/createMessage"}"#.to_string())
+            .await
+            .unwrap();
+        let response: Value = serde_json::from_str(&sent_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(response["id"], 7);
+        assert_eq!(response["error"]["code"], METHOD_NOT_FOUND);
     }
 }

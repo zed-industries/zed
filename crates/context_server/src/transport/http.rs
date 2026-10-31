@@ -153,8 +153,11 @@ impl HttpTransport {
         // observed by the current one.
         *self.auth_challenge.lock() = None;
 
-        let is_notification =
-            !message.contains("\"id\":") || message.contains("notifications/initialized");
+        // Only requests get a JSON or SSE reply. Servers answer notifications
+        // and responses with 202 Accepted and no body.
+        let is_notification = serde_json::from_str::<serde_json::Value>(&message)
+            .ok()
+            .is_none_or(|message| message.get("method").is_none() || message.get("id").is_none());
 
         // If we currently have no access token, try refreshing before sending
         // the request so restored but expired sessions do not need an initial
@@ -540,6 +543,38 @@ mod tests {
                 "unexpected SSE response for {data_prefix:?}",
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_response_accepted_without_body(cx: &mut TestAppContext) {
+        let client = make_fake_http_client(|_req| {
+            Box::pin(async {
+                Ok(Response::builder()
+                    .status(202)
+                    .body(AsyncBody::empty())
+                    .unwrap())
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":"ping-1","result":{}}"#.to_string())
+            .await
+            .expect("a response to a server request should be accepted with 202");
+        transport
+            .send(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_string())
+            .await
+            .expect("a notification should be accepted with 202");
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#.to_string())
+            .await
+            .expect_err("a request needs a JSON or SSE reply");
     }
 
     #[gpui::test]
