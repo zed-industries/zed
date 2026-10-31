@@ -2225,7 +2225,7 @@ fn ssh_command_template(
 fn build_command_windows(
     input_program: Option<String>,
     input_args: &[String],
-    _input_env: &HashMap<String, String>,
+    input_env: &HashMap<String, String>,
     working_dir: Option<String>,
     port_forward: Option<(u16, String, u16)>,
     ssh_env: HashMap<String, String>,
@@ -2266,6 +2266,17 @@ fn build_command_windows(
     //         shell_kind.sequential_and_commands_separator()
     //     )?;
     // }
+    for key in ["PAGER", "GIT_PAGER"] {
+        if let Some(value) = input_env.get(key) {
+            write!(
+                exec,
+                "$env:{}='{}' {} ",
+                key,
+                value.replace('\'', "''"),
+                shell_kind.sequential_and_commands_separator()
+            )?;
+        }
+    }
 
     if let Some(input_program) = input_program {
         write!(
@@ -3085,6 +3096,56 @@ mod tests {
         assert!(
             remote_command.contains("exec env 'ZED$(echo foo)=value' remote_program"),
             "expected env assignment to be quoted, got: {remote_command}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_build_command_windows_passes_pager_env() -> Result<()> {
+        use base64::Engine as _;
+
+        let mut input_env = HashMap::default();
+        input_env.insert("PAGER".to_string(), String::new());
+        input_env.insert("GIT_PAGER".to_string(), "cat".to_string());
+        input_env.insert("INPUT_VAR".to_string(), "val".to_string());
+
+        let command = build_command_windows(
+            Some("git".to_string()),
+            &["log".to_string()],
+            &input_env,
+            None,
+            None,
+            HashMap::default(),
+            PathStyle::Windows,
+            "powershell.exe",
+            ShellKind::PowerShell,
+            vec![],
+            vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "--".to_string(),
+                "host".to_string(),
+            ],
+            Interactive::Yes,
+        )?;
+
+        let encoded = command
+            .args
+            .last()
+            .and_then(|arg| arg.strip_prefix("\"powershell.exe -E "))
+            .and_then(|arg| arg.strip_suffix('"'))
+            .context("missing encoded remote command")?;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(encoded)?;
+        let utf16: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        let remote_command = String::from_utf16(&utf16)?;
+
+        assert_eq!(
+            remote_command,
+            "$env:PAGER='' ; $env:GIT_PAGER='cat' ; &git log"
         );
 
         Ok(())
