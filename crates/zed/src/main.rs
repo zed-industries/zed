@@ -937,6 +937,28 @@ fn main() {
                     }
                 }
             }),
+            Some(request)
+                if request.kind.is_none()
+                    && request.remote_connection.is_none()
+                    && request.diff_paths.is_empty()
+                    && !request.open_paths.is_empty() =>
+            {
+                let app_state = app_state.clone();
+                cx.spawn(async move |cx| {
+                    restore_session_and_handle_open_request(request, app_state, cx).await
+                })
+            }
+            Some(OpenRequest {
+                kind: Some(OpenRequestKind::CliConnection(connection)),
+                ..
+            }) => {
+                let app_state = app_state.clone();
+                cx.spawn(async move |cx| {
+                    handle_cli_connection(connection, app_state, true, cx).await
+                })
+                .detach();
+                Task::ready(())
+            }
             Some(request) => {
                 handle_open_request(request, app_state.clone(), cx);
                 Task::ready(())
@@ -1007,8 +1029,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     if let Some(kind) = request.kind {
         match kind {
             OpenRequestKind::CliConnection(connection) => {
-                cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
-                    .detach();
+                cx.spawn(async move |cx| {
+                    handle_cli_connection(connection, app_state, false, cx).await
+                })
+                .detach();
             }
             OpenRequestKind::FocusApp => {
                 cx.spawn(async move |cx| {
@@ -1366,6 +1390,27 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         })
         .detach();
     }
+}
+
+/// Restores the last session, if `restore_on_startup` allows it. Used when Zed is launched
+/// to open paths, so they get added to the restored session instead of replacing it.
+pub(crate) async fn restore_last_session(app_state: &Arc<AppState>, cx: &mut AsyncApp) {
+    if restorable_workspace_locations(cx, app_state)
+        .await
+        .is_some()
+        && let Err(e) = restore_or_create_workspace(app_state.clone(), cx).await
+    {
+        log::error!("Failed to restore session before opening paths: {e:#}");
+    }
+}
+
+pub(crate) async fn restore_session_and_handle_open_request(
+    request: OpenRequest,
+    app_state: Arc<AppState>,
+    cx: &mut AsyncApp,
+) {
+    restore_last_session(&app_state, cx).await;
+    cx.update(|cx| handle_open_request(request, app_state, cx));
 }
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {

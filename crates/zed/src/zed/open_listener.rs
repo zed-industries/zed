@@ -578,6 +578,7 @@ pub async fn handle_cli_connection(
         Box<dyn CliResponseSink>,
     ),
     app_state: Arc<AppState>,
+    restore_session_first: bool,
     cx: &mut AsyncApp,
 ) {
     if let Some(request) = requests.next().await {
@@ -624,6 +625,10 @@ pub async fn handle_cli_connection(
                         };
                     });
                     return;
+                }
+
+                if restore_session_first && !paths.is_empty() {
+                    crate::restore_last_session(&app_state, cx).await;
                 }
 
                 if open_behavior == cli::OpenBehavior::Default {
@@ -2483,6 +2488,25 @@ mod tests {
         open_request: CliRequest,
         prompt_response: Option<cli::CliBehaviorSetting>,
     ) -> (i32, bool) {
+        run_cli_with_zed_handler_impl(cx, app_state, open_request, prompt_response, false)
+    }
+
+    /// Like [`run_cli_with_zed_handler`], but for the CLI connection that launched Zed.
+    fn run_cli_with_zed_handler_on_launch(
+        cx: &mut TestAppContext,
+        app_state: Arc<AppState>,
+        open_request: CliRequest,
+    ) -> (i32, bool) {
+        run_cli_with_zed_handler_impl(cx, app_state, open_request, None, true)
+    }
+
+    fn run_cli_with_zed_handler_impl(
+        cx: &mut TestAppContext,
+        app_state: Arc<AppState>,
+        open_request: CliRequest,
+        prompt_response: Option<cli::CliBehaviorSetting>,
+        restore_session_first: bool,
+    ) -> (i32, bool) {
         cx.executor().allow_parking();
 
         let (request_tx, request_rx) = mpsc::unbounded::<CliRequest>();
@@ -2490,7 +2514,13 @@ mod tests {
         let response_sink: Box<dyn CliResponseSink> = Box::new(SyncResponseSender(response_tx));
 
         cx.spawn(|mut cx| async move {
-            handle_cli_connection((request_rx, response_sink), app_state, &mut cx).await;
+            handle_cli_connection(
+                (request_rx, response_sink),
+                app_state,
+                restore_session_first,
+                &mut cx,
+            )
+            .await;
         })
         .detach();
 
@@ -2778,6 +2808,93 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_e2e_cli_launch_with_file_restores_last_session(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let fs = app_state.fs.as_fake();
+        fs.insert_tree(path!("/project"), json!({ "a.txt": "a" }))
+            .await;
+        fs.insert_tree(path!("/elsewhere"), json!({ "b.txt": "b" }))
+            .await;
+
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.open_abs_path(
+                        PathBuf::from(path!("/project/a.txt")),
+                        workspace::OpenOptions::default(),
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let serialization_tasks = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.flush_all_serialization(window, cx)
+            })
+            .unwrap();
+        futures::future::join_all(serialization_tasks).await;
+
+        multi_workspace
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 0);
+
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session.replace_session_for_test(Session::test_with_old_session(session_id));
+            });
+        });
+
+        let (status, prompt_shown) = run_cli_with_zed_handler_on_launch(
+            cx,
+            app_state,
+            make_cli_open_request(
+                vec![path!("/elsewhere/b.txt").to_string()],
+                cli::OpenBehavior::Default,
+            ),
+        );
+
+        assert_eq!(status, 0);
+        assert!(!prompt_shown);
+        assert_eq!(
+            cx.windows().len(),
+            1,
+            "the file should be opened in the restored window"
+        );
+
+        let restored_window = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        let open_paths = restored_window
+            .read_with(cx, |multi_workspace, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                let project = workspace.project().read(cx);
+                workspace
+                    .items(cx)
+                    .filter_map(|item| project.absolute_path(&item.project_path(cx)?, cx))
+                    .collect::<collections::HashSet<_>>()
+            })
+            .unwrap();
+        assert_eq!(
+            open_paths,
+            collections::HashSet::from_iter([
+                PathBuf::from(path!("/project/a.txt")),
+                PathBuf::from(path!("/elsewhere/b.txt")),
+            ]),
+            "previously open files should be restored alongside the opened file"
+        );
     }
 
     #[gpui::test]
