@@ -28,7 +28,7 @@ use git::{
     BISECT_LOG, COMMIT_MESSAGE, DOT_GIT, FETCH_HEAD, FSMONITOR_DAEMON, GC_PID, GITIGNORE,
     HOOKS_DIR, INFO_DIR, LFS_DIR, LOGS_DIR, LOGS_REF_STASH, OBJECTS_DIR, ORIG_HEAD,
     REBASE_APPLY_DIR, REBASE_MERGE_DIR, REFS_DIR, REFTABLE_DIR, REPO_EXCLUDE, SEQUENCER_DIR,
-    status::GitSummary,
+    WORKTREES_DIR, status::GitSummary,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
@@ -3743,6 +3743,15 @@ async fn is_dot_git(path: &Path, fs: &dyn Fs) -> bool {
     matches!(config_metadata, Ok(Some(_)))
 }
 
+fn path_in_linked_worktree_git_dir(path_in_git_dir: &Path) -> Option<&Path> {
+    let mut components = path_in_git_dir.components();
+    if components.next()?.as_os_str() != OsStr::new(WORKTREES_DIR) {
+        return None;
+    }
+    components.next()?;
+    Some(components.as_path())
+}
+
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
     let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
     build_gitignore_with_root(abs_path, parent, fs).await
@@ -4932,20 +4941,26 @@ impl BackgroundScanner {
                 }
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
+                    // A linked worktree's git dir (`<common dir>/worktrees/<name>`) has no
+                    // `config`, so `is_dot_git` resolves its events to the common dir.
+                    let path_for_skip_rules = path_in_linked_worktree_git_dir(&path_in_git_dir)
+                        .unwrap_or(&path_in_git_dir);
                     let is_ignored = skipped_file_names_in_dot_git.iter().any(|skipped| {
-                        path_in_git_dir
+                        path_for_skip_rules
                             .file_name()
                             .is_some_and(|file_name| file_name == OsStr::new(skipped))
-                    }) || (path_in_git_dir.starts_with(LOGS_DIR)
-                        && path_in_git_dir != Path::new(LOGS_REF_STASH))
-                        || (path_in_git_dir.starts_with(INFO_DIR)
-                            && path_in_git_dir != Path::new(REPO_EXCLUDE))
+                    }) || (path_for_skip_rules.starts_with(LOGS_DIR)
+                        && path_for_skip_rules != Path::new(LOGS_REF_STASH))
+                        || (path_for_skip_rules.starts_with(INFO_DIR)
+                            && path_for_skip_rules != Path::new(REPO_EXCLUDE))
                         || skipped_dirs_in_dot_git.iter().any(|skipped_git_subdir| {
-                            path_in_git_dir.starts_with(skipped_git_subdir)
+                            path_for_skip_rules.starts_with(skipped_git_subdir)
                         })
-                        || path_in_git_dir.extension().is_some_and(|ext| ext == "lock")
-                        || (path_in_git_dir.components().count() == 1
-                            && path_in_git_dir
+                        || path_for_skip_rules
+                            .extension()
+                            .is_some_and(|ext| ext == "lock")
+                        || (path_for_skip_rules.components().count() == 1
+                            && path_for_skip_rules
                                 .extension()
                                 .is_some_and(|ext| ext == "new" || ext == "tmp"));
                     let is_dot_git = path_in_git_dir == Path::new("")
