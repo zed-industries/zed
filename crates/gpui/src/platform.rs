@@ -1,6 +1,7 @@
 mod app_menu;
 mod keyboard;
 mod keystroke;
+mod platform_info;
 
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 #[expect(missing_docs)]
@@ -36,7 +37,7 @@ pub(crate) type PlatformScreenCaptureFrame =
     objc2_core_foundation::CFRetained<objc2_core_video::CVImageBuffer>;
 
 use crate::{
-    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
+    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, Corners,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
@@ -117,6 +118,42 @@ impl WindowVisibility {
     pub fn is_visible(self) -> bool {
         self == Self::Visible
     }
+}
+
+/// A change to the connected displays, reported through
+/// [`App::observe_displays`](crate::App::observe_displays).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DisplayEvent {
+    /// A display was connected.
+    Added(DisplayId),
+    /// A display was disconnected. Windows on it are moved to another
+    /// display by the platform.
+    Removed(DisplayId),
+    /// A connected display's properties changed.
+    Changed {
+        /// The display that changed.
+        id: DisplayId,
+        /// Which of its properties changed.
+        changes: DisplayChanges,
+    },
+}
+
+bitflags::bitflags! {
+    /// The properties of a display that a [`DisplayEvent::Changed`] reports.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct DisplayChanges: u8 {
+        /// [`PlatformDisplay::bounds`] changed.
+        const BOUNDS = 1 << 0;
+        /// [`PlatformDisplay::refresh_interval`] changed.
+        const REFRESH_INTERVAL = 1 << 1;
+    }
+}
+
+/// Converts a refresh rate in hertz to the time between refreshes, rejecting
+/// the zero, negative, and non-finite rates platforms use to mean "unknown".
+pub fn refresh_interval_from_hz(hertz: f64) -> Option<Duration> {
+    (hertz.is_finite() && hertz > 0.0).then(|| Duration::from_secs_f64(1.0 / hertz))
 }
 
 /// Controls whether the application participates in the system's foreground UI.
@@ -323,8 +360,13 @@ bitflags::bitflags! {
     }
 }
 
+pub use platform_info::{OperatingSystem, PlatformInfo, PlatformTarget};
+
 #[expect(missing_docs)]
 pub trait Platform: 'static {
+    /// Returns the host OS and application target reported by this backend.
+    fn platform_info(&self) -> PlatformInfo;
+
     fn background_executor(&self) -> BackgroundExecutor;
     fn foreground_executor(&self) -> ForegroundExecutor;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
@@ -351,6 +393,11 @@ pub trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    /// Registers the callback invoked when displays may have been added or
+    /// removed, or a display's properties may have changed. GPUI rereads
+    /// [`Self::displays`] to find out what changed, so calls may be spurious.
+    /// The callback runs on the main thread outside of any window update.
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>);
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
@@ -467,6 +514,14 @@ pub trait Platform: 'static {
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>);
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>>;
 
+    /// Returns the operating system's power mode, or [`PowerMode::Unknown`]
+    /// when the platform cannot determine it.
+    fn power_mode(&self) -> PowerMode {
+        PowerMode::Unknown
+    }
+    /// Registers a callback invoked when the reported power mode changes.
+    fn on_power_mode_change(&self, _callback: Box<dyn FnMut()>) {}
+
     /// Sets the application's process-wide identity and user-visible name.
     ///
     /// The identifier is used for platform identity mechanisms such as the
@@ -554,6 +609,22 @@ pub trait Platform: 'static {
     fn write_to_find_pasteboard(&self, item: ClipboardItem);
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
+
+    /// Atomically writes credentials unless an item with this URL and username exists.
+    ///
+    /// Returns `true` if written, or `false` if the existing item was left unchanged.
+    #[cfg(target_os = "macos")]
+    fn write_credentials_if_not_exists(
+        &self,
+        _url: &str,
+        _username: &str,
+        _password: &[u8],
+    ) -> Task<Result<bool>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "this platform does not support atomic credential writes"
+        )))
+    }
+
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
     fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
 
@@ -573,6 +644,14 @@ pub trait PlatformDisplay: Debug {
 
     /// Get the bounds for this display
     fn bounds(&self) -> Bounds<Pixels>;
+
+    /// The time between the display's refreshes. Variable refresh rate
+    /// displays report their maximum rate. `None` when the platform doesn't
+    /// report it.
+    ///
+    /// May query the operating system; GPUI caches it per display, see
+    /// [`Window::refresh_interval`](crate::Window::refresh_interval).
+    fn refresh_interval(&self) -> Option<Duration>;
 
     /// Get the visible bounds for this display, excluding taskbar/dock areas.
     /// This is the usable area where windows can be placed without being obscured.
@@ -628,6 +707,20 @@ pub struct SystemNotificationResponse {
     /// The pressed action button's [`SystemNotificationAction::id`], or
     /// `None` when the user activated the notification body itself.
     pub action_id: Option<SharedString>,
+}
+
+/// The operating system's preference for energy use versus performance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PowerMode {
+    /// The platform cannot determine the mode, or cannot distinguish the
+    /// active mode from other non-low-power modes.
+    Unknown,
+    /// The system prioritizes reducing energy use.
+    LowPower,
+    /// The system balances energy use and performance.
+    Balanced,
+    /// The system prioritizes performance over energy use.
+    HighPower,
 }
 
 /// Thermal state of the system
@@ -1094,6 +1187,10 @@ pub enum AppLifecyclePhase {
     Background,
     /// Becoming visible again, before input is restored.
     Foreground,
+    /// The native scene has disconnected. Its windows may reconnect later.
+    /// This is not a process-termination notification or a guaranteed final
+    /// opportunity to save state.
+    Disconnected,
 }
 
 /// Regions of a window that are obscured or reserved by the system.
@@ -1113,6 +1210,11 @@ pub struct WindowInsets {
     /// (iOS: derived from `keyboardWillShow`/frame-change notifications.
     /// Android: `WindowInsets.Type.ime()`.)
     pub ime: Edges<Pixels>,
+    /// The radii of the window's visible corners where the display rounds
+    /// them, and zero where corners are square or the platform can't say.
+    /// Content inset from an edge by `d` lines up with the display by using a
+    /// radius of `radius - d`. (iOS 26+: a concentric `UICornerConfiguration`.)
+    pub corner_radii: Corners<Pixels>,
 }
 
 impl WindowInsets {
@@ -1215,6 +1317,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
+    /// Registers the callback invoked when the window moves to another
+    /// display. Calls may be spurious. The callback runs on the main thread
+    /// outside of any window update.
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
@@ -1292,6 +1398,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         WindowControls::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
+    fn set_client_corner_radii(&self, _radii: Corners<Pixels>) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
@@ -1930,6 +2037,7 @@ impl From<TileId> for etagere::AllocId {
 pub struct PlatformInputHandler {
     cx: AsyncWindowContext,
     handler: Box<dyn InputHandler>,
+    focus_id: Option<crate::FocusId>,
 }
 
 #[expect(missing_docs)]
@@ -1942,7 +2050,24 @@ pub struct PlatformInputHandler {
 )]
 impl PlatformInputHandler {
     pub fn new(cx: AsyncWindowContext, handler: Box<dyn InputHandler>) -> Self {
-        Self { cx, handler }
+        Self {
+            cx,
+            handler,
+            focus_id: None,
+        }
+    }
+
+    pub(crate) fn with_focus(mut self, focus_id: crate::FocusId) -> Self {
+        self.focus_id = Some(focus_id);
+        self
+    }
+
+    /// Identifies the input field registered through [`Window::handle_input`].
+    ///
+    /// This identity survives adapter replacement during repaint. Backends can
+    /// use it to detect a field change without restarting the keyboard session.
+    pub fn focus_id(&self) -> Option<crate::FocusId> {
+        self.focus_id
     }
 
     pub fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
@@ -2027,6 +2152,15 @@ impl PlatformInputHandler {
             .update(|window, cx| self.handler.bounds_for_range(range_utf16, window, cx))
             .ok()
             .flatten()
+    }
+
+    pub fn selection_bounds_for_range(&mut self, range_utf16: Range<usize>) -> Vec<Bounds<Pixels>> {
+        self.cx
+            .update(|window, cx| {
+                self.handler
+                    .selection_bounds_for_range(range_utf16, window, cx)
+            })
+            .unwrap_or_default()
     }
 
     #[allow(dead_code)]
@@ -2135,6 +2269,21 @@ impl PlatformInputHandler {
             .unwrap_or(true)
     }
 
+    /// Checks eligibility against the current focus, including before the next frame is drawn.
+    ///
+    /// Unlike the legacy acceptance query, this fails closed when the window cannot
+    /// be updated and requires registration through `Window::handle_input`.
+    pub fn query_accepts_focused_text_input(&mut self) -> bool {
+        let focus_id = self.focus_id;
+        self.cx
+            .update(|window, cx| {
+                focus_id.is_some()
+                    && window.focus == focus_id
+                    && self.handler.accepts_text_input(window, cx)
+            })
+            .unwrap_or(false)
+    }
+
     /// See [`InputHandler::prefers_ime_for_printable_keys`].
     ///
     /// This is not a pure delegation to the handler: while a multi-stroke binding is pending this
@@ -2180,10 +2329,10 @@ pub struct UTF16Selection {
     pub reversed: bool,
 }
 
-/// Zed's interface for handling text input from the platform's IME system
-/// This is currently a 1:1 exposure of the NSTextInputClient API:
+/// GPUI's interface for native text input, IME composition, and selection.
+/// Platform backends translate their native text protocols into these operations.
 ///
-/// <https://developer.apple.com/documentation/appkit/nstextinputclient>
+/// Text offsets and ranges use UTF-16 code units unless stated otherwise.
 pub trait InputHandler: 'static {
     /// Get the range of the user's currently selected text, if any
     /// Corresponds to [selectedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438242-selectedrange)
@@ -2257,7 +2406,7 @@ pub trait InputHandler: 'static {
         }
     }
 
-    /// Get the bounds of the given document range in screen coordinates
+    /// Get the bounds of the given document range in window coordinates.
     /// Corresponds to [firstRect(forCharacterRange:actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438240-firstrect)
     ///
     /// This is used for positioning the IME candidate window
@@ -2267,6 +2416,21 @@ pub trait InputHandler: 'static {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Bounds<Pixels>>;
+
+    /// Returns selection rectangles in document order, in window coordinates.
+    ///
+    /// Return line or shaped-run fragments, not one rectangle per character. The
+    /// first and last rectangles contain the range's start and end respectively.
+    /// Empty means native selection geometry is unavailable; caret/IME geometry can
+    /// still be supplied by `bounds_for_range`.
+    fn selection_bounds_for_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Vec<Bounds<Pixels>> {
+        Vec::new()
+    }
 
     /// Get the character offset for the given point in terms of UTF16 characters
     ///
@@ -2471,10 +2635,23 @@ pub struct WindowOptions {
     /// Leave this `false` for windows that rely on AppKit's native titlebar dragging.
     pub app_owns_titlebar_drag: bool,
 
-    /// The minimum interval between animation frames while the window is inactive.
+    /// The minimum frame interval while inactive without sustained high-rate input.
     ///
-    /// Set to `None` to disable inactive-window animation frame throttling.
+    /// Defaults to approximately 30 fps. Set to `None` to disable this limit.
+    /// The longest applicable interval wins; mandatory platform presentations bypass all limits.
     pub inactive_frame_interval: Option<Duration>,
+
+    /// The minimum frame interval while the platform reports Low Power Mode.
+    ///
+    /// Defaults to approximately 30 fps. Set to `None` to disable this limit.
+    /// The longest applicable interval wins; mandatory platform presentations bypass all limits.
+    pub low_power_frame_interval: Option<Duration>,
+
+    /// The minimum frame interval under serious or critical thermal pressure.
+    ///
+    /// Defaults to approximately 60 fps. Set to `None` to disable this limit.
+    /// The longest applicable interval wins; mandatory platform presentations bypass all limits.
+    pub thermal_frame_interval: Option<Duration>,
 
     /// Whether the window should be resizable by the user
     pub is_resizable: bool,
@@ -2504,6 +2681,9 @@ pub struct WindowOptions {
 
     /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
     pub tabbing_identifier: Option<String>,
+
+    /// Whether to render the window using the Display P3 color space on macOS.
+    pub use_display_p3: bool,
 }
 
 /// The variables that can be configured when creating a new window
@@ -2569,6 +2749,9 @@ pub struct WindowParams {
 
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
+
+    #[cfg(target_os = "macos")]
+    pub use_display_p3: bool,
 }
 
 /// Represents the status of how a window should be opened.
@@ -2621,6 +2804,8 @@ impl Default for WindowOptions {
             is_movable: true,
             app_owns_titlebar_drag: false,
             inactive_frame_interval: Some(Duration::from_micros(33_333)),
+            low_power_frame_interval: Some(Duration::from_micros(33_333)),
+            thermal_frame_interval: Some(Duration::from_micros(16_667)),
             is_resizable: true,
             is_minimizable: true,
             display_id: None,
@@ -2630,6 +2815,7 @@ impl Default for WindowOptions {
             window_min_size: None,
             window_decorations: None,
             tabbing_identifier: None,
+            use_display_p3: false,
         }
     }
 }
@@ -3587,6 +3773,21 @@ mod frame_signal_tests {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn test_refresh_interval_from_hz() {
+        assert_eq!(
+            refresh_interval_from_hz(50.0),
+            Some(Duration::from_millis(20))
+        );
+        assert_eq!(
+            refresh_interval_from_hz(120.0),
+            Some(Duration::from_secs(1) / 120)
+        );
+        for unknown in [0.0, -60.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(refresh_interval_from_hz(unknown), None);
+        }
+    }
 
     #[test]
     fn test_window_button_layout_parse_standard() {

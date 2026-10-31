@@ -8,8 +8,8 @@ pub mod fake_provider;
 pub use language_model_core::*;
 
 use anyhow::Result;
-use futures::{FutureExt, SinkExt};
-use futures::{StreamExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
+use futures::FutureExt;
+use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, BackgroundExecutor, Task, Window};
 use icons::IconName;
 use parking_lot::Mutex;
@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 pub type CreateProviderSettingsView = Arc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>;
 
-pub use crate::api_key::{ApiKey, ApiKeyState};
+pub use crate::api_key::{ApiKey, ApiKeyState, read_credentials, set_credentials_read_gate};
 pub use crate::registry::*;
 pub use crate::request::{LanguageModelImageExt, gpui_size_to_image_size, image_size_to_gpui};
 pub use env_var::{EnvVar, env_var};
@@ -35,7 +35,10 @@ pub fn stream_in_background<Output>(
 where
     Output: Send + 'static,
 {
-    let (mut sender, receiver) = mpsc::channel(BACKGROUND_STREAM_BUFFER_SIZE);
+    // `futures::channel::mpsc` parks a full sender behind a `std` mutex that the
+    // receiver also locks, which traps when the receiver polls on the browser's
+    // main thread.
+    let (sender, receiver) = async_channel::bounded(BACKGROUND_STREAM_BUFFER_SIZE);
     let task = executor.spawn(async move {
         while let Some(event) = events.next().await {
             if sender.send(event).await.is_err() {
@@ -278,6 +281,24 @@ impl LanguageModel {
 
     pub fn supports_disabling_thinking(&self) -> bool {
         self.supports_disabling_thinking
+    }
+
+    /// Whether thinking can be turned off at the selected effort level.
+    pub fn supports_disabling_thinking_at_effort(&self, effort: Option<&str>) -> bool {
+        let effort_level = match effort {
+            Some(effort) => self
+                .supported_effort_levels
+                .iter()
+                .find(|effort_level| effort_level.value.as_ref() == effort),
+            None => self
+                .supported_effort_levels
+                .iter()
+                .find(|effort_level| effort_level.is_default),
+        };
+
+        effort_level
+            .and_then(|effort_level| effort_level.supports_disabling_thinking)
+            .unwrap_or(self.supports_disabling_thinking)
     }
 
     pub fn supports_fast_mode(&self) -> bool {
@@ -541,6 +562,7 @@ pub trait LanguageModelProvider: LanguageModelClient {
 
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
+    fn refresh_models(&self, _cx: &mut App) {}
     fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView>;
 
     fn set_api_key(&self, _key: Option<String>, _cx: &mut App) -> Task<Result<()>> {

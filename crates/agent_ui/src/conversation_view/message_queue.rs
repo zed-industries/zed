@@ -118,6 +118,16 @@ impl MessageQueue {
         self.entries.remove(index)
     }
 
+    pub fn restore_after_failed_send(&mut self, entry: QueueEntry) {
+        let index = self
+            .entries
+            .iter()
+            .position(|queued| queued.id.0 > entry.id.0)
+            .unwrap_or(self.entries.len());
+        self.entries.insert(index, entry);
+        self.pause();
+    }
+
     pub fn clear(&mut self) {
         self.entries.clear();
         self.can_fast_track = false;

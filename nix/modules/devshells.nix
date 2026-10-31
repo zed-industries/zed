@@ -31,7 +31,7 @@
           dontUseCmakeConfigure = true;
           meta = {
             description = "mdBook preprocessor and postprocessor for the Zed docs";
-            mainProgram = "docs_preprocessor";
+            mainProgram = "docs-preprocessor";
           };
         }
       );
@@ -118,8 +118,8 @@
             # instead of `cargo run`. mdBook lowercases these keys and turns `_`
             # into `-`, so they map to `preprocessor.zed-docs-preprocessor.command`
             # and `output.zed-html.command` in `docs/book.toml`.
-            MDBOOK_PREPROCESSOR__ZED_DOCS_PREPROCESSOR__COMMAND = "${docs-preprocessor}/bin/docs_preprocessor";
-            MDBOOK_OUTPUT__ZED_HTML__COMMAND = "${docs-preprocessor}/bin/docs_preprocessor postprocess";
+            MDBOOK_PREPROCESSOR__ZED_DOCS_PREPROCESSOR__COMMAND = "${docs-preprocessor}/bin/docs-preprocessor";
+            MDBOOK_OUTPUT__ZED_HTML__COMMAND = "${docs-preprocessor}/bin/docs-preprocessor postprocess";
 
             ZED_ZSTD_MUSL_LIB = "${pkgs.pkgsCross.musl64.pkgsStatic.zstd.out}/lib";
             # For aws-lc-sys musl cross-compilation

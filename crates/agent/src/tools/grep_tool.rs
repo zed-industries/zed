@@ -1,6 +1,6 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use acp_thread::MentionUri;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
@@ -348,19 +348,21 @@ impl AgentTool for GrepTool {
                             line_range: range.start.row..=end_row,
                             column: None,
                         };
-                        content.push(acp::ToolCallContent::Content(acp::Content::new(
+                        content.push(acp::ToolCallContent::from(
                             acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
                                 format!("{}#{}", path.display(), line_label),
                                 uri.to_uri().to_string(),
                             )),
-                        )));
+                        ));
                         locations.push(
-                            acp::ToolCallLocation::new(abs_path).line(Some(range.start.row)),
+                            // ACP numbers lines from 1.
+                            acp::ToolCallLocation::new(abs_path.clone())
+                                .line(Some(range.start.row + 1)),
                         );
                     }
                     // Use a fence longer than any backtick run in the snippet so
                     // matches containing code fences don't break the rendering.
-                    content.push(acp::ToolCallContent::Content(acp::Content::new(
+                    content.push(acp::ToolCallContent::from(
                         acp::ContentBlock::Text(acp::TextContent::new(
                             MarkdownCodeBlock {
                                 tag: "",
@@ -368,7 +370,7 @@ impl AgentTool for GrepTool {
                             }
                             .to_string(),
                         )),
-                    )));
+                    ));
 
                     if let Some(ancestor_range) = ancestor_range
                         && end_row < ancestor_range.end.row {
@@ -383,7 +385,7 @@ impl AgentTool for GrepTool {
 
             if !content.is_empty() {
                 event_stream.update_fields(
-                    acp::ToolCallUpdateFields::new()
+                    |update| update
                         .content(content)
                         .locations(locations),
                 );
@@ -636,7 +638,7 @@ mod tests {
         );
 
         // Pull the ResourceLink blocks (the clickable links) out of the content.
-        let content = update.content.expect("expected content blocks");
+        let content = update.content.take().expect("expected content blocks");
         let links = content
             .iter()
             .filter_map(|block| match block {
@@ -677,22 +679,22 @@ mod tests {
         );
 
         // Each match also reports a location so the panel can reveal the file at
-        // the matched (0-based) row.
-        let locations = update.locations.expect("expected locations");
+        // the matched line, numbered from 1 as ACP numbers lines.
+        let locations = update.locations.take().expect("expected locations");
         assert_eq!(locations.len(), 2);
         assert!(
             locations.iter().any(|location| {
-                location.path.to_string_lossy().replace('\\', "/")
+                location.path.0.to_string_lossy().replace('\\', "/")
                     == path!("/root/src/alpha.txt").replace('\\', "/")
-                    && location.line == Some(0)
+                    && location.line.map(std::num::NonZeroU32::get) == Some(1)
             }),
             "missing location for alpha.txt, got: {locations:?}"
         );
         assert!(
             locations.iter().any(|location| {
-                location.path.to_string_lossy().replace('\\', "/")
+                location.path.0.to_string_lossy().replace('\\', "/")
                     == path!("/root/beta.txt").replace('\\', "/")
-                    && location.line == Some(0)
+                    && location.line.map(std::num::NonZeroU32::get) == Some(1)
             }),
             "missing location for beta.txt, got: {locations:?}"
         );
@@ -732,7 +734,7 @@ mod tests {
         let update = events.expect_update_fields().await;
 
         // Find the snippet text block emitted alongside the clickable link.
-        let content = update.content.expect("expected content blocks");
+        let content = update.content.take().expect("expected content blocks");
         let snippet = content
             .iter()
             .find_map(|block| match block {
