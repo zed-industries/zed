@@ -1307,6 +1307,11 @@ impl PickerDelegate for DebugDelegate {
             })
             .unwrap_or_default();
 
+        let cwd = task_context
+            .cwd
+            .as_ref()
+            .map(|cwd| cwd.to_string_lossy().into_owned());
+
         let mut args = ShellKind::Posix
             .split(&text)
             .into_iter()
@@ -1329,6 +1334,7 @@ impl PickerDelegate for DebugDelegate {
         let args = args.collect::<Vec<_>>();
         let task = task::TaskTemplate {
             label: "one-off".to_owned(), // TODO: rename using command as label
+            cwd,
             env,
             command: program,
             args,
