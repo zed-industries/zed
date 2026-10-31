@@ -11685,6 +11685,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-av-foundation"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "478ae33fcac9df0a18db8302387c666b8ef08a3e2d62b510ca4fc278a384b6c0"
+dependencies = [
+ "bitflags 2.13.1",
+ "objc2 0.6.3",
+ "objc2-core-foundation",
+ "objc2-core-media",
+ "objc2-core-video",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
 name = "objc2-avf-audio"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19566,6 +19580,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "video_viewer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "db",
+ "editor",
+ "file_icons",
+ "fs",
+ "gpui",
+ "image",
+ "language",
+ "log",
+ "objc2 0.6.3",
+ "objc2-av-foundation",
+ "objc2-core-foundation",
+ "objc2-core-media",
+ "objc2-core-video",
+ "objc2-foundation 0.3.2",
+ "project",
+ "settings",
+ "smallvec",
+ "theme",
+ "theme_settings",
+ "ui",
+ "url",
+ "util",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
+ "workspace",
+ "worktree",
+]
+
+[[package]]
 name = "vim"
 version = "0.1.0"
 dependencies = [
@@ -22538,6 +22585,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "video_viewer",
  "vim",
  "vim_mode_setting",
  "watch",
