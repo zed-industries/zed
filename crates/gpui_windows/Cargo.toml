@@ -77,5 +77,10 @@ optional = true
 [target.'cfg(target_os = "windows")'.build-dependencies]
 windows-registry.workspace = true
 
+# `PlatformWindow::render_to_image` is gated on `gpui`'s `cfg(test)`, so
+# dev-dependencies enable those APIs only for test builds.
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
 [package.metadata.cargo-shear]
 ignored = ["scap"]
