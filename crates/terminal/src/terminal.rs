@@ -2385,8 +2385,8 @@ impl Terminal {
         }
 
         match keystroke.key.as_bytes() {
-            [digit @ b'0'..=b'9'] if *digit != b'0' || self.vi_motion_count.is_some() => {
-                Some(usize::from(*digit - b'0'))
+            &[digit @ b'0'..=b'9'] if digit != b'0' || self.vi_motion_count.is_some() => {
+                Some(usize::from(digit - b'0'))
             }
             _ => None,
         }
