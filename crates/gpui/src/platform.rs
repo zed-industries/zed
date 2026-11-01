@@ -1495,12 +1495,16 @@ pub struct GpuFrameStats {
 /// Resident GPU allocations owned by this renderer, without double-counting resources.
 ///
 /// Categories describe allocated capacity, not bytes used by the latest frame.
+/// Metal retains replaced textures until the GPU completes frames using them;
+/// wgpu removes them from these totals at replacement (or when cached atlas bind
+/// groups release them), rather than waiting for driver reclamation.
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GpuMemoryStats {
     /// Sprite atlas textures, in bytes.
     pub atlas_bytes: u64,
-    /// Instance buffers, in bytes.
+    /// Instance buffers, including Metal's static unit-vertex buffer or wgpu's
+    /// globals buffer, in bytes.
     pub instance_buffer_bytes: u64,
     /// Intermediate rendering textures, in bytes.
     pub intermediate_texture_bytes: u64,

@@ -156,6 +156,8 @@ impl GpuCounterSummary {
 pub struct GpuSummary {
     /// Number of submitted frames recorded.
     pub frames: u64,
+    /// Maximum number of renderers contributing to a measured interval.
+    pub max_renderers: usize,
     /// Execution-time distribution, or `None` when no frame could be timed.
     pub gpu_duration: Option<GpuDurationSummary>,
     /// CPU-observed submission-to-completion distribution.
@@ -299,12 +301,18 @@ impl BenchReport {
         Some(summary)
     }
 
-    fn record_gpu_stats(&self, start: Option<GpuMemoryStats>, stats: GpuStats) {
+    fn record_gpu_stats(
+        &self,
+        start: Option<GpuMemoryStats>,
+        stats: GpuStats,
+        renderer_count: usize,
+    ) {
         let mut snapshot = self.gpu_snapshot.borrow_mut();
         if !snapshot.recorded {
             snapshot.summary.memory_start = start;
         }
         snapshot.recorded = true;
+        snapshot.summary.max_renderers = snapshot.summary.max_renderers.max(renderer_count);
         snapshot.summary.memory_end = stats.memory;
         if let Some(peak) = stats.peak_owned_bytes {
             snapshot.summary.peak_owned_bytes =
@@ -482,59 +490,106 @@ impl BenchReport {
     }
 
     fn print_gpu(&self) {
-        let Some(summary) = self.gpu() else { return };
+        self.write_gpu(&mut std::io::stderr().lock()).log_err();
+    }
+
+    fn write_gpu(&self, output: &mut impl std::io::Write) -> std::io::Result<()> {
+        let Some(summary) = self.gpu() else {
+            return Ok(());
+        };
         let snapshot = self.gpu_snapshot.borrow();
-        eprintln!("  GPU:");
-        eprintln!("    frames: {}", summary.frames);
+        writeln!(output, "  GPU:")?;
+        writeln!(output, "    frames: {}", summary.frames)?;
         if summary.frames > 0 && summary.gpu_duration.is_none() {
-            eprintln!("    GPU timing unavailable");
+            writeln!(output, "    GPU timing unavailable")?;
         }
-        self.print_histogram("GPU execution time", &snapshot.gpu_duration.histogram);
-        self.print_histogram(
-            "GPU submit-to-complete",
-            &snapshot.submit_to_complete.histogram,
-        );
-        eprintln!(
+        writeln!(
+            output,
             "    GPU-timed frames over budget: {}",
             summary.frames_over_budget
-        );
-        eprintln!("    max frames in flight: {}", summary.max_frames_in_flight);
+        )?;
+        writeln!(
+            output,
+            "    max frames in flight: {}",
+            summary.max_frames_in_flight
+        )?;
         for (name, counter) in [
             ("instance bytes", summary.instance_bytes),
             ("atlas upload bytes", summary.atlas_upload_bytes),
             ("uniform bytes", summary.uniform_bytes),
+            ("resource created bytes", summary.resource_created_bytes),
+        ] {
+            writeln!(
+                output,
+                "    {name} per frame: mean {}, max {}",
+                format_gpu_bytes(counter.mean),
+                format_gpu_bytes(counter.max as f64)
+            )?;
+        }
+        for (name, counter) in [
             ("atlas uploads", summary.atlas_uploads),
             ("draw calls", summary.draw_calls),
             ("render passes", summary.render_passes),
             ("resource creations", summary.resource_creations),
-            ("resource created bytes", summary.resource_created_bytes),
         ] {
-            eprintln!(
-                "    {name} per frame: mean {:.2}, max {}",
-                counter.mean, counter.max
-            );
+            writeln!(
+                output,
+                "    {name} per frame: mean {}, max {}",
+                format_gpu_count(counter.mean),
+                counter.max
+            )?;
         }
         if let Some(memory) = summary.memory_end {
-            eprintln!(
-                "    memory at end: {} owned bytes (atlas {}, instances {}, intermediate {}, target {})",
-                memory.owned_bytes(),
-                memory.atlas_bytes,
-                memory.instance_buffer_bytes,
-                memory.intermediate_texture_bytes,
-                memory.render_target_bytes
-            );
+            writeln!(
+                output,
+                "    memory at end: {} owned (atlas {}, instances {}, intermediate {}, target {})",
+                format_gpu_bytes(memory.owned_bytes() as f64),
+                format_gpu_bytes(memory.atlas_bytes as f64),
+                format_gpu_bytes(memory.instance_buffer_bytes as f64),
+                format_gpu_bytes(memory.intermediate_texture_bytes as f64),
+                format_gpu_bytes(memory.render_target_bytes as f64)
+            )?;
             if let Some(driver) = memory.driver_allocated_bytes {
-                eprintln!("    driver allocated bytes: {driver}");
+                writeln!(
+                    output,
+                    "    driver allocated bytes: {}",
+                    format_gpu_bytes(driver as f64)
+                )?;
             }
         }
         if let Some(peak) = summary.peak_owned_bytes {
-            eprintln!(
-                "    peak owned bytes: {peak} (sum of renderer peaks; upper bound for multiple windows)"
-            );
+            let caveat = if summary.max_renderers > 1 {
+                " (sum of renderer peaks; upper bound for multiple windows)"
+            } else {
+                ""
+            };
+            writeln!(
+                output,
+                "    peak owned bytes: {}{caveat}",
+                format_gpu_bytes(peak as f64)
+            )?;
         }
         if let Some(growth) = summary.owned_bytes_growth {
-            eprintln!("    owned bytes growth (first to last snapshot): {growth:+}");
+            let sign = if growth < 0 { "-" } else { "+" };
+            writeln!(
+                output,
+                "    owned bytes growth (first to last snapshot): {sign}{}",
+                format_gpu_bytes(growth.unsigned_abs() as f64)
+            )?;
         }
+        for (name, histogram) in [
+            ("GPU execution time", &snapshot.gpu_duration.histogram),
+            (
+                "GPU submit-to-complete",
+                &snapshot.submit_to_complete.histogram,
+            ),
+        ] {
+            if !histogram.is_empty() {
+                writeln!(output, "    {name}:")?;
+                write_duration_histogram(output, histogram, "      ")?;
+            }
+        }
+        Ok(())
     }
 
     fn print_histogram(&self, name: &str, histogram: &Histogram<u64>) {
@@ -562,28 +617,7 @@ impl BenchReport {
 
     fn print_histogram_body(&self, histogram: &Histogram<u64>) {
         let max_foreground_time = Duration::from_nanos(histogram.max());
-        eprintln!("    samples: {}", histogram.len());
-        eprintln!(
-            "    mean: {}",
-            format_duration(Duration::from_nanos(histogram.mean() as u64))
-        );
-        eprintln!(
-            "    p50: {}",
-            format_duration(Duration::from_nanos(histogram.value_at_quantile(0.50)))
-        );
-        eprintln!(
-            "    p90: {}",
-            format_duration(Duration::from_nanos(histogram.value_at_quantile(0.90)))
-        );
-        eprintln!(
-            "    p95: {}",
-            format_duration(Duration::from_nanos(histogram.value_at_quantile(0.95)))
-        );
-        eprintln!(
-            "    p99: {}",
-            format_duration(Duration::from_nanos(histogram.value_at_quantile(0.99)))
-        );
-        eprintln!("    max: {}", format_duration(max_foreground_time));
+        write_duration_histogram(&mut std::io::stderr().lock(), histogram, "    ").log_err();
         eprintln!(
             "    frame budget overruns total: {}",
             self.total_budget_overruns(histogram)
@@ -593,6 +627,46 @@ impl BenchReport {
             self.budget_overruns(max_foreground_time)
         );
     }
+}
+
+fn write_duration_histogram(
+    output: &mut impl std::io::Write,
+    histogram: &Histogram<u64>,
+    indent: &str,
+) -> std::io::Result<()> {
+    writeln!(output, "{indent}samples: {}", histogram.len())?;
+    for (name, nanos) in [
+        ("mean", histogram.mean() as u64),
+        ("p50", histogram.value_at_quantile(0.50)),
+        ("p90", histogram.value_at_quantile(0.90)),
+        ("p95", histogram.value_at_quantile(0.95)),
+        ("p99", histogram.value_at_quantile(0.99)),
+        ("max", histogram.max()),
+    ] {
+        writeln!(
+            output,
+            "{indent}{name}: {}",
+            format_duration(Duration::from_nanos(nanos))
+        )?;
+    }
+    Ok(())
+}
+
+fn format_gpu_count(value: f64) -> String {
+    format!("{value:.2}")
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_owned()
+}
+
+fn format_gpu_bytes(mut bytes: f64) -> String {
+    for unit in ["B", "KiB", "MiB", "GiB", "TiB"] {
+        if bytes < 1024. || unit == "TiB" {
+            return format!("{} {unit}", format_gpu_count(bytes));
+        }
+        bytes /= 1024.;
+    }
+    unreachable!()
 }
 
 struct WindowFrameSnapshot {
@@ -773,12 +847,14 @@ impl GpuMeasurement {
     }
 
     fn finish(self, report: &BenchReport) {
-        if let Some(stats) = combine_gpu_stats(
-            self.windows
-                .iter()
-                .filter_map(|window| drain_gpu_stats(window).log_err().flatten()),
-        ) {
-            report.record_gpu_stats(self.memory_start, stats);
+        let stats: Vec<_> = self
+            .windows
+            .iter()
+            .filter_map(|window| drain_gpu_stats(window).log_err().flatten())
+            .collect();
+        let renderer_count = stats.len();
+        if let Some(stats) = combine_gpu_stats(stats) {
+            report.record_gpu_stats(self.memory_start, stats, renderer_count);
         }
     }
 }
@@ -843,6 +919,8 @@ where
 /// `BENCH_MEASUREMENT=wall-time` always disables GPU metrics as well as CPU
 /// counters. Unsupported GPU renderers contribute no GPU report section.
 /// GPU waits and report aggregation run outside measured intervals.
+/// Bench-support builds retain timestamp infrastructure and `wgpu/counters` even
+/// when runtime GPU metrics are disabled.
 #[derive(Clone)]
 pub struct BenchAppContext<'a, 'measurement> {
     app: Rc<AppCell>,
@@ -2183,6 +2261,7 @@ mod tests {
                 memory: Some(GpuMemoryStats::default()),
                 peak_owned_bytes: Some(200),
             },
+            1,
         );
         let summary = report.gpu().unwrap();
         assert_eq!(summary.frames, 3);
@@ -2217,11 +2296,89 @@ mod tests {
                 frames: vec![crate::GpuFrameStats::default()],
                 ..Default::default()
             },
+            1,
         );
         let summary = report.gpu().unwrap();
         assert!(summary.gpu_duration.is_none());
         assert!(summary.submit_to_complete.is_none());
         assert!(summary.owned_bytes_growth.is_none());
+    }
+
+    #[test]
+    fn gpu_report_prints_nested_histograms_and_readable_scalars() {
+        let report = BenchReport::default();
+        let memory = GpuMemoryStats {
+            atlas_bytes: 1024 * 1024,
+            instance_buffer_bytes: 2 * 1024 * 1024,
+            driver_allocated_bytes: Some(8 * 1024 * 1024),
+            ..Default::default()
+        };
+        report.record_gpu_stats(
+            Some(memory),
+            GpuStats {
+                frames: vec![crate::GpuFrameStats {
+                    gpu_duration: Some(Duration::from_micros(500)),
+                    submit_to_complete: Some(Duration::from_millis(2)),
+                    instance_bytes: 796352,
+                    uniform_bytes: 16,
+                    draw_calls: 3,
+                    render_passes: 1,
+                    frames_in_flight: 2,
+                    ..Default::default()
+                }],
+                memory: Some(memory),
+                peak_owned_bytes: Some(memory.owned_bytes()),
+            },
+            1,
+        );
+        let mut output = Vec::new();
+        report.write_gpu(&mut output).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output,
+            "  GPU:
+    frames: 1
+    GPU-timed frames over budget: 0
+    max frames in flight: 2
+    instance bytes per frame: mean 777.69 KiB, max 777.69 KiB
+    atlas upload bytes per frame: mean 0 B, max 0 B
+    uniform bytes per frame: mean 16 B, max 16 B
+    resource created bytes per frame: mean 0 B, max 0 B
+    atlas uploads per frame: mean 0, max 0
+    draw calls per frame: mean 3, max 3
+    render passes per frame: mean 1, max 1
+    resource creations per frame: mean 0, max 0
+    memory at end: 3 MiB owned (atlas 1 MiB, instances 2 MiB, intermediate 0 B, target 0 B)
+    driver allocated bytes: 8 MiB
+    peak owned bytes: 3 MiB
+    owned bytes growth (first to last snapshot): +0 B
+    GPU execution time:
+      samples: 1
+      mean: 0.500ms
+      p50: 0.500ms
+      p90: 0.500ms
+      p95: 0.500ms
+      p99: 0.500ms
+      max: 0.500ms
+    GPU submit-to-complete:
+      samples: 1
+      mean: 2.000ms
+      p50: 2.001ms
+      p90: 2.001ms
+      p95: 2.001ms
+      p99: 2.001ms
+      max: 2.001ms
+"
+        );
+        eprint!("{output}");
+        report.record_gpu_stats(None, GpuStats::default(), 2);
+        let mut output = Vec::new();
+        report.write_gpu(&mut output).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("(sum of renderer peaks; upper bound for multiple windows)"));
+        assert_eq!(report.gpu().unwrap().max_renderers, 2);
+        assert_eq!(format_gpu_count(1.5), "1.5");
+        assert_eq!(format_gpu_bytes(1536.), "1.5 KiB");
     }
 
     /// Runs `benchmark` under a wall-time primary with a fake counter as the
