@@ -7,7 +7,8 @@ use crate::{
 use gpui::{
     Action, Anchor, AnchoredPositionMode, AnyElement, App, Bounds, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point,
-    Role, Size, Subscription, TaskExt, anchored, canvas, deferred, point, prelude::*, px, relative,
+    Role, Size, Subscription, TaskExt, WeakEntity, anchored, canvas, deferred, point, prelude::*,
+    px, relative,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
 use std::{
@@ -225,7 +226,7 @@ pub struct ContextMenu {
     keep_open_on_confirm: bool,
     fixed_width: Option<DefiniteLength>,
     spacing: ListItemSpacing,
-    main_menu: Option<Entity<ContextMenu>>,
+    main_menu: Option<WeakEntity<ContextMenu>>,
     main_menu_observed_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     // Docs aide-related fields
     documentation_aside: Option<(usize, DocumentationAside)>,
@@ -1012,7 +1013,7 @@ impl ContextMenu {
             cx.emit(DismissEvent);
 
             // Restore keyboard focus to the parent menu so arrow keys / Escape / Enter work again.
-            if let Some(parent) = &self.main_menu {
+            if let Some(parent) = self.main_menu.as_ref().and_then(WeakEntity::upgrade) {
                 let parent_focus = parent.read(cx).focus_handle.clone();
 
                 parent.update(cx, |parent, _cx| {
@@ -1175,7 +1176,7 @@ impl ContextMenu {
             return;
         }
 
-        if let Some(parent) = &self.main_menu {
+        if let Some(parent) = self.main_menu.as_ref().and_then(WeakEntity::upgrade) {
             let parent_clone = parent.clone();
 
             let parent_focus = parent.read(cx).focus_handle.clone();
@@ -1281,7 +1282,7 @@ impl ContextMenu {
                 spacing: ListItemSpacing::default(),
                 documentation_aside: None,
                 aside_trigger_bounds: Rc::new(RefCell::new(HashMap::default())),
-                main_menu: Some(parent_entity),
+                main_menu: Some(parent_entity.downgrade()),
                 main_menu_observed_bounds: Rc::new(Cell::new(None)),
                 submenu_state: SubmenuState::Closed,
                 hover_target: HoverTarget::MainMenu,
@@ -1981,7 +1982,9 @@ impl ContextMenu {
                                     cx.notify();
                                 }
 
-                                if let Some(parent) = &this.main_menu {
+                                if let Some(parent) =
+                                    this.main_menu.as_ref().and_then(WeakEntity::upgrade)
+                                {
                                     let mouse_pos = window.mouse_position();
                                     let parent_clone = parent.clone();
 
@@ -2305,7 +2308,9 @@ impl Render for ContextMenu {
                         .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
                             if *hovered {
                                 this.hover_target = HoverTarget::MainMenu;
-                                if let Some(parent) = &this.main_menu {
+                                if let Some(parent) =
+                                    this.main_menu.as_ref().and_then(WeakEntity::upgrade)
+                                {
                                     parent.update(cx, |parent, _| {
                                         parent.hover_target = HoverTarget::Submenu;
                                     });
@@ -2322,7 +2327,9 @@ impl Render for ContextMenu {
                                     }
                                 }
 
-                                if let Some(parent) = &this.main_menu {
+                                if let Some(parent) =
+                                    this.main_menu.as_ref().and_then(WeakEntity::upgrade)
+                                {
                                     let parent = parent.read(cx);
                                     let overridden_by_parent_trigger = match &parent.submenu_state {
                                         SubmenuState::Open(open_submenu) => parent
@@ -2795,5 +2802,46 @@ mod tests {
                 "Should wrap around to first selectable entry"
             );
         });
+    }
+
+    #[gpui::test]
+    fn submenu_navigation_handles_released_parent(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let parent = cx.update(|window, cx| {
+            ContextMenu::build(window, cx, |menu, _, _| {
+                menu.submenu("Submenu", |menu, _, _| menu.header("Child"))
+            })
+        });
+        let submenu = parent.update_in(cx, |parent, window, cx| {
+            parent.select_first(&SelectFirst, window, cx);
+            parent.select_submenu_child(&SelectChild, window, cx);
+            match &parent.submenu_state {
+                SubmenuState::Open(submenu) => submenu.entity.clone(),
+                SubmenuState::Closed => panic!("submenu should open"),
+            }
+        });
+        let weak_parent = parent.downgrade();
+        cx.update(|_, _| drop(parent));
+        weak_parent.assert_released();
+
+        let dismiss_events = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|_, cx| {
+            let dismiss_events = dismiss_events.clone();
+            cx.subscribe(&submenu, move |_, _: &DismissEvent, _| {
+                dismiss_events.set(dismiss_events.get() + 1);
+            })
+        });
+        let focus_handle = cx.update(|window, cx| {
+            let focus_handle = cx.focus_handle();
+            window.focus(&focus_handle, cx);
+            focus_handle
+        });
+        submenu.update_in(cx, |submenu, window, cx| {
+            submenu.select_submenu_parent(&SelectParent, window, cx);
+            submenu.cancel(&menu::Cancel, window, cx);
+            assert!(focus_handle.is_focused(window));
+        });
+        cx.run_until_parked();
+        assert_eq!(dismiss_events.get(), 2);
     }
 }

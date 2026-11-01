@@ -254,18 +254,21 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                         let Some(new_menu) = (builder)(window, cx) else {
                             return;
                         };
-                        let menu2 = menu.clone();
+                        let weak_menu = Rc::downgrade(&menu);
                         let previous_focus_handle = window.focused(cx);
 
                         window
                             .subscribe(&new_menu, cx, move |modal, _: &DismissEvent, window, cx| {
+                                let Some(menu) = weak_menu.upgrade() else {
+                                    return;
+                                };
                                 if modal.focus_handle(cx).contains_focused(window, cx)
                                     && let Some(previous_focus_handle) =
                                         previous_focus_handle.as_ref()
                                 {
                                     window.focus(previous_focus_handle, cx);
                                 }
-                                *menu2.borrow_mut() = None;
+                                *menu.borrow_mut() = None;
                                 window.refresh();
                             })
                             .detach();

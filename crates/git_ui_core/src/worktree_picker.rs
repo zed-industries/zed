@@ -6,9 +6,10 @@ use collections::HashSet;
 use fuzzy::StringMatchCandidate;
 use git::repository::Worktree as GitWorktree;
 use gpui::{
-    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions,
+    Action, AnyElement, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent,
+    ParentElement, PromptLevel, Render, SharedString, Styled, Subscription, Task, TaskExt,
+    WeakEntity, Window, actions,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{Project, git_store::RepositoryEvent, repo_identity_path};
@@ -173,13 +174,15 @@ impl WorktreePicker {
                     None => None,
                 };
 
-                picker_handle.update_in(cx, |picker, window, cx| {
-                    picker.delegate.all_worktrees = all_worktrees;
-                    picker.delegate.default_branch =
-                        default_branch.and_then(|branch| RemoteBranchName::parse(&branch));
-                    picker.delegate.refresh_project_worktree_paths(window, cx);
-                    picker.refresh(window, cx);
-                })?;
+                picker_handle
+                    .update_in(cx, |picker, window, cx| {
+                        picker.delegate.all_worktrees = all_worktrees;
+                        picker.delegate.default_branch =
+                            default_branch.and_then(|branch| RemoteBranchName::parse(&branch));
+                        picker.delegate.refresh_project_worktree_paths(window, cx);
+                        picker.refresh(window, cx);
+                    })
+                    .ok();
 
                 anyhow::Ok(())
             })
@@ -201,10 +204,12 @@ impl WorktreePicker {
                                 .into_iter()
                                 .filter(|wt| !wt.is_bare)
                                 .collect();
-                            picker.update_in(cx, |picker, window, cx| {
-                                picker.delegate.all_worktrees = all_worktrees;
-                                picker.refresh(window, cx);
-                            })?;
+                            picker
+                                .update_in(cx, |picker, window, cx| {
+                                    picker.delegate.all_worktrees = all_worktrees;
+                                    picker.refresh(window, cx);
+                                })
+                                .ok();
                             anyhow::Ok(())
                         })
                         .detach_and_log_err(cx);
@@ -332,6 +337,20 @@ fn remove_worktree_command(path: &Path, force: bool) -> String {
     } else {
         format!("worktree remove {}", path.display())
     }
+}
+
+fn clear_deleting_worktree_path(
+    picker: &WeakEntity<Picker<WorktreePickerDelegate>>,
+    path: &Path,
+    cx: &mut AsyncWindowContext,
+) {
+    picker
+        .update(cx, |picker, cx| {
+            if picker.delegate.deleting_worktree_paths.remove(path) {
+                cx.notify();
+            }
+        })
+        .ok();
 }
 
 struct WorktreeRemoveForceDeletePrompt {
@@ -539,11 +558,7 @@ impl WorktreePickerDelegate {
             {
                 Ok(result) => result,
                 Err(error) => {
-                    picker.update_in(cx, |picker, _window, cx| {
-                        if picker.delegate.deleting_worktree_paths.remove(&path) {
-                            cx.notify();
-                        }
-                    })?;
+                    clear_deleting_worktree_path(&picker, &path, cx);
                     return Err(error.into());
                 }
             };
@@ -560,11 +575,7 @@ impl WorktreePickerDelegate {
                         .flatten();
 
                     if let Some(prompt_message) = force_delete_prompt {
-                        picker.update_in(cx, |picker, _window, cx| {
-                            if picker.delegate.deleting_worktree_paths.remove(&path) {
-                                cx.notify();
-                            }
-                        })?;
+                        clear_deleting_worktree_path(&picker, &path, cx);
 
                         let answer = cx.update(|window, cx| {
                             window.prompt(
@@ -580,22 +591,39 @@ impl WorktreePickerDelegate {
                             return Ok(());
                         }
 
-                        let should_retry = picker.update_in(cx, |picker, _window, cx| {
-                            let worktree_still_exists = picker
-                                .delegate
-                                .all_worktrees
-                                .iter()
-                                .any(|worktree| worktree.path == path);
-                            if !worktree_still_exists
-                                || !picker.delegate.deleting_worktree_paths.insert(path.clone())
-                            {
-                                return false;
-                            }
-                            cx.notify();
-                            true
-                        })?;
+                        let should_retry = picker
+                            .update(cx, |picker, cx| {
+                                if !picker.delegate.deleting_worktree_paths.insert(path.clone()) {
+                                    return false;
+                                }
+                                cx.notify();
+                                true
+                            })
+                            .unwrap_or(true);
 
                         if !should_retry {
+                            return Ok(());
+                        }
+
+                        let worktree_still_exists = match repo
+                            .update(cx, |repo, _| repo.worktrees())
+                            .await
+                        {
+                            Ok(Ok(worktrees)) => worktrees.iter().any(|worktree| {
+                                worktree.path == path && !worktree.is_main && !worktree.is_bare
+                            }),
+                            Ok(Err(error)) => {
+                                clear_deleting_worktree_path(&picker, &path, cx);
+                                return Err(error);
+                            }
+                            Err(error) => {
+                                clear_deleting_worktree_path(&picker, &path, cx);
+                                return Err(error.into());
+                            }
+                        };
+
+                        if !worktree_still_exists {
+                            clear_deleting_worktree_path(&picker, &path, cx);
                             return Ok(());
                         }
 
@@ -605,11 +633,7 @@ impl WorktreePickerDelegate {
                         {
                             Ok(result) => result,
                             Err(error) => {
-                                picker.update_in(cx, |picker, _window, cx| {
-                                    if picker.delegate.deleting_worktree_paths.remove(&path) {
-                                        cx.notify();
-                                    }
-                                })?;
+                                clear_deleting_worktree_path(&picker, &path, cx);
                                 return Err(error.into());
                             }
                         };
@@ -626,11 +650,7 @@ impl WorktreePickerDelegate {
             };
 
             if let Err(error) = result {
-                picker.update_in(cx, |picker, _window, cx| {
-                    if picker.delegate.deleting_worktree_paths.remove(&path) {
-                        cx.notify();
-                    }
-                })?;
+                clear_deleting_worktree_path(&picker, &path, cx);
 
                 if let Some(workspace) = workspace.upgrade() {
                     cx.update(|_window, cx| {
@@ -646,20 +666,22 @@ impl WorktreePickerDelegate {
                 return Ok(());
             }
 
-            picker.update_in(cx, |picker, _window, cx| {
-                picker.delegate.deleting_worktree_paths.remove(&path);
-                picker.delegate.matches.retain(|e| {
-                    !matches!(e, WorktreeEntry::Worktree { worktree, .. } if worktree.path == path)
-                });
-                picker.delegate.all_worktrees.retain(|w| w.path != path);
-                if picker.delegate.matches.is_empty() {
-                    picker.delegate.selected_index = 0;
-                } else if picker.delegate.selected_index >= picker.delegate.matches.len() {
-                    picker.delegate.selected_index = picker.delegate.matches.len() - 1;
-                }
-                picker.delegate.hovered_delete_index = None;
-                cx.notify();
-            })?;
+            picker
+                .update(cx, |picker, cx| {
+                    picker.delegate.deleting_worktree_paths.remove(&path);
+                    picker.delegate.matches.retain(|e| {
+                        !matches!(e, WorktreeEntry::Worktree { worktree, .. } if worktree.path == path)
+                    });
+                    picker.delegate.all_worktrees.retain(|w| w.path != path);
+                    if picker.delegate.matches.is_empty() {
+                        picker.delegate.selected_index = 0;
+                    } else if picker.delegate.selected_index >= picker.delegate.matches.len() {
+                        picker.delegate.selected_index = picker.delegate.matches.len() - 1;
+                    }
+                    picker.delegate.hovered_delete_index = None;
+                    cx.notify();
+                })
+                .ok();
 
             anyhow::Ok(())
         })
@@ -1668,7 +1690,7 @@ pub async fn open_remote_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::FakeFs;
+    use fs::{FakeFs, Fs as _};
     use gpui::{AppContext, TestAppContext, VisualTestContext};
     use project::project_settings::ProjectSettings;
     use project::{Project, WorktreeSettings};
@@ -1998,6 +2020,104 @@ mod tests {
         assert!(
             !repo_contains_worktree(&repository, &worktree_path, &mut cx).await,
             "worktree should be removed after confirming force delete"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_force_delete_completes_after_picker_is_released(cx: &mut TestAppContext) {
+        let (fs, worktree_picker, repository, worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        fs.with_git_state(path!("/root/project/.git").as_ref(), true, |state| {
+            state
+                .worktrees_requiring_force_delete
+                .insert(worktree_path.clone());
+        })
+        .expect("failed to mark test worktree as requiring force delete");
+
+        let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
+        let picker = worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.delete_worktree(index, false, window, cx);
+            });
+            worktree_picker.picker.downgrade()
+        });
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+
+        cx.update(|_, _| drop(worktree_picker));
+        picker.assert_released();
+
+        cx.simulate_prompt_answer("Force Delete");
+        cx.run_until_parked();
+
+        assert!(
+            !repo_contains_worktree(&repository, &worktree_path, &mut cx).await,
+            "confirmed force delete should not depend on the picker staying open"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_force_delete_preserves_replaced_directory_after_picker_release(
+        cx: &mut TestAppContext,
+    ) {
+        let (fs, worktree_picker, repository, worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        fs.with_git_state(path!("/root/project/.git").as_ref(), true, |state| {
+            state
+                .worktrees_requiring_force_delete
+                .insert(worktree_path.clone());
+        })
+        .expect("failed to mark test worktree as requiring force delete");
+
+        let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
+        let picker = worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.delete_worktree(index, false, window, cx);
+            });
+            worktree_picker.picker.downgrade()
+        });
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+        cx.update(|_, _| drop(worktree_picker));
+        picker.assert_released();
+
+        fs.remove_worktree_for_repo(
+            path!("/root/project/.git").as_ref(),
+            true,
+            "refs/heads/dirty-wt",
+        )
+        .await;
+        fs.insert_tree(
+            &worktree_path,
+            json!({"sentinel.txt": "unrelated replacement directory"}),
+        )
+        .await;
+        cx.run_until_parked();
+        let matching_worktrees = repository
+            .update(&mut cx, |repository, _| repository.worktrees())
+            .await
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .filter(|worktree| worktree.path == worktree_path)
+            .map(|worktree| worktree.path)
+            .collect::<Vec<_>>();
+        assert_eq!(matching_worktrees, Vec::<PathBuf>::new());
+        let sentinel_path = worktree_path.join("sentinel.txt");
+        assert_eq!(
+            fs.load(&sentinel_path).await.unwrap(),
+            "unrelated replacement directory"
+        );
+
+        cx.simulate_prompt_answer("Force Delete");
+        cx.run_until_parked();
+
+        assert!(!cx.has_pending_prompt());
+        assert_eq!(
+            fs.load(&sentinel_path).await.unwrap(),
+            "unrelated replacement directory"
         );
     }
 

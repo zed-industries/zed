@@ -282,16 +282,19 @@ fn show_menu<M: ManagedView>(
     let Some(new_menu) = (builder)(window, cx) else {
         return;
     };
-    let menu2 = menu.clone();
+    let weak_menu = Rc::downgrade(menu);
 
     window
         .subscribe(&new_menu, cx, move |modal, _: &DismissEvent, window, cx| {
+            let Some(menu) = weak_menu.upgrade() else {
+                return;
+            };
             if modal.focus_handle(cx).contains_focused(window, cx)
                 && let Some(previous_focus_handle) = previous_focus_handle.as_ref()
             {
                 window.focus(previous_focus_handle, cx);
             }
-            *menu2.borrow_mut() = None;
+            *menu.borrow_mut() = None;
             window.refresh();
         })
         .detach();
@@ -504,5 +507,133 @@ impl<M: ManagedView> IntoElement for PopoverMenu<M> {
 
     fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ContextMenu, right_click_menu};
+    use gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, WeakEntity};
+    use menu::{SelectChild, SelectFirst};
+
+    #[gpui::test]
+    fn test_menus_are_released_when_their_element_is_removed(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let (host, cx) = cx.add_window_view(|_, _| MenuHost {
+            visible: true,
+            opened_menu: Rc::default(),
+            opened_submenu: Rc::default(),
+        });
+
+        for (selector, button) in [
+            ("POPOVER_MENU", MouseButton::Left),
+            ("RIGHT_CLICK_MENU", MouseButton::Right),
+        ] {
+            for submenu_depth in 0..=2 {
+                set_visible(&host, true, cx);
+                let position = cx
+                    .debug_bounds(selector)
+                    .expect("menu trigger should be rendered")
+                    .center();
+                cx.simulate_mouse_down(position, button, Modifiers::default());
+                cx.simulate_mouse_up(position, button, Modifiers::default());
+                cx.run_until_parked();
+                let menu = host
+                    .update(cx, |host, _| host.opened_menu.take())
+                    .expect("menu should open");
+                assert!(menu.upgrade().is_some(), "{selector} should stay open");
+
+                let mut menus = vec![menu];
+                for _ in 0..submenu_depth {
+                    menus
+                        .last()
+                        .expect("parent menu should exist")
+                        .update_in(cx, |menu, window, cx| {
+                            menu.select_first(&SelectFirst, window, cx);
+                            menu.select_submenu_child(&SelectChild, window, cx);
+                        })
+                        .expect("parent menu should remain alive");
+                    cx.run_until_parked();
+                    let submenu = host
+                        .update(cx, |host, _| host.opened_submenu.take())
+                        .expect("submenu should open");
+                    assert!(submenu.upgrade().is_some());
+                    menus.push(submenu);
+                }
+
+                set_visible(&host, false, cx);
+                for menu in menus {
+                    menu.assert_released();
+                }
+            }
+        }
+    }
+
+    fn set_visible(host: &Entity<MenuHost>, visible: bool, cx: &mut VisualTestContext) {
+        host.update(cx, |host, cx| {
+            host.visible = visible;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+    }
+
+    struct MenuHost {
+        visible: bool,
+        opened_menu: Rc<RefCell<Option<WeakEntity<ContextMenu>>>>,
+        opened_submenu: Rc<RefCell<Option<WeakEntity<ContextMenu>>>>,
+    }
+
+    impl Render for MenuHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let opened_menu = self.opened_menu.clone();
+            let opened_submenu = self.opened_submenu.clone();
+            let build_menu = move |window: &mut Window, cx: &mut App| {
+                let menu = ContextMenu::build(window, cx, |menu, _, _| {
+                    menu.header("Menu").submenu("Submenu", {
+                        let opened_submenu = opened_submenu.clone();
+                        move |menu, _, cx| {
+                            opened_submenu.replace(Some(cx.weak_entity()));
+                            menu.submenu("Nested", {
+                                let opened_submenu = opened_submenu.clone();
+                                move |menu, _, cx| {
+                                    opened_submenu.replace(Some(cx.weak_entity()));
+                                    menu.header("Child")
+                                }
+                            })
+                        }
+                    })
+                });
+                opened_menu.replace(Some(menu.downgrade()));
+                menu
+            };
+            v_flex().size_full().when(self.visible, |this| {
+                this.child(
+                    div().debug_selector(|| "POPOVER_MENU".to_owned()).child(
+                        PopoverMenu::new("popover-menu")
+                            .menu({
+                                let build_menu = build_menu.clone();
+                                move |window, cx| Some(build_menu(window, cx))
+                            })
+                            .trigger(Button::new("popover-menu-trigger", "Popover")),
+                    ),
+                )
+                .child(
+                    div()
+                        .debug_selector(|| "RIGHT_CLICK_MENU".to_owned())
+                        .child(
+                            right_click_menu("right-click-menu")
+                                .menu(build_menu)
+                                .trigger(|_, _, _| Label::new("Right Click")),
+                        ),
+                )
+            })
+        }
     }
 }

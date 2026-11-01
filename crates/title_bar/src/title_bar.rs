@@ -1084,6 +1084,7 @@ impl TitleBar {
 
         Some(
             h_flex()
+                .debug_selector(|| "WORKTREE_AND_BRANCH".to_owned())
                 .gap_px()
                 .children(worktree_button)
                 .when(show_separator, |this| {
@@ -1423,5 +1424,156 @@ impl TitleBar {
                 .into()
             })
             .anchor(Anchor::TopRight)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::{FakeFs, Fs as _};
+    use gpui::{DismissEvent, Modifiers, TestAppContext};
+    use project::WorktreeSettings;
+    use std::{cell::Cell, path::Path, rc::Rc};
+    use util::path;
+    use workspace::RemovalIntent;
+
+    #[gpui::test]
+    async fn test_open_worktree_picker_is_released_when_its_workspace_is_removed(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            ProjectSettings::register(cx);
+            WorktreeSettings::register(cx);
+            TitleBarSettings::override_global(
+                TitleBarSettings {
+                    show_branch_name: false,
+                    show_worktree_name: true,
+                    show_project_items: true,
+                    show_menus: false,
+                    ..*TitleBarSettings::get_global(cx)
+                },
+                cx,
+            );
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let main_project = test_git_project(&fs, path!("/root/main"), cx).await;
+        let removed_project = test_git_project(&fs, path!("/root/worktree"), cx).await;
+        cx.run_until_parked();
+        let weak_project = removed_project.downgrade();
+        let worktree = removed_project.read_with(cx, |project, cx| {
+            project.visible_worktrees(cx).next().unwrap().downgrade()
+        });
+        cx.update(|cx| {
+            call::init(
+                main_project.read(cx).client(),
+                main_project.read(cx).user_store(),
+                cx,
+            );
+        });
+
+        let opened_picker = Rc::new(Cell::new(None));
+        let _subscription = cx.update(|cx| {
+            let opened_picker = opened_picker.clone();
+            cx.observe_new(move |_: &mut WorktreePicker, _, cx| {
+                opened_picker.set(Some(cx.weak_entity()));
+            })
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            let workspace = test_workspace_with_titlebar(main_project, window, cx);
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        cx.run_until_parked();
+        let main_workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let removed_workspace = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+            let workspace = test_workspace_with_titlebar(removed_project, window, cx);
+            multi_workspace.activate(workspace.clone(), None, window, cx);
+            workspace
+        });
+        cx.run_until_parked();
+        let titlebar = removed_workspace.read_with(cx, |workspace, _| {
+            workspace
+                .titlebar_item()
+                .unwrap()
+                .downcast::<TitleBar>()
+                .unwrap()
+                .downgrade()
+        });
+        let position = cx
+            .debug_bounds("WORKTREE_AND_BRANCH")
+            .expect("worktree picker trigger should be rendered")
+            .center();
+        cx.simulate_click(position, Modifiers::default());
+        cx.run_until_parked();
+        let picker = opened_picker.take().expect("worktree picker should open");
+        assert!(picker.upgrade().is_some());
+        let dismissals = Rc::new(Cell::new(0));
+        let _dismissal_subscription = cx.update(|_, cx| {
+            let dismissals = dismissals.clone();
+            cx.subscribe(&picker.upgrade().unwrap(), move |_, _: &DismissEvent, _| {
+                dismissals.set(dismissals.get() + 1);
+            })
+        });
+
+        multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.activate(main_workspace, None, window, cx);
+        });
+        cx.run_until_parked();
+        let removal = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.remove(
+                [removed_workspace.clone()],
+                RemovalIntent::CloseProject,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(removal.await.ok(), Some(true));
+        let workspace = removed_workspace.downgrade();
+        drop(removed_workspace);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+
+        assert_eq!(dismissals.get(), 0);
+        workspace.assert_released();
+        titlebar.assert_released();
+        picker.assert_released();
+        weak_project.assert_released();
+        worktree.assert_released();
+    }
+
+    async fn test_git_project(
+        fs: &Arc<FakeFs>,
+        root: &str,
+        cx: &mut TestAppContext,
+    ) -> Entity<Project> {
+        let root = Path::new(root);
+        fs.create_dir(&root.join(".git")).await.unwrap();
+        fs.insert_file(root.join("file.txt"), b"buffer_text".to_vec())
+            .await;
+        fs.set_head_for_repo(
+            &root.join(".git"),
+            &[("file.txt", "buffer_text".to_string())],
+            "deadbeef",
+        );
+        Project::test(fs.clone(), [root], cx).await
+    }
+
+    fn test_workspace_with_titlebar(
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Workspace> {
+        let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+        workspace.update(cx, |workspace, cx| {
+            let titlebar = cx.new(|cx| TitleBar::new("title-bar", workspace, None, window, cx));
+            workspace.set_titlebar_item(titlebar.into(), window, cx);
+        });
+        workspace
     }
 }
