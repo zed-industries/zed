@@ -225,7 +225,8 @@ impl WgpuContext {
                         continue;
                     };
 
-                    match Self::create_device(&adapter).await {
+                    let features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+                    match Self::create_device_with_features(&adapter, features).await {
                         Ok((device, queue, dual_source_blending, color_texture_format)) => {
                             #[cfg(feature = "bench-support")]
                             if adapter_info.device_type == wgpu::DeviceType::Cpu {
@@ -425,11 +426,18 @@ impl WgpuContext {
     async fn create_device(
         adapter: &wgpu::Adapter,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, TextureFormat)> {
+        Self::create_device_with_features(adapter, wgpu::Features::empty()).await
+    }
+
+    async fn create_device_with_features(
+        adapter: &wgpu::Adapter,
+        additional_features: wgpu::Features,
+    ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, TextureFormat)> {
         let dual_source_blending = adapter
             .features()
             .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
 
-        let mut required_features = wgpu::Features::empty();
+        let mut required_features = additional_features;
         if dual_source_blending {
             required_features |= wgpu::Features::DUAL_SOURCE_BLENDING;
         } else {

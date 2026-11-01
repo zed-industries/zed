@@ -36,12 +36,22 @@ struct WgpuAtlasTextures {
     storage: WgpuAtlasStorage,
     pending_uploads: Vec<PendingUpload>,
     next_texture_generation: u64,
+    #[cfg(all(
+        not(target_family = "wasm"),
+        any(test, feature = "bench-support", feature = "test-support")
+    ))]
+    metrics: Option<crate::wgpu_metrics::SharedCounters>,
 }
 
 pub struct WgpuTextureInfo {
     pub view: wgpu::TextureView,
     /// Distinguishes new textures that reuse an [`AtlasTextureId`].
     pub generation: u64,
+    #[cfg(all(
+        not(target_family = "wasm"),
+        any(test, feature = "bench-support", feature = "test-support")
+    ))]
+    pub(crate) allocation: Option<Arc<crate::wgpu_metrics::AtlasAllocation>>,
 }
 
 impl WgpuAtlas {
@@ -59,6 +69,11 @@ impl WgpuAtlas {
             storage: WgpuAtlasStorage::default(),
             pending_uploads: Vec::new(),
             next_texture_generation: 0,
+            #[cfg(all(
+                not(target_family = "wasm"),
+                any(test, feature = "bench-support", feature = "test-support")
+            ))]
+            metrics: None,
         })))
     }
 
@@ -75,6 +90,30 @@ impl WgpuAtlas {
         lock.backend.flush_uploads();
     }
 
+    #[cfg(all(
+        not(target_family = "wasm"),
+        any(test, feature = "bench-support", feature = "test-support")
+    ))]
+    pub(crate) fn set_metrics(&self, metrics: Option<crate::wgpu_metrics::SharedCounters>) {
+        let mut lock = self.0.lock();
+        for kind in [
+            AtlasTextureKind::Monochrome,
+            AtlasTextureKind::Subpixel,
+            AtlasTextureKind::Polychrome,
+        ] {
+            for texture in lock.backend.storage[kind].textures.iter_mut().flatten() {
+                texture.allocation = metrics.as_ref().map(|metrics| {
+                    Arc::new(crate::wgpu_metrics::AtlasAllocation::new(
+                        metrics.clone(),
+                        crate::wgpu_metrics::texture_bytes(&texture.texture),
+                        false,
+                    ))
+                });
+            }
+        }
+        lock.backend.metrics = metrics;
+    }
+
     /// Returns the view backing `id`, or `None` once every tile in it has been
     /// removed. A scene can still reference such a texture when a cached view
     /// replays a paint from before the image was dropped, so callers must skip
@@ -85,6 +124,11 @@ impl WgpuAtlas {
         Some(WgpuTextureInfo {
             view: texture.view.clone(),
             generation: texture.generation,
+            #[cfg(all(
+                not(target_family = "wasm"),
+                any(test, feature = "bench-support", feature = "test-support")
+            ))]
+            allocation: texture.allocation.clone(),
         })
     }
 
@@ -218,6 +262,17 @@ impl WgpuAtlasTextures {
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        #[cfg(all(
+            not(target_family = "wasm"),
+            any(test, feature = "bench-support", feature = "test-support")
+        ))]
+        let allocation = self.metrics.as_ref().map(|metrics| {
+            Arc::new(crate::wgpu_metrics::AtlasAllocation::new(
+                metrics.clone(),
+                crate::wgpu_metrics::texture_bytes(&texture),
+                true,
+            ))
+        });
         let texture_list = &mut self.storage[kind];
         let index = texture_list.free_list.pop();
         let generation = self.next_texture_generation;
@@ -234,6 +289,11 @@ impl WgpuAtlasTextures {
             texture,
             view,
             live_atlas_keys: 0,
+            #[cfg(all(
+                not(target_family = "wasm"),
+                any(test, feature = "bench-support", feature = "test-support")
+            ))]
+            allocation,
         };
 
         if let Some(ix) = index {
@@ -294,6 +354,15 @@ impl WgpuAtlasTextures {
                     depth_or_array_layers: 1,
                 },
             );
+            #[cfg(all(
+                not(target_family = "wasm"),
+                any(test, feature = "bench-support", feature = "test-support")
+            ))]
+            if let Some(metrics) = &self.metrics {
+                let mut counters = metrics.lock();
+                counters.frame.atlas_uploads += 1;
+                counters.frame.atlas_upload_bytes += upload.data.len() as u64;
+            }
         }
     }
 }
@@ -343,6 +412,11 @@ struct WgpuAtlasTexture {
     view: wgpu::TextureView,
     format: wgpu::TextureFormat,
     live_atlas_keys: u32,
+    #[cfg(all(
+        not(target_family = "wasm"),
+        any(test, feature = "bench-support", feature = "test-support")
+    ))]
+    allocation: Option<Arc<crate::wgpu_metrics::AtlasAllocation>>,
 }
 
 impl WgpuAtlasTexture {

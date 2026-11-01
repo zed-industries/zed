@@ -1,6 +1,11 @@
 mod cosmic_text_system;
 mod wgpu_atlas;
 mod wgpu_context;
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "bench-support", feature = "test-support")
+))]
+mod wgpu_metrics;
 mod wgpu_renderer;
 
 pub use cosmic_text_system::*;
