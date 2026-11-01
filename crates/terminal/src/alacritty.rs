@@ -282,7 +282,7 @@ pub(super) fn toggle_vi_mode(term: &mut AlacrittyTerm) {
 }
 
 pub(super) fn vi_motion(term: &mut AlacrittyTerm, motion: ViMotion, count: usize) {
-    let count = count.min(term.total_lines().saturating_mul(term.columns()));
+    let count = usize::min(count, term.total_lines().saturating_mul(term.columns()));
     for _ in 0..count {
         let previous_point = term.vi_mode_cursor.point;
         term.vi_motion(motion.to_alacritty());
