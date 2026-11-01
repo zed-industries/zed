@@ -1,17 +1,19 @@
 //! Painter-order assignment (`BoundsTree`) and `Scene::finish` for many primitives.
 //!
-//! The `random` cases are the general workload: seeded rectangles of every size, scattered
-//! and overlapping, painted as a mix of quads, shadows and underlines. `SEED` and
-//! `ITERATIONS` choose the seeds as for `#[gpui::test]`. The fixed patterns isolate the
-//! geometry that decides an ordering structure's best and worst cases, such as many
-//! primitives overlapping one another (`overlap`, `nested`) or sharing one axis
-//! (`stripes`), so a change in `random` can be traced to the shape that caused it.
+//! The `random` cases are the general workload: seeded rectangles of every size,
+//! scattered and overlapping, painted as a mix of quads, shadows, underlines, filled paths
+//! and text. `SEED` and `ITERATIONS` choose the seeds as for `#[gpui::test]`. The fixed
+//! patterns isolate the geometry that decides an ordering structure's best and worst
+//! cases, such as many primitives overlapping one another (`overlap`, `nested`) or sharing
+//! one axis (`stripes`), so a change in `random` can be traced to the shape that caused it.
 
 use std::{fmt, rc::Rc, time::Duration};
 
 use gpui::{
-    Background, BenchAppContext, Bounds, BoxShadow, Context, Corners, Hsla, IntoElement, Pixels,
-    Render, Scene, Styled, UnderlineStyle, Window, canvas, fill, hsla, point,
+    App, AtlasTextureId, AtlasTextureKind, AtlasTile, Background, BenchAppContext, Bounds,
+    BoxShadow, Context, Corners, DevicePixels, Hsla, IntoElement, Path, PathBuilder, Pixels,
+    Render, Scene, SharedString, Styled, TextAlign, TextRun, TileId, TransformationMatrix,
+    UnderlineStyle, Window, canvas, fill, hsla, point,
     private::rand::{Rng as _, SeedableRng as _, rngs::StdRng},
     px, size,
 };
@@ -72,14 +74,18 @@ fn cases() -> Vec<Case> {
         .collect()
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Kind {
     Quad,
     Shadow,
     Underline,
+    /// Tessellated before timing: path tessellation is measured by the tree benchmarks,
+    /// and would otherwise dominate what these cases are for.
+    Path(Path<Pixels>),
+    Text(SharedString),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Rectangle {
     bounds: Bounds<Pixels>,
     background: Background,
@@ -100,14 +106,20 @@ fn random_rectangles(seed: u64, count: usize, extent: f32) -> Rc<[Rectangle]> {
                 px(32. + rng.random_range(0.0..extent - width)),
                 px(32. + rng.random_range(0.0..extent - height)),
             );
+            let bounds = Bounds::new(origin, size(px(width), px(height)));
             let color = hsla(rng.random_range(0.0..1.0), 0.8, 0.5, 1.);
             let kind = match rng.random_range(0..20) {
-                0..14 => Kind::Quad,
-                14..17 => Kind::Shadow,
-                _ => Kind::Underline,
+                0..9 => Kind::Quad,
+                9..11 => Kind::Shadow,
+                11..13 => Kind::Underline,
+                13..16 => triangle(bounds).map_or(Kind::Quad, Kind::Path),
+                _ => {
+                    let length = rng.random_range(1..12);
+                    Kind::Text("Ag3 Wq7 fixture"[..length].to_string().into())
+                }
             };
             Rectangle {
-                bounds: Bounds::new(origin, size(px(width), px(height))),
+                bounds,
                 background: color.into(),
                 color,
                 kind,
@@ -115,6 +127,15 @@ fn random_rectangles(seed: u64, count: usize, extent: f32) -> Rc<[Rectangle]> {
         })
         .collect::<Vec<_>>()
         .into()
+}
+
+fn triangle(bounds: Bounds<Pixels>) -> Option<Path<Pixels>> {
+    let mut path = PathBuilder::fill();
+    path.move_to(bounds.origin);
+    path.line_to(bounds.top_right());
+    path.line_to(bounds.bottom_left() + point(bounds.size.width / 2., px(0.)));
+    path.close();
+    path.build().ok()
 }
 
 fn rectangles(case: &Case, extent: f32) -> Rc<[Rectangle]> {
@@ -181,9 +202,9 @@ impl Render for OrderingView {
         let rectangles = self.rectangles.clone();
         canvas(
             |_, _, _| {},
-            move |_, _, window, _| {
+            move |_, _, window, cx| {
                 for rectangle in rectangles.iter() {
-                    paint(rectangle, window);
+                    paint(rectangle, window, cx);
                 }
             },
         )
@@ -191,8 +212,8 @@ impl Render for OrderingView {
     }
 }
 
-fn paint(rectangle: &Rectangle, window: &mut Window) {
-    match rectangle.kind {
+fn paint(rectangle: &Rectangle, window: &mut Window, cx: &mut App) {
+    match &rectangle.kind {
         Kind::Quad => window.paint_quad(fill(rectangle.bounds, rectangle.background)),
         Kind::Shadow => window.paint_drop_shadows(
             rectangle.bounds,
@@ -214,6 +235,50 @@ fn paint(rectangle: &Rectangle, window: &mut Window) {
                 wavy: false,
             },
         ),
+        Kind::Path(path) => window.paint_path(path.clone(), rectangle.color),
+        // Shaped every frame, as the text element does; the line layout cache makes
+        // repeated shaping a lookup.
+        Kind::Text(text) => {
+            let font_size = rectangle.bounds.size.height.clamp(px(8.), px(32.));
+            let run = TextRun {
+                len: text.len(),
+                font: window.text_style().font(),
+                color: rectangle.color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let line = window
+                .text_system()
+                .shape_line(text.clone(), font_size, &[run], None);
+            if let Err(error) = line.paint(
+                rectangle.bounds.origin,
+                font_size,
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            ) {
+                eprintln!("failed to paint text: {error}");
+            }
+        }
+    }
+}
+
+/// Stands in for one glyph's atlas tile. Spread over a few textures, as glyphs of
+/// different sizes and fonts are, so batching by texture is exercised.
+fn glyph_tile(index: usize) -> AtlasTile {
+    AtlasTile {
+        texture_id: AtlasTextureId {
+            index: (index % 3) as u32,
+            kind: AtlasTextureKind::Monochrome,
+        },
+        tile_id: TileId(index as u32),
+        padding: 0,
+        bounds: Bounds::new(
+            point(DevicePixels(0), DevicePixels(0)),
+            size(DevicePixels(16), DevicePixels(16)),
+        ),
     }
 }
 
@@ -222,9 +287,9 @@ fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
     let content_mask = gpui::ContentMask {
         bounds: Bounds::new(point(px(0.), px(0.)), size(px(1_024.), px(1_024.))).scale(1.),
     };
-    for rectangle in rectangles {
+    for (index, rectangle) in rectangles.iter().enumerate() {
         let bounds = rectangle.bounds.scale(1.);
-        match rectangle.kind {
+        match &rectangle.kind {
             Kind::Quad => scene.insert_primitive(gpui::Quad {
                 order: 0,
                 border_style: Default::default(),
@@ -256,6 +321,28 @@ fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
                 thickness: bounds.size.height.min(gpui::ScaledPixels(4.)),
                 wavy: Default::default(),
             }),
+            Kind::Path(path) => {
+                let mut path = path.scale(1.);
+                path.content_mask = content_mask;
+                path.color = rectangle.background;
+                scene.insert_primitive(path);
+            }
+            Kind::Text(text) => {
+                let glyph_size = bounds.size.height.min(gpui::ScaledPixels(32.));
+                for glyph in 0..text.len() {
+                    let origin = bounds.origin
+                        + point(glyph_size * (glyph as f32 * 0.6), gpui::ScaledPixels(0.));
+                    scene.insert_primitive(gpui::MonochromeSprite {
+                        order: 0,
+                        pad: 0,
+                        tile: glyph_tile(index + glyph),
+                        bounds: Bounds::new(origin, size(glyph_size * 0.6, glyph_size)),
+                        content_mask,
+                        color: rectangle.color,
+                        transformation: TransformationMatrix::unit(),
+                    });
+                }
+            }
         }
     }
     scene.finish();

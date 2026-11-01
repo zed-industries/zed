@@ -526,7 +526,7 @@ fn hover(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
 
 /// A seeded stream of the changes a real window sees, one per frame: restyles, resizes,
 /// structural edits, reorders, scattered recolors, pointer moves, scroll events, focus
-/// moves and bare notifies, on top of entities that animate every frame.
+/// moves, window resizes and bare notifies, on top of entities that animate every frame.
 struct MixedWorkload {
     rng: StdRng,
     pointer_targets: Vec<gpui::Point<gpui::Pixels>>,
@@ -574,13 +574,14 @@ impl MixedWorkload {
         }
     }
 
-    /// Applies one change. Weights are percentages of frames.
+    /// Applies one change. Weights are percentages of frames. Returns a new window size
+    /// when this frame's change is a resize, which the caller applies outside the update.
     fn frame(
         &mut self,
         tree: &mut RandomizedElementTree,
         window: &mut Window,
         cx: &mut Context<RandomizedElementTree>,
-    ) {
+    ) -> Option<gpui::Size<gpui::Pixels>> {
         use RandomizedElementTreeMutationKind::*;
         let roll = self.rng.random_range(0..100);
         match roll {
@@ -642,9 +643,17 @@ impl MixedWorkload {
                     );
                 }
             }
-            92..96 => window.focus_next(cx),
+            92..95 => window.focus_next(cx),
+            // Sizes on both sides of the tree's root, which shrinks to fit a smaller window.
+            95..98 => {
+                return Some(gpui::size(
+                    gpui::px(self.rng.random_range(480.0..1600.0)),
+                    gpui::px(self.rng.random_range(360.0..1000.0)),
+                ));
+            }
             _ => cx.notify(),
         }
+        None
     }
 }
 
@@ -674,8 +683,11 @@ fn measure_mixed(
 
     cx.bench_iter(|cx| {
         for _ in 0..family.mixed_frames {
-            window
+            let resize = window
                 .update(|window, cx| tree.update(cx, |tree, cx| workload.frame(tree, window, cx)));
+            if let Some(size) = resize {
+                window.simulate_resize(size);
+            }
             cx.run_until_idle();
         }
     });

@@ -911,20 +911,9 @@ impl RandomizedElementTree {
             drop(snapshot);
             return self.insert_child_internal();
         };
-        // With cached views, an entity's width and height are passed to `.cached(style)` by
-        // the view that renders it, not by the entity itself. Notifying the entity re-renders
-        // only its contents, so the size change must notify the parent's owner instead.
-        let external_style_changed = snapshot.cached_views
-            && matches!(mutation, RandomizedChildMutation::Bounds)
-            && node_at_path(&snapshot.children, &path).is_some_and(|node| node.is_entity);
-        let owner_path = if external_style_changed {
-            path.split_last()
-                .map(|(_, parent)| parent)
-                .unwrap_or_default()
-        } else {
-            &path
-        };
-        let owner_entity_id = nearest_entity_id(&snapshot.children, owner_path);
+        // Notifying a view also re-renders its ancestors, so this reaches the view that
+        // passes a cached entity's size to `.cached(style)` too.
+        let owner_entity_id = nearest_entity_id(&snapshot.children, &path);
         let Some(node) = node_at_path_mut(&mut snapshot.children, &path) else {
             drop(snapshot);
             return self.insert_child_internal();
@@ -1104,6 +1093,9 @@ impl Render for RandomizedElementTree {
             .p(px(root.padding))
             .w(px(root.width))
             .h(px(root.height))
+            // Shrinks with a window smaller than the root, so resizing it changes layout.
+            .max_w_full()
+            .max_h_full()
             .bg(root.background)
             .border(px(root.border_width))
             .border_color(root.border_color)
