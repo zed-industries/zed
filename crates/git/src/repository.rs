@@ -1117,6 +1117,8 @@ pub trait GitRepository: Send + Sync {
 
     fn commit_data_reader(&self) -> Result<CommitDataReader>;
 
+    fn tags(&self) -> BoxFuture<'_, Result<Vec<(String, String)>>>;
+
     fn create_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>>;
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>>;
 
@@ -2814,6 +2816,30 @@ impl GitRepository for RealGitRepository {
             .await?;
 
             Ok(())
+        }
+        .boxed()
+    }
+
+    fn tags(&self) -> BoxFuture<'_, Result<Vec<(String, String)>>> {
+        let git = self.git_binary();
+        async move {
+            let output = git
+                .run(&[
+                    "for-each-ref",
+                    "--sort=refname",
+                    "--format=%(refname)%00%(objectname)",
+                    "refs/tags/",
+                ])
+                .await?;
+            output
+                .lines()
+                .map(|line| {
+                    let (name, target) = line
+                        .split_once('\0')
+                        .context("invalid tag reference from git")?;
+                    Ok((name.to_owned(), target.to_owned()))
+                })
+                .collect()
         }
         .boxed()
     }
@@ -6583,6 +6609,40 @@ mod tests {
             "untracked"
         );
         assert!(!path.join("deleted").exists());
+    }
+
+    #[gpui::test]
+    async fn test_tags_include_loose_and_packed_refs(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        git_command(repo_dir.path(), ["commit", "--allow-empty", "-m", "first"]);
+        git_command(repo_dir.path(), ["tag", "lightweight"]);
+        git_command(repo_dir.path(), ["tag", "-a", "annotated", "-m", "tag"]);
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let tags = repo.tags().await.unwrap();
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].0, "refs/tags/annotated");
+        assert_eq!(tags[1].0, "refs/tags/lightweight");
+        assert_ne!(tags[0].1, tags[1].1);
+
+        git_command(repo_dir.path(), ["pack-refs", "--all"]);
+        assert_eq!(repo.tags().await.unwrap(), tags);
+        git_command(repo_dir.path(), ["commit", "--allow-empty", "-m", "second"]);
+        git_command(repo_dir.path(), ["tag", "-f", "lightweight"]);
+        let moved_tags = repo.tags().await.unwrap();
+        assert_eq!(moved_tags[0], tags[0]);
+        assert_ne!(moved_tags[1], tags[1]);
+        git_command(repo_dir.path(), ["tag", "-d", "annotated"]);
+        assert_eq!(repo.tags().await.unwrap(), vec![moved_tags[1].clone()]);
     }
 
     #[gpui::test]
