@@ -83,6 +83,23 @@ impl HasDisplayHandle for TestWindow {
 }
 
 impl TestWindow {
+    pub(crate) fn set_gpu_metrics_enabled(&self, enabled: bool) {
+        if let Some(renderer) = self.0.lock().renderer.as_mut() {
+            renderer.set_gpu_metrics_enabled(enabled);
+        }
+    }
+
+    pub(crate) fn wait_for_gpu_idle(&self) -> anyhow::Result<()> {
+        if let Some(renderer) = self.0.lock().renderer.as_mut() {
+            renderer.wait_for_gpu_idle()?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn take_gpu_stats(&self) -> Option<crate::GpuStats> {
+        self.0.lock().renderer.as_mut()?.take_gpu_stats()
+    }
+
     pub(crate) fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
