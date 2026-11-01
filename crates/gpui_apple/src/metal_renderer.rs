@@ -518,12 +518,25 @@ impl MetalRenderer {
         // We are uncertain when this happens, but sometimes size can be 0 here. Most likely before
         // the layout pass on window creation. Zero-sized texture creation causes SIGABRT.
         // https://github.com/zed-industries/zed/issues/36229
-        self.path_intermediate_texture = None;
-        self.path_intermediate_msaa_texture = None;
         if size.width.0 <= 0 || size.height.0 <= 0 {
+            self.path_intermediate_texture = None;
+            self.path_intermediate_msaa_texture = None;
             return Ok(());
         }
 
+        if self
+            .path_intermediate_texture
+            .as_ref()
+            .is_some_and(|texture| {
+                texture.width() == size.width.0 as usize
+                    && texture.height() == size.height.0 as usize
+            })
+        {
+            return Ok(());
+        }
+
+        self.path_intermediate_texture = None;
+        self.path_intermediate_msaa_texture = None;
         let texture_descriptor = MTLTextureDescriptor::new();
         // SAFETY: The dimensions are positive and this descriptor creates a 2D texture.
         unsafe {
@@ -1915,6 +1928,60 @@ mod tests {
         CVPixelBufferUnlockBaseAddress, kCVPixelBufferIOSurfacePropertiesKey,
     };
     use objc2_metal::MTLCommandBufferStatus;
+
+    #[test]
+    fn path_intermediate_textures_are_reused_until_resize() -> Result<()> {
+        let mut renderer = MetalRenderer::new_headless(Default::default())?;
+        let initial_size = size(DevicePixels(64), DevicePixels(64));
+        renderer.update_path_intermediate_textures(initial_size)?;
+        let initial_texture = renderer
+            .path_intermediate_texture
+            .clone()
+            .context("missing path intermediate texture")?;
+        let initial_msaa_texture = renderer.path_intermediate_msaa_texture.clone();
+
+        renderer.update_path_intermediate_textures(initial_size)?;
+        assert!(ptr::eq(
+            &*initial_texture,
+            renderer
+                .path_intermediate_texture
+                .as_deref()
+                .context("missing reused texture")?,
+        ));
+        assert_eq!(
+            initial_msaa_texture.as_ref().map(Retained::as_ptr),
+            renderer
+                .path_intermediate_msaa_texture
+                .as_ref()
+                .map(Retained::as_ptr),
+        );
+
+        renderer.update_path_intermediate_textures(size(DevicePixels(128), DevicePixels(64)))?;
+        let resized_texture = renderer
+            .path_intermediate_texture
+            .as_deref()
+            .context("missing resized texture")?;
+        assert_eq!(
+            (resized_texture.width(), resized_texture.height()),
+            (128, 64)
+        );
+        assert!(!ptr::eq(&*initial_texture, resized_texture));
+        if let Some(texture) = &renderer.path_intermediate_msaa_texture {
+            assert_eq!((texture.width(), texture.height()), (128, 64));
+        }
+
+        for (width, height) in [(0, 64), (64, 0), (-1, 64), (64, -1)] {
+            renderer.update_path_intermediate_textures(size(
+                DevicePixels(width),
+                DevicePixels(height),
+            ))?;
+            assert!(renderer.path_intermediate_texture.is_none());
+            assert!(renderer.path_intermediate_msaa_texture.is_none());
+            renderer.update_path_intermediate_textures(initial_size)?;
+            assert!(renderer.path_intermediate_texture.is_some());
+        }
+        Ok(())
+    }
 
     #[test]
     fn render_to_image_rejects_zero_sized_layer() -> Result<()> {
