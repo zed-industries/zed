@@ -66,6 +66,11 @@ pub(crate) struct EntityMap {
 /// collects exactly what was accessed inside it, without copying what the
 /// draw accessed before it began, and `frame` ends up with every access.
 struct AccessedEntities {
+    /// Every entity accessed during the draw: the window subscribes to
+    /// exactly this set when the draw ends. Accesses outside any scope land
+    /// here directly, and a scope's accesses reach it when the outermost open
+    /// scope ends. It is the innermost set only while no scope is open, and
+    /// unlike a scope it is never ended.
     frame: FxHashSet<EntityId>,
     /// The scopes currently recording, innermost last.
     scopes: Vec<FxHashSet<EntityId>>,
@@ -208,8 +213,7 @@ impl EntityMap {
         let ref_counts = self.ref_counts.read();
         self.accessed_entities.get_mut().innermost().extend(
             entities
-                .iter()
-                .copied()
+                .into_iter()
                 .filter(|entity_id| ref_counts.counts.contains_key(*entity_id)),
         );
     }
@@ -1321,7 +1325,7 @@ mod test {
 
         drop(second);
         entity_map.take_dropped();
-        entity_map.extend_accessed(&both);
+        entity_map.extend_accessed(both);
         assert_eq!(
             entity_map.take_accessed(),
             FxHashSet::from_iter([first.entity_id()]),

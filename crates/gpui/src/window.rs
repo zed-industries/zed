@@ -3994,7 +3994,10 @@ impl Window {
                     self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
                 } else {
                     cx.entities.extend_accessed(
-                        &self.next_frame.deferred_draws[deferred_draw_ix].accessed_entities,
+                        self.next_frame.deferred_draws[deferred_draw_ix]
+                            .accessed_entities
+                            .iter()
+                            .copied(),
                     );
                     self.reuse_prepaint(prepaint_range);
                 }

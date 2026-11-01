@@ -555,7 +555,7 @@ fn prepaint_view(
                     let prepaint_start = window.prepaint_index();
                     window.reuse_prepaint(element_state.prepaint_range.clone());
                     cx.entities
-                        .extend_accessed(&element_state.accessed_entities);
+                        .extend_accessed(element_state.accessed_entities.iter().copied());
                     let prepaint_end = window.prepaint_index();
                     element_state.prepaint_range = prepaint_start..prepaint_end;
 
