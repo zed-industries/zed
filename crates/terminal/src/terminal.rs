@@ -1070,7 +1070,7 @@ impl TerminalBuilder {
             selection_phase: SelectionPhase::Ended,
             hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
-            vi_motion_count: None,
+            vi_current_motion_count: None,
             is_remote_terminal: false,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
@@ -1361,7 +1361,7 @@ impl TerminalBuilder {
                     path_hyperlink_timeout,
                 ),
                 vi_mode_enabled: false,
-                vi_motion_count: None,
+                vi_current_motion_count: None,
                 is_remote_terminal,
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
@@ -1568,7 +1568,7 @@ pub struct Terminal {
     hyperlink_regex_searches: RegexSearches,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
-    vi_motion_count: Option<usize>,
+    vi_current_motion_count: Option<usize>,
     is_remote_terminal: bool,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<GpuiPoint<Pixels>>,
@@ -1868,7 +1868,7 @@ impl Terminal {
             InternalEvent::ToggleViMode => {
                 trace!("Toggling vi mode");
                 self.vi_mode_enabled = !self.vi_mode_enabled;
-                self.vi_motion_count = None;
+                self.vi_current_motion_count = None;
                 toggle_term_vi_mode(term);
             }
             InternalEvent::ViMotion { motion, count } => {
@@ -2385,7 +2385,7 @@ impl Terminal {
         }
 
         match keystroke.key.as_bytes() {
-            &[digit @ b'0'..=b'9'] if digit != b'0' || self.vi_motion_count.is_some() => {
+            &[digit @ b'0'..=b'9'] if digit != b'0' || self.vi_current_motion_count.is_some() => {
                 Some(usize::from(digit - b'0'))
             }
             _ => None,
@@ -2398,8 +2398,8 @@ impl Terminal {
         }
 
         if let Some(digit) = self.vi_count_digit(keystroke) {
-            self.vi_motion_count = Some(
-                self.vi_motion_count
+            self.vi_current_motion_count = Some(
+                self.vi_current_motion_count
                     .unwrap_or(0)
                     .saturating_mul(10)
                     .saturating_add(digit),
@@ -2413,7 +2413,7 @@ impl Terminal {
             Cow::Borrowed(keystroke.key.as_str())
         };
 
-        let count = self.vi_motion_count.take();
+        let count = self.vi_current_motion_count.take();
         let motion: Option<ViMotion> = match key.as_ref() {
             "h" | "left" => Some(ViMotion::Left),
             "j" | "down" => Some(ViMotion::Down),
@@ -4090,7 +4090,7 @@ mod tests {
                     terminal.sync(window, cx);
                 }
                 assert_eq!(terminal.last_content.cursor.point, expected, "{keys}");
-                assert_eq!(terminal.vi_motion_count, None);
+                assert_eq!(terminal.vi_current_motion_count, None);
             }
 
             for count in ["1", "3"] {
@@ -4109,7 +4109,7 @@ mod tests {
                         Some(InternalEvent::UpdateSelection(_))
                     ));
                     assert!(terminal.events.is_empty());
-                    assert_eq!(terminal.vi_motion_count, None);
+                    assert_eq!(terminal.vi_current_motion_count, None);
                 }
             }
             for count in ["1", "3"] {
@@ -4121,7 +4121,7 @@ mod tests {
                         "{count}{key}"
                     );
                     assert!(terminal.events.is_empty());
-                    assert_eq!(terminal.vi_motion_count, None);
+                    assert_eq!(terminal.vi_current_motion_count, None);
                 }
             }
             for (key, expected) in [
@@ -4139,12 +4139,12 @@ mod tests {
             terminal.sync(window, cx);
             terminal.toggle_vi_mode();
             terminal.sync(window, cx);
-            assert_eq!(terminal.vi_motion_count, None);
+            assert_eq!(terminal.vi_current_motion_count, None);
 
             for _ in 0..100 {
                 terminal.vi_motion(&Keystroke::parse("9").expect("valid test keystroke"));
             }
-            assert_eq!(terminal.vi_motion_count, Some(usize::MAX));
+            assert_eq!(terminal.vi_current_motion_count, Some(usize::MAX));
             terminal.vi_motion(&Keystroke::parse("k").expect("valid test keystroke"));
             assert_eq!(terminal.events.len(), 2);
             assert!(matches!(
