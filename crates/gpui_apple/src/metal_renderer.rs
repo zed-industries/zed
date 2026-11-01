@@ -62,7 +62,38 @@ pub(crate) mod gpu_metrics {
     #[derive(Default)]
     pub(crate) struct Metrics {
         pub(crate) state: Mutex<State>,
-        pub(crate) idle: Condvar,
+    }
+
+    // This outlives metrics sessions so enabling metrics also waits for buffers
+    // returned by completion handlers of frames submitted while metrics were off.
+    #[derive(Default)]
+    pub(crate) struct HeadlessIdle {
+        pub(crate) state: Mutex<IdleState>,
+        pub(crate) completed: Condvar,
+    }
+
+    #[derive(Default)]
+    pub(crate) struct IdleState {
+        pub(crate) outstanding: u32,
+        pub(crate) error: Option<String>,
+    }
+
+    impl HeadlessIdle {
+        pub(crate) fn wait(&self, timeout: std::time::Duration) -> anyhow::Result<()> {
+            let deadline = Instant::now() + timeout;
+            let mut state = self.state.lock();
+            while state.outstanding != 0 {
+                if self.completed.wait_until(&mut state, deadline).timed_out()
+                    && state.outstanding != 0
+                {
+                    anyhow::bail!("timed out waiting for Metal completion handlers");
+                }
+            }
+            if let Some(error) = state.error.take() {
+                anyhow::bail!("Metal command buffer failed: {error}");
+            }
+            Ok(())
+        }
     }
 
     #[derive(Default)]
@@ -73,7 +104,6 @@ pub(crate) mod gpu_metrics {
         pub(crate) submitted: u64,
         pub(crate) drained: u64,
         pub(crate) disabled: bool,
-        pub(crate) error: Option<String>,
         memory: GpuMemoryStats,
         peak: u64,
     }
@@ -146,7 +176,7 @@ pub(crate) mod gpu_metrics {
 }
 
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-use gpu_metrics::{Allocation, EncodingStats, MemoryKind, Metrics, Submission};
+use gpu_metrics::{Allocation, EncodingStats, HeadlessIdle, MemoryKind, Metrics, Submission};
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 use objc2_metal::MTLResource;
 
@@ -286,13 +316,15 @@ pub struct MetalRenderer {
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
     encoding_stats: Cell<EncodingStats>,
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    atlas_allocations: Vec<(AtlasTextureId, Arc<Allocation>)>,
+    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
     intermediate_allocations: Vec<Arc<Allocation>>,
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
     target_allocation: Option<Arc<Allocation>>,
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
     unit_allocation: Option<Arc<Allocation>>,
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-    last_headless_command: Option<Retained<ProtocolObject<dyn MTLCommandBuffer>>>,
+    headless_idle: Arc<HeadlessIdle>,
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
     submission: Option<Arc<Mutex<Option<Submission>>>>,
 }
@@ -586,13 +618,15 @@ impl MetalRenderer {
             #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
             encoding_stats: Cell::default(),
             #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+            atlas_allocations: Vec::new(),
+            #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
             intermediate_allocations: Vec::new(),
             #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
             target_allocation: None,
             #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
             unit_allocation: None,
             #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-            last_headless_command: None,
+            headless_idle: Arc::default(),
             #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
             submission: None,
         })
@@ -830,6 +864,7 @@ impl MetalRenderer {
         #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
         if self.metrics.is_some() {
             self.encoding_stats.set(EncodingStats::default());
+            self.atlas_allocations.clear();
         }
         if self.path_intermediate_texture.is_none() {
             self.update_path_intermediate_textures(viewport_size)?;
@@ -881,17 +916,17 @@ impl MetalRenderer {
                     .iter()
                     .filter_map(|(buffer, _)| buffer.allocation.clone()),
             );
-            for batch in scene.batches() {
-                if let PrimitiveBatch::MonochromeSprites { texture_id, .. }
-                | PrimitiveBatch::PolychromeSprites { texture_id, .. } = batch
-                {
-                    allocations.extend(self.sprite_atlas.allocation(texture_id));
-                }
-            }
+            allocations.extend(
+                self.atlas_allocations
+                    .drain(..)
+                    .map(|(_, allocation)| allocation),
+            );
             (metrics.clone(), submission, Cell::new(Some(allocations)))
         });
         let instance_buffer_pool = self.instance_buffer_pool.clone();
         let frame_resources = Cell::new(Some((writer.finish(), surface_textures)));
+        #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+        let headless_idle = self.layer.is_none().then(|| self.headless_idle.clone());
         let block = RcBlock::new(
             move |_command: ptr::NonNull<ProtocolObject<dyn MTLCommandBuffer>>| {
                 if let Some((instance_buffer, _surface_textures)) = frame_resources.take() {
@@ -900,7 +935,8 @@ impl MetalRenderer {
                 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
                 if let Some((metrics, submission, allocations)) = &measurement {
                     drop(allocations.take());
-                    if let Some(mut submission) = submission.lock().take() {
+                    let submission = submission.lock().take();
+                    if let Some(mut submission) = submission {
                         let completed = std::time::Instant::now();
                         let mut state = metrics.state.lock();
                         if !state.disabled {
@@ -916,13 +952,19 @@ impl MetalRenderer {
                             if let Some(slot) = state.frames.get_mut(index) {
                                 *slot = Some(submission.frame);
                             }
-                            if let Some(error) = command.error() {
-                                state.error = Some(error.to_string());
-                            }
                         }
                         state.outstanding -= 1;
-                        metrics.idle.notify_all();
                     }
+                }
+                #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+                if let Some(idle) = &headless_idle {
+                    let mut state = idle.state.lock();
+                    // SAFETY: Metal passes the command buffer invoking this handler.
+                    if let Some(error) = unsafe { _command.as_ref() }.error() {
+                        state.error = Some(error.to_string());
+                    }
+                    state.outstanding -= 1;
+                    idle.completed.notify_all();
                 }
             },
         );
@@ -1086,6 +1128,7 @@ impl MetalRenderer {
 
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
     fn commit_headless(&mut self, command: &Retained<ProtocolObject<dyn MTLCommandBuffer>>) {
+        self.headless_idle.state.lock().outstanding += 1;
         if let (Some(metrics), Some(submission)) = (&self.metrics, self.submission.take()) {
             let mut state = metrics.state.lock();
             state.outstanding += 1;
@@ -1105,7 +1148,6 @@ impl MetalRenderer {
             state.frames.push_back(None);
         }
         command.commit();
-        self.last_headless_command = Some(command.clone());
     }
 
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
@@ -1116,6 +1158,23 @@ impl MetalRenderer {
             stats.render_passes += passes;
             stats.uniform_bytes += uniform_bytes as u64;
             self.encoding_stats.set(stats);
+        }
+    }
+
+    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    fn retain_atlas_allocation(
+        &mut self,
+        texture_id: AtlasTextureId,
+        allocation: Option<Arc<Allocation>>,
+    ) {
+        if !self
+            .atlas_allocations
+            .iter()
+            .any(|(id, _)| *id == texture_id)
+        {
+            if let Some(allocation) = allocation {
+                self.atlas_allocations.push((texture_id, allocation));
+            }
         }
     }
 
@@ -1536,7 +1595,7 @@ impl MetalRenderer {
     }
 
     fn draw_monochrome_sprites(
-        &self,
+        &mut self,
         texture_id: AtlasTextureId,
         sprites: Range<usize>,
         instance_bindings: &InstanceBindings,
@@ -1550,6 +1609,9 @@ impl MetalRenderer {
         let Some(texture) = self.sprite_atlas.metal_texture(texture_id) else {
             return;
         };
+        #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+        self.retain_atlas_allocation(texture_id, texture.allocation);
+        let texture = texture.texture;
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -1604,7 +1666,7 @@ impl MetalRenderer {
     }
 
     fn draw_polychrome_sprites(
-        &self,
+        &mut self,
         texture_id: AtlasTextureId,
         sprites: Range<usize>,
         instance_bindings: &InstanceBindings,
@@ -1618,6 +1680,9 @@ impl MetalRenderer {
         let Some(texture) = self.sprite_atlas.metal_texture(texture_id) else {
             return;
         };
+        #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+        self.retain_atlas_allocation(texture_id, texture.allocation);
+        let texture = texture.texture;
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -2238,9 +2303,9 @@ impl gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
             return;
         }
         if enabled {
-            // Settle buffers created while disabled before taking ownership of the pool.
-            if let Some(command) = self.renderer.last_headless_command.take() {
-                command.waitUntilCompleted();
+            if let Err(error) = self.wait_for_gpu_idle() {
+                log::error!("cannot enable Metal GPU metrics: {error:#}");
+                return;
             }
         }
         let renderer = &mut self.renderer;
@@ -2296,19 +2361,9 @@ impl gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
     }
 
     fn wait_for_gpu_idle(&mut self) -> Result<()> {
-        if let Some(command) = self.renderer.last_headless_command.take() {
-            command.waitUntilCompleted();
-        }
-        if let Some(metrics) = &self.renderer.metrics {
-            let mut state = metrics.state.lock();
-            while state.outstanding != 0 {
-                metrics.idle.wait(&mut state);
-            }
-            if let Some(error) = state.error.take() {
-                anyhow::bail!("Metal command buffer failed: {error}");
-            }
-        }
-        Ok(())
+        self.renderer
+            .headless_idle
+            .wait(std::time::Duration::from_secs(30))
     }
 
     fn take_gpu_stats(&mut self) -> Option<gpui::GpuStats> {
@@ -2410,7 +2465,10 @@ mod tests {
         assert!(stats.peak_owned_bytes >= Some(memory.owned_bytes()));
         let empty = renderer.take_gpu_stats().context("empty drain")?;
         assert!(empty.frames.is_empty());
-        assert_eq!(empty.memory, stats.memory);
+        assert_eq!(
+            empty.memory.context("empty memory")?.owned_bytes(),
+            memory.owned_bytes()
+        );
         assert_eq!(empty.peak_owned_bytes, Some(memory.owned_bytes()));
 
         renderer.render_scene(&quad_scene(1), viewport)?;
@@ -2692,12 +2750,120 @@ mod tests {
     }
 
     #[test]
+    fn gpu_metrics_idle_wait_is_bounded() {
+        let idle = HeadlessIdle::default();
+        idle.state.lock().outstanding = 1;
+        assert!(idle.wait(std::time::Duration::ZERO).is_err());
+        idle.state.lock().outstanding = 0;
+        assert!(idle.wait(std::time::Duration::ZERO).is_ok());
+    }
+
+    #[test]
+    fn gpu_metrics_retains_bound_atlas_textures_until_completion() -> Result<()> {
+        let mut renderer = MetalHeadlessRenderer::new()?;
+        renderer.set_gpu_metrics_enabled(true);
+        let viewport = size(DevicePixels(64), DevicePixels(64));
+        renderer.render_scene(&Scene::default(), viewport)?;
+        renderer.wait_for_gpu_idle()?;
+        let atlas = renderer.sprite_atlas();
+        let key = gpui::AtlasKey::Image(gpui::RenderImageParams {
+            image_id: gpui::ImageId(1),
+            frame_index: 0,
+        });
+        let tile = atlas
+            .get_or_insert_with(key.clone(), &mut || {
+                Ok(Some((
+                    size(DevicePixels(2), DevicePixels(2)),
+                    std::borrow::Cow::Owned(vec![255; 16]),
+                )))
+            })?
+            .context("tile")?;
+        let texture = renderer
+            .renderer
+            .sprite_atlas
+            .metal_texture(tile.texture_id)
+            .context("texture")?;
+        renderer
+            .renderer
+            .retain_atlas_allocation(tile.texture_id, texture.allocation.clone());
+        renderer
+            .renderer
+            .retain_atlas_allocation(tile.texture_id, texture.allocation);
+        assert_eq!(renderer.renderer.atlas_allocations.len(), 1);
+
+        let bounds = Bounds {
+            origin: Point::default(),
+            size: size(ScaledPixels(16.), ScaledPixels(16.)),
+        };
+        let mut scene = Scene::default();
+        scene.insert_primitive(gpui::PolychromeSprite {
+            order: 0,
+            pad: 0,
+            tile,
+            grayscale: false.into(),
+            opacity: 1.,
+            bounds,
+            content_mask: ContentMask { bounds },
+            corner_radii: Default::default(),
+        });
+        scene.finish();
+        let target = renderer
+            .renderer
+            .headless_render_target
+            .clone()
+            .context("target")?;
+        let command = renderer.renderer.render_frame(&scene, &target, viewport)?;
+        assert!(renderer.renderer.atlas_allocations.is_empty());
+        atlas.remove(&key);
+        assert!(
+            renderer
+                .take_gpu_stats()
+                .context("retained")?
+                .memory
+                .context("memory")?
+                .atlas_bytes
+                > 0
+        );
+        renderer.renderer.commit_headless(&command);
+        renderer.wait_for_gpu_idle()?;
+        assert_eq!(
+            renderer
+                .take_gpu_stats()
+                .context("released")?
+                .memory
+                .context("memory")?
+                .atlas_bytes,
+            0
+        );
+        Ok(())
+    }
+
+    #[test]
     fn render_to_image_rejects_zero_sized_layer() -> Result<()> {
         let mut renderer = MetalRenderer::new(Default::default(), false, false)?;
         for (width, height) in [(0, 0), (0, 64), (64, 0)] {
             renderer.update_drawable_size(size(DevicePixels(width), DevicePixels(height)));
             assert!(renderer.render_to_image(&Scene::default()).is_err());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn gpu_metrics_enable_waits_for_disabled_frame_resources() -> Result<()> {
+        let mut renderer = MetalHeadlessRenderer::new()?;
+        let viewport = size(DevicePixels(64), DevicePixels(64));
+        for _ in 0..8 {
+            renderer.render_scene(&quad_scene(1), viewport)?;
+        }
+        renderer.set_gpu_metrics_enabled(true);
+        assert_eq!(renderer.renderer.headless_idle.state.lock().outstanding, 0);
+        let pool = renderer.renderer.instance_buffer_pool.lock();
+        assert!(!pool.buffers.is_empty());
+        assert!(
+            pool.buffers
+                .iter()
+                .all(|buffer| buffer.allocation.is_some())
+        );
         Ok(())
     }
 
@@ -2843,8 +3009,8 @@ mod tests {
             blit.endEncoding();
         }
         drop(scene);
+        renderer.commit_headless(&command_buffer);
         drop(renderer);
-        command_buffer.commit();
         command_buffer.waitUntilCompleted();
         assert_eq!(command_buffer.status(), MTLCommandBufferStatus::Completed);
         assert_eq!(read_texture_to_image(&target_texture).unwrap(), image);

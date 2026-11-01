@@ -19,6 +19,12 @@ use {objc2_metal::MTLResource, std::sync::Arc};
 
 pub struct MetalAtlas(Mutex<AtlasState<MetalAtlasTextures>>);
 
+pub(crate) struct MetalTextureInfo {
+    pub texture: Retained<ProtocolObject<dyn MTLTexture>>,
+    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    pub allocation: Option<Arc<Allocation>>,
+}
+
 impl MetalAtlas {
     pub(crate) fn new(
         device: Retained<ProtocolObject<dyn MTLDevice>>,
@@ -38,11 +44,14 @@ impl MetalAtlas {
     /// has been removed. A scene can still reference such a texture when a
     /// cached view replays a paint from before the image was dropped, so
     /// callers must skip those sprites rather than assume the texture exists.
-    pub(crate) fn metal_texture(
-        &self,
-        id: AtlasTextureId,
-    ) -> Option<Retained<ProtocolObject<dyn MTLTexture>>> {
-        Some(self.0.lock().backend.texture(id)?.metal_texture.clone())
+    pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> Option<MetalTextureInfo> {
+        let state = self.0.lock();
+        let texture = state.backend.texture(id)?;
+        Some(MetalTextureInfo {
+            texture: texture.metal_texture.clone(),
+            #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+            allocation: texture.allocation.clone(),
+        })
     }
 
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
@@ -63,11 +72,6 @@ impl MetalAtlas {
             });
         }
         backend.metrics = metrics;
-    }
-
-    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-    pub(crate) fn allocation(&self, id: AtlasTextureId) -> Option<Arc<Allocation>> {
-        self.0.lock().backend.texture(id)?.allocation.clone()
     }
 }
 
