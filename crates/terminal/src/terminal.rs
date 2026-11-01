@@ -122,6 +122,7 @@ enum ViMotion {
 }
 
 impl ViMotion {
+    #[must_use]
     fn supports_count(self) -> bool {
         matches!(
             self,
