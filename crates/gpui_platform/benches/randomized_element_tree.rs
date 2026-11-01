@@ -172,6 +172,29 @@ fn measure_in_window(
     cx: &mut BenchAppContext,
     mut mutate: impl FnMut(&mut RandomizedElementTree, &mut Window, &mut Context<RandomizedElementTree>),
 ) {
+    measure_prepared(
+        group,
+        input,
+        cx,
+        |_| (),
+        |_, tree, window, cx| mutate(tree, window, cx),
+    );
+}
+
+/// Like [`measure_in_window`], with `prepare` reading the warm window once before timing
+/// to build state that every measured frame uses.
+fn measure_prepared<State>(
+    group: &str,
+    input: &TreeInput,
+    cx: &mut BenchAppContext,
+    prepare: impl FnOnce(&Window) -> State,
+    mut mutate: impl FnMut(
+        &mut State,
+        &mut RandomizedElementTree,
+        &mut Window,
+        &mut Context<RandomizedElementTree>,
+    ),
+) {
     let config = input.config;
     let before_window = bench_metrics::allocation_stats();
     let mut window = cx.add_empty_window();
@@ -186,6 +209,7 @@ fn measure_in_window(
     window.update(|window, _| window.refresh());
     cx.run_until_idle();
     describe_once(input, before_window, bench_metrics::allocation_stats());
+    let mut state = window.update(|window, _| prepare(window));
 
     let mut summary = SeedTotals::default();
     let mut previous_iteration: Option<(Instant, Option<bench_metrics::AllocationStats>)> = None;
@@ -205,7 +229,7 @@ fn measure_in_window(
 
         // The tree records every rendered entity; clear it so the list stays one frame long.
         tree.reset_work_counters();
-        mutate(tree, window, cx);
+        mutate(&mut state, tree, window, cx);
     });
     window.update(|window, _| report_scene_stats(group, input.family, window));
     record_for_summary(group, input, summary);
@@ -417,6 +441,59 @@ fn reorder(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     });
 }
 
+/// Where the pointer goes in hover workloads: the center of each painted quad's visible
+/// part, in scene order. Hairline quads are skipped: their centers sit on an element's
+/// edge, where moving the pointer rarely changes what's hovered.
+fn hover_targets(window: &Window) -> Vec<gpui::Point<gpui::Pixels>> {
+    let scale_factor = window.scale_factor();
+    let mut targets: Vec<gpui::Point<gpui::Pixels>> = Vec::new();
+    for quad in &window.rendered_scene().quads {
+        let visible = quad.bounds.intersect(&quad.content_mask.bounds);
+        let minimum = gpui::ScaledPixels(4. * scale_factor);
+        if visible.size.width < minimum || visible.size.height < minimum {
+            continue;
+        }
+        let center = visible.center();
+        let target = gpui::point(
+            gpui::px(center.x.0 / scale_factor),
+            gpui::px(center.y.0 / scale_factor),
+        );
+        if targets.last() != Some(&target) {
+            targets.push(target);
+        }
+    }
+    targets
+}
+
+fn measure_hover(group: &str, input: &TreeInput, cx: &mut BenchAppContext) {
+    let mut frame = 0;
+    measure_prepared(group, input, cx, hover_targets, |targets, _, window, cx| {
+        if let Some(position) = targets.get(frame % targets.len().max(1)) {
+            window.dispatch_event(
+                gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                    position: *position,
+                    modifiers: gpui::Modifiers::default(),
+                    pressed_button: None,
+                }),
+                cx,
+            );
+        }
+        frame += 1;
+    });
+}
+
+/// The pointer moves to a different painted element each frame, as when someone moves the
+/// mouse over a window: event dispatch, hit-testing, hover styles turning on and off, and
+/// the redraw that follows. A move whose set of hovered elements doesn't change draws
+/// nothing, as in a real window; how often that happens depends on the tree's shape. The
+/// pointer stays inside the root, so its group-hover styles switch on in setup and stay on.
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/hover", fps = 120)]
+fn hover(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let mut input = family.sample(&mut rng);
+    input.config = input.config.with_hover_styles(true);
+    measure_hover("hover", &input, cx);
+}
+
 /// The same tree with every entity boundary wrapped in a definite-size `.cached()` view,
 /// as Zed does for panes and docks, so a frame can reuse clean entities' output.
 fn cached_input(family: &TreeFamily, rng: &mut StdRng) -> TreeInput {
@@ -462,6 +539,13 @@ fn cached_insert_remove(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppC
         tree.apply_mutation(kind, cx);
         insert = !insert;
     });
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/hover", fps = 120)]
+fn cached_hover(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let mut input = cached_input(family, &mut rng);
+    input.config = input.config.with_hover_styles(true);
+    measure_hover("cached hover", &input, cx);
 }
 
 #[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/reorder", fps = 120)]
@@ -1194,12 +1278,14 @@ gpui::bench_group!(
     cached_leaf_bounds,
     cached_insert_remove,
     cached_reorder,
+    cached_hover,
     unchanged,
     leaf_style,
     leaf_bounds,
     root_layout,
     insert_remove,
     reorder,
+    hover,
     changing_share,
     text_panel_updates,
     installed_font_panel_updates,

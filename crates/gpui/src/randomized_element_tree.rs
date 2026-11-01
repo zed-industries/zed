@@ -87,8 +87,7 @@ impl RandomizedElementTreeConfig {
     }
 
     /// Gives every element a hover style and a group-hover style keyed to the tree's root.
-    /// Off by default: benchmarks don't move the pointer, so they only pay for registering
-    /// the styles.
+    /// Off by default, so workloads that never move the pointer don't pay for them.
     pub fn with_hover_styles(mut self, hover_styles: bool) -> Self {
         self.hover_styles = hover_styles;
         self
@@ -843,9 +842,13 @@ impl RandomizedElementTree {
         let removed_element_count = removed.element_count();
         let element_id = removed.id;
         snapshot.rebuild_element_paths();
-        self.scroll_handles
-            .borrow_mut()
-            .retain(|element_id, _| snapshot.paths_by_element_id.contains_key(element_id));
+        let mut scroll_handles = self.scroll_handles.borrow_mut();
+        let mut removed_nodes = vec![&removed];
+        while let Some(node) = removed_nodes.pop() {
+            scroll_handles.remove(&node.id);
+            removed_nodes.extend(node.children.iter());
+        }
+        drop(scroll_handles);
         Some(AppliedRandomizedElementTreeMutation {
             mutation: RandomizedElementTreeMutation::Removed {
                 element_id,
