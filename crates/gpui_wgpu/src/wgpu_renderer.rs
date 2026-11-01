@@ -1601,18 +1601,6 @@ impl WgpuRendererCore {
         } else {
             None
         };
-        #[cfg(all(
-            not(target_family = "wasm"),
-            any(test, feature = "bench-support", feature = "test-support")
-        ))]
-        let mut remaining_path_batches = if timestamps.is_some() {
-            scene
-                .batches()
-                .filter(|batch| matches!(batch, PrimitiveBatch::Paths(range) if !range.is_empty()))
-                .count()
-        } else {
-            0
-        };
         let mut encoder =
             self.resources()
                 .device
@@ -1636,7 +1624,7 @@ impl WgpuRendererCore {
                 ))]
                 timestamp_writes: timestamps
                     .as_ref()
-                    .map(|timestamps| timestamps.writes(true, remaining_path_batches == 0)),
+                    .map(|timestamps| timestamps.writes(true, true)),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: frame_view,
                     resolve_target: None,
@@ -1683,7 +1671,6 @@ impl WgpuRendererCore {
                         ))]
                         if let Some(metrics) = &self.metrics {
                             metrics.counters.lock().frame.render_passes += 1;
-                            remaining_path_batches = remaining_path_batches.saturating_sub(1);
                         }
                         pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("main_pass_continued"),
@@ -1693,7 +1680,9 @@ impl WgpuRendererCore {
                             ))]
                             timestamp_writes: timestamps
                                 .as_ref()
-                                .filter(|_| remaining_path_batches == 0)
+                                // wgpu resets queries per pass, not per encoder.
+                                // Rewriting only the end query preserves the first
+                                // start timestamp and leaves the final pass's end.
                                 .map(|timestamps| timestamps.writes(false, true)),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: frame_view,
@@ -1784,7 +1773,12 @@ impl WgpuRendererCore {
         ))]
         if let Some(metrics) = &mut self.metrics {
             if let Some(started) = started {
-                metrics.submitted(&self.resources.queue, started, timestamps);
+                metrics.submitted(
+                    &self.resources.queue,
+                    submission.clone(),
+                    started,
+                    timestamps,
+                );
             }
         }
         Ok(submission)
@@ -2824,6 +2818,10 @@ impl gpui::PlatformHeadlessRenderer for WgpuHeadlessRenderer {
     }
 
     fn wait_for_gpu_idle(&mut self) -> anyhow::Result<()> {
+        // Queue writes are staged until submit, including setup atlas uploads.
+        // Flush them before waiting so no setup work reaches a measured submission.
+        self.core.atlas.before_frame();
+        self.context.queue.submit(std::iter::empty());
         // Waiting for the device rather than one submission also covers atlas
         // writes, image readbacks, and other renderers sharing the headless queue.
         self.context.device.poll(wgpu::PollType::Wait {
@@ -2838,9 +2836,6 @@ impl gpui::PlatformHeadlessRenderer for WgpuHeadlessRenderer {
 
     fn take_gpu_stats(&mut self) -> Option<gpui::GpuStats> {
         let metrics = self.core.metrics.as_mut()?;
-        // Uploads can be deferred until before_frame. Flush before discarding
-        // setup counters so a later measured frame cannot inherit them.
-        self.core.atlas.before_frame();
         Some(metrics.drain(&self.context.device))
     }
 }
@@ -3067,19 +3062,36 @@ mod gpu_metrics_tests {
         };
         path.color = gpui::red().into();
         let mut scene = Scene::default();
-        scene.insert_primitive(path.scale(1.));
+        let path = path.scale(1.);
+        for _ in 0..3 {
+            scene.push_layer(path.bounds);
+            scene.insert_primitive(path.clone());
+            scene.pop_layer();
+            let quad = super::tests::solid_quad(0., 0., 8., 8., gpui::red());
+            scene.push_layer(quad.bounds);
+            scene.insert_primitive(quad);
+            scene.pop_layer();
+        }
         scene.finish();
+        assert_eq!(
+            scene
+                .batches()
+                .filter(|batch| matches!(batch, PrimitiveBatch::Paths(_)))
+                .count(),
+            3
+        );
         renderer.render_scene(&scene, size(32, 32))?;
         let stats = drain(&mut renderer)?;
         let [frame] = stats.frames.as_slice() else {
             anyhow::bail!("expected one frame")
         };
-        assert_eq!(frame.render_passes, 3);
-        assert_eq!(frame.draw_calls, 2);
+        assert_eq!(frame.render_passes, 7);
+        assert_eq!(frame.draw_calls, 9);
         assert_eq!(
             frame.instance_bytes,
-            (3 * std::mem::size_of::<PathRasterizationVertex>() + std::mem::size_of::<PathSprite>())
-                as u64
+            3 * (3 * std::mem::size_of::<PathRasterizationVertex>()
+                + std::mem::size_of::<PathSprite>()
+                + std::mem::size_of::<gpui::Quad>()) as u64
         );
         assert_eq!(
             frame.gpu_duration.is_some(),

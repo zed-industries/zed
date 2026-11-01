@@ -129,6 +129,7 @@ impl TimestampSlot {
 
 struct PendingFrame {
     frame: GpuFrameStats,
+    submission: wgpu::SubmissionIndex,
     completion: Receiver<Duration>,
     timestamps: Option<(TimestampSlot, Receiver<Result<Duration>>)>,
 }
@@ -179,10 +180,13 @@ impl GpuMetrics {
         // benchmark allocations when the GPU falls far behind.
         if self.pending.len() >= 64 {
             device.poll(wgpu::PollType::Wait {
-                submission_index: None,
+                submission_index: self
+                    .pending
+                    .front()
+                    .map(|pending| pending.submission.clone()),
                 timeout: Some(Duration::from_secs(30)),
             })?;
-            self.collect(true)?;
+            self.collect_limit(true, 1)?;
             if let Some(slot) = self.slots.pop() {
                 return Ok(Some(slot));
             }
@@ -193,6 +197,7 @@ impl GpuMetrics {
     pub fn submitted(
         &mut self,
         queue: &wgpu::Queue,
+        submission: wgpu::SubmissionIndex,
         started: (Instant, u32),
         slot: Option<TimestampSlot>,
     ) {
@@ -213,6 +218,7 @@ impl GpuMetrics {
             let readback = slot.readback.clone();
             slot.readback
                 .map_async(wgpu::MapMode::Read, .., move |result| {
+                    let mapped_successfully = result.is_ok();
                     let duration = (|| {
                         result.context("mapping GPU timestamps")?;
                         let mapped = readback.get_mapped_range(..)?;
@@ -224,13 +230,16 @@ impl GpuMetrics {
                             end.wrapping_sub(*start) as f64 * f64::from(period) / 1e9,
                         ))
                     })();
-                    readback.unmap();
+                    if mapped_successfully {
+                        readback.unmap();
+                    }
                     sender.send(duration).ok();
                 });
             (slot, receiver)
         });
         self.pending.push_back(PendingFrame {
             frame,
+            submission,
             completion,
             timestamps,
         });
@@ -244,7 +253,14 @@ impl GpuMetrics {
     }
 
     pub fn collect(&mut self, wait: bool) -> Result<()> {
-        while let Some(pending) = self.pending.front_mut() {
+        self.collect_limit(wait, usize::MAX)
+    }
+
+    fn collect_limit(&mut self, wait: bool, limit: usize) -> Result<()> {
+        for _ in 0..limit {
+            let Some(pending) = self.pending.front_mut() else {
+                break;
+            };
             if pending.frame.submit_to_complete.is_none() {
                 if wait {
                     pending.frame.submit_to_complete =
@@ -292,5 +308,32 @@ impl GpuMetrics {
             memory: Some(memory),
             peak_owned_bytes: Some(peak),
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collecting_oldest_does_not_wait_for_later_submissions() -> Result<()> {
+        let (context, _) = crate::WgpuContext::new_headless()?;
+        let mut metrics =
+            GpuMetrics::new(&context.device, &context.queue, GpuMemoryStats::default());
+        let (first_sender, first_completion) = mpsc::channel();
+        let (_second_sender, second_completion) = mpsc::channel();
+        for completion in [first_completion, second_completion] {
+            metrics.pending.push_back(PendingFrame {
+                frame: GpuFrameStats::default(),
+                submission: context.queue.submit(std::iter::empty()),
+                completion,
+                timestamps: None,
+            });
+        }
+        first_sender.send(Duration::from_millis(1))?;
+        metrics.collect_limit(true, 1)?;
+        assert_eq!(metrics.completed.len(), 1);
+        assert_eq!(metrics.pending.len(), 1);
+        Ok(())
     }
 }
