@@ -704,9 +704,7 @@ impl MetalRenderer {
             (viewport_size.width.ceil() as i32).into(),
             (viewport_size.height.ceil() as i32).into(),
         );
-        // When a `CAMetalDisplayLink` drives the layer, it owns the layer's
-        // drawables and `nextDrawable` raises an Objective-C exception, so
-        // render into a texture of our own instead.
+        // CAMetalDisplayLink owns the drawable, so render into a texture we own.
         self.render_offscreen(scene, viewport_size)
     }
 
@@ -736,7 +734,12 @@ impl MetalRenderer {
     /// back, without presenting anything.
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
     fn render_offscreen(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<RgbaImage> {
+        if size.width.0 <= 0 || size.height.0 <= 0 {
+            anyhow::bail!("Invalid size for render_offscreen: {:?}", size);
+        }
+
         let texture_descriptor = MTLTextureDescriptor::new();
+        // SAFETY: The dimensions are positive and this descriptor creates a 2D texture.
         unsafe {
             texture_descriptor.setWidth(size.width.0 as usize);
             texture_descriptor.setHeight(size.height.0 as usize);
@@ -1912,6 +1915,16 @@ mod tests {
         CVPixelBufferUnlockBaseAddress, kCVPixelBufferIOSurfacePropertiesKey,
     };
     use objc2_metal::MTLCommandBufferStatus;
+
+    #[test]
+    fn render_to_image_rejects_zero_sized_layer() -> Result<()> {
+        let mut renderer = MetalRenderer::new(Default::default(), false, false)?;
+        for (width, height) in [(0, 0), (0, 64), (64, 0)] {
+            renderer.update_drawable_size(size(DevicePixels(width), DevicePixels(height)));
+            assert!(renderer.render_to_image(&Scene::default()).is_err());
+        }
+        Ok(())
+    }
 
     #[test]
     fn display_link_mode_consumes_and_clears_drawables() -> Result<()> {
