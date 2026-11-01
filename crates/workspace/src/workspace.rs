@@ -11115,7 +11115,11 @@ pub fn workspace_windows_for_location<'a>(
         })
 }
 
-fn preferred_target_for_files(host: &ProjectHost<'_>, cx: &App) -> Option<WorkspaceOpenTarget> {
+fn preferred_workspace_target(
+    host: &ProjectHost<'_>,
+    visible: OpenVisible,
+    cx: &App,
+) -> Option<WorkspaceOpenTarget> {
     let target_for_window = |window: WindowHandle<MultiWorkspace>| {
         let multi_workspace = window.read(cx).ok()?;
         let active_workspace = multi_workspace.workspace();
@@ -11134,7 +11138,7 @@ fn preferred_target_for_files(host: &ProjectHost<'_>, cx: &App) -> Option<Worksp
         Some(WorkspaceOpenTarget {
             window,
             workspace: workspace.clone(),
-            visible: OpenVisible::None,
+            visible: visible.clone(),
         })
     };
 
@@ -11216,10 +11220,7 @@ pub fn find_existing_workspace(
             if existing.is_none()
                 && open_options.workspace_matching == WorkspaceMatching::MatchSubdirectory
             {
-                existing = preferred_target_for_files(host, cx);
-                if let Some(target) = &mut existing {
-                    target.visible = OpenVisible::All;
-                }
+                existing = preferred_workspace_target(host, OpenVisible::All, cx);
             }
 
             let all_paths_are_files = existing.as_ref().is_some_and(|target| {
@@ -11248,7 +11249,7 @@ pub fn find_existing_workspace(
             });
 
             if open_options.wait && existing.is_some() && all_paths_are_files {
-                existing = preferred_target_for_files(host, cx).or(existing);
+                existing = preferred_workspace_target(host, OpenVisible::None, cx).or(existing);
             }
         }
 
@@ -11468,7 +11469,9 @@ pub fn open_paths(
 
             if all_metadatas.into_iter().all(|file| !file.is_dir) {
                 reuse_target = cx
-                    .update(|cx| preferred_target_for_files(&ProjectHost::Local, cx))
+                    .update(|cx| {
+                        preferred_workspace_target(&ProjectHost::Local, OpenVisible::None, cx)
+                    })
                     .or(reuse_target);
             }
         }
