@@ -64,11 +64,11 @@ CORE = {
         r"TextPanels/installed font two updates/panels/32$|"
         r"TextPanels/first populated installed font/panels/32$)"
     ),
-    # Overlapping paint cases primarily stress GPU overdraw, not bounds ordering;
-    # their asynchronous driver teardown can dwarf measured CPU frame time.
+    # Overlapping paint cases, including the random ones with large paths and text,
+    # primarily stress GPU overdraw, not bounds ordering; GPU queue backpressure makes
+    # their instruction counts vary by up to ~16% within a run.
     "bounds_ordering": (
-        r"^BoundsOrdering/(scene/[a-z]+-1024(-seed-\d+)?|"
-        r"paint/case/(grid-1024|random-1024-seed-\d+))$"
+        r"^BoundsOrdering/(scene/[a-z]+-1024(-seed-\d+)?|paint/case/grid-1024)$"
     ),
     "inspector_render": (
         r"^closed_inspector_(grid/case/1000-nodes|panel/case/500-rows)-0-cycles$"
