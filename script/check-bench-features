@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-cd "$(dirname "$0")/../../.."
+cd "$(dirname "$0")/.."
 for target in aarch64-apple-darwin x86_64-unknown-linux-gnu; do
     tree=$(cargo tree -p gpui_platform --features bench-support \
         --target "$target" -e normal,build,dev,features)

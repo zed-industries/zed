@@ -618,6 +618,10 @@ fn check_workspace_binaries() -> NamedJob {
 }
 
 pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> NamedJob {
+    fn check_bench_features() -> Step<Run> {
+        named::bash("./script/check-bench-features")
+    }
+
     let target = arch.map(|arch| match platform {
         Platform::Mac => platform.target_triple(arch),
         _ => unimplemented!("cross-arch clippy not supported for {platform}/{arch}"),
@@ -646,6 +650,9 @@ pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> Na
             this.add_step(steps::install_rustup_target(target))
         })
         .add_step(steps::setup_sccache(platform))
+        .when(platform == Platform::Linux, |this| {
+            this.add_step(check_bench_features())
+        })
         .add_step(steps::clippy(platform, target))
         .add_step(steps::show_sccache_stats(platform));
     if platform == Platform::Linux {
