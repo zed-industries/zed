@@ -1406,7 +1406,7 @@ fn resolve_cd_in_worktrees(
         let resolved_path = if subpath.is_empty() {
             abs_path.clone()
         } else {
-            path_style.join_path(&abs_path, subpath).ok()?
+            path_style.normalize_lexically(path_style.join(&abs_path, subpath))
         };
 
         if path_style.starts_with(&resolved_path, &abs_path) {
@@ -1420,11 +1420,10 @@ fn resolve_cd_in_worktrees(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use util::paths::PathStyle::{Unix, Windows};
 
     #[test]
     fn test_resolve_cd_uses_project_path_style() {
-        use util::paths::PathStyle::{Unix, Windows};
-
         // Deliberately ambiguous root names to stress test path resolution.
         let unix_roots: Vec<(&str, PathBuf)> = vec![
             ("worktree", PathBuf::from("/a/worktree")),
@@ -1551,6 +1550,33 @@ mod tests {
             ),
             None,
             "The Windows verbatim path should not return a path that escapes its worktree"
+        );
+    }
+
+    #[test]
+    fn test_resolve_cd_rejects_traversal_with_empty_root_name() {
+        let unix_roots = vec![("", PathBuf::from("/tmp/example/root"))];
+        let windows_roots = vec![("", PathBuf::from("C:\\work\\worktree"))];
+
+        assert_eq!(
+            resolve_cd_in_worktrees("../outside", Unix, &unix_roots),
+            None,
+            "a relative `cd` that escapes the worktree is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("..", Unix, &unix_roots),
+            None,
+            "a relative `cd` to the parent of the worktree is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("..", Windows, &windows_roots),
+            None,
+            "a relative `cd` to the parent of the worktree is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("..\\escape", Windows, &windows_roots),
+            None,
+            "a relative `cd` that escapes the worktree is rejected"
         );
     }
 

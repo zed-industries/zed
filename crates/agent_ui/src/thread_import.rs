@@ -699,14 +699,14 @@ fn fetch_sessions_for_agent(
             .read(cx)
             .project()
             .read(cx)
-            .remote_connection_options(cx);
+            .remote_connection_options(cx)
+            .cloned();
         let agent = Agent::from(agent_id.clone());
         let server = agent.server(<dyn Fs>::global(cx), ThreadStore::global(cx));
         let entry = store.update(cx, |store, cx| store.request_connection(agent, server, cx));
 
         wait_for_connection_tasks.push(entry.read(cx).wait_for_connection().map({
             let agent_id = agent_id.clone();
-            let remote_connection = remote_connection.clone();
             move |result| (agent_id, remote_connection, result)
         }));
     }
