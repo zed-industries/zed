@@ -113,10 +113,20 @@ fn measure_closed_inspector<V: Render + 'static>(
             });
             cx.run_until_idle();
         }
+        // Setup checks, before timing: a toggle that stopped working would otherwise
+        // silently measure a different inspector state than the case name says.
+        assert!(
+            !window.update(|window, cx| window.is_inspector_picking(cx)),
+            "the measured window's inspector must be closed"
+        );
         // Keep the other window alive, with its inspector open, while this one is measured.
         input.other_window_inspected.then(|| {
             let mut window = cx.add_empty_window();
             window.update(|window, cx| window.toggle_inspector(cx));
+            assert!(
+                window.update(|window, cx| window.is_inspector_picking(cx)),
+                "the other window's inspector must be open"
+            );
             window
         })
     };
