@@ -2435,11 +2435,7 @@ impl Terminal {
         };
 
         if let Some(motion) = motion {
-            if count.is_some() && !motion.supports_count() {
-                return;
-            }
-
-            let count = count.unwrap_or(1);
+            let count = count.filter(|_| motion.supports_count()).unwrap_or(1);
             let cursor = self.last_content.cursor.point;
             let cursor_pos = GpuiPoint {
                 x: cursor.column as f32 * self.last_content.terminal_bounds.cell_width,
@@ -2469,9 +2465,6 @@ impl Terminal {
         };
 
         if let Some(scroll_motion) = scroll_motion {
-            if count.is_some() {
-                return;
-            }
             self.events.push_back(InternalEvent::Scroll(scroll_motion));
             return;
         }
@@ -4100,13 +4093,36 @@ mod tests {
                 assert_eq!(terminal.vi_motion_count, None);
             }
 
-            for key in [
-                "$", "^", "H", "M", "L", "%", "g", "G", "ctrl-b", "ctrl-f", "ctrl-d", "ctrl-u",
-            ] {
-                terminal.vi_motion(&Keystroke::parse("3").expect("valid test keystroke"));
-                terminal.vi_motion(&Keystroke::parse(key).expect("valid test keystroke"));
-                assert!(terminal.events.is_empty(), "3{key}");
-                assert_eq!(terminal.vi_motion_count, None, "3{key}");
+            for count in ["1", "3"] {
+                for key in ["$", "^", "H", "M", "L", "%"] {
+                    terminal.vi_motion(&Keystroke::parse(count).expect("valid test keystroke"));
+                    terminal.vi_motion(&Keystroke::parse(key).expect("valid test keystroke"));
+                    assert!(
+                        matches!(
+                            terminal.events.pop_back(),
+                            Some(InternalEvent::ViMotion { count: 1, .. })
+                        ),
+                        "{count}{key}"
+                    );
+                    assert!(matches!(
+                        terminal.events.pop_back(),
+                        Some(InternalEvent::UpdateSelection(_))
+                    ));
+                    assert!(terminal.events.is_empty());
+                    assert_eq!(terminal.vi_motion_count, None);
+                }
+            }
+            for count in ["1", "3"] {
+                for key in ["g", "G", "ctrl-b", "ctrl-f", "ctrl-d", "ctrl-u"] {
+                    terminal.vi_motion(&Keystroke::parse(count).expect("valid test keystroke"));
+                    terminal.vi_motion(&Keystroke::parse(key).expect("valid test keystroke"));
+                    assert!(
+                        matches!(terminal.events.pop_back(), Some(InternalEvent::Scroll(_))),
+                        "{count}{key}"
+                    );
+                    assert!(terminal.events.is_empty());
+                    assert_eq!(terminal.vi_motion_count, None);
+                }
             }
             for (key, expected) in [
                 ("k", Point::new(7, 3)),
