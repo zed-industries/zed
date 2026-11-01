@@ -621,7 +621,10 @@ impl CopilotChat {
             })?;
 
             if configuration_is_current && token.is_some() {
-                Self::update_models(&this, cx).await?;
+                if let Err(error) = Self::update_models(&this, cx).await {
+                    log::error!("Failed to fetch Copilot Chat models: {error:#}");
+                    return Err(error);
+                }
             }
             anyhow::Ok(())
         });
@@ -947,7 +950,13 @@ async fn get_models(
     let mut models: Vec<Model> = all_models
         .into_iter()
         .filter(|model| {
-            model.model_picker_enabled
+            // The API can report `model_picker_enabled: false` for every model, including
+            // ones whose policy is explicitly enabled, so an explicit policy also qualifies.
+            let explicitly_enabled = model
+                .policy
+                .as_ref()
+                .is_some_and(|policy| policy.state == "enabled");
+            (model.model_picker_enabled || explicitly_enabled)
                 && model.capabilities.model_type.as_str() == "chat"
                 && model
                     .policy
