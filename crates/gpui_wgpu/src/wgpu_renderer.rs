@@ -2574,6 +2574,9 @@ impl WgpuRenderer {
         self.atlas.handle_device_lost(context);
 
         let is_bgr = self.is_bgr;
+        // During a live resize the surface is larger than what is shown, so the rebuilt renderer
+        // must keep cropping to the old drawable rather than to its surface.
+        let drawable_size = self.drawable_size;
         *self = Self::new_internal(
             Some(gpu_context.clone()),
             context,
@@ -2583,6 +2586,7 @@ impl WgpuRenderer {
             self.atlas.clone(),
         )?;
         self.set_subpixel_layout(is_bgr);
+        self.drawable_size = drawable_size;
 
         log::info!("GPU recovery complete");
         Ok(())
@@ -2961,8 +2965,8 @@ mod tests {
 
     #[test]
     fn live_resize_steps_reconfigure_once_per_slack() {
-        let size = |w| Size {
-            width: DevicePixels(w),
+        let size = |width| Size {
+            width: DevicePixels(width),
             height: DevicePixels(600),
         };
         let mut surface = (800, 600);

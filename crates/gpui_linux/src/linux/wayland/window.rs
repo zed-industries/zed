@@ -46,7 +46,7 @@ use gpui::{
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 
-/// Crops the buffer to `source` (buffer pixels from the top left), or shows all of it.
+// wp_viewport treats a source of all -1.0 as unset, which shows the whole buffer.
 fn set_viewport_source(viewport: &wp_viewport::WpViewport, source: Option<Size<DevicePixels>>) {
     match source {
         Some(size) => viewport.set_source(0.0, 0.0, size.width.0 as f64, size.height.0 as f64),

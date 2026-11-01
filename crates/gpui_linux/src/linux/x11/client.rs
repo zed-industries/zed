@@ -2045,7 +2045,7 @@ impl X11ClientState {
             .into_iter()
             .filter_map(|cookie| {
                 let info = cookie.reply().ok()?;
-                let mode = resources.modes.iter().find(|m| m.id == info.mode)?;
+                let mode = resources.modes.iter().find(|mode| mode.id == info.mode)?;
                 Some(CrtcArea {
                     x: info.x.into(),
                     y: info.y.into(),
@@ -2083,7 +2083,7 @@ impl X11ClientState {
         let Some(RefreshState::PeriodicRefresh { refresh_rate, .. }) = self
             .windows
             .get(&x_window)
-            .and_then(|w| w.refresh_state.as_ref())
+            .and_then(|window| window.refresh_state.as_ref())
         else {
             return;
         };
@@ -2299,16 +2299,16 @@ struct CrtcArea {
 /// off every monitor, or its position is unknown). `None` when there is no CRTC with a mode.
 fn crtc_refresh_at(crtcs: &[CrtcArea], point: Option<(i32, i32)>) -> Option<Duration> {
     let containing = point.and_then(|(x, y)| {
-        crtcs.iter().find(|c| {
-            c.width > 0
-                && c.height > 0
-                && x >= c.x
-                && x < c.x + c.width
-                && y >= c.y
-                && y < c.y + c.height
+        crtcs.iter().find(|crtc| {
+            crtc.width > 0
+                && crtc.height > 0
+                && x >= crtc.x
+                && x < crtc.x + crtc.width
+                && y >= crtc.y
+                && y < crtc.y + crtc.height
         })
     });
-    containing.or(crtcs.first()).map(|c| c.refresh)
+    containing.or(crtcs.first()).map(|crtc| crtc.refresh)
 }
 
 // Adapted from:
