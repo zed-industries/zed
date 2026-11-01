@@ -967,7 +967,18 @@ async fn open_local_workspace(
         && !diff_paths.is_empty()
         && let Some(cwd) = cwd
     {
-        workspace_paths.push(cwd.to_string_lossy().to_string());
+        // Avoid adding cwd as a root to the focused window with `--add`.
+        // Without a focused local window, retain cwd for workspace matching.
+        let add_to_active_window = open_options.workspace_matching
+            == workspace::WorkspaceMatching::MatchSubdirectory
+            && cx.update(|cx| {
+                let active_window = cx.active_window();
+                workspace::workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
+                    .any(|window| Some(window.into()) == active_window)
+            });
+        if !add_to_active_window {
+            workspace_paths.push(cwd.to_string_lossy().to_string());
+        }
     }
 
     let paths_with_position =
