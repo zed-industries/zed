@@ -270,11 +270,27 @@ On platforms without a headless renderer, GPUI still performs CPU-side window wo
 - invalidations per frame;
 - foreground task, action, and input-dispatch durations;
 - p50, p90, p95, p99, and maximum durations;
-- total and maximum frame-budget overruns.
+- total and maximum CPU frame-budget overruns;
+- GPU execution and submit-to-complete distributions, timed frames over budget, and frames in flight;
+- per-frame GPU uploads, draw calls, render passes, resource creations, and owned/driver memory.
 
 Frame-budget overruns are a synthetic missed-deadline proxy because the headless harness has no display vsync. Do not call them literal display-dropped frames. Supplement important results with app automation and an Instruments, xctrace, miniprof, or equivalent profile.
 
 The report may include Criterion warmup and calibration events even though Criterion's timing estimate uses its measurement phase. Read the current `BenchReport` implementation before interpreting its sample count or percentiles.
+
+### GPU measurements
+
+The `GPU:` section of `BenchReport` (also available through `BenchReport::gpu`) covers completed submissions from supported headless renderers. Setup work is drained before measurement; GPU waits and report aggregation happen outside timing.
+
+- **Frames** counts submissions; **GPU-timed frames over budget** counts available execution times strictly above the configured budget. **Max frames in flight** is the largest outstanding count in any one renderer, including the submitted frame.
+- **GPU execution time** comes from Metal `GPUStartTime`/`GPUEndTime`, or `TIMESTAMP_QUERY` on wgpu's headless device when supported. Histograms report samples, mean, p50/p90/p95/p99, and max. Missing timestamps mean unavailable, not zero.
+- **GPU submit-to-complete** is CPU-observed submission-to-completion latency. It includes queueing, pipelining, and callback delivery; do not interpret it as GPU execution time or a display deadline.
+- **Per-frame counters** report mean and max instance/uniform/atlas upload bytes, atlas upload count, draw calls, render passes, and created buffer/texture count and bytes. Uploads and creations since the previous submission belong to the next frame.
+- **Memory** reports allocated capacity owned by GPUI: atlas, instance buffers (including Metal's unit vertices or wgpu's globals), intermediate textures, and offscreen targets/readbacks. It includes end-of-interval capacity, peak owned bytes, and first-to-last growth. Metal retains replaced textures through GPU completion; wgpu counts replacement/release of renderer references, not eventual driver reclamation. Multiple-window peaks sum renderer high-water marks and are an upper bound, not a simultaneous peak. Driver bytes are backend-scoped (Metal device allocation size; wgpu HAL counters), may include non-GPUI allocations, and are omitted when combining renderers to avoid double counting.
+
+GPU metrics default to on. Set `GPUI_BENCH_GPU_METRICS=off` to disable collection, or `BENCH_MEASUREMENT=wall-time` to disable both GPU and CPU counters. These are runtime opt-outs: timestamp infrastructure and `wgpu/counters` still exist in `bench-support` builds. Run `./script/check-bench-features` to check benchmark/production feature isolation.
+
+GPU clocks ramp with load, so execution times are noisier than instruction counts. Prefer deterministic counters such as render passes, draw calls, and upload bytes for CI gates, and use GPU timings as supporting evidence. Uploaded/allocated bytes do not measure memory bandwidth; use Metal System Trace for that.
 
 ## Responsiveness benchmarks
 
