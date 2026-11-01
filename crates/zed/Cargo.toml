@@ -59,7 +59,7 @@ name = "zed"
 path = "src/main.rs"
 
 [[bin]]
-name = "zed_visual_test_runner"
+name = "zed-visual-test-runner"
 path = "src/visual_test_runner.rs"
 required-features = ["visual-tests"]
 

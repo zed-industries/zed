@@ -433,7 +433,7 @@ async fn fetch_remote_for_worktree_base(
                         FetchOptions::Remote(Remote {
                             name: remote_name.clone().into(),
                         }),
-                        askpass,
+                        Some(askpass),
                         cx,
                     )
                 })

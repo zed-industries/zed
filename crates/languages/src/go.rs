@@ -2,8 +2,8 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
+use github_releases::latest_github_release;
 use gpui::{App, AsyncApp, Entity, Task};
-use http_client::github::latest_github_release;
 pub use language::*;
 use language::{
     LanguageName, LanguageToolchainStore, LspAdapterDelegate, LspInstaller,
