@@ -198,8 +198,12 @@ type: (primitive_type) @type.builtin
   "#include"
   (preproc_directive)
 ] @keyword.preproc @preproc
-(preproc_defined "defined" @keyword.preproc)
-(preproc_defined (identifier) @constant.macro)
+
+(preproc_defined
+  "defined" @keyword.preproc)
+
+(preproc_defined
+  (identifier) @constant.macro)
 
 (comment) @comment
 
