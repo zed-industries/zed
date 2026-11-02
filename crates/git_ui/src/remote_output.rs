@@ -4,15 +4,39 @@ use git::repository::{Remote, RemoteCommandOutput};
 use ui::SharedString;
 use util::ResultExt as _;
 
-const PULL_REQUEST_HINTS: &[(&str, &str)] = &[
+/// Whether a pull request link printed by the remote points at a page for
+/// creating a new pull request or at an already existing one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PullRequestLinkKind {
+    Create,
+    View,
+}
+
+const PULL_REQUEST_HINTS: &[(&str, &str, PullRequestLinkKind)] = &[
     // GitHub: "Create a pull request for 'branch' on GitHub by visiting:"
-    ("Create a pull request", "Create Pull Request"),
+    (
+        "Create a pull request",
+        "Create Pull Request",
+        PullRequestLinkKind::Create,
+    ),
     // Bitbucket: "Create pull request for branch:"
-    ("Create pull request", "Create Pull Request"),
+    (
+        "Create pull request",
+        "Create Pull Request",
+        PullRequestLinkKind::Create,
+    ),
     // GitLab: "To create a merge request for branch, visit:"
-    ("create a merge request", "Create Merge Request"),
+    (
+        "create a merge request",
+        "Create Merge Request",
+        PullRequestLinkKind::Create,
+    ),
     // GitLab: "View merge request for branch:"
-    ("View merge request", "View Merge Request"),
+    (
+        "View merge request",
+        "View Merge Request",
+        PullRequestLinkKind::View,
+    ),
 ];
 
 #[derive(Clone)]
@@ -34,8 +58,23 @@ impl RemoteAction {
 
 pub enum SuccessStyle {
     Toast,
-    ToastWithLog { output: RemoteCommandOutput },
-    PushPrLink { label: &'static str, url: String },
+    ToastWithLog {
+        output: RemoteCommandOutput,
+    },
+    /// The push created a branch for which a new pull request can be opened.
+    /// The URL is built from the git hosting provider, the same way the
+    /// `git: create pull request` command does, and `fallback_url` (the link
+    /// printed by the remote) is only used if that fails.
+    CreatePullRequest {
+        label: &'static str,
+        fallback_url: String,
+    },
+    /// The push references an existing pull request, which can only be reached
+    /// via the link printed by the remote.
+    OpenPullRequest {
+        label: &'static str,
+        url: String,
+    },
 }
 
 pub struct SuccessMessage {
@@ -43,26 +82,28 @@ pub struct SuccessMessage {
     pub style: SuccessStyle,
 }
 
-fn extract_pull_request_link(output: &RemoteCommandOutput) -> Option<(&'static str, String)> {
-    let mut pending_label: Option<&'static str> = None;
+fn extract_pull_request_link(
+    output: &RemoteCommandOutput,
+) -> Option<(&'static str, String, PullRequestLinkKind)> {
+    let mut pending_hint: Option<(&'static str, PullRequestLinkKind)> = None;
 
     for line in output.stderr.lines() {
         let Some(remote_line) = line.trim_start().strip_prefix("remote:") else {
-            pending_label = None;
+            pending_hint = None;
             continue;
         };
 
-        if let Some((_, label)) = PULL_REQUEST_HINTS
+        if let Some((_, label, kind)) = PULL_REQUEST_HINTS
             .iter()
-            .find(|(hint, _)| remote_line.contains(hint))
+            .find(|(hint, _, _)| remote_line.contains(hint))
         {
-            pending_label = Some(label);
+            pending_hint = Some((label, *kind));
         }
 
         if let Some(url) = extract_url(remote_line)
-            && let Some(label) = pending_label
+            && let Some((label, kind)) = pending_hint
         {
-            return Some((label, url));
+            return Some((label, url, kind));
         }
     }
 
@@ -170,10 +211,17 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                     message: "Push: Everything is up-to-date".to_string(),
                     style: SuccessStyle::Toast,
                 }
-            } else if let Some((label, url)) = extract_pull_request_link(&output) {
+            } else if let Some((label, url, kind)) = extract_pull_request_link(&output) {
+                let style = match kind {
+                    PullRequestLinkKind::Create => SuccessStyle::CreatePullRequest {
+                        label,
+                        fallback_url: url,
+                    },
+                    PullRequestLinkKind::View => SuccessStyle::OpenPullRequest { label, url },
+                };
                 SuccessMessage {
                     message: format!("Pushed {} to {}", branch_name, remote_ref.name),
-                    style: SuccessStyle::PushPrLink { label, url },
+                    style,
                 }
             } else {
                 SuccessMessage {
@@ -214,12 +262,16 @@ mod tests {
         };
 
         let msg = format_output(&action, output);
-        if let SuccessStyle::PushPrLink { label, url } = msg.style {
+        if let SuccessStyle::CreatePullRequest {
+            label,
+            fallback_url,
+        } = msg.style
+        {
             assert_eq!(msg.message, "Pushed test_branch to test_remote");
             assert_eq!(label, "Create Pull Request");
-            assert_eq!(url, "https://example.com/test/test/pull/new/test");
+            assert_eq!(fallback_url, "https://example.com/test/test/pull/new/test");
         } else {
-            panic!("Expected PushPrLink variant");
+            panic!("Expected CreatePullRequest variant");
         }
     }
 
@@ -248,15 +300,19 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        if let SuccessStyle::PushPrLink { label, url } = msg.style {
+        if let SuccessStyle::CreatePullRequest {
+            label,
+            fallback_url,
+        } = msg.style
+        {
             assert_eq!(msg.message, "Pushed test_branch to test_remote");
             assert_eq!(label, "Create Merge Request");
             assert_eq!(
-                url,
+                fallback_url,
                 "https://example.com/test/test/-/merge_requests/new?merge_request%5Bsource_branch%5D=test"
             )
         } else {
-            panic!("Expected PushPrLink variant")
+            panic!("Expected CreatePullRequest variant")
         }
     }
 
@@ -276,7 +332,8 @@ mod tests {
             extract_pull_request_link(&output),
             Some((
                 "Create Pull Request",
-                "https://bitbucket.example.com/projects/TEST/repos/test/pull-requests?create&sourceBranch=refs/heads/test".to_string()
+                "https://bitbucket.example.com/projects/TEST/repos/test/pull-requests?create&sourceBranch=refs/heads/test".to_string(),
+                PullRequestLinkKind::Create,
             ))
         );
     }
@@ -312,12 +369,12 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        if let SuccessStyle::PushPrLink { label, url } = msg.style {
+        if let SuccessStyle::OpenPullRequest { label, url } = msg.style {
             assert_eq!(msg.message, "Pushed test_branch to test_remote");
             assert_eq!(label, "View Merge Request");
             assert_eq!(url, "https://example.com/test/test/-/merge_requests/99999");
         } else {
-            panic!("Expected PushPrLink variant")
+            panic!("Expected OpenPullRequest variant")
         }
     }
 
