@@ -10,6 +10,7 @@ use editor::{
     display_map::{Crease, CreaseId, CreaseMetadata, FoldId},
     scroll::Autoscroll,
 };
+use fs::Fs;
 use futures::{AsyncReadExt as _, FutureExt as _, future::Shared};
 use gpui::{
     AppContext, ClipboardEntry, Context, Empty, Entity, EntityId, Image, ImageFormat, Img,
@@ -147,8 +148,10 @@ impl MentionSet {
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Skill {
-                skill_file_path, ..
-            } => self.confirm_mention_for_skill(skill_file_path, cx),
+                source,
+                skill_file_path,
+                ..
+            } => self.confirm_mention_for_skill(source, skill_file_path, cx),
             MentionUri::Diagnostics {
                 include_errors,
                 include_warnings,
@@ -321,8 +324,10 @@ impl MentionSet {
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Skill {
-                skill_file_path, ..
-            } => self.confirm_mention_for_skill(skill_file_path, cx),
+                source,
+                skill_file_path,
+                ..
+            } => self.confirm_mention_for_skill(source, skill_file_path, cx),
             MentionUri::Diagnostics {
                 include_errors,
                 include_warnings,
@@ -494,6 +499,7 @@ impl MentionSet {
 
     fn confirm_mention_for_skill(
         &self,
+        source: String,
         skill_file_path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
@@ -505,8 +511,26 @@ impl MentionSet {
                 tracked_buffers: Vec::new(),
             }));
         }
+        // Project skills may be on a remote machine, so read them through the project.
+        // Global skills stay local, even if a worktree contains their path.
+        if let Some(project) = self.project.upgrade()
+            && let Some(buffer) = project.update(cx, |project, cx| {
+                let project_path = project_path_for_skill(project, &source, &skill_file_path, cx)?;
+                Some(project.open_buffer(project_path, cx))
+            })
+        {
+            return cx.spawn(async move |_, cx| {
+                let buffer = buffer.await?;
+                let content = buffer.update(cx, |buffer, _cx| buffer.text());
+                Ok(Mention::Text {
+                    content,
+                    tracked_buffers: Vec::new(),
+                })
+            });
+        }
+        let fs = <dyn Fs>::global(cx);
         cx.background_spawn(async move {
-            let content = std::fs::read_to_string(&skill_file_path).map_err(|e| {
+            let content = fs.load(&skill_file_path).await.map_err(|e| {
                 anyhow!(
                     "Failed to read skill file {}: {}",
                     skill_file_path.display(),
@@ -709,6 +733,30 @@ impl MentionSet {
     }
 }
 
+/// A project skill's source is its worktree's root name.
+fn project_path_for_skill(
+    project: &Project,
+    source: &str,
+    skill_file_path: &Path,
+    cx: &App,
+) -> Option<ProjectPath> {
+    project.worktrees(cx).find_map(|worktree| {
+        let worktree = worktree.read(cx);
+        if worktree.root_name_str() != source {
+            return None;
+        }
+        let path_style = worktree.path_style();
+        let relative_path = path_style
+            .strip_prefix(skill_file_path, worktree.abs_path())
+            .ok()?;
+        let relative_path = RelPath::new(relative_path, path_style).ok()?;
+        Some(ProjectPath {
+            worktree_id: worktree.id(),
+            path: relative_path.into_arc(),
+        })
+    })
+}
+
 /// Computes disambiguated labels for a set of mentions, so that mentions sharing
 /// a base name get extra context (parent path components, skill source) to tell
 /// them apart. Same approach as buffer tab titles and the sidebar.
@@ -834,6 +882,71 @@ mod tests {
             }
             other => panic!("Expected selection mention to resolve as text, got {other:?}"),
         }
+    }
+
+    #[gpui::test]
+    async fn test_global_skill_mention_inside_worktree_reads_from_host_fs(cx: &mut TestAppContext) {
+        let content = read_skill_mention_with_project_and_host_copies(
+            "global",
+            path!("/home/user"),
+            path!("/home/user/.agents/skills/my-skill/SKILL.md"),
+            cx,
+        )
+        .await;
+        assert_eq!(content, "host copy");
+    }
+
+    async fn read_skill_mention_with_project_and_host_copies(
+        source: &str,
+        worktree_root: &str,
+        skill_file_path: &str,
+        cx: &mut TestAppContext,
+    ) -> String {
+        init_test(cx);
+        let skill_directory = Path::new(skill_file_path).parent().unwrap();
+
+        let host_fs = FakeFs::new(cx.executor());
+        host_fs
+            .insert_tree(skill_directory, json!({ "SKILL.md": "host copy" }))
+            .await;
+        cx.update(|cx| <dyn Fs>::set_global(host_fs, cx));
+
+        let project_fs = FakeFs::new(cx.executor());
+        project_fs
+            .insert_tree(skill_directory, json!({ "SKILL.md": "project copy" }))
+            .await;
+        let project = Project::test(project_fs, [Path::new(worktree_root)], cx).await;
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None));
+
+        let mention_task = mention_set.update(cx, |mention_set, cx| {
+            let http_client = project.read(cx).client().http_client();
+            mention_set.confirm_mention_for_uri(
+                MentionUri::Skill {
+                    name: "my-skill".to_string(),
+                    source: source.to_string(),
+                    skill_file_path: skill_file_path.into(),
+                },
+                false,
+                http_client,
+                cx,
+            )
+        });
+        match mention_task.await.unwrap() {
+            Mention::Text { content, .. } => content,
+            other => panic!("Expected skill mention to resolve as text, got {other:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_mention_reads_through_project_fs(cx: &mut TestAppContext) {
+        let content = read_skill_mention_with_project_and_host_copies(
+            "project",
+            path!("/project"),
+            path!("/project/.agents/skills/my-skill/SKILL.md"),
+            cx,
+        )
+        .await;
+        assert_eq!(content, "project copy");
     }
 
     #[test]

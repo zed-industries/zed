@@ -56,7 +56,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
-    ops::{DerefMut, Range},
+    ops::Range,
     rc::Rc,
     sync::{
         Arc, Weak,
@@ -483,10 +483,10 @@ impl ArenaClearNeeded {
     /// reference.
     pub fn clear(self, cx: &mut App) {
         assert!(
-            std::ptr::eq(self.arena, &cx.element_arena),
+            std::ptr::eq(self.arena, &*cx.element_arena),
             "ArenaClearNeeded::clear called with a different App than the draw ran against"
         );
-        cx.element_arena.borrow_mut().clear();
+        RefCell::borrow_mut(&cx.element_arena).clear();
     }
 }
 
@@ -1033,6 +1033,9 @@ pub(crate) struct DeferredDraw {
     absolute_offset: Point<Pixels>,
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
+    /// The entities the deferred element accessed while it was last drawn, in
+    /// any phase, restored when its prepaint is reused.
+    accessed_entities: FxHashSet<EntityId>,
 }
 
 pub(crate) struct Frame {
@@ -1323,45 +1326,64 @@ pub(crate) struct InputRateTracker {
     sustain_duration: Duration,
 }
 
-const THIRTY_FPS_INTERVAL: Duration = Duration::from_micros(33333);
-const SIXTY_FPS_INTERVAL: Duration = Duration::from_micros(16667);
 const FRAME_INTERVAL_TOLERANCE: Duration = Duration::from_millis(1);
 
-/// Display-link timestamps can straddle a target interval by fractions of a
-/// millisecond. Accepting that callback preserves an even display-frame divisor
-/// instead of occasionally waiting for an additional refresh.
-fn frame_request_arrived_too_early(elapsed: Duration, minimum_interval: Duration) -> bool {
-    elapsed < minimum_interval.saturating_sub(FRAME_INTERVAL_TOLERANCE)
+/// Keeps throttled frames on a stable cadence despite callback delivery jitter.
+#[derive(Default)]
+struct FramePacer {
+    last_frame: Option<Instant>,
+}
+
+impl FramePacer {
+    fn should_defer(&mut self, now: Instant, minimum_interval: Option<Duration>) -> bool {
+        if let Some(interval) = minimum_interval
+            && let Some(last_frame) = self.last_frame
+        {
+            let deadline = last_frame + interval;
+            if now + FRAME_INTERVAL_TOLERANCE < deadline {
+                return true;
+            }
+            // Correct small dispatch delays without shifting subsequent deadlines,
+            // but bound the correction to a quarter interval. Larger delays restart
+            // the cadence so recovery cannot produce closely spaced catch-up frames.
+            self.last_frame = Some(if now.saturating_duration_since(deadline) <= interval / 4 {
+                deadline
+            } else {
+                now
+            });
+        } else {
+            self.last_frame = Some(now);
+        }
+        false
+    }
 }
 
 fn minimum_frame_interval(
     should_throttle: bool,
     inactive_without_high_rate_input: bool,
     inactive_frame_interval: Option<Duration>,
+    low_power_frame_interval: Option<Duration>,
+    thermal_frame_interval: Option<Duration>,
     thermal_state: ThermalState,
     power_mode: crate::PowerMode,
 ) -> Option<Duration> {
-    let low_power_mode_enabled = power_mode == crate::PowerMode::LowPower;
     if !should_throttle {
-        None
-    } else if inactive_without_high_rate_input {
-        match (inactive_frame_interval, low_power_mode_enabled) {
-            (Some(inactive_frame_interval), true) => {
-                Some(inactive_frame_interval.max(THIRTY_FPS_INTERVAL))
-            }
-            (inactive_frame_interval, false) => inactive_frame_interval,
-            (None, true) => Some(THIRTY_FPS_INTERVAL),
-        }
-    } else if low_power_mode_enabled {
-        Some(THIRTY_FPS_INTERVAL)
-    } else if matches!(
-        thermal_state,
-        ThermalState::Critical | ThermalState::Serious
-    ) {
-        Some(SIXTY_FPS_INTERVAL)
-    } else {
-        None
+        return None;
     }
+
+    [
+        inactive_frame_interval.filter(|_| inactive_without_high_rate_input),
+        low_power_frame_interval.filter(|_| power_mode == crate::PowerMode::LowPower),
+        thermal_frame_interval.filter(|_| {
+            matches!(
+                thermal_state,
+                ThermalState::Critical | ThermalState::Serious
+            )
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .max()
 }
 
 impl Default for InputRateTracker {
@@ -1627,6 +1649,8 @@ impl Window {
             is_movable,
             app_owns_titlebar_drag,
             inactive_frame_interval,
+            low_power_frame_interval,
+            thermal_frame_interval,
             is_resizable,
             is_minimizable,
             display_id,
@@ -1697,7 +1721,6 @@ impl Window {
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
-        let last_frame_time = Rc::new(Cell::new(None));
 
         platform_window
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
@@ -1735,19 +1758,43 @@ impl Window {
                     Box::new(move || {
                         log::info!("Accessibility activated");
                         active_flag.store(true, SeqCst);
-                        activation_sender.send_blocking(()).log_err();
+                        activation_sender
+                            .send_blocking(())
+                            .with_context(|| {
+                                format!(
+                                    "queuing accessibility activation for window {:?}",
+                                    handle.window_id()
+                                )
+                            })
+                            .log_err();
                         Some(initial_tree.clone())
                     })
                 },
                 action: Box::new(move |request| {
-                    action_sender.send_blocking(request).log_err();
+                    action_sender
+                        .send_blocking(request)
+                        .with_context(|| {
+                            format!(
+                                "queuing accessibility action for window {:?}",
+                                handle.window_id()
+                            )
+                        })
+                        .log_err();
                 }),
                 deactivation: {
                     let active_flag = a11y_active_flag.clone();
                     Box::new(move || {
                         log::info!("Accessibility deactivated");
                         active_flag.store(false, SeqCst);
-                        deactivation_sender.send_blocking(()).log_err();
+                        deactivation_sender
+                            .send_blocking(())
+                            .with_context(|| {
+                                format!(
+                                    "queuing accessibility deactivation for window {:?}",
+                                    handle.window_id()
+                                )
+                            })
+                            .log_err();
                     })
                 },
             });
@@ -1763,6 +1810,12 @@ impl Window {
                     while activation_receiver.recv().await.is_ok() {
                         handle
                             .update(&mut async_cx, |_, window, _| window.refresh())
+                            .with_context(|| {
+                                format!(
+                                    "handling accessibility activation for window {:?}",
+                                    handle.window_id()
+                                )
+                            })
                             .log_err();
                     }
                 })
@@ -1774,6 +1827,12 @@ impl Window {
                     while deactivation_receiver.recv().await.is_ok() {
                         handle
                             .update(&mut async_cx, |_, window, _| window.refresh())
+                            .with_context(|| {
+                                format!(
+                                    "handling accessibility deactivation for window {:?}",
+                                    handle.window_id()
+                                )
+                            })
                             .log_err();
                     }
                 })
@@ -1786,6 +1845,12 @@ impl Window {
                         handle
                             .update(&mut async_cx, |_, window, cx| {
                                 window.handle_a11y_action(request, cx);
+                            })
+                            .with_context(|| {
+                                format!(
+                                    "handling accessibility action for window {:?}",
+                                    handle.window_id()
+                                )
                             })
                             .log_err();
                     }
@@ -1805,6 +1870,7 @@ impl Window {
                         if cx.windows.contains_key(window_id) {
                             handle
                                 .update(cx, |_, window, _| window.remove_window())
+                                .with_context(|| format!("handling close for window {window_id:?}"))
                                 .log_err();
                         }
                         SystemWindowTabController::remove_tab(cx, window_id);
@@ -1821,6 +1887,7 @@ impl Window {
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
             let mut deferred_force_render = false;
+            let mut frame_pacer = FramePacer::default();
             move |request_frame_options| {
                 #[cfg(feature = "profiler")]
                 let (_foreground_turn, window_id) = {
@@ -1864,65 +1931,79 @@ impl Window {
 
                 let power_state = handle
                     .update(&mut cx, |_, _, cx| (cx.thermal_state(), cx.power_mode()))
+                    .with_context(|| {
+                        format!(
+                            "reading power state for frame request for window {:?}",
+                            handle.window_id()
+                        )
+                    })
                     .log_err();
 
-                // Throttle frame rate based on conditions:
-                // - Thermal pressure (Serious/Critical): cap to ~60fps
-                // - Low power mode: cap to ~30fps
-                // - Inactive window (not focused): use its configured frame interval
-                let should_throttle = !request_frame_options.require_presentation
-                    && (request_frame_options.force_render
-                        || !next_frame_callbacks.borrow().is_empty());
-                let inactive_without_high_rate_input = should_throttle
-                    && !active.get()
-                    && !input_rate_tracker.borrow_mut().is_high_rate();
+                // Keep presenting briefly after high-rate input to prevent display
+                // underclocking, but subject to the same power limits as redraws.
+                let high_rate_input = input_rate_tracker.borrow_mut().is_high_rate();
+                let has_next_frame_callbacks = !next_frame_callbacks.borrow().is_empty();
+                let has_frame_demand = invalidator.is_dirty()
+                    || force_render
+                    || has_next_frame_callbacks
+                    || request_frame_options.require_presentation
+                    || needs_present.get()
+                    || high_rate_input;
+
+                let should_throttle = !request_frame_options.require_presentation;
+                let inactive_without_high_rate_input =
+                    should_throttle && !active.get() && !high_rate_input;
                 let (thermal_state, power_mode) =
                     power_state.unwrap_or((ThermalState::Nominal, crate::PowerMode::Unknown));
                 let min_frame_interval = minimum_frame_interval(
                     should_throttle,
                     inactive_without_high_rate_input,
                     inactive_frame_interval,
+                    low_power_frame_interval,
+                    thermal_frame_interval,
                     thermal_state,
                     power_mode,
                 );
 
                 let now = Instant::now();
-                if let Some(min_interval) = min_frame_interval {
-                    if let Some(last_frame) = last_frame_time.get()
-                        && frame_request_arrived_too_early(
-                            now.duration_since(last_frame),
-                            min_interval,
-                        )
-                    {
-                        // Don't lose a pending forced render to throttling.
-                        deferred_force_render |= force_render;
-                        // Deferred by throttling: ask demand-driven platforms to retry.
-                        handle
-                            .update(&mut cx, |_, window, _| {
-                                window.platform_window.schedule_frame();
-                            })
-                            .log_err();
-                        // The demand that entered this branch (a deferred forced
-                        // render or pending next-frame callbacks) is still
-                        // unserved; platforms that stop requesting frames for
-                        // idle windows need a wakeup to deliver the retry.
-                        invalidator.wake_platform();
-                        #[cfg(feature = "profiler")]
-                        profiler::journal::record_frame_skipped(
-                            window_id,
-                            Instant::now(),
-                            if inactive_without_high_rate_input {
-                                profiler::journal::FrameSkipReason::InactiveFrameRateLimit
-                            } else if power_mode == crate::PowerMode::LowPower {
-                                profiler::journal::FrameSkipReason::LowPowerFrameRateLimit
-                            } else {
-                                profiler::journal::FrameSkipReason::ThermalFrameRateLimit
-                            },
-                        );
-                        return;
-                    }
+                // Idle display-link ticks must neither consume a frame slot nor
+                // wake a demand-driven frame source.
+                if has_frame_demand && frame_pacer.should_defer(now, min_frame_interval) {
+                    // Don't lose a pending forced render to throttling.
+                    deferred_force_render |= force_render;
+                    // Deferred by throttling: ask demand-driven platforms to retry.
+                    handle
+                        .update(&mut cx, |_, window, _| {
+                            window.platform_window.schedule_frame();
+                        })
+                        .with_context(|| {
+                            format!(
+                                "rescheduling throttled frame for window {:?}",
+                                handle.window_id()
+                            )
+                        })
+                        .log_err();
+                    // The demand is still unserved; platforms that stop
+                    // requesting frames for idle windows need a wakeup to retry.
+                    invalidator.wake_platform();
+                    #[cfg(feature = "profiler")]
+                    profiler::journal::record_frame_skipped(
+                        window_id,
+                        Instant::now(),
+                        if inactive_without_high_rate_input
+                            && inactive_frame_interval == min_frame_interval
+                        {
+                            profiler::journal::FrameSkipReason::InactiveFrameRateLimit
+                        } else if power_mode == crate::PowerMode::LowPower
+                            && low_power_frame_interval == min_frame_interval
+                        {
+                            profiler::journal::FrameSkipReason::LowPowerFrameRateLimit
+                        } else {
+                            profiler::journal::FrameSkipReason::ThermalFrameRateLimit
+                        },
+                    );
+                    return;
                 }
-                last_frame_time.set(Some(now));
 
                 let pending_next_frame_callbacks = next_frame_callbacks.take();
                 if !pending_next_frame_callbacks.is_empty() {
@@ -1932,17 +2013,19 @@ impl Window {
                                 callback(window, cx);
                             }
                         })
+                        .with_context(|| {
+                            format!(
+                                "running next-frame callbacks for window {:?}",
+                                handle.window_id()
+                            )
+                        })
                         .log_err();
                 }
 
-                // Keep presenting if input was recently arriving at a high rate (>= 60fps).
-                // Once high-rate input is detected, we sustain presentation for 1 second
-                // to prevent display underclocking during active input.
+                let should_draw = invalidator.is_dirty() || force_render;
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
-                    || input_rate_tracker.borrow_mut().is_high_rate();
-
-                let should_draw = invalidator.is_dirty() || force_render;
+                    || high_rate_input;
                 if should_draw {
                     measure("frame duration", || {
                         handle
@@ -1960,11 +2043,20 @@ impl Window {
                                 window.present();
                                 arena_clear_needed.clear(cx);
                             })
+                            .with_context(|| {
+                                format!(
+                                    "drawing and presenting frame for window {:?}",
+                                    handle.window_id()
+                                )
+                            })
                             .log_err();
                     })
                 } else if needs_present {
                     handle
                         .update(&mut cx, |_, window, _| window.present())
+                        .with_context(|| {
+                            format!("presenting frame for window {:?}", handle.window_id())
+                        })
                         .log_err();
                 }
 
@@ -1975,6 +2067,12 @@ impl Window {
                         {
                             window.platform_window.schedule_frame();
                         }
+                    })
+                    .with_context(|| {
+                        format!(
+                            "scheduling follow-up frame for window {:?}",
+                            handle.window_id()
+                        )
                     })
                     .log_err();
 
@@ -2002,6 +2100,12 @@ impl Window {
             move || {
                 handle
                     .update(&mut cx, |_, window, _| window.refresh())
+                    .with_context(|| {
+                        format!(
+                            "handling visual viewport change for window {:?}",
+                            handle.window_id()
+                        )
+                    })
                     .log_err();
             }
         }));
@@ -2010,6 +2114,9 @@ impl Window {
             move |_| {
                 handle
                     .update(&mut cx, |_, window, _| window.refresh())
+                    .with_context(|| {
+                        format!("handling insets change for window {:?}", handle.window_id())
+                    })
                     .log_err();
             }
         }));
@@ -2018,6 +2125,7 @@ impl Window {
             move |_, _| {
                 handle
                     .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
+                    .with_context(|| format!("handling resize for window {:?}", handle.window_id()))
                     .log_err();
             }
         }));
@@ -2026,6 +2134,7 @@ impl Window {
             move || {
                 handle
                     .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
+                    .with_context(|| format!("handling move for window {:?}", handle.window_id()))
                     .log_err();
             }
         }));
@@ -2044,6 +2153,12 @@ impl Window {
                     .spawn(async move {
                         handle
                             .update(&mut cx, |_, window, cx| window.appearance_changed(cx))
+                            .with_context(|| {
+                                format!(
+                                    "handling appearance change for window {:?}",
+                                    handle.window_id()
+                                )
+                            })
                             .log_err();
                     })
                     .detach();
@@ -2054,6 +2169,12 @@ impl Window {
             move || {
                 handle
                     .update(&mut cx, |_, window, cx| window.button_layout_changed(cx))
+                    .with_context(|| {
+                        format!(
+                            "handling button layout change for window {:?}",
+                            handle.window_id()
+                        )
+                    })
                     .log_err();
             }
         }));
@@ -2075,6 +2196,12 @@ impl Window {
 
                         SystemWindowTabController::update_last_active(cx, window.handle.id);
                     })
+                    .with_context(|| {
+                        format!(
+                            "handling active status change for window {:?}",
+                            handle.window_id()
+                        )
+                    })
                     .log_err();
             }
         }));
@@ -2084,6 +2211,12 @@ impl Window {
                 handle
                     .update(&mut cx, |_, window, cx| {
                         window.refresh_visibility(cx);
+                    })
+                    .with_context(|| {
+                        format!(
+                            "handling visibility change for window {:?}",
+                            handle.window_id()
+                        )
                     })
                     .log_err();
             }
@@ -2096,6 +2229,12 @@ impl Window {
                         window.hovered.set(active);
                         window.refresh();
                     })
+                    .with_context(|| {
+                        format!(
+                            "handling hover status change for window {:?}",
+                            handle.window_id()
+                        )
+                    })
                     .log_err();
             }
         }));
@@ -2104,6 +2243,9 @@ impl Window {
             Box::new(move |event| {
                 handle
                     .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
+                    .with_context(|| {
+                        format!("dispatching input for window {:?}", handle.window_id())
+                    })
                     .log_err()
                     .unwrap_or(DispatchEventResult::default())
             })
@@ -2120,6 +2262,12 @@ impl Window {
                         }
                         None
                     })
+                    .with_context(|| {
+                        format!(
+                            "hit-testing window controls for window {:?}",
+                            handle.window_id()
+                        )
+                    })
                     .log_err()
                     .unwrap_or(None)
             })
@@ -2131,6 +2279,12 @@ impl Window {
                     .update(&mut cx, |_, _window, cx| {
                         SystemWindowTabController::move_tab_to_new_window(cx, handle.window_id());
                     })
+                    .with_context(|| {
+                        format!(
+                            "moving tab to new window from window {:?}",
+                            handle.window_id()
+                        )
+                    })
                     .log_err();
             })
         });
@@ -2140,6 +2294,9 @@ impl Window {
                 handle
                     .update(&mut cx, |_, _window, cx| {
                         SystemWindowTabController::merge_all_windows(cx, handle.window_id());
+                    })
+                    .with_context(|| {
+                        format!("merging all windows into window {:?}", handle.window_id())
                     })
                     .log_err();
             })
@@ -2151,6 +2308,9 @@ impl Window {
                     .update(&mut cx, |_, _window, cx| {
                         SystemWindowTabController::select_next_tab(cx, handle.window_id());
                     })
+                    .with_context(|| {
+                        format!("selecting next tab for window {:?}", handle.window_id())
+                    })
                     .log_err();
             })
         });
@@ -2160,6 +2320,9 @@ impl Window {
                 handle
                     .update(&mut cx, |_, _window, cx| {
                         SystemWindowTabController::select_previous_tab(cx, handle.window_id())
+                    })
+                    .with_context(|| {
+                        format!("selecting previous tab for window {:?}", handle.window_id())
                     })
                     .log_err();
             })
@@ -2171,6 +2334,9 @@ impl Window {
                     .update(&mut cx, |_, window, cx| {
                         let tab_bar_visible = window.platform_window.tab_bar_visible();
                         SystemWindowTabController::set_visible(cx, tab_bar_visible);
+                    })
+                    .with_context(|| {
+                        format!("toggling tab bar for window {:?}", handle.window_id())
                     })
                     .log_err();
             })
@@ -2602,6 +2768,7 @@ impl Window {
                     let node_id = window.focus_node_id_in_rendered_frame(focus_id);
                     window.dispatch_action_on_node(node_id, action.as_ref(), cx);
                 })
+                .with_context(|| format!("dispatching action for window {:?}", window.window_id()))
                 .log_err();
         })
     }
@@ -2853,6 +3020,12 @@ impl Window {
                 window.display_id = display_id;
                 moved.then_some(display_id)
             })
+            .with_context(|| {
+                format!(
+                    "handling display change for window {:?}",
+                    handle.window_id()
+                )
+            })
             .log_err()
             .flatten();
         let Some(display_id) = moved_to else {
@@ -2868,6 +3041,12 @@ impl Window {
         }
         handle
             .update(cx, |_, window, cx| window.notify_display_observers(cx))
+            .with_context(|| {
+                format!(
+                    "notifying display observers for window {:?}",
+                    handle.window_id()
+                )
+            })
             .log_err();
     }
 
@@ -2916,6 +3095,13 @@ impl Window {
     pub fn render_to_image(&self) -> anyhow::Result<image::RgbaImage> {
         self.platform_window
             .render_to_image(&self.rendered_frame.scene)
+    }
+
+    /// Borrows the most recently rendered frame's scene, so benchmarks can validate their
+    /// output and report batch counts without cloning it.
+    #[cfg(feature = "bench-support")]
+    pub fn rendered_scene(&self) -> &Scene {
+        &self.rendered_frame.scene
     }
 
     /// Returns the quads in the most recently rendered frame's scene, so tests can assert on
@@ -3056,6 +3242,11 @@ impl Window {
     pub fn set_client_inset(&mut self, inset: Pixels) {
         self.client_inset = Some(inset);
         self.platform_window.set_client_inset(inset);
+    }
+
+    /// Sets the client-drawn corner radii so platform effects can match the window's shape.
+    pub fn set_client_corner_radii(&mut self, radii: Corners<Pixels>) {
+        self.platform_window.set_client_corner_radii(radii);
     }
 
     /// Returns the client_inset value by [`Self::set_client_inset`].
@@ -3625,8 +3816,7 @@ impl Window {
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
-        let mut entities_ref = cx.entities.accessed_entities.get_mut();
-        let mut entities = mem::take(entities_ref.deref_mut());
+        let entities = cx.entities.take_accessed();
         let handle = self.handle;
         cx.record_entities_accessed(
             handle,
@@ -3634,8 +3824,7 @@ impl Window {
             self.invalidator.clone(),
             &entities,
         );
-        let mut entities_ref = cx.entities.accessed_entities.get_mut();
-        mem::swap(&mut entities, entities_ref.deref_mut());
+        cx.entities.restore_accessed(entities);
     }
 
     fn invalidate_entities(&mut self) {
@@ -3960,15 +4149,25 @@ impl Window {
 
                 let prepaint_start = self.prepaint_index();
                 if let Some(mut element) = element {
-                    self.with_rendered_view(current_view, |window| {
-                        window.with_rem_size(Some(rem_size), |window| {
-                            window.with_absolute_element_offset(absolute_offset, |window| {
-                                element.prepaint(window, cx);
+                    let ((), accessed_entities) = cx.detect_accessed_entities(|cx| {
+                        self.with_rendered_view(current_view, |window| {
+                            window.with_rem_size(Some(rem_size), |window| {
+                                window.with_absolute_element_offset(absolute_offset, |window| {
+                                    element.prepaint(window, cx);
+                                });
                             });
                         });
                     });
+                    self.next_frame.deferred_draws[deferred_draw_ix].accessed_entities =
+                        accessed_entities;
                     self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
                 } else {
+                    cx.entities.extend_accessed(
+                        self.next_frame.deferred_draws[deferred_draw_ix]
+                            .accessed_entities
+                            .iter()
+                            .copied(),
+                    );
                     self.reuse_prepaint(prepaint_range);
                 }
                 let prepaint_end = self.prepaint_index();
@@ -4004,13 +4203,16 @@ impl Window {
             let paint_start = self.paint_index();
             let content_mask = deferred_draw.content_mask;
             if let Some(element) = deferred_draw.element.as_mut() {
-                self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_content_mask(content_mask, |window| {
-                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                            element.paint(window, cx);
-                        });
+                let ((), accessed_entities) = cx.detect_accessed_entities(|cx| {
+                    self.with_rendered_view(deferred_draw.current_view, |window| {
+                        window.with_content_mask(content_mask, |window| {
+                            window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                                element.paint(window, cx);
+                            });
+                        })
                     })
-                })
+                });
+                deferred_draw.accessed_entities.extend(accessed_entities);
             } else {
                 self.reuse_paint(deferred_draw.paint_range.clone());
             }
@@ -4086,6 +4288,7 @@ impl Window {
                     absolute_offset: deferred_draw.absolute_offset,
                     prepaint_range: deferred_draw.prepaint_range.clone(),
                     paint_range: deferred_draw.paint_range.clone(),
+                    accessed_entities: deferred_draw.accessed_entities.clone(),
                 }),
         );
     }
@@ -4568,6 +4771,7 @@ impl Window {
             absolute_offset,
             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
+            accessed_entities: FxHashSet::default(),
         });
     }
 
@@ -5984,6 +6188,12 @@ impl Window {
                     window.dispatch_recognized_touch_gesture(gesture, cx);
                 }
             })
+            .with_context(|| {
+                format!(
+                    "handling long-press timer for window {:?}",
+                    cx.window_handle().window_id()
+                )
+            })
             .log_err();
         }));
     }
@@ -6195,9 +6405,11 @@ impl Window {
                     accepts
                 });
 
+            let standalone_modifier = matches!(currently_pending.keystrokes.as_slice(), [keystroke] if keystroke.is_modifier_key());
             let needs_timeout = previous_timeout.is_some()
                 || match_result.pending_has_binding
-                || text_input_requires_timeout;
+                || text_input_requires_timeout
+                || standalone_modifier;
             currently_pending.timeout = if needs_timeout {
                 match previous_timeout {
                     Some(mut timeout) if timeout.is_paused() => {
@@ -6280,6 +6492,12 @@ impl Window {
 
                 window.pending_input_changed(cx);
                 window.replay_pending_input(to_replay, cx)
+            })
+            .with_context(|| {
+                format!(
+                    "handling pending input timeout for window {:?}",
+                    cx.window_handle().window_id()
+                )
             })
             .log_err();
         });
@@ -7485,6 +7703,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// Updates the root view of this window.
     ///
     /// This will fail if the window has been closed or if the root view's type does not match
+    #[track_caller]
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -7614,6 +7833,7 @@ impl AnyWindowHandle {
     /// Updates the state of the root view of this window.
     ///
     /// This will fail if the window has been closed.
+    #[track_caller]
     pub fn update<C, R>(
         self,
         cx: &mut C,
@@ -8131,7 +8351,7 @@ mod tests {
         cx.app.borrow_mut().mode = crate::app::GpuiMode::Production;
         let (journal, _guard) = journal::install_test_foreground_journal(256, 4);
         let mut collector = journal.collector();
-        for initially_dirty in [true, false] {
+        for (initially_dirty, schedule_callback) in [(true, false), (false, true)] {
             // Keep the throttle closed without depending on short wall-clock deadlines.
             let window = cx
                 .app
@@ -8157,13 +8377,15 @@ mod tests {
                     if initially_dirty {
                         window.refresh();
                     }
-                    window.on_next_frame({
-                        let callback_ran = callback_ran.clone();
-                        move |window, _| {
-                            callback_ran.set(true);
-                            window.refresh();
-                        }
-                    });
+                    if schedule_callback {
+                        window.on_next_frame({
+                            let callback_ran = callback_ran.clone();
+                            move |window, _| {
+                                callback_ran.set(true);
+                                window.refresh();
+                            }
+                        });
+                    }
                     draws_before
                 })
                 .expect("schedule throttled frame");
@@ -8176,6 +8398,7 @@ mod tests {
                 caused_invalidation: false,
             });
             collector.collect_unseen();
+            let wakes_before = platform_window.frame_wake_count();
             platform_window.simulate_frame_request(RequestFrameOptions {
                 signal_at: Some(Instant::now()),
                 ..Default::default()
@@ -8192,6 +8415,8 @@ mod tests {
                 })
                 .expect("inspect deferred frame");
             assert!(!callback_ran.get());
+            assert!(platform_window.frame_scheduled());
+            assert!(platform_window.frame_wake_count() > wakes_before);
             assert!(collector.collect_unseen().entries.iter().any(|entry| {
                 matches!(
                     entry,
@@ -8216,7 +8441,7 @@ mod tests {
                     );
                 })
                 .expect("inspect presented frame");
-            assert!(callback_ran.get());
+            assert_eq!(callback_ran.get(), schedule_callback);
         }
     }
 
@@ -8467,61 +8692,131 @@ mod tests {
     }
 
     #[test]
-    fn frame_throttle_accepts_display_link_rounding() {
-        assert!(!super::frame_request_arrived_too_early(
-            Duration::from_micros(16_666),
-            super::SIXTY_FPS_INTERVAL,
-        ));
-        assert!(!super::frame_request_arrived_too_early(
-            Duration::from_micros(33_332),
-            super::THIRTY_FPS_INTERVAL,
-        ));
+    fn frame_throttle_tracks_display_refreshes() {
+        let start = super::Instant::now();
+        for (elapsed, interval) in [
+            (Duration::from_micros(16_666), Duration::from_micros(16_667)),
+            (Duration::from_micros(33_332), Duration::from_micros(33_333)),
+        ] {
+            let mut pacer = super::FramePacer::default();
+            assert!(!pacer.should_defer(start, Some(interval)));
+            assert!(pacer.should_defer(start + elapsed / 2, Some(interval)));
+            assert!(!pacer.should_defer(start + elapsed, Some(interval)));
+        }
     }
 
     #[test]
-    fn frame_throttle_rejects_an_extra_display_refresh() {
-        assert!(super::frame_request_arrived_too_early(
-            Duration::from_micros(8_333),
-            super::SIXTY_FPS_INTERVAL,
-        ));
-        assert!(super::frame_request_arrived_too_early(
-            Duration::from_micros(16_666),
-            super::THIRTY_FPS_INTERVAL,
-        ));
+    fn frame_throttle_preserves_cadence_without_catching_up_after_stalls() {
+        let start = super::Instant::now();
+        let interval = Duration::from_micros(33_333);
+        let mut pacer = super::FramePacer::default();
+        assert!(!pacer.should_defer(start, Some(interval)));
+        let delayed_frame = start + interval + Duration::from_millis(5);
+        assert!(!pacer.should_defer(delayed_frame, Some(interval)));
+        assert!(pacer.should_defer(start + interval + interval / 2, Some(interval)));
+        assert!(!pacer.should_defer(start + interval * 2, Some(interval)));
+
+        // Even a stall just short of another full interval must not cause a burst.
+        let after_stall = start + interval * 4 - Duration::from_millis(1);
+        assert!(!pacer.should_defer(after_stall, Some(interval)));
+        assert!(pacer.should_defer(after_stall + interval / 2, Some(interval)));
+        assert!(!pacer.should_defer(after_stall + interval, Some(interval)));
+        // Mandatory presentation bypasses the limit and establishes a fresh cadence.
+        let mandatory_frame = after_stall + interval + Duration::from_millis(2);
+        assert!(!pacer.should_defer(mandatory_frame, None));
+        assert!(pacer.should_defer(mandatory_frame + interval / 2, Some(interval)));
     }
 
     #[test]
     fn power_modes_preserve_frame_limits() {
+        let options = WindowOptions::default();
         for (power_mode, active_interval, thermal_interval) in [
             (
                 crate::PowerMode::LowPower,
-                Some(super::THIRTY_FPS_INTERVAL),
-                super::THIRTY_FPS_INTERVAL,
+                Some(Duration::from_micros(33_333)),
+                Duration::from_micros(33_333),
             ),
-            (crate::PowerMode::Unknown, None, super::SIXTY_FPS_INTERVAL),
-            (crate::PowerMode::Balanced, None, super::SIXTY_FPS_INTERVAL),
-            (crate::PowerMode::HighPower, None, super::SIXTY_FPS_INTERVAL),
+            (
+                crate::PowerMode::Unknown,
+                None,
+                Duration::from_micros(16_667),
+            ),
+            (
+                crate::PowerMode::Balanced,
+                None,
+                Duration::from_micros(16_667),
+            ),
+            (
+                crate::PowerMode::HighPower,
+                None,
+                Duration::from_micros(16_667),
+            ),
         ] {
             assert_eq!(
-                super::minimum_frame_interval(true, false, None, ThermalState::Nominal, power_mode),
+                super::minimum_frame_interval(
+                    true,
+                    false,
+                    options.inactive_frame_interval,
+                    options.low_power_frame_interval,
+                    options.thermal_frame_interval,
+                    ThermalState::Nominal,
+                    power_mode,
+                ),
                 active_interval,
             );
             assert_eq!(
-                super::minimum_frame_interval(true, false, None, ThermalState::Serious, power_mode),
+                super::minimum_frame_interval(
+                    true,
+                    false,
+                    options.inactive_frame_interval,
+                    options.low_power_frame_interval,
+                    options.thermal_frame_interval,
+                    ThermalState::Serious,
+                    power_mode,
+                ),
                 Some(thermal_interval),
             );
-            let inactive_interval = Duration::from_millis(100);
+        }
+    }
+
+    #[test]
+    fn frame_limits_combine_enabled_intervals() {
+        let short = Some(Duration::from_millis(10));
+        let long = Some(Duration::from_millis(100));
+        for (inactive, low_power, thermal, expected) in [
+            (long, short, short, long),
+            (short, long, short, long),
+            (short, short, long, long),
+            (long, None, None, long),
+            (None, long, None, long),
+            (None, None, long, long),
+            (None, None, None, None),
+        ] {
             assert_eq!(
                 super::minimum_frame_interval(
                     true,
                     true,
-                    Some(inactive_interval),
-                    ThermalState::Nominal,
-                    power_mode,
+                    inactive,
+                    low_power,
+                    thermal,
+                    ThermalState::Critical,
+                    crate::PowerMode::LowPower,
                 ),
-                Some(inactive_interval),
+                expected,
             );
         }
+        assert_eq!(
+            super::minimum_frame_interval(
+                false,
+                true,
+                long,
+                long,
+                long,
+                ThermalState::Critical,
+                crate::PowerMode::LowPower,
+            ),
+            None,
+        );
     }
 
     struct EmptyView;
@@ -8629,6 +8924,8 @@ mod tests {
     fn test_frame_waker_fires_on_frame_demand(cx: &mut TestAppContext) {
         let window = cx.add_window(|_, _| EmptyView);
         let test_window = cx.test_window(window.into());
+        // This test exercises idle wakeups, not the inactive-window frame limit.
+        test_window.simulate_active_status_change(true);
 
         // Windows start dirty, and that can predate waker installation;
         // installing the waker must deliver the pending wake or the first
@@ -9890,6 +10187,122 @@ mod tests {
             .collect()
     }
 
+    actions!(window_test, [StandaloneModifierAction]);
+
+    struct StandaloneModifierView {
+        focus_handle: FocusHandle,
+        action_count: usize,
+    }
+
+    impl Render for StandaloneModifierView {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .key_context("StandaloneModifier")
+                .track_focus(&self.focus_handle)
+                .on_action(cx.listener(|this, _: &StandaloneModifierAction, _, _| {
+                    this.action_count += 1;
+                }))
+        }
+    }
+
+    #[gpui::test]
+    fn test_standalone_modifier_sequence_timeout_and_recovery(cx: &mut TestAppContext) {
+        use crate::{KeyBinding, Modifiers};
+
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "shift shift",
+                StandaloneModifierAction,
+                Some("StandaloneModifier"),
+            )]);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let focus_handle = cx.focus_handle();
+            window.focus(&focus_handle, cx);
+            StandaloneModifierView {
+                focus_handle,
+                action_count: 0,
+            }
+        });
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        };
+        cx.simulate_modifiers_change(shift);
+        cx.simulate_modifiers_change(Modifiers::default());
+        cx.update(|window, _| {
+            assert_eq!(
+                window.pending_input_keystrokes(),
+                Some([Keystroke::parse("shift").expect("valid keystroke")].as_slice())
+            );
+        });
+        cx.background_executor.advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(!window.has_pending_keystrokes());
+            assert_eq!(view.read(cx).action_count, 0);
+        });
+
+        cx.simulate_modifiers_change(shift);
+        cx.simulate_modifiers_change(Modifiers::default());
+        cx.update(|window, cx| {
+            assert!(window.has_pending_keystrokes());
+            assert_eq!(view.read(cx).action_count, 0);
+        });
+
+        cx.simulate_modifiers_change(shift);
+        cx.simulate_modifiers_change(Modifiers::default());
+        cx.update(|window, cx| {
+            assert!(!window.has_pending_keystrokes());
+            assert_eq!(view.read(cx).action_count, 1);
+        });
+    }
+
+    #[gpui::test]
+    fn test_standalone_modifier_sequence_dispatches_before_timeout(cx: &mut TestAppContext) {
+        use crate::{KeyBinding, Modifiers};
+
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "shift shift",
+                StandaloneModifierAction,
+                Some("StandaloneModifier"),
+            )]);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let focus_handle = cx.focus_handle();
+            window.focus(&focus_handle, cx);
+            StandaloneModifierView {
+                focus_handle,
+                action_count: 0,
+            }
+        });
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        };
+        cx.simulate_modifiers_change(shift);
+        cx.simulate_modifiers_change(Modifiers::default());
+        cx.background_executor
+            .advance_clock(Duration::from_millis(500));
+        cx.update(|window, cx| {
+            assert!(window.has_pending_keystrokes());
+            assert_eq!(view.read(cx).action_count, 0);
+        });
+        cx.simulate_modifiers_change(shift);
+        cx.simulate_modifiers_change(Modifiers::default());
+        cx.update(|window, cx| {
+            assert!(!window.has_pending_keystrokes());
+            assert_eq!(view.read(cx).action_count, 1);
+        });
+        cx.background_executor.advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(!window.has_pending_keystrokes());
+            assert_eq!(view.read(cx).action_count, 1);
+        });
+    }
+
     fn dispatch_touch<T: 'static>(
         window: crate::WindowHandle<T>,
         cx: &mut TestAppContext,
@@ -9912,6 +10325,111 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn cached_view_follows_inherited_opacity(cx: &mut TestAppContext) {
+        struct Child {
+            renders: usize,
+        }
+
+        impl Render for Child {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders += 1;
+                div().size_full().bg(crate::rgb(0xff0000))
+            }
+        }
+
+        struct Root {
+            opacity: f32,
+            width: Pixels,
+            child: crate::Entity<Child>,
+        }
+
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(self.width)
+                    .h(px(200.))
+                    .opacity(self.opacity)
+                    .hover(|style| style.opacity(1.))
+                    .child(
+                        self.child
+                            .clone()
+                            .cached(crate::StyleRefinement::default().size(px(100.))),
+                    )
+            }
+        }
+
+        /// Updates the root, draws until no more frames are requested, and returns the
+        /// child's painted alpha and how many times it has rendered.
+        fn update_and_draw(
+            window: crate::WindowHandle<Root>,
+            child: &crate::Entity<Child>,
+            cx: &mut TestAppContext,
+            update: impl FnOnce(&mut Root, &mut Window, &mut Context<Root>),
+        ) -> (f32, usize) {
+            window
+                .update(cx, |root, window, cx| {
+                    update(root, window, cx);
+                    cx.notify();
+                })
+                .expect("update root");
+            for _ in 0..3 {
+                let (alpha, renders, requested_frames) = cx
+                    .update_window(window.into(), |_, window, cx| {
+                        window.draw(cx).clear(cx);
+                        let quads = &window.rendered_frame.scene.quads;
+                        assert_eq!(quads.len(), 1);
+                        let alpha = quads.first().expect("child quad").background.solid.a;
+                        (
+                            alpha,
+                            child.read(cx).renders,
+                            window.simulate_next_frame(cx),
+                        )
+                    })
+                    .expect("draw window");
+                if requested_frames == 0 {
+                    return (alpha, renders);
+                }
+            }
+            panic!("cached child kept requesting frames");
+        }
+
+        let child = cx.new(|_| Child { renders: 0 });
+        let window = cx.add_window(|_, _| Root {
+            opacity: 1.,
+            width: px(200.),
+            child: child.clone(),
+        });
+        let outside = point(px(500.), px(500.));
+        let inside = point(px(50.), px(50.));
+        let beside = point(px(250.), px(50.));
+
+        // Changing the wrapper's opacity redraws the child; unchanged opacity reuses it.
+        let move_outside = |_: &mut Root, window: &mut Window, cx: &mut Context<Root>| {
+            window.simulate_mouse_move(outside, cx)
+        };
+        assert_eq!(update_and_draw(window, &child, cx, move_outside), (1., 1));
+        assert_eq!(update_and_draw(window, &child, cx, |_, _, _| {}), (1., 1));
+        let fade = |root: &mut Root, _: &mut Window, _: &mut Context<Root>| root.opacity = 0.5;
+        assert_eq!(update_and_draw(window, &child, cx, fade), (0.5, 2));
+        assert_eq!(update_and_draw(window, &child, cx, |_, _, _| {}), (0.5, 2));
+
+        // Hover opacity applies when the mouse enters and leaves.
+        let move_inside = |_: &mut Root, window: &mut Window, cx: &mut Context<Root>| {
+            window.simulate_mouse_move(inside, cx)
+        };
+        assert_eq!(update_and_draw(window, &child, cx, move_inside).0, 1.);
+        let move_beside = |_: &mut Root, window: &mut Window, cx: &mut Context<Root>| {
+            window.simulate_mouse_move(beside, cx)
+        };
+        assert_eq!(update_and_draw(window, &child, cx, move_beside).0, 0.5);
+
+        // Widening the wrapper puts it under a still mouse, so only paint's hit test sees
+        // the hover.
+        let widen = |root: &mut Root, _: &mut Window, _: &mut Context<Root>| root.width = px(300.);
+        assert_eq!(update_and_draw(window, &child, cx, widen).0, 1.);
     }
 }
 

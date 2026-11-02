@@ -900,6 +900,9 @@ impl NativeAgent {
         let session_id = thread.id().clone();
         let parent_session_id = thread.parent_thread_id();
         let title = thread.title();
+        let is_subagent = thread.is_subagent();
+        // A native subagent's title is the label its parent gave it.
+        let subagent_title = title.clone();
         let draft_prompt = thread.draft_prompt().map(Vec::from);
         let scroll_position = thread.ui_scroll_position();
         let token_usage = thread.latest_token_usage();
@@ -918,6 +921,13 @@ impl NativeAgent {
                 prompt_capabilities_rx,
                 cx,
             );
+            if is_subagent {
+                acp_thread.set_subagent_association(acp_thread::subagents::SubagentAssociation {
+                    title: subagent_title,
+                    description: None,
+                    can_cancel: true,
+                });
+            }
             acp_thread.set_draft_prompt(draft_prompt, cx);
             acp_thread.set_ui_scroll_position(scroll_position);
             acp_thread.update_token_usage(token_usage, cx);
@@ -1710,13 +1720,15 @@ impl NativeAgent {
         let Some(state) = project_state else {
             return Vec::new();
         };
-        let compact_command = acp_v2::AvailableCommand::new(
-            COMPACT_COMMAND_NAME,
-            "Summarize the conversation so far to free up context",
-        )
-        .meta(acp_thread::meta_with_command_category(
-            acp_thread::CommandCategory::Native,
-        ));
+        let compact_command = acp_v2::AvailableCommand::Command(
+            acp_v2::Command::new(
+                COMPACT_COMMAND_NAME,
+                "Summarize the conversation so far to free up context",
+            )
+            .meta(acp_thread::meta_with_command_category(
+                acp_thread::CommandCategory::Native,
+            )),
+        );
 
         let registry = state.context_server_registry.read(cx);
 
@@ -1740,10 +1752,9 @@ impl NativeAgent {
             };
 
             let mut command =
-                acp_v2::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default())
-                    .meta(acp_thread::meta_with_command_category(
-                        acp_thread::CommandCategory::Mcp,
-                    ));
+                acp_v2::Command::new(name, prompt.description.clone().unwrap_or_default()).meta(
+                    acp_thread::meta_with_command_category(acp_thread::CommandCategory::Mcp),
+                );
 
             match prompt.arguments.as_deref() {
                 Some([arg]) => {
@@ -1760,7 +1771,7 @@ impl NativeAgent {
                 }
             }
 
-            Some(command)
+            Some(acp_v2::AvailableCommand::Command(command))
         });
 
         std::iter::once(compact_command)
@@ -1861,6 +1872,28 @@ impl NativeAgent {
                     })
                     .await
                     .map_err(Arc::new)?;
+                    let outcomes = thread.read_with(cx, |thread, _| {
+                        thread
+                            .subagent_outcomes()
+                            .iter()
+                            .map(|outcome| {
+                                (
+                                    outcome.entry_count,
+                                    acp_v2::StateUpdate::Idle(
+                                        acp_v2::IdleStateUpdate::new()
+                                            .stop_reason(outcome.stop_reason.clone()),
+                                    ),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    if !outcomes.is_empty() {
+                        acp_thread
+                            .update(cx, |acp_thread, cx| {
+                                acp_thread.restore_subagent_outcomes(outcomes, cx)
+                            })
+                            .map_err(Arc::new)?;
+                    }
                     Ok(acp_thread)
                 }
             })
@@ -3975,6 +4008,9 @@ impl SubagentHandle for NativeSubagentHandle {
                         task.await
                     } else {
                         thread.update(cx, |thread, cx| thread.request_cancel(cx)).await;
+                        // Let the run report its own idle state first, so this run's outcome
+                        // reported below comes after it.
+                        task.await.log_err();
                         Err(anyhow!(
                             "The agent is nearing the end of its context window and has been \
                              stopped. You can prompt the thread again to have the agent wrap up \
@@ -3987,6 +4023,7 @@ impl SubagentHandle for NativeSubagentHandle {
                 &response,
                 Ok(acp_v2::StopReason::Cancelled | acp_v2::StopReason::Refusal)
             );
+            let response_stop_reason = response.as_ref().ok().cloned();
             let result = match response {
                 Ok(reason) => match reason {
                     acp_v2::StopReason::Cancelled => Err(anyhow!("User canceled")),
@@ -4028,7 +4065,7 @@ impl SubagentHandle for NativeSubagentHandle {
                 })
                 .ok();
 
-            if discard_partial_output {
+            let result = if discard_partial_output {
                 result
             } else {
                 result.map_err(|error| {
@@ -4039,7 +4076,53 @@ impl SubagentHandle for NativeSubagentHandle {
                         anyhow!("{error:#}\n\nPartial subagent output (last 3 messages, up to 4096 characters each):\n\n{partial_output}")
                     }
                 })
-            }
+            };
+
+            // The run's own idle state only says how the model stopped. Report the verdict
+            // the parent's tool call gets, so the subagent's cards agree with it.
+            let stop_reason = match (&result, response_stop_reason) {
+                (Ok(_), Some(reason))
+                | (
+                    Err(_),
+                    Some(
+                        reason @ (acp_v2::StopReason::Cancelled
+                        | acp_v2::StopReason::MaxTokens
+                        | acp_v2::StopReason::MaxTurnRequests
+                        | acp_v2::StopReason::Refusal),
+                    ),
+                ) => reason,
+                (result, _) => {
+                    let mut error = acp_v2::Error::internal_error();
+                    error.message = match result {
+                        Ok(_) => "The subagent stopped without a reason".to_string(),
+                        Err(error) => error.to_string(),
+                    };
+                    acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new().error(error))
+                }
+            };
+            cx.update(|cx| {
+                let entry_count = acp_thread.read(cx).entries().len();
+                thread.update(cx, |thread, cx| {
+                    thread.record_subagent_outcome(
+                        SubagentOutcome {
+                            entry_count,
+                            stop_reason: stop_reason.clone(),
+                        },
+                        cx,
+                    )
+                });
+                acp_thread.update(cx, |acp_thread, cx| {
+                    acp_thread.update_session_state(
+                        acp_v2::StateUpdate::Idle(
+                            acp_v2::IdleStateUpdate::new().stop_reason(stop_reason),
+                        ),
+                        cx,
+                    )
+                })
+            })
+            .log_err();
+
+            result
         })
     }
 }
@@ -6005,13 +6088,15 @@ mod internal_tests {
 
             assert_eq!(
                 commands,
-                &[acp_v2::AvailableCommand::new(
-                    COMPACT_COMMAND_NAME,
-                    "Summarize the conversation so far to free up context",
-                )
-                .meta(acp_thread::meta_with_command_category(
-                    acp_thread::CommandCategory::Native,
-                ))],
+                &[acp_v2::AvailableCommand::Command(
+                    acp_v2::Command::new(
+                        COMPACT_COMMAND_NAME,
+                        "Summarize the conversation so far to free up context",
+                    )
+                    .meta(acp_thread::meta_with_command_category(
+                        acp_thread::CommandCategory::Native,
+                    ))
+                )],
             );
         });
     }
@@ -7880,7 +7965,7 @@ mod internal_tests {
 
         acp_thread.read_with(cx, |thread, _cx| {
             let commands = thread.available_commands();
-            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+            let names: Vec<&str> = commands.iter().map(|c| c.name()).collect();
             assert!(
                 !names.contains(&"visible-skill"),
                 "skills should not be exposed as ACP slash commands: {names:?}"
@@ -7997,7 +8082,7 @@ mod internal_tests {
                     .collect::<Vec<_>>()
             );
             let commands = acp_thread.read(cx).available_commands();
-            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+            let names: Vec<&str> = commands.iter().map(|c| c.name()).collect();
             assert!(
                 !names.contains(&"my-skill"),
                 "untrusted skill leaked into slash commands: {names:?}"

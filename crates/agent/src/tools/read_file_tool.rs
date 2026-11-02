@@ -35,6 +35,16 @@ fn resolve_line_range(start_line: Option<u32>, end_line: Option<u32>) -> (u32, u
     (start, end)
 }
 
+/// Maximum number of characters displayed per line before truncating.
+/// Lines exceeding this limit are truncated with [`LINE_TRUNCATION_MARKER`]
+/// to prevent minified assets, source maps, or long data rows from overflowing
+/// the model's context window.
+const MAX_LINE_LEN: usize = 2000;
+
+/// Marker appended to lines that exceed [`MAX_LINE_LEN`].
+const LINE_TRUNCATION_MARKER: &str =
+    const_format::formatcp!("... (line truncated to {MAX_LINE_LEN} chars)");
+
 /// Prefixes each line of `text` with its line number in `cat -n` format:
 /// the line number is right-aligned in a 6-character field, followed by a
 /// single tab, followed by the line's original content (including its
@@ -53,11 +63,37 @@ fn format_with_line_numbers(text: &str, start_line: u32) -> String {
     output
 }
 
+fn append_line_segment(
+    output: &mut String,
+    segment: &str,
+    current_line_chars: &mut usize,
+    line_truncated: &mut bool,
+) {
+    if *line_truncated {
+        return;
+    }
+
+    let remaining = MAX_LINE_LEN.saturating_sub(*current_line_chars);
+    match segment.char_indices().nth(remaining) {
+        Some((byte_idx, _)) => {
+            output.push_str(&segment[..byte_idx]);
+            output.push_str(LINE_TRUNCATION_MARKER);
+            *line_truncated = true;
+        }
+        None => {
+            output.push_str(segment);
+            *current_line_chars += segment.chars().count();
+        }
+    }
+}
+
 /// Streams `cat -n`-style line-numbered output directly into `output` from an
 /// iterator of string slices. Chunks do not need to align to line boundaries:
 /// a single chunk may contain multiple newlines, span multiple lines, or end
 /// mid-line. This lets callers consume `Buffer::text_for_range`'s `Chunks`
 /// iterator without materializing the unnumbered text first.
+///
+/// Lines longer than [`MAX_LINE_LEN`] are capped and suffixed with [`LINE_TRUNCATION_MARKER`].
 fn write_lines_numbered<'a>(
     output: &mut String,
     chunks: impl IntoIterator<Item = &'a str>,
@@ -67,6 +103,9 @@ fn write_lines_numbered<'a>(
 
     let mut line_number = start_line;
     let mut at_line_start = true;
+    let mut current_line_chars = 0;
+    let mut line_truncated = false;
+
     for chunk in chunks {
         let mut rest = chunk;
         while !rest.is_empty() {
@@ -74,17 +113,26 @@ fn write_lines_numbered<'a>(
                 // Writes to a `String` are infallible, so the `Result` can be ignored.
                 let _ = write!(output, "{line_number:>6}\t");
                 at_line_start = false;
+                current_line_chars = 0;
+                line_truncated = false;
             }
+
             match rest.find('\n') {
                 Some(nl) => {
-                    let (head, tail) = rest.split_at(nl + 1);
-                    output.push_str(head);
+                    let head = &rest[..nl];
+                    let tail = &rest[nl + 1..];
+
+                    append_line_segment(output, head, &mut current_line_chars, &mut line_truncated);
+                    output.push('\n');
+
                     line_number = line_number.saturating_add(1);
                     at_line_start = true;
+                    current_line_chars = 0;
+                    line_truncated = false;
                     rest = tail;
                 }
                 None => {
-                    output.push_str(rest);
+                    append_line_segment(output, rest, &mut current_line_chars, &mut line_truncated);
                     break;
                 }
             }
@@ -153,6 +201,8 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
 /// - For large files, this tool returns a file outline with symbol names and line numbers instead of the full content.
 ///   This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.
 ///   Do NOT retry reading the same file without line numbers if you receive an outline.
+/// - Lines longer than 2000 characters are truncated with `... (line truncated to 2000 chars)`.
+///   Use `grep` or `terminal` to inspect the full content of very long lines.
 /// - This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.
 ///   Image files are returned as visual content that you can analyze directly.
 ///
@@ -2050,5 +2100,102 @@ mod test {
             result.is_err(),
             "path outside skills dir should be rejected"
         );
+    }
+
+    fn numbered(chunks: &[&str], start_line: u32) -> String {
+        let mut output = String::new();
+        write_lines_numbered(&mut output, chunks.iter().copied(), start_line);
+        output
+    }
+
+    #[test]
+    fn test_write_lines_numbered_keeps_short_lines() {
+        assert_eq!(numbered(&["short line\n"], 1), "     1\tshort line\n");
+    }
+
+    #[test]
+    fn test_write_lines_numbered_truncates_long_line() {
+        let long_line = format!("{}\n", "a".repeat(2500));
+        assert_eq!(
+            numbered(&[&long_line], 1),
+            format!(
+                "     1\t{}{}\n",
+                "a".repeat(MAX_LINE_LEN),
+                LINE_TRUNCATION_MARKER
+            )
+        );
+    }
+
+    #[test]
+    fn test_write_lines_numbered_truncates_line_across_chunks() {
+        let chunk = "b".repeat(1200);
+        assert_eq!(
+            numbered(&[&chunk, &chunk, "\n"], 5),
+            format!(
+                "     5\t{}{}\n",
+                "b".repeat(MAX_LINE_LEN),
+                LINE_TRUNCATION_MARKER
+            )
+        );
+    }
+
+    #[test]
+    fn test_write_lines_numbered_counts_chars_not_bytes() {
+        let exact_line = format!("{}\n", "あ".repeat(MAX_LINE_LEN));
+        assert_eq!(
+            numbered(&[&exact_line], 1),
+            format!("     1\t{}", exact_line)
+        );
+
+        let long_line = format!("{}\n", "あ".repeat(MAX_LINE_LEN + 10));
+        assert_eq!(
+            numbered(&[&long_line], 1),
+            format!(
+                "     1\t{}{}\n",
+                "あ".repeat(MAX_LINE_LEN),
+                LINE_TRUNCATION_MARKER
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_file_truncates_long_lines(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let long_content = format!("line 1\n{}\nline 3\n", "x".repeat(2500));
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "long.txt": long_content
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+        let (event_stream, _) = ToolCallEventStream::test();
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "root/long.txt".to_string(),
+                    start_line: Some(1),
+                    end_line: Some(3),
+                };
+                tool.run(ToolInput::resolved(input), event_stream, cx)
+            })
+            .await
+            .expect("read_file should succeed");
+
+        let text = match result {
+            LanguageModelToolResultContent::Text(text) => text,
+            _ => panic!("expected text result"),
+        };
+        assert!(text.contains("     1\tline 1\n"));
+        assert!(text.contains(LINE_TRUNCATION_MARKER));
+        assert!(text.contains("     3\tline 3\n"));
+        assert!(!text.contains(&"x".repeat(2500)));
     }
 }

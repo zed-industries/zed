@@ -1,4 +1,6 @@
-use agent_client_protocol::{Error, schema::v2::RequestId};
+// The log shows v1 and v2 traffic. v1's ID type also covers the `null` ID of error
+// responses, which v2 keeps even though v2 requests can't use it.
+use agent_client_protocol::{Error, schema::v1::RequestId};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},

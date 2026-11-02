@@ -38,9 +38,7 @@ pub use multi_workspace::{
     SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar, sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
-pub use remote::{
-    RemoteConnectionIdentity, remote_connection_identity, same_remote_connection_identity,
-};
+pub use remote::RemoteConnectionIdentity;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use agent_settings::AgentSettings;
@@ -62,10 +60,10 @@ use futures::{
 };
 use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AppContext, AsyncApp, AsyncWindowContext, Axis,
-    Bounds, ClipboardItem, Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke,
-    ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size,
-    Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity,
+    Bounds, ClipboardItem, Context, Corners, CursorStyle, Decorations, DragMoveEvent, Entity,
+    EntityId, EventEmitter, FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext,
+    Keystroke, ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
+    Size, Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity,
     WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas, point, relative, size,
     transparent_black,
 };
@@ -98,7 +96,7 @@ pub use persistence::{
 use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 use postage::stream::Stream;
 use project::{
-    DirectoryLister, PathChange, Project, ProjectEntryId, ProjectPath, ResolvedPath,
+    DirectoryLister, PathChange, Project, ProjectEntryId, ProjectHost, ProjectPath, ResolvedPath,
     UpdatedEntriesSet, Worktree, WorktreeId, WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     git_store::{GitStoreEvent, RepositoryEvent},
@@ -893,11 +891,10 @@ fn prompt_and_open_paths(
     create_new_window: bool,
     cx: &mut App,
 ) {
-    if let Some(workspace_window) =
-        workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
-            .into_iter()
-            .next()
-    {
+    let workspace_window =
+        workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx).next();
+
+    if let Some(workspace_window) = workspace_window {
         workspace_window
             .update(cx, |multi_workspace, window, cx| {
                 let workspace = multi_workspace.workspace().clone();
@@ -5333,17 +5330,15 @@ impl Workspace {
         let path = Path::new(url_or_path);
         // Try to resolve relative path against base_path first
         let path_from_base = if let Some(base) = base_path {
-            let resolved_path = path_style.join(base, path).map(PathBuf::from);
+            let resolved_path = path_style.join(base, path);
             if project_is_local {
-                if let Some(resolved_path) = resolved_path
-                    && resolved_path.exists()
-                {
+                if resolved_path.exists() {
                     open_abs_path(self, resolved_path, cx);
                     return;
                 }
                 None
             } else {
-                resolved_path
+                Some(resolved_path)
             }
         } else {
             None
@@ -7015,10 +7010,8 @@ impl Workspace {
         } else {
             None
         };
-        let remote_name = remote_options
-            .as_ref()
-            .map(RemoteConnectionOptions::display_name);
-        let remote_host = remote_options.as_ref().map(RemoteConnectionOptions::host);
+        let remote_name = remote_options.map(|o| o.display_name());
+        let remote_host = remote_options.map(|o| o.host());
 
         let branch = if needs.branch {
             project
@@ -8005,7 +7998,7 @@ impl Workspace {
 
     fn workspace_location(&self, cx: &App) -> WorkspaceLocation {
         let paths = PathList::new(&self.root_paths(cx));
-        if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
+        if let Some(connection) = self.project.read(cx).remote_connection_options(cx).cloned() {
             WorkspaceLocation::Location(SerializedWorkspaceLocation::Remote(connection), paths)
         } else if self.project.read(cx).is_local() {
             WorkspaceLocation::Location(SerializedWorkspaceLocation::Local, paths)
@@ -10593,7 +10586,8 @@ pub async fn apply_restored_multiworkspace_state(
                     resolved_paths.push(path.to_path_buf());
                 }
             }
-            let resolved = ProjectGroupKey::new(key.host(), PathList::new(&resolved_paths));
+            let resolved =
+                ProjectGroupKey::new(key.host().cloned(), PathList::new(&resolved_paths));
             if !resolved_groups.iter().any(|g| g.key == resolved) {
                 resolved_groups.push(SerializedProjectGroupState {
                     key: resolved,
@@ -11035,89 +11029,158 @@ pub fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<M
     })
 }
 
-fn workspace_is_at_location(
-    workspace: &Entity<Workspace>,
-    location: &SerializedWorkspaceLocation,
-    cx: &App,
-) -> bool {
-    let WorkspaceLocation::Location(workspace_location, _) =
-        workspace.read(cx).workspace_location(cx)
-    else {
-        return false;
-    };
+pub struct WorkspaceOpenTarget {
+    pub window: WindowHandle<MultiWorkspace>,
+    pub workspace: Entity<Workspace>,
+    pub visible: OpenVisible,
+}
 
-    match (&workspace_location, location) {
-        (SerializedWorkspaceLocation::Local, SerializedWorkspaceLocation::Local) => true,
+fn matches_remote_location(
+    connection: &RemoteConnectionOptions,
+    requested: &RemoteConnectionOptions,
+) -> bool {
+    match (connection, requested) {
+        (RemoteConnectionOptions::Ssh(_), RemoteConnectionOptions::Ssh(_)) => {
+            connection.identity() == requested.identity()
+        }
+        (RemoteConnectionOptions::Wsl(connection), RemoteConnectionOptions::Wsl(requested)) => {
+            // The WSL username is not consistently populated in the workspace location, so ignore it for now.
+            connection.distro_name == requested.distro_name
+        }
         (
-            SerializedWorkspaceLocation::Remote(workspace_remote),
-            SerializedWorkspaceLocation::Remote(remote),
-        ) => match (workspace_remote, remote) {
-            (RemoteConnectionOptions::Ssh(_), RemoteConnectionOptions::Ssh(_)) => {
-                same_remote_connection_identity(Some(workspace_remote), Some(remote))
-            }
-            (
-                RemoteConnectionOptions::Wsl(workspace_remote),
-                RemoteConnectionOptions::Wsl(remote),
-            ) => {
-                // The WSL username is not consistently populated in the workspace location, so ignore it for now.
-                workspace_remote.distro_name == remote.distro_name
-            }
-            (
-                RemoteConnectionOptions::Docker(workspace_remote),
-                RemoteConnectionOptions::Docker(remote),
-            ) => workspace_remote.container_id == remote.container_id,
-            #[cfg(any(test, feature = "test-support"))]
-            (
-                RemoteConnectionOptions::Mock(workspace_remote),
-                RemoteConnectionOptions::Mock(remote),
-            ) => workspace_remote.id == remote.id,
-            _ => false,
-        },
+            RemoteConnectionOptions::Docker(connection),
+            RemoteConnectionOptions::Docker(requested),
+        ) => connection.container_id == requested.container_id,
+        #[cfg(any(test, feature = "test-support"))]
+        (RemoteConnectionOptions::Mock(connection), RemoteConnectionOptions::Mock(requested)) => {
+            connection.id == requested.id
+        }
         _ => false,
     }
 }
 
-pub fn workspace_windows_for_location(
-    serialized_location: &SerializedWorkspaceLocation,
-    cx: &App,
-) -> Vec<WindowHandle<MultiWorkspace>> {
+fn matches_requested_host(project: &Project, requested: &ProjectHost<'_>, cx: &App) -> bool {
+    match requested {
+        ProjectHost::Local => project.is_local(),
+        ProjectHost::Remote(requested) => {
+            let Some(connection) = project.remote_connection_options(cx) else {
+                return false;
+            };
+
+            if !matches_remote_location(connection, requested) {
+                return false;
+            }
+
+            match (connection, *requested) {
+                (
+                    RemoteConnectionOptions::Ssh(options),
+                    RemoteConnectionOptions::Ssh(requested_options),
+                ) => {
+                    // SSH arguments can override the host and user.
+                    // Normalize the args to make None == Some(vec![]) for comparison.
+                    options.args.as_deref().unwrap_or_default()
+                        == requested_options.args.as_deref().unwrap_or_default()
+                }
+                (
+                    RemoteConnectionOptions::Docker(options),
+                    RemoteConnectionOptions::Docker(requested_options),
+                ) => options.remote_user == requested_options.remote_user,
+                _ => true,
+            }
+        }
+    }
+}
+
+pub fn workspace_windows_for_location<'a>(
+    serialized_location: &'a SerializedWorkspaceLocation,
+    cx: &'a App,
+) -> impl Iterator<Item = WindowHandle<MultiWorkspace>> + 'a {
     cx.windows()
         .into_iter()
         .filter_map(|window| window.downcast::<MultiWorkspace>())
-        .filter(|multi_workspace| {
+        .filter(move |multi_workspace| {
             multi_workspace.read(cx).is_ok_and(|multi_workspace| {
-                multi_workspace
-                    .workspaces()
-                    .any(|workspace| workspace_is_at_location(workspace, serialized_location, cx))
+                multi_workspace.workspaces().any(|workspace| {
+                    let project = workspace.read(cx).project.read(cx);
+
+                    match (project.remote_connection_options(cx), serialized_location) {
+                        (Some(connection), SerializedWorkspaceLocation::Remote(requested)) => {
+                            matches_remote_location(connection, requested)
+                        }
+                        (None, SerializedWorkspaceLocation::Local) => project.is_local(),
+                        _ => false,
+                    }
+                })
             })
         })
-        .collect()
 }
 
-pub async fn find_existing_workspace(
+fn preferred_target_for_files(host: &ProjectHost<'_>, cx: &App) -> Option<WorkspaceOpenTarget> {
+    let target_for_window = |window: WindowHandle<MultiWorkspace>| {
+        let multi_workspace = window.read(cx).ok()?;
+        let active_workspace = multi_workspace.workspace();
+        let matches_host = |workspace: &Entity<Workspace>| {
+            matches_requested_host(workspace.read(cx).project.read(cx), host, cx)
+        };
+
+        let workspace = if matches_host(active_workspace) {
+            active_workspace
+        } else {
+            multi_workspace
+                .workspaces()
+                .find(|workspace| *workspace != active_workspace && matches_host(workspace))?
+        };
+
+        Some(WorkspaceOpenTarget {
+            window,
+            workspace: workspace.clone(),
+            visible: OpenVisible::None,
+        })
+    };
+
+    let active_window = cx
+        .active_window()
+        .and_then(|window| window.downcast::<MultiWorkspace>());
+
+    if let Some(window) = active_window
+        && let Some(target) = target_for_window(window)
+    {
+        Some(target)
+    } else {
+        cx.windows()
+            .into_iter()
+            .filter_map(|window| window.downcast::<MultiWorkspace>())
+            .filter(|window| Some(*window) != active_window)
+            .find_map(target_for_window)
+    }
+}
+
+pub fn find_existing_workspace(
     abs_paths: &[PathBuf],
     open_options: &OpenOptions,
-    location: &SerializedWorkspaceLocation,
+    host: &ProjectHost<'_>,
     cx: &mut AsyncApp,
-) -> (
-    Option<(WindowHandle<MultiWorkspace>, Entity<Workspace>)>,
-    OpenVisible,
-) {
-    let mut existing: Option<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> = None;
-    let mut open_visible = OpenVisible::All;
-    let mut best_match = None;
+) -> Option<WorkspaceOpenTarget> {
+    cx.update(|cx| {
+        let mut existing = None;
+        let mut best_match = None;
 
-    if open_options.workspace_matching != WorkspaceMatching::None {
-        cx.update(|cx| {
-            for window in workspace_windows_for_location(location, cx) {
+        if open_options.workspace_matching != WorkspaceMatching::None {
+            for window in cx
+                .windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+            {
                 if let Ok(multi_workspace) = window.read(cx) {
                     for workspace in multi_workspace.workspaces() {
-                        if !workspace_is_at_location(workspace, location, cx) {
+                        let workspace_ref = workspace.read(cx);
+                        let project = workspace_ref.project.read(cx);
+
+                        if !matches_requested_host(project, host, cx) {
                             continue;
                         }
 
-                        let project = workspace.read(cx).project.read(cx);
-                        let m = match open_options.workspace_matching {
+                        let visibility = match open_options.workspace_matching {
                             WorkspaceMatching::None => None,
                             WorkspaceMatching::MatchExact => {
                                 project.visibility_for_paths(abs_paths, true, cx)
@@ -11129,63 +11192,60 @@ pub async fn find_existing_workspace(
                                 project.visibility_for_paths(abs_paths, false, cx)
                             }
                         };
-                        if m > best_match {
-                            existing = Some((window, workspace.clone()));
-                            best_match = m;
+
+                        if visibility > best_match {
+                            existing = Some(WorkspaceOpenTarget {
+                                window,
+                                workspace: workspace.clone(),
+                                visible: OpenVisible::All,
+                            });
+                            best_match = visibility;
                         } else if best_match.is_none()
                             && open_options.workspace_matching
                                 == WorkspaceMatching::MatchSubdirectory
                         {
-                            existing = Some((window, workspace.clone()))
+                            existing = Some(WorkspaceOpenTarget {
+                                window,
+                                workspace: workspace.clone(),
+                                visible: OpenVisible::All,
+                            });
                         }
                     }
                 }
             }
-        });
 
-        let all_paths_are_files = existing
-            .as_ref()
-            .and_then(|(_, target_workspace)| {
-                cx.update(|cx| {
-                    let workspace = target_workspace.read(cx);
-                    let project = workspace.project.read(cx);
-                    let path_style = workspace.path_style(cx);
-                    Some(!abs_paths.iter().any(|path| {
-                        let path = util::paths::SanitizedPath::new(path);
-                        project.worktrees(cx).any(|worktree| {
+            let all_paths_are_files = existing.as_ref().is_some_and(|target| {
+                let workspace = target.workspace.read(cx);
+                let project = workspace.project.read(cx);
+                let path_style = workspace.path_style(cx);
+
+                !abs_paths.iter().any(|path| {
+                    let path = util::paths::SanitizedPath::new(path);
+
+                    project
+                        .worktrees(cx)
+                        .filter_map(|worktree| {
                             let worktree = worktree.read(cx);
                             let abs_path = worktree.abs_path();
-                            path_style
-                                .strip_prefix(path.as_ref(), abs_path.as_ref())
-                                .ok()
-                                .and_then(|path| RelPath::new(path, path_style).ok())
-                                .and_then(|rel| worktree.entry_for_path(&rel))
-                                .is_some_and(|e| e.is_dir())
-                        })
-                    }))
-                })
-            })
-            .unwrap_or(false);
 
-        if open_options.wait && existing.is_some() && all_paths_are_files {
-            cx.update(|cx| {
-                let windows = workspace_windows_for_location(location, cx);
-                let window = cx
-                    .active_window()
-                    .and_then(|window| window.downcast::<MultiWorkspace>())
-                    .filter(|window| windows.contains(window))
-                    .or_else(|| windows.into_iter().next());
-                if let Some(window) = window {
-                    if let Ok(multi_workspace) = window.read(cx) {
-                        let active_workspace = multi_workspace.workspace().clone();
-                        existing = Some((window, active_workspace));
-                        open_visible = OpenVisible::None;
-                    }
-                }
+                            let relative_path = path_style
+                                .strip_prefix(path.as_ref(), abs_path.as_ref())
+                                .ok()?;
+                            let relative_path = RelPath::new(relative_path, path_style).ok()?;
+
+                            worktree.entry_for_path(&relative_path)
+                        })
+                        .any(|entry| entry.is_dir())
+                })
             });
+
+            if open_options.wait && existing.is_some() && all_paths_are_files {
+                existing = preferred_target_for_files(host, cx).or(existing);
+            }
         }
-    }
-    (existing, open_visible)
+
+        existing
+    })
 }
 
 /// Controls whether to reuse an existing workspace whose worktrees contain the
@@ -11376,7 +11436,7 @@ pub fn open_workspace_by_id(
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: Arc<AppState>,
-    mut open_options: OpenOptions,
+    open_options: OpenOptions,
     cx: &mut App,
 ) -> Task<anyhow::Result<OpenResult>> {
     let abs_paths = abs_paths.to_vec();
@@ -11386,17 +11446,14 @@ pub fn open_paths(
         .find_map(|p| util::paths::WslPath::from_path(p));
 
     cx.spawn(async move |cx| {
-        let (mut existing, mut open_visible) = find_existing_workspace(
-            &abs_paths,
-            &open_options,
-            &SerializedWorkspaceLocation::Local,
-            cx,
-        )
-        .await;
+        let mut reuse_target =
+            find_existing_workspace(&abs_paths, &open_options, &ProjectHost::Local, cx);
+
+        let mut creation_window = open_options.requesting_window;
 
         // Fallback: if no workspace contains the paths and all paths are files,
         // prefer an existing local workspace window (active window first).
-        if open_options.should_reuse_existing_window() && existing.is_none() {
+        if open_options.should_reuse_existing_window() && reuse_target.is_none() {
             let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
             let all_metadatas = futures::future::join_all(all_paths)
                 .await
@@ -11404,24 +11461,9 @@ pub fn open_paths(
                 .filter_map(|result| result.ok().flatten());
 
             if all_metadatas.into_iter().all(|file| !file.is_dir) {
-                cx.update(|cx| {
-                    let windows = workspace_windows_for_location(
-                        &SerializedWorkspaceLocation::Local,
-                        cx,
-                    );
-                    let window = cx
-                        .active_window()
-                        .and_then(|window| window.downcast::<MultiWorkspace>())
-                        .filter(|window| windows.contains(window))
-                        .or_else(|| windows.into_iter().next());
-                    if let Some(window) = window {
-                        if let Ok(multi_workspace) = window.read(cx) {
-                            let active_workspace = multi_workspace.workspace().clone();
-                            existing = Some((window, active_workspace));
-                            open_visible = OpenVisible::None;
-                        }
-                    }
-                });
+                reuse_target = cx
+                    .update(|cx| preferred_target_for_files(&ProjectHost::Local, cx))
+                    .or(reuse_target);
             }
         }
 
@@ -11433,31 +11475,27 @@ pub fn open_paths(
         // open_workspace_for_paths reusing an empty window) already chose the
         // target window, so we must not open the sidebar as a side-effect.
         if open_options.should_reuse_existing_window()
-            && existing.is_none()
-            && open_options.requesting_window.is_none()
+            && reuse_target.is_none()
+            && creation_window.is_none()
         {
             let use_existing_window = open_options.add_dirs_to_sidebar;
 
             if use_existing_window {
-                let target_window = cx.update(|cx| {
-                    let windows = workspace_windows_for_location(
-                        &SerializedWorkspaceLocation::Local,
-                        cx,
-                    );
-                    let window = cx
+                creation_window = cx.update(|cx| {
+                    let active_window = cx
                         .active_window()
-                        .and_then(|window| window.downcast::<MultiWorkspace>())
-                        .filter(|window| windows.contains(window))
-                        .or_else(|| windows.into_iter().next());
-                    window.filter(|window| {
-                        window
-                            .read(cx)
-                            .is_ok_and(|mw| mw.multi_workspace_enabled(cx))
-                    })
+                        .and_then(|window| window.downcast::<MultiWorkspace>());
+
+                    workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
+                        .min_by_key(|window| Some(*window) != active_window)
+                        .filter(|window| {
+                            window
+                                .read(cx)
+                                .is_ok_and(|mw| mw.multi_workspace_enabled(cx))
+                        })
                 });
 
-                if let Some(window) = target_window {
-                    open_options.requesting_window = Some(window);
+                if let Some(window) = creation_window {
                     window
                         .update(cx, |multi_workspace, _, cx| {
                             if AgentSettings::get_global(cx).threads_sidebar.auto_open {
@@ -11476,8 +11514,12 @@ pub fn open_paths(
 
         let open_in_dev_container = open_options.open_in_dev_container;
 
-        let result = if let Some((existing, target_workspace)) = existing {
-            let open_task = existing
+        let result = if let Some(WorkspaceOpenTarget {
+            window: target_window,
+            workspace: target_workspace,
+            visible: open_visible,
+        }) = reuse_target {
+            let open_task = target_window
                 .update(cx, |multi_workspace, window, cx| {
                     window.activate_window();
                     multi_workspace.activate(target_workspace.clone(), None, window, cx);
@@ -11499,7 +11541,7 @@ pub fn open_paths(
                 })?
                 .await;
 
-            _ = existing.update(cx, |multi_workspace, _, cx| {
+            _ = target_window.update(cx, |multi_workspace, _, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
                     for item in open_task.iter().flatten() {
@@ -11510,7 +11552,7 @@ pub fn open_paths(
                 });
             });
 
-            Ok(OpenResult { window: existing, workspace: target_workspace, opened_items: open_task })
+            Ok(OpenResult { window: target_window, workspace: target_workspace, opened_items: open_task })
         } else {
             let init = if open_in_dev_container {
                 Some(Box::new(|workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>| {
@@ -11524,7 +11566,7 @@ pub fn open_paths(
                     Workspace::new_local(
                         abs_paths,
                         app_state.clone(),
-                        open_options.requesting_window,
+                        creation_window,
                         open_options.env,
                         init,
                         open_options.open_mode,
@@ -12200,8 +12242,26 @@ pub fn client_side_decorations(
     };
 
     match decorations {
-        Decorations::Client { .. } => window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW),
-        Decorations::Server => window.set_client_inset(px(0.0)),
+        Decorations::Client { .. } => {
+            window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
+            let radius = |rounded| {
+                if rounded {
+                    theme::CLIENT_SIDE_DECORATION_ROUNDING
+                } else {
+                    px(0.0)
+                }
+            };
+            window.set_client_corner_radii(Corners {
+                top_left: radius(!tiling.top && !tiling.left),
+                top_right: radius(!tiling.top && !tiling.right),
+                bottom_left: radius(!tiling.bottom && !tiling.left),
+                bottom_right: radius(!tiling.bottom && !tiling.right),
+            });
+        }
+        Decorations::Server => {
+            window.set_client_inset(px(0.0));
+            window.set_client_corner_radii(Corners::default());
+        }
     }
 
     struct GlobalResizeEdge(ResizeEdge);
