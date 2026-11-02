@@ -1266,19 +1266,67 @@ fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     log::debug!("Checking if process with PID {} exists...", pid);
 
     let system = sysinfo::System::new_with_specifics(
-        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+        sysinfo::RefreshKind::nothing().with_processes(
+            sysinfo::ProcessRefreshKind::nothing()
+                .with_cmd(sysinfo::UpdateKind::Always)
+                .with_user(sysinfo::UpdateKind::Always),
+        ),
     );
 
-    if system.process(sysinfo::Pid::from_u32(pid)).is_some() {
-        log::debug!(
-            "Process with PID {} exists. NOT spawning new server, but attaching to existing one.",
-            pid
-        );
-        Ok(Some(pid))
-    } else {
-        log::debug!("Found PID file, but process with that PID does not exist. Removing PID file.");
-        std::fs::remove_file(path).map_err(|source| CheckPidError { source, pid })?;
-        Ok(None)
+    match system.process(sysinfo::Pid::from_u32(pid)) {
+        Some(process) if is_server_process(process, path, &system) => {
+            log::debug!(
+                "Process with PID {} exists. NOT spawning new server, but attaching to existing one.",
+                pid
+            );
+            Ok(Some(pid))
+        }
+        Some(_) => {
+            log::info!(
+                "PID {pid} from PID file belongs to an unrelated process (likely reused after a reboot). Removing PID file."
+            );
+            std::fs::remove_file(path).map_err(|source| CheckPidError { source, pid })?;
+            Ok(None)
+        }
+        None => {
+            log::debug!(
+                "Found PID file, but process with that PID does not exist. Removing PID file."
+            );
+            std::fs::remove_file(path).map_err(|source| CheckPidError { source, pid })?;
+            Ok(None)
+        }
+    }
+}
+
+/// PIDs are reused (e.g. after the host reboots), so a live PID alone does not prove that the
+/// server which wrote the PID file is still running. Treating an unrelated process as the server
+/// makes the proxy try to kill it, which fails for other users' processes and blocks connecting.
+fn is_server_process(
+    process: &sysinfo::Process,
+    pid_file: &Path,
+    system: &sysinfo::System,
+) -> bool {
+    // On Linux, thread IDs share the PID namespace and show up as processes.
+    if process.thread_kind().is_some() {
+        return false;
+    }
+
+    let command_line = process.cmd();
+    if !command_line.is_empty() {
+        return command_line
+            .windows(2)
+            .any(|arguments| arguments[0] == "--pid-file" && Path::new(&arguments[1]) == pid_file);
+    }
+
+    // The command line of another user's process may be unreadable, but the server always runs
+    // as the same user as the proxy.
+    let current_user = sysinfo::get_current_pid()
+        .ok()
+        .and_then(|current_pid| system.process(current_pid))
+        .and_then(|current_process| current_process.user_id());
+    match (process.user_id(), current_user) {
+        (Some(owner), Some(current_user)) => owner == current_user,
+        _ => true,
     }
 }
 
@@ -1489,6 +1537,40 @@ mod tests {
         use super::*;
         use gpui::TestAppContext;
         use proto::EnvelopedMessage as _;
+
+        #[test]
+        fn pid_file_pointing_at_unrelated_process_is_stale() {
+            let temp_dir = tempfile::tempdir().expect("create temp dir");
+            let pid_file = temp_dir.path().join("server.pid");
+            std::fs::write(&pid_file, std::process::id().to_string()).expect("write PID file");
+
+            assert_eq!(check_pid_file(&pid_file).expect("check PID file"), None);
+            assert!(!pid_file.exists());
+        }
+
+        #[test]
+        fn pid_file_pointing_at_server_process_is_kept() {
+            let temp_dir = tempfile::tempdir().expect("create temp dir");
+            let pid_file = temp_dir.path().join("server.pid");
+            // The trailing `; true` keeps the shell from exec-ing `sleep`, which would drop the
+            // `--pid-file` arguments from the process command line.
+            let server = new_command("sh")
+                .arg("-c")
+                .arg("sleep 30; true")
+                .arg("--pid-file")
+                .arg(&pid_file)
+                .kill_on_drop(true)
+                .spawn()
+                .expect("spawn fake server");
+            let server_pid = server.id();
+            std::fs::write(&pid_file, server_pid.to_string()).expect("write PID file");
+
+            let result = check_pid_file(&pid_file);
+            drop(server);
+
+            assert_eq!(result.expect("check PID file"), Some(server_pid));
+            assert!(pid_file.exists());
+        }
 
         // Windows did not reproduce socket backpressure.
         #[gpui::test]
