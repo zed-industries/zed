@@ -1766,7 +1766,9 @@ impl Sidebar {
                 // in a single pass.
                 for thread in &mut threads {
                     let thread_id = thread.metadata.thread_id;
-                    if let Some(info) = live_info_by_thread.get(&thread_id) {
+                    if thread.metadata.session_id.is_some()
+                        && let Some(info) = live_info_by_thread.get(&thread_id)
+                    {
                         let status = info.status;
                         Arc::make_mut(thread).apply_active_info(info);
                         new_live_statuses.insert(thread_id, status);
