@@ -1627,53 +1627,62 @@ impl NativeAgent {
     }
 
     fn publish_skill_index(&self, cx: &mut Context<Self>) {
-        let mut local_global_skills: Option<Vec<Skill>> = None;
+        let mut global_skills = Vec::new();
         let mut remote_global_skills = HashMap::default();
         let mut project_groups: Vec<ProjectSkillGroup> = Vec::new();
+        let mut seen_global = false;
+        let mut has_local_project = false;
 
         for (project_id, state) in &self.projects {
-            let global_skills = state
-                .skills
-                .iter()
-                .filter(|skill| skill.source == SkillSource::Global)
-                .cloned()
-                .collect::<Vec<_>>();
-            if global_skills_are_remote(state.project.read(cx)) {
-                remote_global_skills.insert(*project_id, global_skills);
-            } else if local_global_skills
-                .as_ref()
-                .is_none_or(|skills| skills.is_empty())
-            {
-                local_global_skills = Some(global_skills);
+            let is_remote = global_skills_are_remote(state.project.read(cx));
+            if is_remote {
+                remote_global_skills.insert(*project_id, Vec::new());
+            } else {
+                has_local_project = true;
             }
-
             for skill in state.skills.iter() {
-                if let SkillSource::ProjectLocal {
-                    worktree_id,
-                    worktree_root_name,
-                } = &skill.source
-                {
-                    if let Some(group) = project_groups
-                        .iter_mut()
-                        .find(|g| g.worktree_id == *worktree_id)
-                    {
-                        group.skills.push(skill.clone());
-                    } else {
-                        project_groups.push(ProjectSkillGroup {
-                            worktree_id: *worktree_id,
-                            worktree_root_name: SharedString::from(worktree_root_name.clone()),
-                            skills: vec![skill.clone()],
-                        });
+                match &skill.source {
+                    SkillSource::BuiltIn => {}
+                    SkillSource::Global if is_remote => {
+                        remote_global_skills
+                            .entry(*project_id)
+                            .or_insert_with(Vec::new)
+                            .push(skill.clone());
+                    }
+                    SkillSource::Global => {
+                        if !seen_global {
+                            global_skills.push(skill.clone());
+                        }
+                    }
+                    SkillSource::ProjectLocal {
+                        worktree_id,
+                        worktree_root_name,
+                    } => {
+                        if let Some(group) = project_groups
+                            .iter_mut()
+                            .find(|g| g.worktree_id == *worktree_id)
+                        {
+                            group.skills.push(skill.clone());
+                        } else {
+                            project_groups.push(ProjectSkillGroup {
+                                worktree_id: *worktree_id,
+                                worktree_root_name: SharedString::from(worktree_root_name.clone()),
+                                skills: vec![skill.clone()],
+                            });
+                        }
                     }
                 }
+            }
+            if !global_skills.is_empty() {
+                seen_global = true;
             }
         }
 
         let index = cx.default_global::<SkillIndex>();
-        // Each workspace has its own agent, so keep the global skills of
-        // machines this agent has no project on.
-        if let Some(local_global_skills) = local_global_skills {
-            index.global_skills = local_global_skills;
+        // Each workspace has its own agent, so one with only remote projects
+        // leaves this machine's global skills to the others.
+        if has_local_project || self.projects.is_empty() {
+            index.global_skills = global_skills;
         }
         index.remote_global_skills.extend(remote_global_skills);
         index.project_skills = project_groups;
