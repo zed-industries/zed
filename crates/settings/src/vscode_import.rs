@@ -1052,6 +1052,7 @@ impl VsCodeSettings {
         WorkspaceSettingsContent {
             active_pane_modifiers: self.active_pane_modifiers(),
             accessible_mode: None,
+            active_panel_modifiers: None,
             text_rendering_mode: None,
             use_display_p3: None,
             autosave: self.read_enum("files.autoSave", |s| match s {
