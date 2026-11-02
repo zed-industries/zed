@@ -9554,7 +9554,6 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "gpui_util",
- "http_client",
  "icons",
  "image",
  "language_model_core",
