@@ -10,10 +10,7 @@ use gpui::{
     Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
     Subscription, Task, TaskExt, WeakEntity, list,
 };
-use util::{
-    debug_panic,
-    paths::{PathStyle, is_absolute},
-};
+use util::{debug_panic, paths::PathStyle};
 
 use crate::ToggleUserFrames;
 use language::PointUtf16;
@@ -528,7 +525,8 @@ impl StackFrameList {
                 .filter(|path| {
                     // Since we do not know if we are debugging on the host or (a remote/WSL) target,
                     // we need to check if either the path is absolute as Posix or Windows.
-                    is_absolute(path, PathStyle::Unix) || is_absolute(path, PathStyle::Windows)
+                    let path = Path::new(path);
+                    PathStyle::Unix.is_absolute(path) || PathStyle::Windows.is_absolute(path)
                 })
                 .map(|path| Arc::<Path>::from(Path::new(path)))
         })

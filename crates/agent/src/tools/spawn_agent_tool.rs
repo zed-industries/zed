@@ -202,7 +202,6 @@ impl AgentTool for SpawnAgentTool {
                     message_end_index: None,
                 };
 
-                event_stream.subagent_spawned(subagent.id());
                 event_stream.update_fields(|update| {
                     update.meta(acp_v2::Meta::from_iter([(
                         SUBAGENT_SESSION_INFO_META_KEY.into(),

@@ -1,6 +1,6 @@
 ---
 title: AI Coding Agent - Zed Agent Panel
-description: Use Zed's AI coding agent to generate, refactor, and debug code with tool calling, checkpoints, and multi-model support.
+description: Use Zed's AI coding agent to generate, refactor, and debug code with tool calling and multi-model support.
 ---
 
 # Agent Panel
@@ -26,7 +26,7 @@ Expand the editor with {#kb agent::ExpandMessageEditor} if you need more room.
 Responses stream in with indicators showing [which tools](./tools.md) the model is using.
 The sections below cover what you can do from here.
 
-> Note that some Agent Panel features may not be available for every External Agent. Restoring threads from history, checkpoints, token usage display, and similar features depend on the agent integration.
+> Note that some Agent Panel features may not be available for every External Agent. Restoring threads from history, token usage display, and similar features depend on the agent integration.
 > Their availability varies depending on the agent.
 
 ### Creating New Threads {#new-thread}
@@ -68,12 +68,6 @@ By default, queued messages get sent once the agent finishes generating. If you 
 
 You can edit or remove (an individual or all) queued messages.
 You can also still interrupt the agent immediately if you want by either clicking on the stop button or by clicking the "Send Now" (double-enter) on a queued message.
-
-### Checkpoints {#checkpoints}
-
-Every time the model performs an edit, you should see a "Restore Checkpoint" button at the top of your message, allowing you to return your code base to the state it was in prior to that message.
-
-The checkpoint button appears even if you interrupt the thread midway through an edit, as this is likely a moment when you've identified that the agent is not heading in the right direction and you want to revert back.
 
 ### Context Menu {#context-menu}
 

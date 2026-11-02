@@ -495,7 +495,7 @@ impl RenderOnce for DiffStyleControls {
                                     .text_ui_sm(cx)
                                     .text_color(Color::Muted.color(cx))
                                     .children(render_modifiers(
-                                        &gpui::Modifiers::secondary_key(),
+                                        &gpui::Modifiers::secondary_key(cx),
                                         PlatformStyle::platform(),
                                         None,
                                         Some(TextSize::Small.rems(cx).into()),
@@ -508,7 +508,7 @@ impl RenderOnce for DiffStyleControls {
                     .on_click({
                         let splittable_editor = self.splittable_editor.clone();
                         move |_, window, cx| {
-                            if window.modifiers().secondary() {
+                            if window.modifiers().secondary(cx) {
                                 window.dispatch_action(
                                     OpenSettingsAt {
                                         path: "minimum_split_diff_width".to_string(),

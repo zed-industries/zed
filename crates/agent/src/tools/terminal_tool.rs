@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1 as acp;
+use acp_thread::ProcessOutput;
 use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
 use futures::FutureExt as _;
@@ -1246,7 +1246,7 @@ fn wsl_interop_blocked(content: &str) -> bool {
 }
 
 fn process_content(
-    output: acp::TerminalOutputResponse,
+    output: ProcessOutput,
     command: &str,
     timed_out: bool,
     user_stopped: bool,
@@ -1392,23 +1392,27 @@ fn resolve_cd_in_worktrees(
     path_style: util::paths::PathStyle,
     worktree_roots: &[(&str, PathBuf)],
 ) -> Option<PathBuf> {
-    let cd = path_style.normalize(cd);
-    let cd_path = Path::new(&cd);
-    let is_absolute = path_style.is_absolute(&cd);
+    let cd_path = path_style.normalize_lexically(cd);
+    let is_absolute = path_style.is_absolute(&cd_path);
 
     worktree_roots.iter().find_map(|(root_name, abs_path)| {
-        let prefix = if is_absolute {
-            path_style.normalize(abs_path.to_str()?)
+        let abs_path = path_style.normalize_lexically(abs_path);
+        let prefix: &Path = if is_absolute {
+            &abs_path
         } else {
-            (*root_name).to_string()
+            Path::new(*root_name)
         };
-        let subpath = path_style.strip_prefix(cd_path, Path::new(&prefix))?;
-        if subpath.is_empty() {
-            Some(abs_path.clone())
+        let subpath = path_style.strip_prefix(&cd_path, prefix).ok()?;
+        let resolved_path = if subpath.is_empty() {
+            abs_path.clone()
         } else {
-            path_style
-                .join_path(abs_path, &*subpath.display(path_style))
-                .ok()
+            path_style.normalize_lexically(path_style.join(&abs_path, subpath))
+        };
+
+        if path_style.starts_with(&resolved_path, &abs_path) {
+            Some(resolved_path)
+        } else {
+            None
         }
     })
 }
@@ -1416,11 +1420,10 @@ fn resolve_cd_in_worktrees(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use util::paths::PathStyle::{Unix, Windows};
 
     #[test]
     fn test_resolve_cd_uses_project_path_style() {
-        use util::paths::PathStyle::{Unix, Windows};
-
         // Deliberately ambiguous root names to stress test path resolution.
         let unix_roots: Vec<(&str, PathBuf)> = vec![
             ("worktree", PathBuf::from("/a/worktree")),
@@ -1429,6 +1432,8 @@ mod tests {
         // Worktree roots are stored with backslash separators on Windows, but
         // models frequently write paths with forward slashes; both must match.
         let windows_roots = vec![("worktree", PathBuf::from("C:\\work\\worktree"))];
+
+        let windows_verbatim_roots = vec![("worktree", PathBuf::from(r"\\?\C:\work\worktree"))];
 
         // absolute paths
         assert_eq!(
@@ -1535,6 +1540,44 @@ mod tests {
             None,
             "a Windows-absolute path that escapes its worktree via `..` is rejected"
         );
+
+        // Windows verbatim path
+        assert_eq!(
+            resolve_cd_in_worktrees(
+                r"\\?\C:\work\worktree\../another",
+                Windows,
+                &windows_verbatim_roots
+            ),
+            None,
+            "The Windows verbatim path should not return a path that escapes its worktree"
+        );
+    }
+
+    #[test]
+    fn test_resolve_cd_rejects_traversal_with_empty_root_name() {
+        let unix_roots = vec![("", PathBuf::from("/tmp/example/root"))];
+        let windows_roots = vec![("", PathBuf::from("C:\\work\\worktree"))];
+
+        assert_eq!(
+            resolve_cd_in_worktrees("../outside", Unix, &unix_roots),
+            None,
+            "a relative `cd` that escapes the worktree is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("..", Unix, &unix_roots),
+            None,
+            "a relative `cd` to the parent of the worktree is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("..", Windows, &windows_roots),
+            None,
+            "a relative `cd` to the parent of the worktree is rejected"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("..\\escape", Windows, &windows_roots),
+            None,
+            "a relative `cd` that escapes the worktree is rejected"
+        );
     }
 
     #[test]
@@ -1569,7 +1612,7 @@ mod tests {
 
     #[test]
     fn test_process_content_user_stopped() {
-        let output = acp::TerminalOutputResponse::new("partial output".to_string(), false);
+        let output = ProcessOutput::new("partial output".to_string(), false);
 
         let result = process_content(
             output,
@@ -1805,8 +1848,8 @@ mod tests {
 
     #[test]
     fn test_process_content_filters_success_output_for_model() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree\nfour".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("one\ntwo\nthree\nfour".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
 
         let result = process_content(
             output,
@@ -1824,8 +1867,8 @@ mod tests {
 
     #[test]
     fn test_process_content_filters_failure_output_for_model() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+        let output = ProcessOutput::new("one\ntwo\nthree".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(1));
 
         let result = process_content(
             output,
@@ -1846,7 +1889,7 @@ mod tests {
 
     #[test]
     fn test_process_content_filters_timeout_output_for_model() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false);
+        let output = ProcessOutput::new("one\ntwo\nthree".to_string(), false);
 
         let result = process_content(
             output,
@@ -1867,7 +1910,7 @@ mod tests {
 
     #[test]
     fn test_process_content_filters_user_stopped_output_for_model() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false);
+        let output = ProcessOutput::new("one\ntwo\nthree".to_string(), false);
 
         let result = process_content(
             output,
@@ -1889,8 +1932,8 @@ mod tests {
 
     #[test]
     fn test_process_content_selected_output_has_no_explanatory_note() {
-        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("one\ntwo\nthree".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
 
         let result = process_content(
             output,
@@ -1910,7 +1953,7 @@ mod tests {
 
     #[test]
     fn test_process_content_user_stopped_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+        let output = ProcessOutput::new("".to_string(), false);
 
         let result = process_content(
             output,
@@ -1934,7 +1977,7 @@ mod tests {
 
     #[test]
     fn test_process_content_timed_out() {
-        let output = acp::TerminalOutputResponse::new("build output here".to_string(), false);
+        let output = ProcessOutput::new("build output here".to_string(), false);
 
         let result = process_content(
             output,
@@ -1958,7 +2001,7 @@ mod tests {
 
     #[test]
     fn test_process_content_timed_out_with_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+        let output = ProcessOutput::new("".to_string(), false);
 
         let result = process_content(
             output,
@@ -1982,8 +2025,8 @@ mod tests {
 
     #[test]
     fn test_process_content_with_success() {
-        let output = acp::TerminalOutputResponse::new("success output".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("success output".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
 
         let result = process_content(
             output,
@@ -2007,8 +2050,8 @@ mod tests {
 
     #[test]
     fn test_process_content_with_success_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
 
         let result = process_content(
             output,
@@ -2027,8 +2070,8 @@ mod tests {
 
     #[test]
     fn test_process_content_with_error_exit() {
-        let output = acp::TerminalOutputResponse::new("error output".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+        let output = ProcessOutput::new("error output".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(1));
 
         let result = process_content(
             output,
@@ -2052,8 +2095,8 @@ mod tests {
 
     #[test]
     fn test_process_content_with_error_exit_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+        let output = ProcessOutput::new("".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(1));
 
         let result = process_content(
             output,
@@ -2072,7 +2115,7 @@ mod tests {
 
     #[test]
     fn test_process_content_unexpected_termination() {
-        let output = acp::TerminalOutputResponse::new("some output".to_string(), false);
+        let output = ProcessOutput::new("some output".to_string(), false);
 
         let result = process_content(
             output,
@@ -2096,7 +2139,7 @@ mod tests {
 
     #[test]
     fn test_process_content_unexpected_termination_empty_output() {
-        let output = acp::TerminalOutputResponse::new("".to_string(), false);
+        let output = ProcessOutput::new("".to_string(), false);
 
         let result = process_content(
             output,
@@ -2402,9 +2445,8 @@ mod tests {
         fs.insert_tree("/root", serde_json::json!({})).await;
         let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let output =
-            acp::TerminalOutputResponse::new("one\ntwo\nthree\nfour\nfive".to_string(), false)
-                .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("one\ntwo\nthree\nfour\nfive".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
         let environment = std::rc::Rc::new(cx.update(|cx| {
             crate::tests::FakeThreadEnvironment::default().with_terminal(
                 crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0)
@@ -2462,8 +2504,8 @@ mod tests {
         fs.insert_tree("/root", serde_json::json!({})).await;
         let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let output = acp::TerminalOutputResponse::new("command output".to_string(), false)
-            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let output = ProcessOutput::new("command output".to_string(), false)
+            .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
         let environment = std::rc::Rc::new(cx.update(|cx| {
             crate::tests::FakeThreadEnvironment::default().with_terminal(
                 crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0)

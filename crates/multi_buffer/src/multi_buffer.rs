@@ -3519,18 +3519,29 @@ impl MultiBufferSnapshot {
                     .then(|| {
                         let mut word_diffs = Vec::new();
 
-                        if self.show_deleted_hunks || is_inverted {
-                            let hunk_start_offset = if is_inverted {
-                                Anchor::in_buffer(
-                                    excerpt.path_key_index,
-                                    buffer_snapshot.anchor_after(hunk.diff_base_byte_range.start),
-                                )
+                        let hunk_start_offset = if is_inverted {
+                            Anchor::in_buffer(
+                                excerpt.path_key_index,
+                                buffer_snapshot.anchor_after(hunk.diff_base_byte_range.start),
+                            )
+                            .to_offset(self)
+                        } else {
+                            Anchor::in_buffer(excerpt.path_key_index, hunk.buffer_range.start)
                                 .to_offset(self)
-                            } else {
-                                Anchor::in_buffer(excerpt.path_key_index, hunk.buffer_range.start)
-                                    .to_offset(self)
-                            };
+                        };
 
+                        let hunk_has_deleted_text = !is_inverted && {
+                            let mut cursor = self.diff_transforms.cursor::<MultiBufferOffset>(());
+                            cursor.seek(&hunk_start_offset, Bias::Right);
+                            matches!(
+                                cursor.item(),
+                                Some(DiffTransform::DeletedHunk { buffer_id, hunk_info, .. })
+                                    if *buffer_id == buffer_snapshot.remote_id()
+                                        && hunk_info.hunk_start_anchor == hunk.buffer_range.start
+                            )
+                        };
+
+                        if hunk_has_deleted_text || is_inverted {
                             word_diffs.extend(hunk.base_word_diffs.iter().map(|diff| {
                                 hunk_start_offset + diff.start..hunk_start_offset + diff.end
                             }));

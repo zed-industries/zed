@@ -14,7 +14,8 @@ path = "src/server.rs"
 doctest = false
 
 [[bin]]
-name = "remote_server"
+name = "remote-server"
+path = "src/main.rs"
 
 [features]
 default = []
@@ -79,7 +80,6 @@ uuid = { workspace = true, features = ["v4"] }
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows.workspace = true
 gpui = { workspace = true, features = ["windows-manifest"] }
 
 [dev-dependencies]

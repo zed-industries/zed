@@ -201,6 +201,14 @@ impl CommitView {
         )
     }
 
+    pub(crate) fn commit_sha(&self) -> &SharedString {
+        &self.commit.sha
+    }
+
+    pub(crate) fn repository(&self) -> &Entity<Repository> {
+        &self.repository
+    }
+
     fn open_with_options(
         commit_sha: String,
         repo: WeakEntity<Repository>,
