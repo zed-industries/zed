@@ -5,13 +5,14 @@ use crate::{
 use agent_client_protocol::v2::schema as acp;
 use agent_skills::is_agents_skills_path;
 use anyhow::{Result, anyhow};
+use client::proto;
 use fs::Fs;
-use gpui::{App, Entity, Task, WeakEntity};
+use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
 use project::{Project, ProjectPath};
 use settings::Settings;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use util::{paths::component_matches_ignore_ascii_case, paths::normalize_path};
+use util::{ResultExt as _, paths::component_matches_ignore_ascii_case, paths::normalize_path};
 
 pub enum SensitiveSettingsKind {
     Local,
@@ -152,6 +153,57 @@ pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathB
     }
 }
 
+/// Like [`resolve_global_skill_path`], but for a remote project, whose global
+/// skills are on the remote machine, so the path is expanded and canonicalized
+/// there.
+pub async fn resolve_remote_global_skill_path(
+    path: &Path,
+    project: &Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Option<PathBuf> {
+    let client = cx
+        .update(|cx| crate::remote_server_client(project, cx))
+        .log_err()?;
+    let metadata = |path: &Path, canonicalize: bool| {
+        let request = client.request(proto::GetPathMetadata {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            path: path.to_string_lossy().into_owned(),
+            canonicalize,
+        });
+        async move {
+            let response = request.await.log_err()?;
+            response.exists.then(|| PathBuf::from(response.path))
+        }
+    };
+
+    let home_dir = metadata(Path::new("~"), false).await?;
+    let skills_dir = home_dir
+        .join(agent_skills::AGENTS_DIR_NAME)
+        .join(agent_skills::SKILLS_DIR_NAME);
+    let normalized_path = expand_and_normalize_absolute_path(path, &home_dir)?;
+    let relative_path = normalized_path.strip_prefix(&skills_dir).ok()?;
+
+    let canonical_path = metadata(&normalized_path, true).await?;
+    let canonical_skills_dir = metadata(&skills_dir, true).await?;
+    if canonical_path.starts_with(&canonical_skills_dir) {
+        return Some(canonical_path);
+    }
+
+    // A linked skill directory, as in `is_in_linked_global_skill_dir`.
+    let Some(Component::Normal(skill_dir_name)) = relative_path.components().next() else {
+        return None;
+    };
+    let skill_dir = skills_dir.join(skill_dir_name);
+    let canonical_skill_dir = metadata(&skill_dir, true).await?;
+    let is_skill = metadata(&skill_dir.join(agent_skills::SKILL_FILE_NAME), false)
+        .await
+        .is_some();
+    (is_skill
+        && !canonical_skill_dir.starts_with(&canonical_skills_dir)
+        && canonical_path.starts_with(&canonical_skill_dir))
+    .then_some(canonical_path)
+}
+
 async fn is_in_linked_global_skill_dir(
     path: &Path,
     canonical_path: &Path,
@@ -178,7 +230,7 @@ async fn is_in_linked_global_skill_dir(
             .await
 }
 
-fn expand_home_prefix(path: &Path) -> Option<PathBuf> {
+fn expand_home_prefix(path: &Path, home_dir: &Path) -> Option<PathBuf> {
     if path.is_absolute() {
         return Some(path.to_path_buf());
     }
@@ -189,7 +241,7 @@ fn expand_home_prefix(path: &Path) -> Option<PathBuf> {
         return None;
     }
 
-    let mut expanded = paths::home_dir().clone();
+    let mut expanded = home_dir.to_path_buf();
     for component in components {
         match component {
             Component::Normal(component) => expanded.push(component),
@@ -201,14 +253,14 @@ fn expand_home_prefix(path: &Path) -> Option<PathBuf> {
     Some(expanded)
 }
 
-fn expand_and_normalize_absolute_path(path: &Path) -> Option<PathBuf> {
-    let expanded_path = expand_home_prefix(path)?;
+fn expand_and_normalize_absolute_path(path: &Path, home_dir: &Path) -> Option<PathBuf> {
+    let expanded_path = expand_home_prefix(path, home_dir)?;
     let normalized_path = normalize_path(&expanded_path);
     normalized_path.is_absolute().then_some(normalized_path)
 }
 
 fn resolve_lexical_global_skill_path(path: &Path) -> Option<PathBuf> {
-    let normalized_path = expand_and_normalize_absolute_path(path)?;
+    let normalized_path = expand_and_normalize_absolute_path(path, paths::home_dir())?;
     let normalized_skills_dir = normalize_path(&agent_skills::global_skills_dir());
 
     normalized_path
