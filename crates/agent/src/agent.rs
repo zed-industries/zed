@@ -1525,7 +1525,7 @@ impl NativeAgent {
         &mut self,
         project: Entity<Project>,
         event: &project::Event,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         let project_id = project.entity_id();
         let Some(state) = self.projects.get_mut(&project_id) else {
@@ -1533,7 +1533,21 @@ impl NativeAgent {
         };
         match event {
             project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
-                state.project_context_needs_refresh.send(()).ok();
+                // Opening a file outside the project adds and removes an
+                // invisible worktree, which the context doesn't include.
+                let context_paths = state
+                    .project_context
+                    .read(cx)
+                    .worktrees
+                    .iter()
+                    .map(|worktree| worktree.abs_path.clone());
+                let visible_paths = project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path());
+                if !context_paths.eq(visible_paths) {
+                    state.project_context_needs_refresh.send(()).ok();
+                }
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
                 if items.iter().any(|(path, _, _)| {
