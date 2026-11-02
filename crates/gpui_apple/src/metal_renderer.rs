@@ -2439,6 +2439,61 @@ mod tests {
     }
 
     #[test]
+    fn gpu_metrics_reuses_headless_path_textures_until_resize() -> Result<()> {
+        let mut renderer = MetalHeadlessRenderer::new()?;
+        renderer.set_gpu_metrics_enabled(true);
+        let intermediate_count = 1 + u32::from(renderer.renderer.path_sample_count > 1);
+        let scene = Scene::default();
+        for (size_index, (width, height)) in [(64, 64), (128, 64), (128, 128), (64, 64)]
+            .into_iter()
+            .enumerate()
+        {
+            let viewport = size(DevicePixels(width), DevicePixels(height));
+            let mut intermediate_bytes = None;
+            for frame_index in 0..3 {
+                renderer.render_scene(&scene, viewport)?;
+                // Return the instance buffer to the pool so extra in-flight frames
+                // cannot add unrelated resource creations.
+                renderer.wait_for_gpu_idle()?;
+                let stats = renderer.take_gpu_stats().context("frame stats")?;
+                assert_eq!(stats.frames.len(), 1);
+                let frame = stats.frames.first().context("completed frame")?;
+                let expected_creations = if frame_index == 0 {
+                    intermediate_count + 1 + u32::from(size_index == 0)
+                } else {
+                    0
+                };
+                assert_eq!(frame.resource_creations, expected_creations);
+
+                let texture = renderer
+                    .renderer
+                    .path_intermediate_texture
+                    .as_ref()
+                    .context("path intermediate texture")?;
+                assert_eq!(texture.width(), width as usize);
+                assert_eq!(texture.height(), height as usize);
+                let mut expected_bytes = texture.allocatedSize() as u64;
+                if let Some(texture) = &renderer.renderer.path_intermediate_msaa_texture {
+                    assert_eq!(texture.width(), width as usize);
+                    assert_eq!(texture.height(), height as usize);
+                    expected_bytes += texture.allocatedSize() as u64;
+                }
+                let memory = stats.memory.context("memory snapshot")?;
+                assert!(expected_bytes > 0);
+                assert_eq!(memory.intermediate_texture_bytes, expected_bytes);
+                if let Some(intermediate_bytes) = intermediate_bytes {
+                    assert_eq!(memory.intermediate_texture_bytes, intermediate_bytes);
+                    assert_eq!(frame.resource_created_bytes, 0);
+                } else {
+                    intermediate_bytes = Some(memory.intermediate_texture_bytes);
+                    assert!(frame.resource_created_bytes >= expected_bytes);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn gpu_metrics_counts_path_passes_and_instances() -> Result<()> {
         let mut builder = gpui::PathBuilder::fill();
         builder.move_to(point(px(0.), px(0.)));
@@ -2466,6 +2521,29 @@ mod tests {
             2 * mem::size_of::<Size<DevicePixels>>() as u64
         );
         assert_eq!(frame.instance_bytes, expected_bytes as u64);
+
+        let intermediate_bytes = stats
+            .memory
+            .context("path memory")?
+            .intermediate_texture_bytes;
+        for _ in 0..3 {
+            let image =
+                renderer.render_scene_to_image(&scene, size(DevicePixels(64), DevicePixels(64)))?;
+            assert_eq!(image.get_pixel(16, 8).0, [255, 255, 255, 255]);
+            assert_eq!(image.get_pixel(48, 48).0, [0, 0, 0, 255]);
+            renderer.wait_for_gpu_idle()?;
+            let stats = renderer.take_gpu_stats().context("image stats")?;
+            let frame = stats.frames.first().context("image frame")?;
+            // Image capture still creates a CPU-readable target for each frame.
+            assert_eq!(frame.resource_creations, 1);
+            assert_eq!(
+                stats
+                    .memory
+                    .context("image memory")?
+                    .intermediate_texture_bytes,
+                intermediate_bytes
+            );
+        }
         Ok(())
     }
 
@@ -2528,8 +2606,7 @@ mod tests {
         let stats = renderer.take_gpu_stats().context("post-setup stats")?;
         let frame = stats.frames.first().context("post-setup frame")?;
         assert_eq!(frame.atlas_uploads, 0);
-        // render_scene recreates both path textures even for a warm, empty scene.
-        assert_eq!(frame.resource_creations, 2);
+        assert_eq!(frame.resource_creations, 0);
         Ok(())
     }
 
