@@ -66,7 +66,7 @@ impl SkillLocation {
     }
 }
 
-pub(crate) fn skill_location(
+fn skill_location(
     skill: &Skill,
     remote_project: Option<Entity<Project>>,
     settings_window: &SettingsWindow,

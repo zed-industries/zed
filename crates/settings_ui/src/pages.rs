@@ -34,7 +34,7 @@ pub(crate) use skill_creator::{
 pub(crate) use skills_setup::displayed_skills;
 pub(crate) use skills_setup::{DeletedSkill, render_skills_setup_page};
 #[cfg(test)]
-pub(crate) use skills_setup::{SkillLocation, copy_skill_share_link, skill_location, trash_skill};
+pub(crate) use skills_setup::{copy_skill_share_link, trash_skill};
 pub(crate) use tool_permissions_setup::render_tool_permissions_setup_page;
 
 pub use tool_permissions_setup::{
