@@ -12,18 +12,7 @@ use objc2_metal::{
 use parking_lot::Mutex;
 use std::{borrow::Cow, ptr::NonNull};
 
-#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-use crate::metal_renderer::gpu_metrics::{Allocation, MemoryKind, Metrics};
-#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-use {objc2_metal::MTLResource, std::sync::Arc};
-
 pub struct MetalAtlas(Mutex<AtlasState<MetalAtlasTextures>>);
-
-pub(crate) struct MetalTextureInfo {
-    pub texture: Retained<ProtocolObject<dyn MTLTexture>>,
-    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-    pub allocation: Option<Arc<Allocation>>,
-}
 
 impl MetalAtlas {
     pub(crate) fn new(
@@ -35,8 +24,6 @@ impl MetalAtlas {
             supports_shared_storage,
             monochrome_textures: AtlasTextureList::default(),
             polychrome_textures: AtlasTextureList::default(),
-            #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-            metrics: None,
         })))
     }
 
@@ -44,34 +31,11 @@ impl MetalAtlas {
     /// has been removed. A scene can still reference such a texture when a
     /// cached view replays a paint from before the image was dropped, so
     /// callers must skip those sprites rather than assume the texture exists.
-    pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> Option<MetalTextureInfo> {
-        let state = self.0.lock();
-        let texture = state.backend.texture(id)?;
-        Some(MetalTextureInfo {
-            texture: texture.metal_texture.clone(),
-            #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-            allocation: texture.allocation.clone(),
-        })
-    }
-
-    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-    pub(crate) fn set_metrics(&self, metrics: Option<Arc<Metrics>>) {
-        let mut state = self.0.lock();
-        let backend = &mut state.backend;
-        for texture in backend
-            .monochrome_textures
-            .iter_mut()
-            .chain(backend.polychrome_textures.iter_mut())
-        {
-            texture.allocation = metrics.as_ref().map(|metrics| {
-                metrics.allocation(
-                    MemoryKind::Atlas,
-                    texture.metal_texture.allocatedSize(),
-                    false,
-                )
-            });
-        }
-        backend.metrics = metrics;
+    pub(crate) fn metal_texture(
+        &self,
+        id: AtlasTextureId,
+    ) -> Option<Retained<ProtocolObject<dyn MTLTexture>>> {
+        Some(self.0.lock().backend.texture(id)?.metal_texture.clone())
     }
 }
 
@@ -80,8 +44,6 @@ struct MetalAtlasTextures {
     supports_shared_storage: bool,
     monochrome_textures: AtlasTextureList<MetalAtlasTexture>,
     polychrome_textures: AtlasTextureList<MetalAtlasTexture>,
-    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-    metrics: Option<Arc<Metrics>>,
 }
 
 impl PlatformAtlas for MetalAtlas {
@@ -111,13 +73,6 @@ impl AtlasBackend for MetalAtlasTextures {
             .texture(tile.texture_id)
             .context("looking up allocated atlas texture")?;
         texture.upload(tile.bounds.origin, &upload)?;
-        #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-        if let Some(metrics) = &self.metrics {
-            let mut state = metrics.state.lock();
-            state.pending.atlas_uploads += 1;
-            state.pending.atlas_upload_bytes +=
-                (upload.bytes_per_row * upload.size.height.0 as usize) as u64;
-        }
         Ok(tile)
     }
 
@@ -242,10 +197,6 @@ impl MetalAtlasTextures {
                 kind,
             },
             allocator: etagere::BucketedAtlasAllocator::new(size_to_etagere(size)),
-            #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-            allocation: self.metrics.as_ref().map(|metrics| {
-                metrics.allocation(MemoryKind::Atlas, metal_texture.allocatedSize(), true)
-            }),
             metal_texture,
             live_atlas_keys: 0,
         };
@@ -268,8 +219,6 @@ struct MetalAtlasTexture {
     allocator: BucketedAtlasAllocator,
     metal_texture: Retained<ProtocolObject<dyn MTLTexture>>,
     live_atlas_keys: u32,
-    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-    allocation: Option<Arc<Allocation>>,
 }
 
 impl MetalAtlasTexture {

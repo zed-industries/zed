@@ -199,12 +199,6 @@ struct WgpuResources {
 struct CachedTextureBindGroup {
     texture_generation: u64,
     bind_group: wgpu::BindGroup,
-    // Cached bind groups retain atlas textures after their last tile is removed.
-    #[cfg(all(
-        not(target_family = "wasm"),
-        any(test, feature = "bench-support", feature = "test-support")
-    ))]
-    _allocation: Option<Arc<crate::wgpu_metrics::AtlasAllocation>>,
 }
 
 impl WgpuResources {
@@ -1438,20 +1432,6 @@ impl WgpuRendererCore {
 
         let (texture, view) =
             Self::create_path_intermediate(&resources.device, format, width, height);
-        #[cfg(all(
-            not(target_family = "wasm"),
-            any(test, feature = "bench-support", feature = "test-support")
-        ))]
-        if let Some(metrics) = &self.metrics {
-            let mut counters = metrics.counters.lock();
-            let bytes = crate::wgpu_metrics::texture_bytes(&texture);
-            counters.memory.intermediate_texture_bytes += bytes;
-            counters.created(bytes);
-            if let Some(old) = &resources.path_intermediate_texture {
-                counters.memory.intermediate_texture_bytes -=
-                    crate::wgpu_metrics::texture_bytes(old);
-            }
-        }
         resources.path_intermediate_texture = Some(texture);
         resources.path_intermediate_view = Some(view);
 
@@ -1464,22 +1444,6 @@ impl WgpuRendererCore {
         )
         .map(|(texture, view)| (Some(texture), Some(view)))
         .unwrap_or((None, None));
-        #[cfg(all(
-            not(target_family = "wasm"),
-            any(test, feature = "bench-support", feature = "test-support")
-        ))]
-        if let Some(metrics) = &self.metrics {
-            let mut counters = metrics.counters.lock();
-            if let Some(texture) = &path_msaa_texture {
-                let bytes = crate::wgpu_metrics::texture_bytes(texture);
-                counters.memory.intermediate_texture_bytes += bytes;
-                counters.created(bytes);
-            }
-            if let Some(old) = &resources.path_msaa_texture {
-                counters.memory.intermediate_texture_bytes -=
-                    crate::wgpu_metrics::texture_bytes(old);
-            }
-        }
         resources.path_msaa_texture = path_msaa_texture;
         resources.path_msaa_view = path_msaa_view;
     }
@@ -1537,36 +1501,12 @@ impl WgpuRendererCore {
             self.gamma_offset,
             bytemuck::bytes_of(&gamma_params),
         );
-        #[cfg(all(
-            not(target_family = "wasm"),
-            any(test, feature = "bench-support", feature = "test-support")
-        ))]
-        if let Some(metrics) = &self.metrics {
-            metrics.counters.lock().frame.uniform_bytes += (2 * std::mem::size_of::<GlobalParams>()
-                + std::mem::size_of::<GammaParams>())
-                as u64;
-        }
 
-        let result = self
-            .record_frame(scene, target_view, clear_color)
+        self.record_frame(scene, target_view, clear_color)
             .inspect_err(|_| {
                 // Queue writes are staged before encoding; flush them even if the frame fails.
                 self.resources.queue.submit(std::iter::empty());
-            });
-        #[cfg(all(
-            not(target_family = "wasm"),
-            any(test, feature = "bench-support", feature = "test-support")
-        ))]
-        if let Some(metrics) = &self.metrics {
-            let mut counters = metrics.counters.lock();
-            counters.memory.instance_buffer_bytes -=
-                std::mem::take(&mut counters.retired_instance_bytes);
-            if result.is_err() {
-                counters.frame.draw_calls = 0;
-                counters.frame.render_passes = 0;
-            }
-        }
-        result
+            })
     }
 
     fn record_frame(
@@ -1609,13 +1549,6 @@ impl WgpuRendererCore {
                 });
 
         {
-            #[cfg(all(
-                not(target_family = "wasm"),
-                any(test, feature = "bench-support", feature = "test-support")
-            ))]
-            if let Some(metrics) = &self.metrics {
-                metrics.counters.lock().frame.render_passes += 1;
-            }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main_pass"),
                 #[cfg(all(
@@ -1665,13 +1598,6 @@ impl WgpuRendererCore {
                             &mut instance_offset,
                         )?;
 
-                        #[cfg(all(
-                            not(target_family = "wasm"),
-                            any(test, feature = "bench-support", feature = "test-support")
-                        ))]
-                        if let Some(metrics) = &self.metrics {
-                            metrics.counters.lock().frame.render_passes += 1;
-                        }
                         pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("main_pass_continued"),
                             #[cfg(all(
@@ -1762,7 +1688,7 @@ impl WgpuRendererCore {
             not(target_family = "wasm"),
             any(test, feature = "bench-support", feature = "test-support")
         ))]
-        let started = self.metrics.as_ref().map(|metrics| metrics.will_submit());
+        let started = self.metrics.as_ref().map(|_| std::time::Instant::now());
         let submission = self
             .resources()
             .queue
@@ -1888,11 +1814,6 @@ impl WgpuRendererCore {
                 CachedTextureBindGroup {
                     texture_generation: texture_info.generation,
                     bind_group,
-                    #[cfg(all(
-                        not(target_family = "wasm"),
-                        any(test, feature = "bench-support", feature = "test-support")
-                    ))]
-                    _allocation: texture_info.allocation,
                 },
             );
         }
@@ -1915,13 +1836,6 @@ impl WgpuRendererCore {
             0..4,
             instances.first_instance + range.start..instances.first_instance + range.end,
         );
-        #[cfg(all(
-            not(target_family = "wasm"),
-            any(test, feature = "bench-support", feature = "test-support")
-        ))]
-        if let Some(metrics) = &self.metrics {
-            metrics.counters.lock().frame.draw_calls += 1;
-        }
     }
 
     fn draw_sprites(
@@ -1950,13 +1864,6 @@ impl WgpuRendererCore {
             sprite_instances.first_instance + range.start
                 ..sprite_instances.first_instance + range.end,
         );
-        #[cfg(all(
-            not(target_family = "wasm"),
-            any(test, feature = "bench-support", feature = "test-support")
-        ))]
-        if let Some(metrics) = &self.metrics {
-            metrics.counters.lock().frame.draw_calls += 1;
-        }
         Ok(())
     }
 
@@ -2010,13 +1917,6 @@ impl WgpuRendererCore {
             0..4,
             instances.first_instance..instances.first_instance + sprites.len() as u32,
         );
-        #[cfg(all(
-            not(target_family = "wasm"),
-            any(test, feature = "bench-support", feature = "test-support")
-        ))]
-        if let Some(metrics) = &self.metrics {
-            metrics.counters.lock().frame.draw_calls += 1;
-        }
         Ok(())
     }
 
@@ -2085,15 +1985,6 @@ impl WgpuRendererCore {
                     ..vertex_binding.first_instance + vertices.len() as u32,
                 0..1,
             );
-            #[cfg(all(
-                not(target_family = "wasm"),
-                any(test, feature = "bench-support", feature = "test-support")
-            ))]
-            if let Some(metrics) = &self.metrics {
-                let mut counters = metrics.counters.lock();
-                counters.frame.render_passes += 1;
-                counters.frame.draw_calls += 1;
-            }
         }
 
         Ok(true)
@@ -2138,13 +2029,6 @@ impl WgpuRendererCore {
 
         let resources = self.resources();
         if !data.is_empty() {
-            #[cfg(all(
-                not(target_family = "wasm"),
-                any(test, feature = "bench-support", feature = "test-support")
-            ))]
-            if let Some(metrics) = &self.metrics {
-                metrics.counters.lock().frame.instance_bytes += data.len() as u64;
-            }
             match &resources.instance_data {
                 InstanceData::Storage(buffer) => resources.queue.write_buffer(buffer, offset, data),
                 InstanceData::Texture { .. } => {
@@ -2285,17 +2169,6 @@ impl WgpuRendererCore {
         // Bind groups created earlier in the frame keep the previous buffer or
         // texture alive, so allocations written before the grow remain valid;
         // only subsequent writes land in the new allocation.
-        #[cfg(all(
-            not(target_family = "wasm"),
-            any(test, feature = "bench-support", feature = "test-support")
-        ))]
-        if let Some(metrics) = &self.metrics {
-            let mut counters = metrics.counters.lock();
-            counters.memory.instance_buffer_bytes += capacity;
-            counters.created(capacity);
-            // Earlier bind groups retain old allocations until encoding ends.
-            counters.retired_instance_bytes += self.instance_data_capacity;
-        }
         let uses_webgl_instance_data = self.uses_webgl_instance_data;
         let resources = self.resources_mut();
         if uses_webgl_instance_data {
@@ -2597,16 +2470,6 @@ impl WgpuHeadlessRenderer {
                 view_formats: &[],
             });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        if let Some(metrics) = &self.core.metrics {
-            let mut counters = metrics.counters.lock();
-            let bytes = crate::wgpu_metrics::texture_bytes(&texture);
-            counters.memory.render_target_bytes += bytes;
-            counters.created(bytes);
-            if let Some(target) = &self.render_target {
-                counters.memory.render_target_bytes -=
-                    crate::wgpu_metrics::texture_bytes(&target.texture);
-            }
-        }
         self.render_target = Some(HeadlessRenderTarget { texture, view });
         Ok(())
     }
@@ -2677,9 +2540,6 @@ impl WgpuHeadlessRenderer {
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
-        let _readback_allocation = self.core.metrics.as_ref().map(|metrics| {
-            crate::wgpu_metrics::ReadbackAllocation::new(metrics.counters.clone(), buffer_size)
-        });
         let mut encoder =
             self.core
                 .resources
@@ -2785,36 +2645,9 @@ impl gpui::PlatformHeadlessRenderer for WgpuHeadlessRenderer {
         if enabled == self.core.metrics.is_some() {
             return;
         }
-        if enabled {
-            self.core.resources.atlas_texture_bind_groups.clear();
-            let resources = &self.core.resources;
-            let memory = gpui::GpuMemoryStats {
-                // The contract has no separate uniform category; include the
-                // renderer's small globals allocation alongside instance buffers.
-                instance_buffer_bytes: self.core.instance_data_capacity
-                    + resources.globals_buffer.size(),
-                intermediate_texture_bytes: resources
-                    .path_intermediate_texture
-                    .iter()
-                    .chain(resources.path_msaa_texture.iter())
-                    .map(crate::wgpu_metrics::texture_bytes)
-                    .sum(),
-                render_target_bytes: self.render_target.as_ref().map_or(0, |target| {
-                    crate::wgpu_metrics::texture_bytes(&target.texture)
-                }),
-                ..Default::default()
-            };
-            let metrics = crate::wgpu_metrics::GpuMetrics::new(
-                &self.context.device,
-                &self.context.queue,
-                memory,
-            );
-            self.core.atlas.set_metrics(Some(metrics.counters.clone()));
-            self.core.metrics = Some(metrics);
-        } else {
-            self.core.atlas.set_metrics(None);
-            self.core.metrics = None;
-        }
+        self.core.metrics = enabled.then(|| {
+            crate::wgpu_metrics::GpuMetrics::new(&self.context.device, &self.context.queue)
+        });
     }
 
     fn wait_for_gpu_idle(&mut self) -> anyhow::Result<()> {
@@ -2836,7 +2669,7 @@ impl gpui::PlatformHeadlessRenderer for WgpuHeadlessRenderer {
 
     fn take_gpu_stats(&mut self) -> Option<gpui::GpuStats> {
         let metrics = self.core.metrics.as_mut()?;
-        Some(metrics.drain(&self.context.device))
+        Some(metrics.drain())
     }
 }
 
@@ -2908,8 +2741,7 @@ impl RenderingParameters {
 #[cfg(all(test, target_os = "linux"))]
 mod gpu_metrics_tests {
     use super::*;
-    use gpui::{AtlasKey, ImageId, PlatformAtlas, PlatformHeadlessRenderer, RenderImageParams};
-    use std::borrow::Cow;
+    use gpui::PlatformHeadlessRenderer;
 
     fn size(width: i32, height: i32) -> Size<DevicePixels> {
         Size {
@@ -2934,23 +2766,8 @@ mod gpu_metrics_tests {
             .context("metrics should be enabled")
     }
 
-    fn upload(renderer: &WgpuHeadlessRenderer, id: usize) -> Result<AtlasKey> {
-        let key = AtlasKey::Image(RenderImageParams {
-            image_id: ImageId(id),
-            frame_index: 0,
-        });
-        renderer
-            .core
-            .atlas
-            .get_or_insert_with(key.clone(), &mut || {
-                Ok(Some((size(2, 2), Cow::Owned(vec![255; 16]))))
-            })?
-            .context("atlas tile")?;
-        Ok(key)
-    }
-
     #[test]
-    fn frames_are_ordered_timed_and_disabled_by_default() -> Result<()> {
+    fn frames_are_timed_and_disabled_by_default() -> Result<()> {
         let mut renderer = WgpuHeadlessRenderer::new()?;
         renderer.render_scene(&quad_scene(1), size(32, 32))?;
         renderer.wait_for_gpu_idle()?;
@@ -2958,10 +2775,6 @@ mod gpu_metrics_tests {
         renderer.set_gpu_metrics_enabled(true);
         let initial = drain(&mut renderer)?;
         assert!(initial.frames.is_empty());
-        let memory = initial.memory.context("memory snapshot")?;
-        assert!(memory.instance_buffer_bytes >= 2 * 1024 * 1024);
-        assert_eq!(memory.render_target_bytes, 32 * 32 * 4);
-        assert_eq!(initial.peak_owned_bytes, Some(memory.owned_bytes()));
         let timestamps = renderer
             .context
             .device
@@ -2977,26 +2790,12 @@ mod gpu_metrics_tests {
         }
         let stats = drain(&mut renderer)?;
         assert_eq!(stats.frames.len(), 20);
-        for (index, frame) in stats.frames.iter().enumerate() {
-            assert_eq!(
-                frame.instance_bytes,
-                ((index + 1) * std::mem::size_of::<gpui::Quad>()) as u64
-            );
+        for frame in &stats.frames {
             assert_eq!(frame.gpu_duration.is_some(), timestamps);
             assert!(frame.submit_to_complete.is_some());
-            assert!(frame.frames_in_flight > 0);
-            assert_eq!(frame.render_passes, 1);
-            assert!(frame.draw_calls > 0);
-            assert_eq!(
-                frame.uniform_bytes,
-                (2 * std::mem::size_of::<GlobalParams>() + std::mem::size_of::<GammaParams>())
-                    as u64
-            );
-            assert_eq!(frame.resource_creations, 0);
         }
         let empty = drain(&mut renderer)?;
         assert!(empty.frames.is_empty());
-        assert_eq!(empty.peak_owned_bytes, Some(memory.owned_bytes()));
         renderer.render_scene(&quad_scene(1), size(32, 32))?;
         renderer.set_gpu_metrics_enabled(false);
         renderer.render_scene(&quad_scene(1), size(32, 32))?;
@@ -3008,50 +2807,7 @@ mod gpu_metrics_tests {
     }
 
     #[test]
-    fn atlas_uploads_and_creations_belong_to_next_frame() -> Result<()> {
-        let mut renderer = WgpuHeadlessRenderer::new()?;
-        renderer.set_gpu_metrics_enabled(true);
-        let key = upload(&renderer, 1)?;
-        renderer.render_scene(&quad_scene(1), size(32, 32))?;
-        renderer.render_scene(&quad_scene(1), size(32, 32))?;
-        let stats = drain(&mut renderer)?;
-        let [first, second] = stats.frames.as_slice() else {
-            anyhow::bail!("expected two frames")
-        };
-        assert_eq!(first.atlas_uploads, 1);
-        assert_eq!(first.atlas_upload_bytes, 16);
-        let samples = renderer.core.rendering_params.path_sample_count;
-        assert_eq!(first.resource_creations, 3 + u32::from(samples > 1));
-        assert_eq!(
-            first.resource_created_bytes,
-            1024 * 1024 * 4 + 32 * 32 * 4 * (2 + if samples > 1 { u64::from(samples) } else { 0 })
-        );
-        assert_eq!(second.atlas_uploads, 0);
-        assert_eq!(second.resource_creations, 0);
-        let memory = stats.memory.context("memory")?;
-        assert_eq!(memory.atlas_bytes, 1024 * 1024 * 4);
-        renderer.core.atlas.remove(&key);
-        let after = drain(&mut renderer)?;
-        assert_eq!(after.memory.context("memory after remove")?.atlas_bytes, 0);
-        assert_eq!(after.peak_owned_bytes, Some(memory.owned_bytes()));
-
-        upload(&renderer, 2)?;
-        // No frame has flushed this paint upload yet.
-        let setup = drain(&mut renderer)?;
-        assert!(setup.frames.is_empty());
-        renderer.render_scene(&quad_scene(1), size(32, 32))?;
-        let measured = drain(&mut renderer)?;
-        let [frame] = measured.frames.as_slice() else {
-            anyhow::bail!("expected one frame")
-        };
-        assert_eq!(frame.atlas_uploads, 0);
-        assert_eq!(frame.atlas_upload_bytes, 0);
-        assert_eq!(frame.resource_creations, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn path_passes_and_resize_memory_are_counted() -> Result<()> {
+    fn timestamps_span_multiple_path_passes() -> Result<()> {
         let mut renderer = WgpuHeadlessRenderer::new()?;
         renderer.set_gpu_metrics_enabled(true);
         let mut path = gpui::Path::new(gpui::point(gpui::px(0.), gpui::px(0.)));
@@ -3085,14 +2841,7 @@ mod gpu_metrics_tests {
         let [frame] = stats.frames.as_slice() else {
             anyhow::bail!("expected one frame")
         };
-        assert_eq!(frame.render_passes, 7);
-        assert_eq!(frame.draw_calls, 9);
-        assert_eq!(
-            frame.instance_bytes,
-            3 * (3 * std::mem::size_of::<PathRasterizationVertex>()
-                + std::mem::size_of::<PathSprite>()
-                + std::mem::size_of::<gpui::Quad>()) as u64
-        );
+        assert!(frame.submit_to_complete.is_some());
         assert_eq!(
             frame.gpu_duration.is_some(),
             renderer
@@ -3100,100 +2849,6 @@ mod gpu_metrics_tests {
                 .device
                 .features()
                 .contains(wgpu::Features::TIMESTAMP_QUERY)
-        );
-        renderer.render_scene(&scene, size(64, 64))?;
-        renderer.render_scene(&scene, size(16, 16))?;
-        let resized = drain(&mut renderer)?;
-        let memory = resized.memory.context("resized memory")?;
-        assert_eq!(memory.render_target_bytes, 16 * 16 * 4);
-        assert!(resized.peak_owned_bytes.context("peak")? > memory.owned_bytes());
-        assert_eq!(
-            drain(&mut renderer)?.peak_owned_bytes,
-            Some(memory.owned_bytes())
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn instance_growth_and_readback_allocations_are_counted() -> Result<()> {
-        let mut renderer = WgpuHeadlessRenderer::new()?;
-        renderer.set_gpu_metrics_enabled(true);
-        let baseline = drain(&mut renderer)?.memory.context("baseline")?;
-        let old_capacity = renderer.core.instance_data_capacity;
-        renderer.core.grow_instance_data(old_capacity + 1)?;
-        renderer.core.grow_instance_data(old_capacity * 2 + 1)?;
-        let capacity = renderer.core.instance_data_capacity;
-        renderer.render_scene_to_image(&quad_scene(1), size(16, 16))?;
-        let stats = drain(&mut renderer)?;
-        let memory = stats.memory.context("grown memory")?;
-        assert_eq!(
-            memory.instance_buffer_bytes,
-            baseline.instance_buffer_bytes - old_capacity + capacity
-        );
-        let [frame] = stats.frames.as_slice() else {
-            anyhow::bail!("expected one frame")
-        };
-        assert!(frame.resource_created_bytes >= old_capacity * 2 + capacity);
-        assert!(
-            stats.peak_owned_bytes.context("peak")?
-                >= baseline.owned_bytes() + old_capacity * 2 + capacity
-        );
-        // The image-copy buffer is created after the render submission. A drain
-        // must discard that creation rather than attribute it to the next frame.
-        renderer.render_scene(&quad_scene(1), size(16, 16))?;
-        let next = drain(&mut renderer)?;
-        assert!(
-            next.frames
-                .iter()
-                .all(|frame| frame.resource_creations == 0)
-        );
-        assert_eq!(
-            next.memory.context("next memory")?.owned_bytes(),
-            memory.owned_bytes()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn cached_atlas_bind_groups_retain_owned_memory() -> Result<()> {
-        let mut renderer = WgpuHeadlessRenderer::new()?;
-        renderer.set_gpu_metrics_enabled(true);
-        let key = upload(&renderer, 1)?;
-        let tile = renderer
-            .core
-            .atlas
-            .get_or_insert_with(key.clone(), &mut || Ok(None))?
-            .context("tile")?;
-        let quad = super::tests::solid_quad(0., 0., 16., 16., gpui::red());
-        let mut scene = Scene::default();
-        scene.insert_primitive(gpui::PolychromeSprite {
-            order: 0,
-            pad: 0,
-            tile,
-            grayscale: false.into(),
-            opacity: 1.,
-            bounds: quad.bounds,
-            content_mask: quad.content_mask,
-            corner_radii: gpui::Corners::default(),
-        });
-        scene.finish();
-        renderer.render_scene(&scene, size(16, 16))?;
-        assert_eq!(drain(&mut renderer)?.frames[0].draw_calls, 1);
-        renderer.core.atlas.remove(&key);
-        assert_eq!(
-            drain(&mut renderer)?
-                .memory
-                .context("retained")?
-                .atlas_bytes,
-            1024 * 1024 * 4
-        );
-        renderer.render_scene(&Scene::default(), size(16, 16))?;
-        assert_eq!(
-            drain(&mut renderer)?
-                .memory
-                .context("released")?
-                .atlas_bytes,
-            0
         );
         Ok(())
     }
@@ -3221,7 +2876,7 @@ mod gpu_metrics_tests {
             second
                 .frames
                 .iter()
-                .all(|frame| frame.gpu_duration.is_none())
+                .all(|frame| frame.gpu_duration.is_none() && frame.submit_to_complete.is_some())
         );
         Ok(())
     }

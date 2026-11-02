@@ -23,7 +23,7 @@ pub use async_context::*;
 #[cfg(feature = "bench-support")]
 pub use bench_context::{
     BenchAppContext, BenchMeasurement, BenchReport, BenchWindowContext, CountingAllocator,
-    GpuCounterSummary, GpuDurationSummary, GpuSummary, MetricReport, bench_platform,
+    GpuDurationSummary, GpuSummary, MetricReport, bench_platform,
 };
 use collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque};
 pub use context::*;

@@ -1462,9 +1462,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
 /// GPU work attributed to one submitted frame.
 ///
-/// Uploads (especially atlas uploads during paint) and resource creations accumulated
-/// since the previous submission belong to the next submitted frame. Durations describe
-/// GPU execution and completion, not CPU scene encoding.
+/// Durations describe GPU execution and completion, not CPU scene encoding.
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GpuFrameStats {
@@ -1472,71 +1470,14 @@ pub struct GpuFrameStats {
     pub gpu_duration: Option<Duration>,
     /// CPU-observed time from submission/commit to completion.
     pub submit_to_complete: Option<Duration>,
-    /// Submitted but incomplete frames at submission, including this frame.
-    pub frames_in_flight: u32,
-    /// Instance data uploaded, in bytes.
-    pub instance_bytes: u64,
-    /// Sprite atlas data uploaded, in bytes.
-    pub atlas_upload_bytes: u64,
-    /// Uniform data uploaded, in bytes.
-    pub uniform_bytes: u64,
-    /// Number of sprite atlas uploads.
-    pub atlas_uploads: u32,
-    /// Number of draw calls encoded.
-    pub draw_calls: u32,
-    /// Number of render passes encoded.
-    pub render_passes: u32,
-    /// Number of GPU buffers and textures created while producing this frame.
-    pub resource_creations: u32,
-    /// Allocated size of those newly created buffers and textures, in bytes.
-    pub resource_created_bytes: u64,
 }
 
-/// Resident GPU allocations owned by this renderer, without double-counting resources.
-///
-/// Categories describe allocated capacity, not bytes used by the latest frame.
-/// Metal retains replaced textures until the GPU completes frames using them;
-/// wgpu removes them from these totals at replacement (or when cached atlas bind
-/// groups release them), rather than waiting for driver reclamation.
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct GpuMemoryStats {
-    /// Sprite atlas textures, in bytes.
-    pub atlas_bytes: u64,
-    /// Instance buffers, including Metal's static unit-vertex buffer or wgpu's
-    /// globals buffer, in bytes.
-    pub instance_buffer_bytes: u64,
-    /// Intermediate rendering textures, in bytes.
-    pub intermediate_texture_bytes: u64,
-    /// Offscreen render targets, in bytes.
-    pub render_target_bytes: u64,
-    /// Driver-reported allocation total, if available. Its scope is backend-dependent
-    /// and can include allocations not owned by GPUI; it is not part of `owned_bytes`.
-    pub driver_allocated_bytes: Option<u64>,
-}
-
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
-impl GpuMemoryStats {
-    /// Total bytes owned by GPUI across all categories.
-    pub fn owned_bytes(&self) -> u64 {
-        self.atlas_bytes
-            + self.instance_buffer_bytes
-            + self.intermediate_texture_bytes
-            + self.render_target_bytes
-    }
-}
-
-/// Completed frame measurements and allocation state returned by a renderer drain.
+/// Completed frame measurements returned by a renderer drain.
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GpuStats {
     /// One entry per completed submission since the previous drain, in submission order.
     pub frames: Vec<GpuFrameStats>,
-    /// Allocation snapshot at the time of this drain, even if no frames completed.
-    pub memory: Option<GpuMemoryStats>,
-    /// Highest GPUI-owned allocation total since the previous drain, if tracked.
-    /// A drain resets the high-water mark to the current owned allocation total.
-    pub peak_owned_bytes: Option<u64>,
 }
 
 /// A renderer for headless windows that can produce real rendered output.
@@ -1570,12 +1511,10 @@ pub trait PlatformHeadlessRenderer {
         Ok(())
     }
 
-    /// Drains completed frames since the previous call and snapshots memory.
+    /// Drains completed frames since the previous call.
     ///
     /// Callers wait for idle first. Return `None` when disabled or unsupported;
-    /// supported renderers may return a memory snapshot with an empty frame list.
-    /// Also discard any unsubmitted upload/creation counters at this boundary so
-    /// setup work cannot leak into the next measured frame.
+    /// supported renderers may return an empty frame list.
     fn take_gpu_stats(&mut self) -> Option<GpuStats> {
         None
     }

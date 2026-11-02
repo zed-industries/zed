@@ -9,14 +9,6 @@ for target in aarch64-apple-darwin x86_64-unknown-linux-gnu; do
         echo "test-support leaked into the $target benchmark graph" >&2
         exit 1
     fi
-    tree=$(cargo tree -p gpui_wgpu --target "$target" -e normal,build,features -i wgpu)
-    if printf '%s\n' "$tree" | grep -F 'wgpu feature "counters"'; then
-        echo "wgpu/counters leaked into the $target production graph" >&2
-        exit 1
-    fi
 done
 
-tree=$(cargo tree -p gpui_platform --features bench-support \
-    --target x86_64-unknown-linux-gnu -e features -i wgpu)
-printf '%s\n' "$tree" | grep -F 'wgpu feature "counters"' >/dev/null
 echo "GPU benchmark feature isolation passed"
