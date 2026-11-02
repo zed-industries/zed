@@ -1305,8 +1305,7 @@ fn parse_open_ai_model(
                 && model.supports_chat_completions
                 && model.interleaved_reasoning,
             max_tokens_parameter: model.supports_chat_completions && model.max_tokens_parameter,
-            supports_none_reasoning_effort: model.supports_thinking
-                && model.supports_none_reasoning_effort,
+            supports_none_reasoning_effort: model.supports_none_reasoning_effort,
         },
     })
 }
