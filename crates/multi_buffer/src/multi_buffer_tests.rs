@@ -4218,6 +4218,31 @@ async fn test_enclosing_indent(cx: &mut TestAppContext) {
             }
         ))
     );
+
+    // Opening and closing lines are detected when the indent width differs from the tab size.
+    let two_space_indented = indoc!(
+        "
+        function f() {
+          if (a) {
+            b();
+          }
+        }
+        "
+    );
+    for (row, expected) in [(0, Some((0..3, 0))), (3, Some((1..2, 2))), (4, Some((0..3, 0)))] {
+        assert_eq!(
+            enclosing_indent(two_space_indented, row, cx).await,
+            expected.map(|(range, spaces)| (
+                range,
+                LineIndent {
+                    tabs: 0,
+                    spaces,
+                    line_blank: false,
+                }
+            )),
+            "row {row}"
+        );
+    }
 }
 
 #[gpui::test]
