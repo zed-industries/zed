@@ -30,6 +30,46 @@ message AgentServerCommand {
   optional SpawnInTerminal login = 5;
 }
 
+message GetGlobalSkills {
+  uint64 project_id = 1;
+}
+
+message GetGlobalSkillsResponse {
+  repeated GlobalSkillFile files = 1;
+  repeated GlobalSkillLoadError errors = 2;
+}
+
+message GlobalSkillFile {
+  string path = 1;
+  string content = 2;
+}
+
+message GlobalSkillLoadError {
+  string path = 1;
+  string message = 2;
+}
+
+message GlobalSkillsChanged {
+  uint64 project_id = 1;
+}
+
+message CreateGlobalSkill {
+  uint64 project_id = 1;
+  string name = 2;
+  string description = 3;
+  string body = 4;
+  bool disable_model_invocation = 5;
+}
+
+message CreateGlobalSkillResponse {
+  string skill_file_path = 1;
+}
+
+message TrashGlobalSkill {
+  uint64 project_id = 1;
+  string directory_name = 2;
+}
+
 message ExternalAgentsUpdated {
   uint64 project_id = 1;
   repeated string names = 2;

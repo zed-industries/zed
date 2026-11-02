@@ -10,7 +10,7 @@ use fs::Fs;
 use futures::AsyncReadExt;
 use gpui::{
     App, AsyncApp, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription, Task,
-    TextStyle, WeakEntity, WindowHandle, actions,
+    TextStyle, WeakEntity, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
 use language::{Buffer, language_settings::SoftWrap};
@@ -24,8 +24,8 @@ use ui::{Banner, Divider, SwitchField, WithScrollbar, prelude::*};
 use ui_input::{ErasedEditorEvent, InputField};
 use util::ResultExt;
 use util::rel_path::RelPath;
-use workspace::MultiWorkspace;
 
+use super::skills_setup::{SkillLocation, remote_global_skills_project};
 use crate::{SettingsUiFile, SettingsWindow, all_projects};
 
 actions!(
@@ -74,27 +74,20 @@ struct ImportedSkill {
     disable_model_invocation: bool,
 }
 
-enum ScopeChoice {
-    Global,
-    Project {
-        project: Entity<Project>,
-        worktree: Entity<Worktree>,
-    },
-}
-
-fn scope_for_settings_file(
-    current_file: &SettingsUiFile,
-    original_window: Option<&WindowHandle<MultiWorkspace>>,
+/// Where a skill created with this settings file selected is written.
+fn location_for_settings_file(
+    settings_window: &SettingsWindow,
+    remote_project: Option<Entity<Project>>,
     cx: &App,
-) -> ScopeChoice {
-    if let SettingsUiFile::Project((worktree_id, _)) = current_file {
-        for project in all_projects(original_window, cx) {
+) -> SkillLocation {
+    if let SettingsUiFile::Project((worktree_id, _)) = &settings_window.current_file {
+        for project in all_projects(settings_window.original_window.as_ref(), cx) {
             if let Some(worktree) = project.read(cx).worktree_for_id(*worktree_id, cx) {
-                return ScopeChoice::Project { project, worktree };
+                return SkillLocation::Project { project, worktree };
             }
         }
     }
-    ScopeChoice::Global
+    SkillLocation::global(remote_project)
 }
 
 pub(crate) fn skill_url_from_clipboard(cx: &App) -> Option<String> {
@@ -614,16 +607,13 @@ impl SkillCreatorPage {
 
         // Resolve the scope at save time so the skill is written to whichever
         // settings file is selected at the moment the user clicks Save.
-        let scope = self
+        let location = self
             .settings_window
             .read_with(cx, |settings_window, cx| {
-                scope_for_settings_file(
-                    &settings_window.current_file,
-                    settings_window.original_window.as_ref(),
-                    cx,
-                )
+                let remote_project = remote_global_skills_project(settings_window, cx);
+                location_for_settings_file(settings_window, remote_project, cx)
             })
-            .unwrap_or(ScopeChoice::Global);
+            .unwrap_or(SkillLocation::Local);
         let name = self.current_name(cx);
         let description = self.current_description(cx);
         let body = self.current_body(cx);
@@ -635,8 +625,8 @@ impl SkillCreatorPage {
         cx.notify();
 
         let task = cx.spawn_in(window, async move |this, cx| {
-            let result = match &scope {
-                ScopeChoice::Global => {
+            let result = match &location {
+                SkillLocation::Local => {
                     write_skill_to_disk(
                         fs.as_ref(),
                         &global_skills_dir(),
@@ -647,7 +637,23 @@ impl SkillCreatorPage {
                     )
                     .await
                 }
-                ScopeChoice::Project { project, worktree } => {
+                SkillLocation::RemoteGlobal(project) => {
+                    let create_task = cx.update(|_window, cx| {
+                        agent::create_remote_global_skill(
+                            project,
+                            &name,
+                            &description,
+                            &body,
+                            disable_model_invocation,
+                            cx,
+                        )
+                    });
+                    match create_task {
+                        Ok(create_task) => create_task.await,
+                        Err(error) => Err(error),
+                    }
+                }
+                SkillLocation::Project { project, worktree } => {
                     write_skill_to_worktree(
                         project,
                         worktree,

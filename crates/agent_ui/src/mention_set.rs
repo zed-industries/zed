@@ -1,5 +1,5 @@
 use crate::diagnostics::{DiagnosticsOptions, codeblock_fence_for_path, collect_diagnostics};
-use acp_thread::{MentionUri, selection_name};
+use acp_thread::{MentionUri, SkillOrigin, selection_name};
 use agent::{ThreadStore, outline};
 use agent_client_protocol::v2::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
@@ -150,8 +150,9 @@ impl MentionSet {
             MentionUri::Skill {
                 source,
                 skill_file_path,
+                origin,
                 ..
-            } => self.confirm_mention_for_skill(source, skill_file_path, cx),
+            } => self.confirm_mention_for_skill(origin, source, skill_file_path, cx),
             MentionUri::Diagnostics {
                 include_errors,
                 include_warnings,
@@ -326,8 +327,9 @@ impl MentionSet {
             MentionUri::Skill {
                 source,
                 skill_file_path,
+                origin,
                 ..
-            } => self.confirm_mention_for_skill(source, skill_file_path, cx),
+            } => self.confirm_mention_for_skill(origin, source, skill_file_path, cx),
             MentionUri::Diagnostics {
                 include_errors,
                 include_warnings,
@@ -499,49 +501,51 @@ impl MentionSet {
 
     fn confirm_mention_for_skill(
         &self,
+        origin: SkillOrigin,
         source: String,
         skill_file_path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        // Built-in skills have synthetic paths that don't exist on disk;
-        // serve their content directly from the compiled-in data.
-        if let Some(content) = agent_skills::builtin_skill_content(&skill_file_path) {
-            return Task::ready(Ok(Mention::Text {
+        match skill_file_location(origin, &source, &skill_file_path) {
+            SkillFileLocation::BuiltIn(content) => Task::ready(Ok(Mention::Text {
                 content: content.to_string(),
                 tracked_buffers: Vec::new(),
-            }));
-        }
-        // Project skills may be on a remote machine, so read them through the project.
-        // Global skills stay local, even if a worktree contains their path.
-        if let Some(project) = self.project.upgrade()
-            && let Some(buffer) = project.update(cx, |project, cx| {
-                let project_path = project_path_for_skill(project, &source, &skill_file_path, cx)?;
-                Some(project.open_buffer(project_path, cx))
-            })
-        {
-            return cx.spawn(async move |_, cx| {
-                let buffer = buffer.await?;
-                let content = buffer.update(cx, |buffer, _cx| buffer.text());
-                Ok(Mention::Text {
-                    content,
-                    tracked_buffers: Vec::new(),
+            })),
+            SkillFileLocation::Project => {
+                let Some(project) = self.project.upgrade() else {
+                    return Task::ready(Err(anyhow!("project was dropped")));
+                };
+                let buffer = project.update(cx, |project, cx| {
+                    project.open_local_buffer(&skill_file_path, cx)
+                });
+                cx.spawn(async move |_, cx| {
+                    let buffer = buffer.await.with_context(|| {
+                        format!("Failed to read skill file {}", skill_file_path.display())
+                    })?;
+                    let content = buffer.update(cx, |buffer, _cx| buffer.text());
+                    Ok(Mention::Text {
+                        content,
+                        tracked_buffers: Vec::new(),
+                    })
                 })
-            });
+            }
+            SkillFileLocation::Local => {
+                let fs = <dyn Fs>::global(cx);
+                cx.background_spawn(async move {
+                    let content = fs.load(&skill_file_path).await.map_err(|e| {
+                        anyhow!(
+                            "Failed to read skill file {}: {}",
+                            skill_file_path.display(),
+                            e
+                        )
+                    })?;
+                    Ok(Mention::Text {
+                        content,
+                        tracked_buffers: Vec::new(),
+                    })
+                })
+            }
         }
-        let fs = <dyn Fs>::global(cx);
-        cx.background_spawn(async move {
-            let content = fs.load(&skill_file_path).await.map_err(|e| {
-                anyhow!(
-                    "Failed to read skill file {}: {}",
-                    skill_file_path.display(),
-                    e
-                )
-            })?;
-            Ok(Mention::Text {
-                content,
-                tracked_buffers: Vec::new(),
-            })
-        })
     }
 
     pub fn confirm_mention_for_selection(
@@ -733,28 +737,35 @@ impl MentionSet {
     }
 }
 
-/// A project skill's source is its worktree's root name.
-fn project_path_for_skill(
-    project: &Project,
+pub(crate) enum SkillFileLocation {
+    BuiltIn(&'static str),
+    /// On the machine Zed runs on.
+    Local,
+    /// On the project's machine, which may be remote.
+    Project,
+}
+
+pub(crate) fn skill_file_location(
+    origin: SkillOrigin,
     source: &str,
     skill_file_path: &Path,
-    cx: &App,
-) -> Option<ProjectPath> {
-    project.worktrees(cx).find_map(|worktree| {
-        let worktree = worktree.read(cx);
-        if worktree.root_name_str() != source {
-            return None;
+) -> SkillFileLocation {
+    if let Some(content) = agent_skills::builtin_skill_content(skill_file_path) {
+        return SkillFileLocation::BuiltIn(content);
+    }
+    match origin {
+        SkillOrigin::BuiltIn | SkillOrigin::LocalGlobal => SkillFileLocation::Local,
+        SkillOrigin::RemoteGlobal | SkillOrigin::Project => SkillFileLocation::Project,
+        // Mentions saved without an origin are from when global skills were always local.
+        // Older ones used an empty source for global skills.
+        SkillOrigin::Unknown
+            if (source == "global" || source.is_empty())
+                && skill_file_path.starts_with(agent_skills::global_skills_dir()) =>
+        {
+            SkillFileLocation::Local
         }
-        let path_style = worktree.path_style();
-        let relative_path = path_style
-            .strip_prefix(skill_file_path, worktree.abs_path())
-            .ok()?;
-        let relative_path = RelPath::new(relative_path, path_style).ok()?;
-        Some(ProjectPath {
-            worktree_id: worktree.id(),
-            path: relative_path.into_arc(),
-        })
-    })
+        SkillOrigin::Unknown => SkillFileLocation::Project,
+    }
 }
 
 /// Computes disambiguated labels for a set of mentions, so that mentions sharing
@@ -885,25 +896,88 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_global_skill_mention_inside_worktree_reads_from_host_fs(cx: &mut TestAppContext) {
+    async fn test_local_global_skill_mention_inside_same_named_worktree_reads_from_host_fs(
+        cx: &mut TestAppContext,
+    ) {
         let content = read_skill_mention_with_project_and_host_copies(
+            SkillOrigin::LocalGlobal,
             "global",
-            path!("/home/user"),
-            path!("/home/user/.agents/skills/my-skill/SKILL.md"),
+            Path::new(path!("/home/global")),
+            Path::new(path!("/home/global/.agents/skills/my-skill/SKILL.md")),
             cx,
         )
         .await;
         assert_eq!(content, "host copy");
     }
 
+    #[gpui::test]
+    async fn test_remote_global_skill_mention_reads_through_project_fs(cx: &mut TestAppContext) {
+        let content = read_skill_mention_with_project_and_host_copies(
+            SkillOrigin::RemoteGlobal,
+            "global",
+            Path::new(path!("/project")),
+            Path::new(path!("/home/user/.agents/skills/my-skill/SKILL.md")),
+            cx,
+        )
+        .await;
+        assert_eq!(content, "project copy");
+    }
+
+    #[gpui::test]
+    async fn test_project_skill_mention_reads_through_project_fs(cx: &mut TestAppContext) {
+        let content = read_skill_mention_with_project_and_host_copies(
+            SkillOrigin::Project,
+            "project",
+            Path::new(path!("/project")),
+            Path::new(path!("/project/.agents/skills/my-skill/SKILL.md")),
+            cx,
+        )
+        .await;
+        assert_eq!(content, "project copy");
+    }
+
+    #[gpui::test]
+    async fn test_saved_global_skill_mention_without_origin_reads_from_host_fs(
+        cx: &mut TestAppContext,
+    ) {
+        let skill_file_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join(agent_skills::SKILL_FILE_NAME);
+        let content = read_skill_mention_with_project_and_host_copies(
+            SkillOrigin::Unknown,
+            "global",
+            paths::home_dir(),
+            &skill_file_path,
+            cx,
+        )
+        .await;
+        assert_eq!(content, "host copy");
+    }
+
+    #[gpui::test]
+    async fn test_saved_project_skill_mention_without_origin_reads_through_project_fs(
+        cx: &mut TestAppContext,
+    ) {
+        let content = read_skill_mention_with_project_and_host_copies(
+            SkillOrigin::Unknown,
+            "project",
+            Path::new(path!("/project")),
+            Path::new(path!("/project/.agents/skills/my-skill/SKILL.md")),
+            cx,
+        )
+        .await;
+        assert_eq!(content, "project copy");
+    }
+
     async fn read_skill_mention_with_project_and_host_copies(
+        origin: SkillOrigin,
         source: &str,
-        worktree_root: &str,
-        skill_file_path: &str,
+        worktree_root: &Path,
+        skill_file_path: &Path,
         cx: &mut TestAppContext,
     ) -> String {
         init_test(cx);
-        let skill_directory = Path::new(skill_file_path).parent().unwrap();
+        let skill_directory = skill_file_path.parent().unwrap();
 
         let host_fs = FakeFs::new(cx.executor());
         host_fs
@@ -912,10 +986,11 @@ mod tests {
         cx.update(|cx| <dyn Fs>::set_global(host_fs, cx));
 
         let project_fs = FakeFs::new(cx.executor());
+        project_fs.insert_tree(worktree_root, json!({})).await;
         project_fs
             .insert_tree(skill_directory, json!({ "SKILL.md": "project copy" }))
             .await;
-        let project = Project::test(project_fs, [Path::new(worktree_root)], cx).await;
+        let project = Project::test(project_fs, [worktree_root], cx).await;
         let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None));
 
         let mention_task = mention_set.update(cx, |mention_set, cx| {
@@ -925,6 +1000,7 @@ mod tests {
                     name: "my-skill".to_string(),
                     source: source.to_string(),
                     skill_file_path: skill_file_path.into(),
+                    origin,
                 },
                 false,
                 http_client,
@@ -935,18 +1011,6 @@ mod tests {
             Mention::Text { content, .. } => content,
             other => panic!("Expected skill mention to resolve as text, got {other:?}"),
         }
-    }
-
-    #[gpui::test]
-    async fn test_project_skill_mention_reads_through_project_fs(cx: &mut TestAppContext) {
-        let content = read_skill_mention_with_project_and_host_copies(
-            "project",
-            path!("/project"),
-            path!("/project/.agents/skills/my-skill/SKILL.md"),
-            cx,
-        )
-        .await;
-        assert_eq!(content, "project copy");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicBool;
 
 use crate::DEFAULT_THREAD_TITLE;
 use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
-use acp_thread::MentionUri;
+use acp_thread::{MentionUri, SkillOrigin};
 use agent_client_protocol::v2::schema as acp;
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
@@ -346,7 +346,19 @@ pub struct AvailableSkill {
     /// worktree root name for project-local skills.
     pub source: SharedString,
     pub skill_file_path: PathBuf,
+    pub origin: SkillOrigin,
     pub warning: Option<SharedString>,
+}
+
+impl AvailableSkill {
+    pub fn mention_uri(&self) -> MentionUri {
+        MentionUri::Skill {
+            name: self.name.to_string(),
+            source: self.source.to_string(),
+            skill_file_path: self.skill_file_path.clone(),
+            origin: self.origin,
+        }
+    }
 }
 
 fn skill_completion_icon_path(
@@ -600,11 +612,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Completion {
-        let uri = MentionUri::Skill {
-            name: skill.name.to_string(),
-            source: skill.source.to_string(),
-            skill_file_path: skill.skill_file_path.clone(),
-        };
+        let uri = skill.mention_uri();
         let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();
         let icon_path = skill_completion_icon_path(&skill, &uri, cx);
@@ -1474,11 +1482,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                 .into_iter()
                                 .map(|candidate| match &candidate {
                                     SlashCompletionCandidate::Skill(skill) => {
-                                        let uri = MentionUri::Skill {
-                                            name: skill.name.to_string(),
-                                            source: skill.source.to_string(),
-                                            skill_file_path: skill.skill_file_path.clone(),
-                                        };
+                                        let uri = skill.mention_uri();
                                         let new_text = format!("{} ", uri.as_link());
                                         let new_text_len = new_text.len();
                                         let icon_path = skill_completion_icon_path(skill, &uri, cx);
