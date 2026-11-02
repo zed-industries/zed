@@ -478,7 +478,7 @@ fn save_thread_metadata(
 ) {
     cx.update(|cx| {
         let worktree_paths = project.read(cx).worktree_paths(cx);
-        let remote_connection = project.read(cx).remote_connection_options(cx);
+        let remote_connection = project.read(cx).remote_connection_options(cx).cloned();
         let thread_id = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
@@ -13428,7 +13428,7 @@ mod property_test {
                     let key = &keys[project_group_index];
                     let ws = mw
                         .workspaces_for_project_group(key, cx)
-                        .first()
+                        .next()
                         .cloned()
                         .unwrap_or_else(|| mw.workspace().clone());
                     let project = ws.read(cx).project().clone();
@@ -13444,8 +13444,7 @@ mod property_test {
                     let thread_id = active_thread_id(&panel, cx);
                     let session_id = active_session_id(&panel, cx);
                     // Make the thread non-draft without exercising the prompt
-                    // send path; these invariants are about sidebar state, not
-                    // git checkpointing during user prompts.
+                    // send path; these invariants are about sidebar state.
                     cx.update(|_, cx| {
                         connection.send_update(
                             session_id.clone(),
@@ -13475,7 +13474,7 @@ mod property_test {
                         interacted_at: None,
                         worktree_paths: project.read(cx).worktree_paths(cx),
                         archived: false,
-                        remote_connection: project.read(cx).remote_connection_options(cx),
+                        remote_connection: project.read(cx).remote_connection_options(cx).cloned(),
                     });
                     cx.update(|_, cx| {
                         ThreadMetadataStore::global(cx)
@@ -13582,7 +13581,7 @@ mod property_test {
                     let keys = mw.project_group_keys();
                     let key = &keys[index];
                     mw.workspaces_for_project_group(key, cx)
-                        .first()
+                        .next()
                         .cloned()
                         .unwrap_or_else(|| mw.workspace().clone())
                 });
@@ -13652,7 +13651,7 @@ mod property_test {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
                     mw.workspaces_for_project_group(key, cx)
-                        .first()
+                        .next()
                         .cloned()
                         .unwrap()
                 });
@@ -13672,7 +13671,7 @@ mod property_test {
                 let workspace = multi_workspace.read_with(cx, |mw, cx| {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
-                    mw.workspaces_for_project_group(key, cx).first().cloned()
+                    mw.workspaces_for_project_group(key, cx).next().cloned()
                 });
                 let Some(workspace) = workspace else { return };
                 let project = workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -13699,7 +13698,7 @@ mod property_test {
                 let workspace = multi_workspace.read_with(cx, |mw, cx| {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
-                    mw.workspaces_for_project_group(key, cx).first().cloned()
+                    mw.workspaces_for_project_group(key, cx).next().cloned()
                 });
                 let Some(workspace) = workspace else { return };
                 let project = workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -14324,7 +14323,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
     let (main_worktree_paths, remote_connection) = project.read_with(cx, |p, cx| {
         (
             p.project_group_key(cx).path_list().clone(),
-            p.remote_connection_options(cx),
+            p.remote_connection_options(cx).cloned(),
         )
     });
     cx.update(|_window, cx| {
@@ -15277,7 +15276,7 @@ async fn test_remote_archive_thread_with_active_connection(
     // the folder at the linked worktree checkout and the main at the
     // parent repo, so `build_root_plan` targets the linked worktree
     // specifically and knows which main repo owns it.
-    let remote_connection = project.read_with(cx, |p, cx| p.remote_connection_options(cx));
+    let remote_connection = project.read_with(cx, |p, cx| p.remote_connection_options(cx).cloned());
 
     // Record the worktree as Zed-created on the client, keyed by the remote
     // connection identity, with the creation time of the gitdir on the

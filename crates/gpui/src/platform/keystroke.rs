@@ -288,6 +288,14 @@ impl Keystroke {
         }
         self
     }
+
+    /// Returns whether the key itself is a modifier
+    pub fn is_modifier_key(&self) -> bool {
+        matches!(
+            self.key.as_str(),
+            "shift" | "control" | "alt" | "platform" | "function"
+        )
+    }
 }
 
 impl KeybindingKeystroke {
