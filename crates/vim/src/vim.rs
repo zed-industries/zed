@@ -987,6 +987,9 @@ impl Vim {
                     }
                     _ => {
                         vim.update_editor(cx, |_, editor, cx| editor.paste(&Paste, window, cx));
+                        if vim.mode == Mode::HelixSelect {
+                            vim.switch_mode(Mode::HelixNormal, true, window, cx);
+                        }
                     }
                 },
             );

@@ -694,6 +694,23 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: Option<String>,
+    /// Settings for automatically fetching the default branch's remote and the current branch's upstream remote.
+    pub auto_fetch: Option<AutoFetchSettingsContent>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct AutoFetchSettingsContent {
+    /// Whether to automatically fetch in the background.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// How long to wait between automatic fetches, in seconds.
+    /// Only used when `enabled` is true. (min: 15)
+    ///
+    /// Default: 60
+    pub interval_secs: Option<u64>,
 }
 
 #[with_fallible_options]
