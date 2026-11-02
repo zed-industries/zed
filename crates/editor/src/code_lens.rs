@@ -4,7 +4,7 @@ use collections::{HashMap, HashSet};
 use futures::{StreamExt as _, stream::FuturesUnordered};
 use gpui::{MouseButton, SharedString, Task, TaskExt, WeakEntity};
 use itertools::Itertools;
-use language::{BufferId, ClientCommand};
+use language::{BufferId, ClientCommand, point_from_lsp};
 use multi_buffer::{Anchor, BufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
 use project::{CodeAction, TaskSourceKind, lsp_store::code_lens::CodeLensActions};
 use task::TaskContext;
@@ -14,7 +14,7 @@ use ui::{Context, Window, div, prelude::*};
 
 use crate::{
     Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, LspDataKind, SelectionEffects,
-    actions::ToggleCodeLens,
+    actions::{FindAllReferences, ToggleCodeLens},
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
     hover_links::HoverLink,
     runnables::RunnableTaskStatus,
@@ -86,6 +86,7 @@ pub(super) fn try_handle_client_command(
             "editor.action.showReferences"
             | "editor.action.goToLocations"
             | "editor.action.peekLocations" => Some(ClientCommand::ShowLocations),
+            "roslyn.client.peekReferences" => Some(ClientCommand::FindReferences),
             _ => None,
         });
 
@@ -95,6 +96,9 @@ pub(super) fn try_handle_client_command(
         }
         Some(ClientCommand::ShowLocations) => {
             try_show_references(arguments, action, editor, window, cx)
+        }
+        Some(ClientCommand::FindReferences) => {
+            try_find_references(arguments, action, editor, window, cx)
         }
         None => false,
     }
@@ -206,6 +210,49 @@ fn try_show_references(
     editor
         .navigate_to_hover_links(None, links, nav_entry, false, window, cx)
         .detach_and_log_err(cx);
+
+    true
+}
+
+fn try_find_references(
+    arguments: &[serde_json::Value],
+    action: &CodeAction,
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> bool {
+    // Arguments are `[document_uri, position]`, with no locations, so the references
+    // have to be queried. The document is always the one holding the lens.
+    let Some(position) = arguments.get(1) else {
+        return false;
+    };
+    let Ok(position) = serde_json::from_value::<lsp::Position>(position.clone()) else {
+        return false;
+    };
+    let Some(buffer) = editor
+        .buffer()
+        .read(cx)
+        .buffer(action.range.start.buffer_id)
+    else {
+        return false;
+    };
+    let buffer_snapshot = buffer.read(cx).snapshot();
+    let point = buffer_snapshot.clip_point_utf16(point_from_lsp(position), text::Bias::Left);
+    let Some(anchor) = editor
+        .buffer()
+        .read(cx)
+        .snapshot(cx)
+        .anchor_in_excerpt(buffer_snapshot.anchor_before(point))
+    else {
+        return false;
+    };
+
+    editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+        s.select_anchor_ranges([anchor..anchor]);
+    });
+    if let Some(task) = editor.find_all_references(&FindAllReferences::default(), window, cx) {
+        task.detach_and_log_err(cx);
+    }
 
     true
 }
@@ -1707,6 +1754,117 @@ mod tests {
                 "Unresolved lenses should have been resolved and displayed"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_code_lens_roslyn_peek_references(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        update_test_editor_settings(cx, &|settings| {
+            settings.code_lens = Some(CodeLens::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_typescript(
+            lsp::ServerCapabilities {
+                code_lens_provider: Some(lsp::CodeLensOptions {
+                    resolve_provider: None,
+                }),
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+
+        let uri = cx.buffer_lsp_url.clone();
+        let mut code_lens_request =
+            cx.set_request_handler::<lsp::request::CodeLensRequest, _, _>(move |_, _, _| {
+                let uri = uri.clone();
+                async move {
+                    Ok(Some(vec![lsp::CodeLens {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 14)),
+                        command: Some(lsp::Command {
+                            title: "1 reference".to_owned(),
+                            command: "roslyn.client.peekReferences".to_owned(),
+                            arguments: Some(vec![
+                                serde_json::json!(uri.as_str()),
+                                serde_json::json!({"line": 0, "character": 9}),
+                            ]),
+                        }),
+                        data: None,
+                    }]))
+                }
+            });
+
+        cx.set_state("function hello() {}\nhello();ˇ");
+        assert!(
+            code_lens_request.next().await.is_some(),
+            "should have received a code lens request"
+        );
+        cx.run_until_parked();
+
+        let reference_positions = Arc::new(Mutex::new(Vec::new()));
+        let mut references_request =
+            cx.set_request_handler::<lsp::request::References, _, _>({
+                let reference_positions = reference_positions.clone();
+                move |uri, params, _| {
+                    reference_positions
+                        .lock()
+                        .unwrap()
+                        .push(params.text_document_position.position);
+                    async move {
+                        Ok(Some(vec![
+                            lsp::Location {
+                                uri: uri.clone(),
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 9),
+                                    lsp::Position::new(0, 14),
+                                ),
+                            },
+                            lsp::Location {
+                                uri,
+                                range: lsp::Range::new(
+                                    lsp::Position::new(1, 0),
+                                    lsp::Position::new(1, 5),
+                                ),
+                            },
+                        ]))
+                    }
+                }
+            });
+
+        let workspace = cx.workspace.clone();
+        let handled = cx.update_editor(|editor, window, cx| {
+            let action = editor
+                .code_lens
+                .as_ref()
+                .and_then(|state| state.blocks.values().flatten().next())
+                .map(|block| block.line.items[0].action.clone())
+                .expect("should have a code lens block");
+            super::try_handle_client_command(&action, editor, &workspace, window, cx)
+        });
+        assert!(handled, "roslyn.client.peekReferences should be handled");
+
+        assert!(
+            references_request.next().await.is_some(),
+            "should have sent a references request"
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            *reference_positions.lock().unwrap(),
+            vec![lsp::Position::new(0, 9)],
+            "references should be queried at the position from the command arguments"
+        );
+        let active_item_title = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_item(cx)
+                .map(|item| item.tab_content_text(0, cx))
+        });
+        assert_eq!(
+            active_item_title.as_deref(),
+            Some("References to hello"),
+            "the references multibuffer should be opened"
+        );
     }
 
     #[gpui::test]
