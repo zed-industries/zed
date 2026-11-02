@@ -3002,6 +3002,8 @@
     "save_breakpoints": true,
     "timeout": 2000,
     "dock": "bottom",
+    "default_width": 300,
+    "default_height": 300,
     "log_dap_communications": true,
     "format_dap_log_messages": true,
     "button": true,
