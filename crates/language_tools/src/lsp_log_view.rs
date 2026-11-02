@@ -23,7 +23,7 @@ use std::{any::TypeId, borrow::Cow, sync::Arc};
 use ui::{Checkbox, ContextMenu, PopoverMenu, ToggleState, prelude::*};
 use workspace::{
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
-    item::{Item, ItemHandle},
+    item::{Item, ItemHandle, ItemNavigation},
     searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
@@ -834,6 +834,10 @@ impl Focusable for LspLogView {
 
 impl Item for LspLogView {
     type Event = EditorEvent;
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         Editor::to_item_events(event, f)

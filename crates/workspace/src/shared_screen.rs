@@ -1,6 +1,6 @@
 use crate::{
-    ItemNavHistory, WorkspaceId,
-    item::{Item, ItemEvent},
+    WorkspaceId,
+    item::{Item, ItemEvent, ItemNavigation},
 };
 use client::{User, proto::PeerId};
 use gpui::{
@@ -17,7 +17,6 @@ pub enum Event {
 pub struct SharedScreen {
     pub peer_id: PeerId,
     user: Arc<User>,
-    nav_history: Option<ItemNavHistory>,
     view: AnyView,
     clone_view: fn(&AnyView, &mut Window, &mut App) -> AnyView,
     focus: FocusHandle,
@@ -35,7 +34,6 @@ impl SharedScreen {
             view,
             peer_id,
             user,
-            nav_history: Default::default(),
             focus: cx.focus_handle(),
             clone_view,
         }
@@ -67,10 +65,8 @@ impl Item for SharedScreen {
         Some(format!("{}'s screen", self.user.username).into())
     }
 
-    fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(nav_history) = self.nav_history.as_mut() {
-            nav_history.push::<()>(None, None, cx);
-        }
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
     }
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
@@ -83,15 +79,6 @@ impl Item for SharedScreen {
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
         None
-    }
-
-    fn set_nav_history(
-        &mut self,
-        history: ItemNavHistory,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-        self.nav_history = Some(history);
     }
 
     fn can_split(&self) -> bool {
@@ -110,7 +97,6 @@ impl Item for SharedScreen {
             view: cloned_view,
             peer_id: self.peer_id,
             user: self.user.clone(),
-            nav_history: Default::default(),
             focus: cx.focus_handle(),
             clone_view,
         })))

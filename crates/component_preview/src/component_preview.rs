@@ -19,7 +19,8 @@ use ui::{
 use ui_input::InputField;
 use workspace::AppState;
 use workspace::{
-    Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items, item::ItemEvent,
+    Item, ItemId, ItemNavigation, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
+    item::ItemEvent,
 };
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
@@ -708,6 +709,10 @@ impl From<ComponentId> for ActivePageId {
 
 impl Item for ComponentPreview {
     type Event = ItemEvent;
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Component Preview".into()

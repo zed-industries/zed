@@ -19,7 +19,7 @@ use ui::{
 };
 use workspace::{
     Workspace,
-    item::{Item, ItemEvent},
+    item::{Item, ItemEvent, ItemNavigation},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -699,6 +699,10 @@ impl Focusable for AgentRegistryPage {
 
 impl Item for AgentRegistryPage {
     type Event = ItemEvent;
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "ACP Registry".into()

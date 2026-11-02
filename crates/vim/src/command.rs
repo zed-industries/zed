@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::{CommandInterceptItem, CommandInterceptResult};
 use editor::{
-    Bias, Editor, EditorSettings, SelectionEffects, ToPoint,
+    Bias, Editor, EditorSettings, RecordNavigation, SelectionEffects, ToPoint,
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
@@ -787,7 +787,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let result = vim.update_editor(cx, |vim, editor, cx| {
                 let range = range.buffer_range(vim, editor, window, cx)?;
                 editor.change_selections(
-                    SelectionEffects::no_scroll().nav_history(false),
+                    SelectionEffects::no_scroll().record_navigation(RecordNavigation::Never),
                     window,
                     cx,
                     |s| {

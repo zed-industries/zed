@@ -1,6 +1,6 @@
 use editor::{
-    Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RowExt, ToOffset,
-    ToPoint as _,
+    Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RecordNavigation, RowExt,
+    ToOffset, ToPoint as _,
     display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
@@ -831,7 +831,7 @@ impl Motion {
         matches!(self, Motion::WrappingLeft | Motion::WrappingRight)
     }
 
-    pub(crate) fn push_to_jump_list(&self) -> bool {
+    pub(crate) fn record_navigation(&self) -> RecordNavigation {
         use Motion::*;
         match self {
             CurrentLine
@@ -861,7 +861,7 @@ impl Motion {
             | StartOfLineDownward
             | Up { .. }
             | WrappingLeft
-            | WrappingRight => false,
+            | WrappingRight => RecordNavigation::Never,
             EndOfDocument
             | EndOfParagraph
             | GoToPercentage
@@ -894,7 +894,7 @@ impl Motion {
             | WindowBottom
             | WindowMiddle
             | WindowTop
-            | ZedSearchResult { .. } => true,
+            | ZedSearchResult { .. } => RecordNavigation::Always,
         }
     }
 

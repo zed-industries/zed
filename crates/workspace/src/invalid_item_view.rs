@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use gpui::{EventEmitter, FocusHandle, Focusable};
+use gpui::{Entity, EventEmitter, FocusHandle, Focusable};
 use ui::{
     App, Button, ButtonCommon, ButtonStyle, Clickable, Context, FluentBuilder, InteractiveElement,
     KeyBinding, Label, LabelCommon, LabelSize, ParentElement, Render, SharedString, Styled as _,
@@ -8,7 +8,7 @@ use ui::{
 };
 use zed_actions::workspace::OpenWithSystem;
 
-use crate::Item;
+use crate::{Item, ItemNavigation};
 
 /// A view to display when a certain buffer/image/other item fails to open.
 #[derive(Debug)]
@@ -40,6 +40,10 @@ impl InvalidItemView {
 
 impl Item for InvalidItemView {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Excluded
+    }
 
     fn tab_content_text(&self, mut detail: usize, _: &App) -> SharedString {
         // Ensure we always render at least the filename.

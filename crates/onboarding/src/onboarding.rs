@@ -24,7 +24,7 @@ use workspace::welcome::WelcomePage;
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
-    item::{Item, ItemEvent},
+    item::{Item, ItemEvent, ItemNavigation},
     notifications::NotifyResultExt as _,
     open_new, register_serializable_item, with_active_or_new_workspace,
 };
@@ -395,6 +395,10 @@ impl Focusable for Onboarding {
 
 impl Item for Onboarding {
     type Event = ItemEvent;
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Onboarding".into()

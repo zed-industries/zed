@@ -14,19 +14,12 @@ use gpui::{
 use language::{self, Buffer, Capability, OffsetRangeExt, Point};
 use project::{Project, ProjectPath};
 use settings::Settings;
-use std::{
-    any::{Any, TypeId},
-    cmp,
-    ops::Range,
-    pin::pin,
-    sync::Arc,
-    time::Duration,
-};
+use std::{any::TypeId, cmp, ops::Range, pin::pin, sync::Arc, time::Duration};
 use ui::{Color, Icon, IconName, SharedString};
 use util::paths::PathExt;
 
 use workspace::{
-    Item, ItemNavHistory, Workspace,
+    Item, ItemNavigation, Workspace,
     item::{ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
 };
@@ -341,9 +334,8 @@ impl Item for TextDiffView {
         Some("Selection Diff View Opened")
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.diff_editor
-            .update(cx, |editor, cx| editor.deactivated(window, cx));
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::delegate(self.diff_editor.clone())
     }
 
     fn act_as_type<'a>(
@@ -377,28 +369,6 @@ impl Item for TextDiffView {
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.diff_editor.read(cx).active_project_path(cx)
-    }
-
-    fn set_nav_history(
-        &mut self,
-        nav_history: ItemNavHistory,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let rhs = self.diff_editor.read(cx).rhs_editor().clone();
-        rhs.update(cx, |editor, _| {
-            editor.set_nav_history(Some(nav_history));
-        });
-    }
-
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.diff_editor
-            .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
     fn added_to_workspace(

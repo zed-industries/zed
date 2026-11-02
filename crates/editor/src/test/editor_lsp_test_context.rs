@@ -22,7 +22,7 @@ use language::{
 };
 use lsp::{notification, request};
 use project::Project;
-use workspace::{AppState, MultiWorkspace, Workspace, WorkspaceHandle};
+use workspace::{AppState, MultiWorkspace, NavigableItem as _, Workspace, WorkspaceHandle};
 
 use super::editor_test_context::{AssertionContextManager, EditorTestContext};
 
@@ -146,7 +146,7 @@ impl EditorLspTestContext {
                 .active_pane()
                 .read(cx)
                 .nav_history_for_item(&cx.entity());
-            editor.set_nav_history(Some(nav_history));
+            editor.bind_history(nav_history, cx);
             window.focus(&editor.focus_handle(cx), cx)
         });
 

@@ -28,7 +28,7 @@ use std::{
 use util::maybe;
 use workspace::{
     ToolbarItemEvent, ToolbarItemView, Workspace,
-    item::Item,
+    item::{Item, ItemNavigation},
     searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
     ui::{Button, Clickable, ContextMenu, Label, LabelCommon, PopoverMenu, h_flex},
 };
@@ -987,6 +987,10 @@ pub fn init(cx: &mut App) {
 
 impl Item for DapLogView {
     type Event = EditorEvent;
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         Editor::to_item_events(event, f)

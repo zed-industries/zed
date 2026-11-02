@@ -11,7 +11,7 @@ use ui::{
     utils::calculate_contrast_ratio,
 };
 
-use crate::{Item, Workspace};
+use crate::{Item, ItemNavigation, Workspace};
 
 actions!(
     dev,
@@ -85,6 +85,10 @@ impl ThemePreview {}
 
 impl Item for ThemePreview {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(crate::item::ItemEvent)) {}
 

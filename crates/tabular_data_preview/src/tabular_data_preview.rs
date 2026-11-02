@@ -4,7 +4,7 @@ use gpui::{Action, AppContext, Entity, EventEmitter, FocusHandle, Focusable, Tas
 use schemars::JsonSchema;
 use serde::Deserialize;
 use ui::{SharedString, prelude::*};
-use workspace::{Item, Pane, Workspace};
+use workspace::{Item, ItemNavigation, Pane, Workspace};
 
 use crate::parser::EditorState;
 
@@ -215,6 +215,10 @@ impl EventEmitter<()> for TabularDataPreviewPane {}
 
 impl Item for TabularDataPreviewPane {
     type Event = ();
+
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::Visits
+    }
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Table))

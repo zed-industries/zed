@@ -1,7 +1,7 @@
 use crate::{Vim, state::Mode};
 use editor::{
-    DisplayPoint, Editor, EditorSettings, SelectionEffects, display_map::DisplayRow,
-    scroll::ScrollAmount,
+    DisplayPoint, Editor, EditorSettings, RecordNavigation, SelectionEffects,
+    display_map::DisplayRow, scroll::ScrollAmount,
 };
 use gpui::{Context, Window, actions};
 use language::Bias;
@@ -258,7 +258,7 @@ impl Vim {
                 vim.visual_block_motion(true, editor, window, cx, &mut move_cursor);
             } else {
                 editor.change_selections(
-                    SelectionEffects::no_scroll().nav_history(false),
+                    SelectionEffects::no_scroll().record_navigation(RecordNavigation::Never),
                     window,
                     cx,
                     |s| {

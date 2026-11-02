@@ -22,16 +22,11 @@ use language::{Buffer, Capability, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
 use project::{Project, ProjectItem, ProjectPath};
 use settings::{Settings, SettingsStore};
-use std::{
-    any::{Any, TypeId},
-    collections::hash_map::Entry,
-    ops::Range,
-    sync::Arc,
-};
+use std::{any::TypeId, collections::hash_map::Entry, ops::Range, sync::Arc};
 use ui::{CommonAnimationExt, Divider, IconButtonShape, KeyBinding, Tooltip, prelude::*};
 use util::{ResultExt, truncate_and_trailoff};
 use workspace::{
-    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Item, ItemHandle, ItemNavigation, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
     item::{ItemEvent, SaveOptions, TabContentParams, TabTooltipContent},
     searchable::SearchableItemHandle,
@@ -518,19 +513,8 @@ impl Item for AgentDiffPane {
         Editor::to_item_events(event, f)
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor
-            .update(cx, |editor, cx| editor.deactivated(window, cx));
-    }
-
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.editor
-            .update(cx, |editor, cx| editor.navigate(data, window, cx))
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::delegate(self.editor.clone())
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
@@ -583,19 +567,6 @@ impl Item for AgentDiffPane {
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.editor.read(cx).active_project_path(cx)
-    }
-
-    fn set_nav_history(
-        &mut self,
-        nav_history: ItemNavHistory,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.rhs_editor().update(cx, |editor, _| {
-                editor.set_nav_history(Some(nav_history));
-            });
-        });
     }
 
     fn can_split(&self) -> bool {

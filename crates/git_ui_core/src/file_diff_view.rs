@@ -14,17 +14,11 @@ use gpui::{
 use language::{Buffer, HighlightedText, Point};
 use project::{Project, ProjectPath};
 use settings::Settings;
-use std::{
-    any::{Any, TypeId},
-    path::PathBuf,
-    pin::pin,
-    sync::Arc,
-    time::Duration,
-};
+use std::{any::TypeId, path::PathBuf, pin::pin, sync::Arc, time::Duration};
 use ui::{Color, Icon, IconName, SharedString, prelude::*};
 use util::paths::PathExt as _;
 use workspace::{
-    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Item, ItemHandle, ItemNavigation, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
     item::{ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
@@ -310,8 +304,8 @@ impl Item for FileDiffView {
         Some("Diff View Opened")
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor.deactivated(window, cx);
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::delegate(self.editor.clone())
     }
 
     fn act_as_type<'a>(
@@ -341,32 +335,6 @@ impl Item for FileDiffView {
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.editor.read(cx).active_project_path(cx)
-    }
-
-    fn set_nav_history(
-        &mut self,
-        nav_history: ItemNavHistory,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.rhs_editor().update(cx, |editor, _| {
-                editor.set_nav_history(Some(nav_history));
-            })
-        });
-    }
-
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.editor.update(cx, |editor, cx| {
-            editor
-                .rhs_editor()
-                .update(cx, |editor, cx| editor.navigate(data, window, cx))
-        })
     }
 
     fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {

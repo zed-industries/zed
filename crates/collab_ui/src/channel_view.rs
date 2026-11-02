@@ -16,15 +16,12 @@ use gpui::{
 };
 use project::Project;
 use rpc::proto::ChannelVisibility;
-use std::{
-    any::{Any, TypeId},
-    sync::Arc,
-};
+use std::{any::TypeId, sync::Arc};
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::{CollaboratorId, item::TabContentParams};
 use workspace::{
-    ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
+    ItemNavigation, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent},
     searchable::SearchableItemHandle,
 };
@@ -518,30 +515,8 @@ impl Item for ChannelView {
         })))
     }
 
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.editor
-            .update(cx, |editor, cx| editor.navigate(data, window, cx))
-    }
-
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor
-            .update(cx, |item, cx| item.deactivated(window, cx))
-    }
-
-    fn set_nav_history(
-        &mut self,
-        history: ItemNavHistory,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.editor.update(cx, |editor, cx| {
-            Item::set_nav_history(editor, history, window, cx)
-        })
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::delegate(self.editor.clone())
     }
 
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
