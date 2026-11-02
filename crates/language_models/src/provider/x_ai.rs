@@ -3,7 +3,6 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
-use http_client::{CustomHeaders, HttpClient};
 use language_model::chat_completion::{ChatCompletionEventMapper, ResponseStreamEvent};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
@@ -19,6 +18,7 @@ use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::IconName;
 use x_ai::XAI_API_URL;
+use zed_http_client::{CustomHeaders, HttpClient};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");

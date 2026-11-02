@@ -99,7 +99,6 @@ git_hosting_providers.workspace = true
 git_ui = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_tokio.workspace = true
-http_client.workspace = true
 
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
@@ -133,6 +132,7 @@ util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 zed_actions.workspace = true
+zed_http_client.workspace = true
 zlog.workspace = true
 
 [package.metadata.cargo-shear]

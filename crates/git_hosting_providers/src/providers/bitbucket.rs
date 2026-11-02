@@ -5,11 +5,11 @@ use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use gpui::SharedString;
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use itertools::Itertools as _;
 use regex::Regex;
 use serde::Deserialize;
 use url::Url;
+use zed_http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
@@ -126,7 +126,7 @@ impl Bitbucket {
 
         let request = Request::get(&url)
             .header("Content-Type", "application/json")
-            .follow_redirects(http_client::RedirectPolicy::FollowAll);
+            .follow_redirects(zed_http_client::RedirectPolicy::FollowAll);
 
         let mut response = client
             .send(request.body(AsyncBody::default())?)

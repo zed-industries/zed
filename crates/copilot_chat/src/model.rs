@@ -15,7 +15,6 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::{FutureExt, Stream, StreamExt};
 use gpui::{AsyncApp, Entity};
-use http_client::StatusCode;
 use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCompletionStream, LanguageModelCostInfo, LanguageModelEffortLevel,
@@ -25,6 +24,7 @@ use language_model::{
     MessageContent, ProviderErrorCategory, RateLimiter, Role, StopReason, TokenUsage,
 };
 use util::debug_panic;
+use zed_http_client::StatusCode;
 
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
 

@@ -3,7 +3,6 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
-use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, CompactionResult, EnvVar,
     FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelClient,
@@ -25,6 +24,7 @@ use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::IconName;
+use zed_http_client::{CustomHeaders, HttpClient};
 
 use language_model::chat_completion::ChatCompletionEventMapper;
 use open_ai::completion::token_usage_from_response_usage;

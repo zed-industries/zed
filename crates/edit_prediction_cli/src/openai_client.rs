@@ -1,5 +1,4 @@
 use anyhow::Result;
-use http_client::HttpClient;
 use indoc::indoc;
 use open_ai::{
     MessageContent, OPEN_AI_API_URL, Request as OpenAiRequest, RequestMessage,
@@ -13,6 +12,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use zed_http_client::HttpClient;
 
 pub struct PlainOpenAiClient {
     pub http_client: Arc<dyn HttpClient>,
@@ -21,7 +21,7 @@ pub struct PlainOpenAiClient {
 
 impl PlainOpenAiClient {
     pub fn new() -> Result<Self> {
-        let http_client: Arc<dyn http_client::HttpClient> = Arc::new(ReqwestClient::new());
+        let http_client: Arc<dyn zed_http_client::HttpClient> = Arc::new(ReqwestClient::new());
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY environment variable not set"))?;
         Ok(Self {
@@ -110,7 +110,7 @@ struct SerializableMessage {
 
 impl BatchingOpenAiClient {
     fn new(cache_path: &Path) -> Result<Self> {
-        let http_client: Arc<dyn http_client::HttpClient> = Arc::new(ReqwestClient::new());
+        let http_client: Arc<dyn zed_http_client::HttpClient> = Arc::new(ReqwestClient::new());
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY environment variable not set"))?;
 

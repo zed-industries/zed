@@ -11,7 +11,6 @@ use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
 use futures::{channel::oneshot, stream::StreamExt as _};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, Task, TaskExt};
-use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
@@ -37,6 +36,7 @@ use rpc::{
     proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
 use smol::process::Child;
+use zed_http_client::HttpClient;
 
 use settings::{Settings as _, SettingsLocation, initial_server_settings_content};
 use std::{

@@ -2885,7 +2885,6 @@ mod tests {
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, Modifiers, OwnedMenuItem,
         TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions, point, px,
     };
-    use http_client::BlockedHttpClient;
     use language::LanguageRegistry;
     use languages::{markdown_lang, rust_lang};
     use node_runtime::NodeRuntime;
@@ -2915,6 +2914,7 @@ mod tests {
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
     };
+    use zed_http_client::BlockedHttpClient;
 
     async fn flush_workspace_serialization(
         window: &WindowHandle<MultiWorkspace>,

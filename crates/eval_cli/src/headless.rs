@@ -5,7 +5,6 @@ use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore};
 use db::AppDatabase;
 use extension::ExtensionHostProxy;
 use fs::RealFs;
-use gpui::http_client::read_proxy_from_env;
 use gpui::{App, AppContext as _, Entity};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -17,6 +16,7 @@ use release_channel::{AppCommitSha, AppVersion};
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
 use util::ResultExt as _;
+use zed_http_client::read_proxy_from_env;
 
 pub struct AgentCliAppState {
     pub languages: Arc<LanguageRegistry>,

@@ -19,13 +19,13 @@ async-fs.workspace = true
 async-tar.workspace = true
 futures.workspace = true
 gpui.workspace = true
-http_client.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 util.workspace = true
+zed_http_client.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

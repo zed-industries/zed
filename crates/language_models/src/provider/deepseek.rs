@@ -6,7 +6,6 @@ use deepseek::DEEPSEEK_API_URL;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
-use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
     LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -21,6 +20,7 @@ pub use settings::DeepseekAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
+use zed_http_client::{CustomHeaders, HttpClient};
 
 use ui::IconName;
 

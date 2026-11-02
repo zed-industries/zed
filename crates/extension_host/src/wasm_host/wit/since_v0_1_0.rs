@@ -2,8 +2,8 @@ use crate::wasm_host::{
     WasmState,
     wit::{IntoWasmtimeResult, ToWasmtimeResult},
 };
-use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
+use ::zed_http_client::{AsyncBody, HttpRequestExt};
 use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -55,7 +55,7 @@ mod settings {
 
 pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
 pub type ExtensionKeyValueStore = Arc<dyn KeyValueStoreDelegate>;
-pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
+pub type ExtensionHttpResponseStream = Arc<Mutex<::zed_http_client::Response<AsyncBody>>>;
 
 pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
@@ -372,7 +372,7 @@ impl http_client::HostHttpResponseStream for WasmState {
     }
 }
 
-impl From<http_client::HttpMethod> for ::http_client::Method {
+impl From<http_client::HttpMethod> for ::zed_http_client::Method {
     fn from(value: http_client::HttpMethod) -> Self {
         match value {
             http_client::HttpMethod::Get => Self::GET,
@@ -388,16 +388,16 @@ impl From<http_client::HttpMethod> for ::http_client::Method {
 
 fn convert_request(
     extension_request: &http_client::HttpRequest,
-) -> anyhow::Result<::http_client::Request<AsyncBody>> {
-    let mut request = ::http_client::Request::builder()
-        .method(::http_client::Method::from(extension_request.method))
+) -> anyhow::Result<::zed_http_client::Request<AsyncBody>> {
+    let mut request = ::zed_http_client::Request::builder()
+        .method(::zed_http_client::Method::from(extension_request.method))
         .uri(&extension_request.url)
         .follow_redirects(match extension_request.redirect_policy {
-            http_client::RedirectPolicy::NoFollow => ::http_client::RedirectPolicy::NoFollow,
+            http_client::RedirectPolicy::NoFollow => ::zed_http_client::RedirectPolicy::NoFollow,
             http_client::RedirectPolicy::FollowLimit(limit) => {
-                ::http_client::RedirectPolicy::FollowLimit(limit)
+                ::zed_http_client::RedirectPolicy::FollowLimit(limit)
             }
-            http_client::RedirectPolicy::FollowAll => ::http_client::RedirectPolicy::FollowAll,
+            http_client::RedirectPolicy::FollowAll => ::zed_http_client::RedirectPolicy::FollowAll,
         });
     for (key, value) in &extension_request.headers {
         request = request.header(key, value);
@@ -411,7 +411,7 @@ fn convert_request(
 }
 
 async fn convert_response(
-    response: &mut ::http_client::Response<AsyncBody>,
+    response: &mut ::zed_http_client::Response<AsyncBody>,
 ) -> anyhow::Result<http_client::HttpResponse> {
     let mut extension_response = http_client::HttpResponse {
         body: Vec::new(),

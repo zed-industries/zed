@@ -7,11 +7,6 @@ mod chat_completion_transport_tests;
 
 use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
-    StatusCode,
-    http::{HeaderMap, HeaderValue},
-};
 use language_model_core::LanguageModelCompletionError;
 pub use language_model_core::ReasoningEffort;
 pub use language_model_core::chat_completion::{
@@ -24,6 +19,11 @@ use serde_json::value::RawValue;
 use std::{convert::TryFrom, future::Future, io};
 use strum::EnumIter;
 use thiserror::Error;
+use zed_http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    StatusCode,
+    http::{HeaderMap, HeaderValue},
+};
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
@@ -941,7 +941,7 @@ pub enum RequestError {
     BuildRequestBody {
         provider: String,
         #[source]
-        error: http_client::http::Error,
+        error: zed_http_client::http::Error,
     },
     #[error("error sending HTTP request to {host} for {provider}")]
     HttpSend {
@@ -1230,7 +1230,7 @@ where
 
 async fn http_response_error(
     provider_name: &str,
-    response: &mut http_client::Response<AsyncBody>,
+    response: &mut zed_http_client::Response<AsyncBody>,
 ) -> RequestError {
     let body = match read_response_body(response).await {
         Ok(body) => body,
@@ -1249,7 +1249,9 @@ async fn http_response_error(
     }
 }
 
-async fn read_response_body(response: &mut http_client::Response<AsyncBody>) -> io::Result<String> {
+async fn read_response_body(
+    response: &mut zed_http_client::Response<AsyncBody>,
+) -> io::Result<String> {
     let mut body = String::new();
     response.body_mut().read_to_string(&mut body).await?;
     Ok(body)
@@ -1330,7 +1332,7 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
                 headers,
             } => {
                 let retry_after = headers
-                    .get(http_client::http::header::RETRY_AFTER)
+                    .get(zed_http_client::http::header::RETRY_AFTER)
                     .and_then(|val| val.to_str().ok()?.parse::<u64>().ok())
                     .map(std::time::Duration::from_secs);
 

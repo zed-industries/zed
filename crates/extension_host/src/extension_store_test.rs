@@ -26,7 +26,6 @@ use gpui::{
     AppContext as _, BackgroundExecutor, BorrowAppContext as _, Entity, EntityId, TaskExt,
     TestAppContext,
 };
-use http_client::{FakeHttpClient, Response};
 use language::{
     BinaryStatus, LanguageConfig, LanguageMatcher, LanguageName, LanguageRegistry, QueryFiles,
 };
@@ -52,6 +51,7 @@ use std::{
 use task::{SpawnInTerminal, ZedDebugConfig};
 use theme::ThemeRegistry;
 use util::{rel_path::rel_path_buf, test::TempTree};
+use zed_http_client::{FakeHttpClient, Response};
 
 #[cfg(test)]
 #[ctor::ctor(unsafe)]

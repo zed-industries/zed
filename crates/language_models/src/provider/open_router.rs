@@ -3,7 +3,6 @@ use anyhow::Result;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
-use http_client::{CustomHeaders, HttpClient};
 use language_model::chat_completion::ChatCompletionEventMapper;
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
@@ -23,6 +22,7 @@ use sha2::{Digest as _, Sha256};
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
 use util::ResultExt;
+use zed_http_client::{CustomHeaders, HttpClient};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
@@ -1229,12 +1229,11 @@ mod tests {
             cx.set_global(settings_store);
         });
 
-        let http_client =
-            http_client::FakeHttpClient::create(|_request| async move {
-                Ok(http_client::Response::builder().status(401).body(
-                    http_client::AsyncBody::from(r#"{"error":{"message":"invalid key"}}"#),
-                )?)
-            });
+        let http_client = zed_http_client::FakeHttpClient::create(|_request| async move {
+            Ok(zed_http_client::Response::builder().status(401).body(
+                zed_http_client::AsyncBody::from(r#"{"error":{"message":"invalid key"}}"#),
+            )?)
+        });
         let provider = cx.update(|cx| {
             OpenRouterLanguageModelProvider::new(http_client, Arc::new(TestCredentialsProvider), cx)
         });

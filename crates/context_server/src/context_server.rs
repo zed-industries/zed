@@ -8,11 +8,11 @@ pub mod transport;
 pub mod types;
 
 use collections::HashMap;
-use http_client::HttpClient;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt::Display, path::PathBuf};
+use zed_http_client::HttpClient;
 
 use anyhow::Result;
 use client::{Client, StdinPrefix};

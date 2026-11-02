@@ -1,11 +1,11 @@
 use anthropic::ANTHROPIC_API_URL;
 use anyhow::{Context as _, anyhow};
 use gpui::BackgroundExecutor;
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use language_model::{ANTHROPIC_PROVIDER_ID, LanguageModel, LanguageModelRegistry};
 use std::env;
 use std::sync::Arc;
 use util::ResultExt;
+use zed_http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 
 #[derive(Clone, Debug)]
 pub struct AnthropicEventData {

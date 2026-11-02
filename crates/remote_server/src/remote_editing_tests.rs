@@ -29,7 +29,6 @@ use gpui::{
     AppContext as _, Entity, ImageSource, IntoElement as _, SharedString, TestAppContext,
     UpdateGlobal, VisualContext, img, px, size,
 };
-use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
     OffsetRangeExt, Point, PointUtf16,
@@ -82,6 +81,7 @@ use util::{
     paths::{PathMatcher, PathStyle},
     rel_path::rel_path,
 };
+use zed_http_client::{BlockedHttpClient, FakeHttpClient};
 
 #[gpui::test]
 async fn test_remote_auto_fetch(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {

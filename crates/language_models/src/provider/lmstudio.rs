@@ -3,7 +3,6 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AsyncApp, Context, Entity, Subscription, Task, TaskExt};
-use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionStream, LanguageModelToolChoice, LanguageModelToolChoiceSupport,
@@ -16,6 +15,7 @@ use language_model::{
     RateLimiter, Role, SubPageProviderSettings,
 };
 use lmstudio::{LMSTUDIO_API_URL, ModelType, get_models};
+use zed_http_client::{CustomHeaders, HttpClient};
 
 pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -919,7 +919,7 @@ mod tests {
     use super::*;
     use credentials_provider::test_support::FakeCredentialsProvider;
     use gpui::TestAppContext;
-    use http_client::{AsyncBody, FakeHttpClient, Response};
+    use zed_http_client::{AsyncBody, FakeHttpClient, Response};
 
     #[gpui::test]
     async fn enabling_ai_discovers_models_with_stored_credentials(cx: &mut TestAppContext) {
@@ -993,9 +993,9 @@ mod tests {
         });
 
         let http_client = FakeHttpClient::create(|_request| async move {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(500)
-                .body(http_client::AsyncBody::from("server error"))?)
+                .body(zed_http_client::AsyncBody::from("server error"))?)
         });
         let provider = cx.update(|cx| {
             LmStudioLanguageModelProvider::new(

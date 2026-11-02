@@ -6,14 +6,14 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::http::{self, HeaderMap, HeaderValue};
-use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
-    StatusCode,
-};
 use serde::{Deserialize, Serialize};
 use strum::EnumString;
 use thiserror::Error;
+use zed_http_client::http::{self, HeaderMap, HeaderValue};
+use zed_http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    StatusCode,
+};
 
 pub mod batches;
 pub mod completion;
@@ -1460,7 +1460,7 @@ fn completion_error_from_anthropic_api_with_status(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use http_client::FakeHttpClient;
+    use zed_http_client::FakeHttpClient;
 
     #[test]
     fn count_input_tokens_preserves_input_without_generation_fields() {

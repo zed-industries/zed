@@ -26,10 +26,7 @@ use futures::{
     channel::{mpsc, oneshot},
 };
 use gpui::App;
-use gpui::{
-    Entity, TestAppContext, UpdateGlobal,
-    http_client::{FakeHttpClient, Response},
-};
+use gpui::{Entity, TestAppContext, UpdateGlobal};
 use indoc::indoc;
 use language::{
     Anchor, Buffer, Capability, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSeverity,
@@ -49,6 +46,7 @@ use util::{
 };
 use uuid::Uuid;
 use workspace::{AppState, CollaboratorId, MultiWorkspace};
+use zed_http_client::{FakeHttpClient, Response};
 use zeta_prompt::Zeta2PromptInput;
 
 use crate::prediction::EditPredictionInputs;
@@ -2956,9 +2954,9 @@ fn init_test_with_fake_client_and_legacy_data_collection(
                             let response = res_rx.await?;
                             if response.request_id == REQUEST_TIMEOUT_RESPONSE_ID {
                                 return Ok(Response::builder()
-                                    .status(http_client::http::StatusCode::REQUEST_TIMEOUT)
+                                    .status(zed_http_client::http::StatusCode::REQUEST_TIMEOUT)
                                     .body(
-                                        http_client::http::StatusCode::REQUEST_TIMEOUT
+                                        zed_http_client::http::StatusCode::REQUEST_TIMEOUT
                                             .as_str()
                                             .into(),
                                     )
@@ -2977,9 +2975,9 @@ fn init_test_with_fake_client_and_legacy_data_collection(
                             let response = res_rx.await?;
                             if response.request_id == REQUEST_TIMEOUT_RESPONSE_ID {
                                 return Ok(Response::builder()
-                                    .status(http_client::http::StatusCode::REQUEST_TIMEOUT)
+                                    .status(zed_http_client::http::StatusCode::REQUEST_TIMEOUT)
                                     .body(
-                                        http_client::http::StatusCode::REQUEST_TIMEOUT
+                                        zed_http_client::http::StatusCode::REQUEST_TIMEOUT
                                             .as_str()
                                             .into(),
                                     )
@@ -3624,16 +3622,18 @@ async fn make_test_ep_store(
             let mut body = req.into_body();
             async move {
                 match (method, uri.as_str()) {
-                    (Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
-                        .status(200)
-                        .body(
-                            serde_json::to_string(&CreateLlmTokenResponse {
-                                token: LlmToken("the-llm-token".to_string()),
-                            })
-                            .unwrap()
-                            .into(),
-                        )
-                        .unwrap()),
+                    (Method::POST, "/client/llm_tokens") => {
+                        Ok(zed_http_client::Response::builder()
+                            .status(200)
+                            .body(
+                                serde_json::to_string(&CreateLlmTokenResponse {
+                                    token: LlmToken("the-llm-token".to_string()),
+                                })
+                                .unwrap()
+                                .into(),
+                            )
+                            .unwrap())
+                    }
                     (Method::POST, "/predict_edits/v3") => {
                         let mut buf = Vec::new();
                         body.read_to_end(&mut buf).await.ok();
@@ -3642,7 +3642,7 @@ async fn make_test_ep_store(
                             serde_json::from_slice(&decompressed).unwrap();
 
                         next_request_id += 1;
-                        Ok(http_client::Response::builder()
+                        Ok(zed_http_client::Response::builder()
                             .status(200)
                             .body(
                                 serde_json::to_string(&PredictEditsV3Response {
@@ -3689,12 +3689,12 @@ async fn make_test_ep_store(
                             patch: format!("--- a/{path}\n+++ b/{path}\n{diff}"),
                             model_version: None,
                         };
-                        Ok(http_client::Response::builder()
+                        Ok(zed_http_client::Response::builder()
                             .status(200)
                             .body(serde_json::to_string(&response).unwrap().into())
                             .unwrap())
                     }
-                    _ => Ok(http_client::Response::builder()
+                    _ => Ok(zed_http_client::Response::builder()
                         .status(404)
                         .body("Not Found".to_string().into())
                         .unwrap()),
@@ -3805,12 +3805,12 @@ async fn make_sweep_prompt_test_ep_store(
                             },
                         };
 
-                        Ok(http_client::Response::builder()
+                        Ok(zed_http_client::Response::builder()
                             .status(200)
                             .body(serde_json::to_string(&response).unwrap().into())
                             .unwrap())
                     }
-                    _ => Ok(http_client::Response::builder()
+                    _ => Ok(zed_http_client::Response::builder()
                         .status(404)
                         .body("Not Found".to_string().into())
                         .unwrap()),
@@ -3894,7 +3894,7 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
         move |_req| {
             request_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             async move {
-                Ok(gpui::http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(401)
                     .body("Unauthorized".into())
                     .unwrap())

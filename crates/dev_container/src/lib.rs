@@ -5,7 +5,6 @@ use gpui::AppContext;
 use gpui::Entity;
 use gpui::Task;
 use gpui::WeakEntity;
-use http_client::anyhow;
 use picker::Picker;
 use picker::PickerDelegate;
 use project::ProjectEnvironment;
@@ -29,6 +28,7 @@ use ui::h_flex;
 use ui::rems_from_px;
 use ui::v_flex;
 use util::shell::Shell;
+use zed_http_client::anyhow;
 
 use gpui::{Action, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce};
 use serde::Deserialize;
@@ -41,7 +41,7 @@ use util::ResultExt;
 use util::rel_path::RelPath;
 use workspace::{ModalView, Workspace, with_active_or_new_workspace};
 
-use http_client::HttpClient;
+use zed_http_client::HttpClient;
 
 mod command_json;
 mod devcontainer_api;
@@ -1684,7 +1684,7 @@ async fn get_ghcr_features(
 
 #[cfg(test)]
 mod tests {
-    use http_client::{FakeHttpClient, anyhow};
+    use zed_http_client::{FakeHttpClient, anyhow};
 
     use crate::{
         DevContainerTemplatesResponse, devcontainer_templates_repository,
@@ -1707,7 +1707,7 @@ mod tests {
             {
                 return Err(anyhow!("Unexpected path: {}", path));
             }
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
                 .body("{
                     \"sourceInformation\": {

@@ -370,12 +370,12 @@ mod tests {
     use clock::FakeSystemClock;
     use feature_flags::FeatureFlagAppExt as _;
     use gpui::{AppContext as _, AsyncApp, BorrowAppContext as _};
-    use http_client::FakeHttpClient;
     use language_model::IconOrSvg;
     use release_channel::AppVersion;
     use std::future::Future;
     use std::pin::Pin;
     use ui::IconName;
+    use zed_http_client::FakeHttpClient;
 
     struct FakeCredentialsProvider;
 

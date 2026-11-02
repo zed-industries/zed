@@ -34,7 +34,6 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Subscription,
     Task, TaskExt, UpdateGlobal as _, WeakEntity, actions,
 };
-use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage, QueryFile,
     QueryFileContents, QueryFiles, Rope,
@@ -67,6 +66,7 @@ use wasm_host::{
     WasmExtension, WasmHost,
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
 };
+use zed_http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 
 pub use extension::{
     ExtensionLibraryKind, GrammarManifestEntry, OldExtensionManifest, SchemaVersion,
@@ -893,7 +893,7 @@ impl ExtensionStore {
 
                 let content_length = response
                     .headers()
-                    .get(http_client::http::header::CONTENT_LENGTH)
+                    .get(zed_http_client::http::header::CONTENT_LENGTH)
                     .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
 
                 let mut body = BufReader::new(response.body_mut());

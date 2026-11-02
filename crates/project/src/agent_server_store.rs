@@ -14,7 +14,6 @@ use gpui::{
     AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     TaskExt,
 };
-use http_client::HttpClient;
 use node_runtime::NodeRuntime;
 use percent_encoding::percent_decode_str;
 use remote::RemoteClient;
@@ -26,6 +25,7 @@ use settings::{AgentConfigOptionValue, RegisterSetting, SettingsStore, update_se
 use sha2::{Digest, Sha256};
 use url::Url;
 use util::{ResultExt as _, debug_panic};
+use zed_http_client::HttpClient;
 
 use crate::ProjectEnvironment;
 use crate::agent_registry_store::{AgentRegistryStore, RegistryAgent, RegistryTargetConfig};
@@ -1780,10 +1780,10 @@ mod tests {
     };
     use crate::worktree_store::{WorktreeIdCounter, WorktreeStore};
     use gpui::TestAppContext;
-    #[cfg(feature = "test-support")]
-    use http_client::{AsyncBody, FakeHttpClient, Response};
     use node_runtime::NodeRuntime;
     use settings::Settings as _;
+    #[cfg(feature = "test-support")]
+    use zed_http_client::{AsyncBody, FakeHttpClient, Response};
 
     #[cfg(feature = "test-support")]
     const TEST_ARCHIVE_URL: &str = "https://example.test/agent";
@@ -1915,7 +1915,7 @@ mod tests {
             let project_environment = cx.new(|cx| {
                 crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
             });
-            let http_client = http_client::FakeHttpClient::with_404_response();
+            let http_client = zed_http_client::FakeHttpClient::with_404_response();
 
             cx.new(|cx| {
                 AgentServerStore::local(

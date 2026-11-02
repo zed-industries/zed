@@ -34,10 +34,6 @@ use gpui::{
     App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, TaskExt, Window, actions,
 };
 use gpui_tokio::Tokio;
-use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
-    http::{HeaderValue, header::AUTHORIZATION},
-};
 use language_model::{
     AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel, LanguageModelClient,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelCompletionStream,
@@ -63,6 +59,10 @@ use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
+use zed_http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    http::{HeaderValue, header::AUTHORIZATION},
+};
 
 use crate::AllLanguageModelSettings;
 use crate::provider::open_ai::{
@@ -323,14 +323,14 @@ fn sign_mantle_request_sigv4_at(
 ) -> Result<()> {
     if !request
         .headers()
-        .contains_key(http_client::http::header::HOST)
+        .contains_key(zed_http_client::http::header::HOST)
         && let Some(authority) = request.uri().authority()
     {
         let host = HeaderValue::from_str(authority.as_str())
             .context("invalid host header derived from Mantle request URI")?;
         request
             .headers_mut()
-            .insert(http_client::http::header::HOST, host);
+            .insert(zed_http_client::http::header::HOST, host);
     }
 
     let identity = credentials.clone().into();
@@ -1244,11 +1244,11 @@ fn mantle_supported_effort_levels(model: &MantleModel) -> Vec<LanguageModelEffor
 /// `bedrock-runtime` permissions.
 fn map_mantle_error(model: &MantleModel, error: RequestError) -> LanguageModelCompletionError {
     if let RequestError::HttpResponseError { status_code, .. } = &error
-        && *status_code == http_client::http::StatusCode::FORBIDDEN
+        && *status_code == zed_http_client::http::StatusCode::FORBIDDEN
     {
         return LanguageModelCompletionError::from_provider_response(
             PROVIDER_NAME,
-            Some(http_client::http::StatusCode::FORBIDDEN),
+            Some(zed_http_client::http::StatusCode::FORBIDDEN),
             None,
             format!(
                 "Bedrock Mantle denied this request for {}. Mantle-only models require IAM \
@@ -3197,7 +3197,7 @@ mod tests {
         });
         let provider = cx.update(|cx| {
             BedrockLanguageModelProvider::new(
-                http_client::FakeHttpClient::with_404_response(),
+                zed_http_client::FakeHttpClient::with_404_response(),
                 Arc::new(NoCredentialsProvider),
                 cx,
             )
@@ -3251,7 +3251,7 @@ mod tests {
         });
         let provider = cx.update(|cx| {
             BedrockLanguageModelProvider::new(
-                http_client::FakeHttpClient::with_404_response(),
+                zed_http_client::FakeHttpClient::with_404_response(),
                 Arc::new(NoCredentialsProvider),
                 cx,
             )
@@ -4202,7 +4202,7 @@ mod tests {
         assert_eq!(
             request
                 .headers()
-                .get(http_client::http::header::HOST)
+                .get(zed_http_client::http::header::HOST)
                 .and_then(|value| value.to_str().ok()),
             Some("bedrock-mantle.us-east-1.api.aws")
         );
@@ -4974,7 +4974,7 @@ mod tests {
             cx.set_global(settings_store);
             gpui_tokio::init(cx);
             BedrockLanguageModelProvider::new(
-                http_client::FakeHttpClient::with_404_response(),
+                zed_http_client::FakeHttpClient::with_404_response(),
                 Arc::new(NoCredentialsProvider),
                 cx,
             )

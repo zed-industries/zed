@@ -4,7 +4,6 @@ use collections::HashMap;
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use fs::{Fs, RemoveOptions};
 use futures::{StreamExt, TryStreamExt};
-use gpui::http_client::AsyncBody;
 use gpui::{AsyncApp, SharedString};
 use language::{LanguageName, Toolchain};
 use log::warn;
@@ -22,6 +21,7 @@ use std::{
 };
 use util::command::new_command;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
+use zed_http_client::AsyncBody;
 
 enum DebugpyLaunchMode<'a> {
     Normal,

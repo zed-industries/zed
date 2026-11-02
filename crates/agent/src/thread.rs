@@ -7656,7 +7656,7 @@ mod tests {
             model,
             LanguageModelCompletionError::from_http_status(
                 LanguageModelProviderName::new("test"),
-                http_client::StatusCode::SERVICE_UNAVAILABLE,
+                zed_http_client::StatusCode::SERVICE_UNAVAILABLE,
                 "overloaded".to_string(),
                 Some(retry_after),
             ),
@@ -8900,7 +8900,7 @@ mod tests {
             &model,
             LanguageModelCompletionError::from_http_status(
                 LanguageModelProviderName::new("test"),
-                http_client::StatusCode::PAYLOAD_TOO_LARGE,
+                zed_http_client::StatusCode::PAYLOAD_TOO_LARGE,
                 "prompt is too long".to_string(),
                 None,
             ),
@@ -9696,7 +9696,7 @@ mod tests {
         // fails the same way.
         let error = LanguageModelCompletionError::from_http_status(
             language_model::LanguageModelProviderName::new("Anthropic"),
-            http_client::StatusCode::UNAUTHORIZED,
+            zed_http_client::StatusCode::UNAUTHORIZED,
             "invalid x-api-key".to_string(),
             None,
         );
@@ -9723,10 +9723,10 @@ mod tests {
     #[test]
     fn test_retry_strategy_uses_exponential_backoff_without_retry_after() {
         for status in [
-            http_client::StatusCode::TOO_MANY_REQUESTS,
-            http_client::StatusCode::INTERNAL_SERVER_ERROR,
-            http_client::StatusCode::SERVICE_UNAVAILABLE,
-            http_client::StatusCode::from_u16(529).unwrap(),
+            zed_http_client::StatusCode::TOO_MANY_REQUESTS,
+            zed_http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            zed_http_client::StatusCode::SERVICE_UNAVAILABLE,
+            zed_http_client::StatusCode::from_u16(529).unwrap(),
         ] {
             let error = LanguageModelCompletionError::from_http_status(
                 language_model::LanguageModelProviderName::new("Anthropic"),
@@ -9765,7 +9765,7 @@ mod tests {
         let retry_after = Duration::from_secs(3);
         let error = LanguageModelCompletionError::from_http_status(
             language_model::LanguageModelProviderName::new("Anthropic"),
-            http_client::StatusCode::TOO_MANY_REQUESTS,
+            zed_http_client::StatusCode::TOO_MANY_REQUESTS,
             "rate limited".to_string(),
             Some(retry_after),
         );

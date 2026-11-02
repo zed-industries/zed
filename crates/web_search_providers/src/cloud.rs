@@ -7,8 +7,8 @@ use cloud_api_types::OrganizationId;
 use cloud_llm_client::{WebSearchBody, WebSearchResponse};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext, Context, Entity, Task};
-use http_client::Method;
 use web_search::{WebSearchProvider, WebSearchProviderId};
+use zed_http_client::Method;
 
 pub struct CloudWebSearchProvider {
     state: Entity<State>,
@@ -75,7 +75,7 @@ async fn perform_web_search(
     let body = serde_json::to_string(&body)?;
     let mut response = client
         .authenticated_llm_request(&llm_api_token, organization_id, |token| {
-            Ok(http_client::Request::builder()
+            Ok(zed_http_client::Request::builder()
                 .method(Method::POST)
                 .uri(url.as_ref())
                 .header("Content-Type", "application/json")

@@ -37,7 +37,7 @@ fn custom_headers_from(
     provider_name: &str,
     raw: Option<HashMap<String, String>>,
     reserved: &[&str],
-) -> http_client::CustomHeaders {
+) -> zed_http_client::CustomHeaders {
     raw.as_ref()
         .filter(|map| !map.is_empty())
         .map(|map| resolve_custom_headers(provider_name, map, reserved))

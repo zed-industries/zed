@@ -40,7 +40,6 @@ use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
     Task, TaskExt, WeakEntity,
 };
-use http_client::HttpClient;
 use node_runtime::NodeRuntime;
 use remote::RemoteClient;
 use serde::{Deserialize, Serialize};
@@ -66,6 +65,7 @@ use util::command::Stdio;
 use util::command::new_command;
 use util::{ResultExt, debug_panic, maybe};
 use worktree::Worktree;
+use zed_http_client::HttpClient;
 
 const MAX_TRACKED_OUTPUT_EVENTS: usize = 5000;
 const DEBUG_HISTORY_LIMIT: usize = 10;

@@ -19,7 +19,6 @@ use futures::{
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, UpdateGlobal as _};
 use gpui_tokio::Tokio;
-use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use net::async_net::{UnixListener, UnixStream};
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
@@ -65,6 +64,7 @@ use std::{
 };
 use thiserror::Error;
 use util::{ResultExt, command::new_command};
+use zed_http_client::{Url, read_proxy_from_env};
 
 #[derive(Subcommand)]
 pub enum Commands {

@@ -67,7 +67,7 @@ mod test_mocks {
             &self.worktree_root
         }
 
-        fn http_client(&self) -> Arc<dyn http_client::HttpClient> {
+        fn http_client(&self) -> Arc<dyn zed_http_client::HttpClient> {
             unimplemented!("Not needed for tests")
         }
 

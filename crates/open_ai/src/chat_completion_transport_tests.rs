@@ -2,15 +2,15 @@ use super::*;
 use anyhow::anyhow;
 use futures::TryStreamExt as _;
 use futures::executor::block_on;
-use http_client::{
-    FakeHttpClient, Response,
-    http::{HeaderName, HeaderValue},
-};
 use language_model_core::{
     LanguageModelCompletionError, LanguageModelProviderName, ProviderErrorCategory,
 };
 use serde_json::json;
 use std::sync::{Arc, Mutex};
+use zed_http_client::{
+    FakeHttpClient, Response,
+    http::{HeaderName, HeaderValue},
+};
 
 #[test]
 fn streaming_transport_serializes_custom_requests_and_reports_done() {

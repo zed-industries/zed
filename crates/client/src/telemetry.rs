@@ -7,7 +7,6 @@ use fs::Fs;
 use futures::channel::mpsc;
 use futures::{Future, StreamExt};
 use gpui::{App, AppContext as _, BackgroundExecutor, Task};
-use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 use parking_lot::Mutex;
 use regex::Regex;
 use release_channel::ReleaseChannel;
@@ -20,6 +19,7 @@ use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{AssistantEventData, AssistantPhase, Event, EventRequestBody, EventWrapper};
+use zed_http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 
 pub struct TelemetrySubscription {
     pub historical_events: Result<HistoricalEvents>,
@@ -738,11 +738,11 @@ mod tests {
     use clock::FakeSystemClock;
 
     use gpui::TestAppContext;
-    use http_client::FakeHttpClient;
     use std::collections::HashMap;
     use telemetry_events::FlexibleEvent;
     use util::rel_path::RelPath;
     use worktree::{PathChange, ProjectEntryId, WorktreeId};
+    use zed_http_client::FakeHttpClient;
 
     #[gpui::test]
     async fn test_telemetry_flush_on_max_queue_size(

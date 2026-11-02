@@ -6,7 +6,6 @@ use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
 use gpui::{
     App, AsyncApp, BackgroundExecutor, Context, Entity, SharedString, Task, TaskExt, Window,
 };
-use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
@@ -31,6 +30,7 @@ use ui::{
 };
 use ui_input::InputField;
 use util::ResultExt;
+use zed_http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request, http};
 
 fn reasoning_effort_display(effort: ReasoningEffort) -> (&'static str, &'static str) {
     match effort {
@@ -613,7 +613,7 @@ impl HttpClient for InjectHeaderClient {
         self.inner.user_agent()
     }
 
-    fn proxy(&self) -> Option<&http_client::Url> {
+    fn proxy(&self) -> Option<&zed_http_client::Url> {
         self.inner.proxy()
     }
 
@@ -994,9 +994,9 @@ impl Render for ConfigurationView {
 mod tests {
     use super::*;
     use fs::FakeFs;
-    use http_client::{FakeHttpClient, Response};
     use language_model::{LanguageModelRequestMessage, MessageContent, Role};
     use parking_lot::Mutex;
+    use zed_http_client::{FakeHttpClient, Response};
 
     fn test_catalog() -> &'static str {
         r#"{

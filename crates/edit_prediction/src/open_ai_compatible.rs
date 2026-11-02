@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use cloud_llm_client::predict_edits_v3::{RawCompletionRequest, RawCompletionResponse};
 use futures::AsyncReadExt as _;
-use gpui::{App, AppContext as _, Entity, Global, SharedString, Task, http_client};
+use gpui::{App, AppContext as _, Entity, Global, SharedString, Task};
 use language::language_settings::{OpenAiCompatibleEditPredictionSettings, all_language_settings};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use std::sync::Arc;
@@ -68,7 +68,7 @@ pub(crate) async fn send_custom_server_request(
     max_tokens: u32,
     stop_tokens: Vec<String>,
     api_key: Option<Arc<str>>,
-    http_client: &Arc<dyn http_client::HttpClient>,
+    http_client: &Arc<dyn zed_http_client::HttpClient>,
 ) -> Result<(String, String)> {
     match provider {
         settings::EditPredictionProvider::Ollama => {
@@ -95,8 +95,8 @@ pub(crate) async fn send_custom_server_request(
             };
 
             let request_body = serde_json::to_string(&request)?;
-            let mut http_request_builder = http_client::Request::builder()
-                .method(http_client::Method::POST)
+            let mut http_request_builder = zed_http_client::Request::builder()
+                .method(zed_http_client::Method::POST)
                 .uri(settings.api_url.as_ref())
                 .header("Content-Type", "application/json");
 
@@ -106,7 +106,7 @@ pub(crate) async fn send_custom_server_request(
             }
 
             let http_request =
-                http_request_builder.body(http_client::AsyncBody::from(request_body))?;
+                http_request_builder.body(zed_http_client::AsyncBody::from(request_body))?;
 
             let mut response = http_client.send(http_request).await?;
             let status = response.status();

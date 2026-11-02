@@ -255,7 +255,6 @@ mod tests {
     use extension_host::RELOAD_DEBOUNCE_DURATION;
     use fs::RemoveOptions;
     use gpui::{AnyView, TestAppContext, VisualTestContext};
-    use http_client::HttpClient as _;
     use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{Project, WorktreeId};
     use serde_json::json;
@@ -263,6 +262,7 @@ mod tests {
     use util::path;
     use util::rel_path::rel_path;
     use workspace::{AppState, SplitDirection};
+    use zed_http_client::HttpClient as _;
 
     const EMMET_EXTENSION_ID: &str = "emmet";
 

@@ -21,7 +21,6 @@ use fs::FakeFs;
 use futures::{StreamExt as _, channel::oneshot};
 use git::GitHostingProviderRegistry;
 use gpui::{AppContext as _, BackgroundExecutor, Entity, Task, TestAppContext, VisualTestContext};
-use http_client::{FakeHttpClient, Method};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use notifications::NotificationStore;
@@ -47,6 +46,7 @@ use std::{
 };
 use util::path;
 use workspace::{MultiWorkspace, Workspace, WorkspaceStore};
+use zed_http_client::{FakeHttpClient, Method};
 
 use livekit_client::test::{ManualUnixTimestampSource, TestServer as LivekitTestServer};
 
@@ -226,13 +226,13 @@ impl TestServer {
                                     access_token: ACCESS_TOKEN.into(),
                                 })
                             {
-                                return Ok(http_client::Response::builder()
+                                return Ok(zed_http_client::Response::builder()
                                     .status(401)
                                     .body("Unauthorized".into())
                                     .unwrap());
                             }
 
-                            Ok(http_client::Response::builder()
+                            Ok(zed_http_client::Response::builder()
                                 .status(200)
                                 .body(
                                     serde_json::to_string(&make_get_authenticated_user_response(
@@ -243,7 +243,7 @@ impl TestServer {
                                 )
                                 .unwrap())
                         }
-                        _ => Ok(http_client::Response::builder()
+                        _ => Ok(zed_http_client::Response::builder()
                             .status(404)
                             .body("Not Found".into())
                             .unwrap()),

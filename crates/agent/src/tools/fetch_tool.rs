@@ -7,11 +7,11 @@ use anyhow::{Context as _, Result, bail};
 use futures::{AsyncReadExt as _, FutureExt as _};
 use gpui::{App, AppContext as _, Task};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
-use http_client::{AsyncBody, HttpClientWithUrl};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::SharedString;
 use util::markdown::{MarkdownEscaped, MarkdownInlineCode};
+use zed_http_client::{AsyncBody, HttpClientWithUrl};
 
 use crate::sandboxing::{NetworkRequest, SandboxRequest};
 use crate::{AgentTool, ToolCallEventStream, ToolInput};

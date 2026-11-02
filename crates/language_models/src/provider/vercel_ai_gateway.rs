@@ -3,9 +3,6 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
-use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
-};
 use language_model::chat_completion::{ChatCompletionEventMapper, ResponseStreamEvent};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
@@ -22,6 +19,9 @@ use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
 use util::ResultExt;
+use zed_http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
+};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("vercel_ai_gateway");
 const PROVIDER_NAME: LanguageModelProviderName =
@@ -645,8 +645,8 @@ mod tests {
             cx.set_global(settings_store);
         });
 
-        let http_client = http_client::FakeHttpClient::create(|_request| async move {
-            Ok(http_client::Response::builder()
+        let http_client = zed_http_client::FakeHttpClient::create(|_request| async move {
+            Ok(zed_http_client::Response::builder()
                 .status(401)
                 .body(AsyncBody::from(r#"{"error":{"message":"invalid key"}}"#))?)
         });

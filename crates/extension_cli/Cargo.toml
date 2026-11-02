@@ -21,7 +21,6 @@ extension.workspace = true
 futures.workspace = true
 fs.workspace = true
 gpui_platform.workspace = true
-http_client.workspace = true
 language.workspace = true
 log.workspace = true
 reqwest_client.workspace = true
@@ -36,3 +35,4 @@ tokio = { workspace = true, features = ["fs", "macros", "parking_lot", "process"
 toml.workspace = true
 tree-sitter = { workspace = true, features = ["wasm"] }
 wasmtime.workspace = true
+zed_http_client.workspace = true

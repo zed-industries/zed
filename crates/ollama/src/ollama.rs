@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
 
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, HttpRequestExt, Method, Request as HttpRequest,
-    RequestBuilderExt,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings_content::KeepAlive;
+use zed_http_client::{
+    AsyncBody, CustomHeaders, HttpClient, HttpRequestExt, Method, Request as HttpRequest,
+    RequestBuilderExt,
+};
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 

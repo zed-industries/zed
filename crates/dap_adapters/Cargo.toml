@@ -36,13 +36,14 @@ serde_json.workspace = true
 smol.workspace = true
 task.workspace = true
 util.workspace = true
+zed_http_client.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-http_client.workspace = true
 node_runtime.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 task = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+zed_http_client.workspace = true

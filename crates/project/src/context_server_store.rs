@@ -17,7 +17,6 @@ use futures::{FutureExt as _, StreamExt as _, future::join_all};
 use gpui::{
     App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, TaskExt, WeakEntity, actions,
 };
-use http_client::HttpClient;
 use itertools::Itertools;
 use rand::Rng as _;
 use registry::ContextServerDescriptorRegistry;
@@ -25,6 +24,7 @@ use remote::{RemoteClient, command::RemoteCommand};
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use settings::{Settings as _, SettingsLocation, SettingsStore, WorktreeId};
 use util::{ResultExt as _, rel_path::RelPath};
+use zed_http_client::HttpClient;
 
 use crate::{
     DisableAiSettings, Project,

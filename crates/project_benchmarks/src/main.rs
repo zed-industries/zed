@@ -7,7 +7,6 @@ use client::{Client, UserStore};
 use futures::channel::oneshot;
 use gpui::AppContext as _;
 use gpui::TaskExt;
-use http_client::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use project::{
@@ -17,6 +16,7 @@ use project::{
 use release_channel::ReleaseChannel;
 use remote::{ConnectionIdentifier, RemoteClientDelegate, SshConnectionOptions};
 use semver::Version;
+use zed_http_client::FakeHttpClient;
 
 #[derive(Parser)]
 struct Args {

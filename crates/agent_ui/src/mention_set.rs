@@ -16,7 +16,6 @@ use gpui::{
     AppContext, ClipboardEntry, Context, Empty, Entity, EntityId, Image, ImageFormat, Img,
     SharedString, Task, WeakEntity,
 };
-use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Either;
 use language::Buffer;
 use language_model::{LanguageModelImage, LanguageModelImageExt};
@@ -37,6 +36,7 @@ use text::OffsetRangeExt;
 use ui::{Disclosure, Toggleable, prelude::*};
 use util::{ResultExt, debug_panic, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
+use zed_http_client::{AsyncBody, HttpClientWithUrl};
 
 use crate::ui::MentionCrease;
 

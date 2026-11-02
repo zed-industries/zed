@@ -19,7 +19,6 @@ schemars = ["dep:schemars"]
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
-http_client.workspace = true
 language_model_core.workspace = true
 open_ai.workspace = true
 schemars = { workspace = true, optional = true }
@@ -27,6 +26,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 thiserror.workspace = true
+zed_http_client.workspace = true
 
 [dev-dependencies]
-http_client = { workspace = true, features = ["test-support"] }
+zed_http_client = { workspace = true, features = ["test-support"] }

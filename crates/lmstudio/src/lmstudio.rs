@@ -1,8 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
-};
 pub use language_model_core::chat_completion::{
     ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamError, ResponseStreamEvent,
     ResponseStreamResult, ToolCallChunk, Usage,
@@ -10,6 +7,9 @@ pub use language_model_core::chat_completion::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
+use zed_http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
+};
 
 pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
 

@@ -63,7 +63,6 @@ git.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
 html_to_markdown.workspace = true
-http_client.workspace = true
 idna.workspace = true
 indoc.workspace = true
 itertools.workspace = true
@@ -117,6 +116,7 @@ watch.workspace = true
 workspace.workspace = true
 git_ui_core.workspace = true
 zed_actions.workspace = true
+zed_http_client.workspace = true
 image.workspace = true
 reqwest_client = { workspace = true, optional = true }
 
@@ -130,7 +130,6 @@ db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 eval_utils.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
 languages = { workspace = true, features = ["test-support"] }
@@ -147,3 +146,4 @@ reqwest_client.workspace = true
 tempfile.workspace = true
 vim.workspace = true
 terminal = { workspace = true, features = ["test-support"] }
+zed_http_client = { workspace = true, features = ["test-support"] }

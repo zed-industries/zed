@@ -248,6 +248,7 @@ members = [
     "crates/zed_actions",
     "crates/zed_credentials_provider",
     "crates/zed_env_vars",
+    "crates/zed_http_client",
     "crates/zeta_prompt",
     "crates/zlog",
     "crates/zlog_settings",
@@ -518,6 +519,7 @@ x_ai_subscribed = { path = "crates/x_ai_subscribed" }
 zed_actions = { path = "crates/zed_actions" }
 zed_credentials_provider = { path = "crates/zed_credentials_provider" }
 zed_env_vars = { path = "crates/zed_env_vars" }
+zed_http_client = { path = "crates/zed_http_client" }
 zeta_prompt = { path = "crates/zeta_prompt" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }

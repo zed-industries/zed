@@ -12,9 +12,9 @@ use credentials_provider::CredentialsProvider;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use gpui::WeakEntity;
 use gpui::{App, AsyncApp, Entity, Global, Task, prelude::*};
-use http_client::HttpRequestExt;
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
+use zed_http_client::HttpRequestExt;
+use zed_http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 
 pub use copilot_oauth::DeviceFlow;
 
@@ -1025,11 +1025,11 @@ pub(crate) async fn discover_api_endpoint(
 }
 
 pub(crate) fn copilot_request_headers(
-    builder: http_client::Builder,
+    builder: zed_http_client::Builder,
     oauth_token: &str,
     is_user_initiated: Option<bool>,
     location: Option<ChatLocation>,
-) -> http_client::Builder {
+) -> zed_http_client::Builder {
     builder
         .header("Authorization", format!("Bearer {}", oauth_token))
         .header("Content-Type", "application/json")
@@ -1235,7 +1235,7 @@ mod tests {
     use super::*;
     use credentials_provider::test_support::FakeCredentialsProvider;
     use gpui::TestAppContext;
-    use http_client::FakeHttpClient;
+    use zed_http_client::FakeHttpClient;
 
     #[test]
     fn test_github_urls() {

@@ -5,7 +5,7 @@ publish.workspace = true
 edition.workspace = true
 
 [features]
-test-support = ["http_client/test-support"]
+test-support = ["zed_http_client/test-support"]
 
 [[bin]]
 name = "project-benchmarks"
@@ -20,7 +20,6 @@ client.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
-http_client.workspace = true
 language.workspace = true
 node_runtime.workspace = true
 project.workspace = true
@@ -30,6 +29,7 @@ rpassword = "7.4"
 semver.workspace = true
 settings.workspace = true
 watch.workspace = true
+zed_http_client.workspace = true
 
 [lints]
 workspace = true

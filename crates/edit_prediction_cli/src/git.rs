@@ -51,7 +51,7 @@ pub fn parse_repo_url(url: &str) -> Result<(String, String)> {
         let (owner, repo) = path.split_once('/').context("expected / in git url")?;
         Ok((owner.to_string(), repo.trim_end_matches(".git").to_string()))
     } else {
-        let parsed = http_client::Url::parse(url)?;
+        let parsed = zed_http_client::Url::parse(url)?;
         let mut segments = parsed.path_segments().context("empty http url")?;
         let owner = segments.next().context("expected owner")?;
         let repo = segments.next().context("expected repo")?;

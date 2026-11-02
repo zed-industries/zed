@@ -4,7 +4,6 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
-use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
@@ -28,6 +27,7 @@ use ui::{
 };
 use ui_input::InputField;
 use util::ResultExt;
+use zed_http_client::{CustomHeaders, HttpClient};
 
 use crate::AllLanguageModelSettings;
 use language_model::chat_completion::ChatCompletionEventMapper;
@@ -1477,10 +1477,10 @@ mod tests {
     use super::*;
     use credentials_provider::test_support::FakeCredentialsProvider;
     use gpui::TestAppContext;
-    use http_client::FakeHttpClient;
     use language_model::{LanguageModelRegistry, LanguageModelToolUse};
     use parking_lot::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use zed_http_client::FakeHttpClient;
 
     fn entry(id: &str, n_ctx: Option<u64>, n_ctx_train: Option<u64>) -> ModelEntry {
         ModelEntry {
@@ -1866,9 +1866,9 @@ mod tests {
                     "/props" => (200, "{}"),
                     path => anyhow::bail!("unexpected request: {path}"),
                 };
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(status)
-                    .body(http_client::AsyncBody::from(body))?)
+                    .body(zed_http_client::AsyncBody::from(body))?)
             }
         });
         let credentials = Arc::new(FakeCredentialsProvider::default());
@@ -1950,27 +1950,27 @@ mod tests {
                         model_request_authorizations.lock().push(authorization);
                         let request_index = model_request_count.fetch_add(1, Ordering::SeqCst);
                         if request_index == 0 {
-                            return Ok(http_client::Response::builder()
+                            return Ok(zed_http_client::Response::builder()
                                 .status(503)
-                                .body(http_client::AsyncBody::from("not ready"))?);
+                                .body(zed_http_client::AsyncBody::from("not ready"))?);
                         }
 
-                        return Ok(http_client::Response::builder().status(200).body(
-                            http_client::AsyncBody::from(
+                        return Ok(zed_http_client::Response::builder().status(200).body(
+                            zed_http_client::AsyncBody::from(
                                 r#"{"data":[{"id":"test-model","meta":{"n_ctx":4096}}]}"#,
                             ),
                         )?);
                     }
 
                     if path == "/props" {
-                        return Ok(http_client::Response::builder()
+                        return Ok(zed_http_client::Response::builder()
                             .status(200)
-                            .body(http_client::AsyncBody::from("{}"))?);
+                            .body(zed_http_client::AsyncBody::from("{}"))?);
                     }
 
-                    Ok(http_client::Response::builder()
+                    Ok(zed_http_client::Response::builder()
                         .status(404)
-                        .body(http_client::AsyncBody::default())?)
+                        .body(zed_http_client::AsyncBody::default())?)
                 }
             }
         });
@@ -2004,9 +2004,9 @@ mod tests {
         });
 
         let http_client = FakeHttpClient::create(|_request| async move {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(500)
-                .body(http_client::AsyncBody::from("server error"))?)
+                .body(zed_http_client::AsyncBody::from("server error"))?)
         });
         let credentials_provider = Arc::new(FakeCredentialsProvider::default());
         let provider = cx

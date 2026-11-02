@@ -2,9 +2,9 @@ use std::{future, sync::Arc, time::Duration};
 
 use fs::FakeFs;
 use gpui::TestAppContext;
-use http_client::{AsyncBody, FakeHttpClient, HttpClient, Response};
 use project::{AgentRegistryStore, RegistryAgent};
 use serde_json::json;
+use zed_http_client::{AsyncBody, FakeHttpClient, HttpClient, Response};
 
 use crate::init_test;
 

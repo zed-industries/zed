@@ -22,7 +22,6 @@ use futures::{
     future::BoxFuture,
 };
 use gpui::{App, AsyncApp, BackgroundExecutor, EntityId, Task};
-use http_client::HttpClient;
 use language::LanguageName;
 use lsp::LanguageServerName;
 use moka::sync::Cache;
@@ -44,6 +43,7 @@ use wasmtime::{
 };
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wit::Extension;
+use zed_http_client::HttpClient;
 
 pub struct WasmHost {
     engine: Engine,
@@ -1039,10 +1039,10 @@ mod tests {
     use extension::ExtensionHostProxy;
     use fs::FakeFs;
     use gpui::TestAppContext;
-    use http_client::FakeHttpClient;
     use node_runtime::NodeRuntime;
     use serde_json::json;
     use settings::SettingsStore;
+    use zed_http_client::FakeHttpClient;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {

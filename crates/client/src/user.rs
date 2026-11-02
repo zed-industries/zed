@@ -18,7 +18,6 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task,
     TaskExt, WeakEntity,
 };
-use http_client::http::{HeaderMap, HeaderValue};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use std::{
@@ -27,6 +26,7 @@ use std::{
 };
 use text::ReplicaId;
 use util::{ResultExt, TryFutureExt as _};
+use zed_http_client::http::{HeaderMap, HeaderValue};
 
 pub type LegacyUserId = u64;
 
@@ -1117,8 +1117,8 @@ mod tests {
     use crate::test::make_get_authenticated_user_response;
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
-    use http_client::FakeHttpClient;
     use settings::SettingsStore;
+    use zed_http_client::FakeHttpClient;
 
     #[gpui::test]
     async fn test_current_organization_has_no_active_subscription(cx: &mut TestAppContext) {

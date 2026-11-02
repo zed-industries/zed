@@ -9,7 +9,6 @@ use futures::{
     io,
 };
 use heck::ToSnakeCase;
-use http_client::{self, AsyncBody, HttpClient};
 use semver::Version;
 use serde::Deserialize;
 use std::{
@@ -22,6 +21,7 @@ use std::{
 use util::{ResultExt, command::Stdio};
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
+use zed_http_client::{self, AsyncBody, HttpClient};
 
 /// Currently, we compile with Rust's `wasm32-wasip2` target, which works with WASI `preview2` and the component model.
 const RUST_TARGET: &str = "wasm32-wasip2";

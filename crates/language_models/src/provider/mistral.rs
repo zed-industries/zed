@@ -4,7 +4,6 @@ use credentials_provider::CredentialsProvider;
 
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Global, SharedString, Task};
-use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
     LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -21,6 +20,7 @@ use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::IconName;
+use zed_http_client::{CustomHeaders, HttpClient};
 
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
 

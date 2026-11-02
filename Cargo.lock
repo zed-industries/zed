@@ -278,7 +278,6 @@ dependencies = [
  "handlebars 4.5.0",
  "heck 0.5.0",
  "html_to_markdown",
- "http_client",
  "http_proxy",
  "indoc",
  "itertools 0.14.0",
@@ -323,6 +322,7 @@ dependencies = [
  "watch",
  "web_search",
  "zed_env_vars",
+ "zed_http_client",
  "zlog",
  "zstd",
 ]
@@ -389,7 +389,6 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "gpui_tokio",
- "http_client",
  "indoc",
  "language_model",
  "log",
@@ -409,6 +408,7 @@ dependencies = [
  "uuid",
  "watch",
  "zed_credentials_provider",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -494,7 +494,6 @@ dependencies = [
  "gpui_tokio",
  "heapless",
  "html_to_markdown",
- "http_client",
  "idna",
  "image",
  "indoc",
@@ -555,6 +554,7 @@ dependencies = [
  "watch",
  "workspace",
  "zed_actions",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -796,7 +796,6 @@ dependencies = [
  "chrono",
  "collections",
  "futures 0.3.34",
- "http_client",
  "language_model_core",
  "log",
  "schemars 1.0.4",
@@ -804,6 +803,7 @@ dependencies = [
  "serde_json",
  "strum 0.28.0",
  "thiserror 2.0.17",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -1395,7 +1395,6 @@ dependencies = [
  "futures 0.3.34",
  "futures-lite 2.6.1",
  "gpui",
- "http_client",
  "log",
  "parking_lot",
  "paths",
@@ -1409,6 +1408,7 @@ dependencies = [
  "util",
  "which",
  "workspace",
+ "zed_http_client",
  "zlog",
 ]
 
@@ -2020,7 +2020,7 @@ version = "0.1.0"
 dependencies = [
  "aws-smithy-runtime-api",
  "aws-smithy-types",
- "http_client",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -2133,12 +2133,12 @@ dependencies = [
  "aws-sdk-bedrockruntime",
  "aws-smithy-types",
  "futures 0.3.34",
- "http_client",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "strum 0.28.0",
  "thiserror 2.0.17",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -2859,7 +2859,6 @@ dependencies = [
  "collections",
  "futures 0.3.34",
  "gpui",
- "http_client",
  "language",
  "log",
  "postage",
@@ -2869,6 +2868,7 @@ dependencies = [
  "settings",
  "text",
  "util",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -3062,7 +3062,6 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "gpui_tokio",
- "http_client",
  "http_client_tls",
  "log",
  "objc2-foundation 0.3.2",
@@ -3096,6 +3095,7 @@ dependencies = [
  "windows 0.62.2",
  "worktree",
  "zed_credentials_provider",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -3118,7 +3118,6 @@ dependencies = [
  "futures-lite 2.6.1",
  "gpui",
  "gpui_tokio",
- "http_client",
  "http_client_tls",
  "parking_lot",
  "serde",
@@ -3126,6 +3125,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio-rustls",
  "yawc",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -3193,7 +3193,6 @@ dependencies = [
  "edit_prediction_types",
  "futures 0.3.34",
  "gpui",
- "http_client",
  "icons",
  "language",
  "language_model",
@@ -3202,6 +3201,7 @@ dependencies = [
  "serde_json",
  "text",
  "zed_credentials_provider",
+ "zed_http_client",
  "zeta_prompt",
 ]
 
@@ -3245,7 +3245,6 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "hex",
- "http_client",
  "indoc",
  "language",
  "language_model",
@@ -3299,6 +3298,7 @@ dependencies = [
  "workspace",
  "worktree",
  "zed_actions",
+ "zed_http_client",
  "zlog",
 ]
 
@@ -3591,7 +3591,6 @@ dependencies = [
  "futures 0.3.34",
  "futures-lite 2.6.1",
  "gpui",
- "http_client",
  "log",
  "net",
  "oauth_callback_server",
@@ -3607,6 +3606,7 @@ dependencies = [
  "tempfile",
  "url",
  "util",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -3672,12 +3672,12 @@ dependencies = [
  "credentials_provider",
  "futures 0.3.34",
  "gpui",
- "http_client",
  "language_model",
  "log",
  "serde",
  "serde_json",
  "util",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -4398,7 +4398,6 @@ dependencies = [
  "futures 0.3.34",
  "github_releases",
  "gpui",
- "http_client",
  "language",
  "log",
  "node_runtime",
@@ -4414,6 +4413,7 @@ dependencies = [
  "task",
  "telemetry",
  "util",
+ "zed_http_client",
  "zlog",
 ]
 
@@ -4439,7 +4439,6 @@ dependencies = [
  "fs",
  "futures 0.3.34",
  "gpui",
- "http_client",
  "language",
  "log",
  "node_runtime",
@@ -4449,6 +4448,7 @@ dependencies = [
  "smol",
  "task",
  "util",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -4732,10 +4732,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.34",
- "http_client",
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -4831,7 +4831,6 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "http 1.3.1",
- "http_client",
  "indoc",
  "log",
  "menu",
@@ -4850,6 +4849,7 @@ dependencies = [
  "workspace",
  "worktree",
  "yaml-rust2",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -5245,6 +5245,7 @@ dependencies = [
  "worktree",
  "zed_actions",
  "zed_credentials_provider",
+ "zed_http_client",
  "zeta_prompt",
  "zlog",
  "zstd",
@@ -5275,7 +5276,6 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "gpui_tokio",
- "http_client",
  "indoc",
  "language",
  "language_extension",
@@ -5310,6 +5310,7 @@ dependencies = [
  "wasmtime",
  "watch",
  "workspace",
+ "zed_http_client",
  "zeta_prompt",
 ]
 
@@ -5881,6 +5882,7 @@ dependencies = [
  "theme_settings",
  "util",
  "watch",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -5970,7 +5972,6 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "heck 0.5.0",
- "http_client",
  "indoc",
  "language",
  "log",
@@ -5990,6 +5991,7 @@ dependencies = [
  "wasm-encoder 0.254.2",
  "wasmparser 0.254.2",
  "which",
+ "zed_http_client",
  "ztracing",
 ]
 
@@ -6005,7 +6007,6 @@ dependencies = [
  "fs",
  "futures 0.3.34",
  "gpui_platform",
- "http_client",
  "language",
  "log",
  "reqwest_client",
@@ -6020,6 +6021,7 @@ dependencies = [
  "toml 0.9.8",
  "tree-sitter",
  "wasmtime",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -6042,7 +6044,6 @@ dependencies = [
  "github_releases",
  "gpui",
  "gpui_tokio",
- "http_client",
  "language",
  "language_extension",
  "log",
@@ -6073,6 +6074,7 @@ dependencies = [
  "wasmparser 0.254.2",
  "wasmtime",
  "wasmtime-wasi",
+ "zed_http_client",
  "zlog",
  "ztracing",
 ]
@@ -6102,7 +6104,6 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
- "http_client",
  "language",
  "log",
  "markdown",
@@ -6123,6 +6124,7 @@ dependencies = [
  "vim_mode_setting",
  "workspace",
  "zed_actions",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -6981,7 +6983,6 @@ dependencies = [
  "file_content",
  "futures 0.3.34",
  "gpui",
- "http_client",
  "itertools 0.14.0",
  "log",
  "parking_lot",
@@ -7003,6 +7004,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "zed_http_client",
  "ztracing",
 ]
 
@@ -7015,7 +7017,6 @@ dependencies = [
  "futures 0.3.34",
  "git",
  "gpui",
- "http_client",
  "indoc",
  "itertools 0.14.0",
  "pretty_assertions",
@@ -7026,6 +7027,7 @@ dependencies = [
  "url",
  "urlencoding",
  "util",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -7093,6 +7095,7 @@ dependencies = [
  "watch",
  "workspace",
  "zed_actions",
+ "zed_http_client",
  "zlog",
  "ztracing",
 ]
@@ -7150,13 +7153,13 @@ dependencies = [
  "async-tar",
  "futures 0.3.34",
  "gpui",
- "http_client",
  "log",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "util",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -7315,11 +7318,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.34",
- "http_client",
  "language_model_core",
  "log",
  "serde",
  "serde_json",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -9440,7 +9443,6 @@ dependencies = [
  "globset",
  "gpui",
  "grammars",
- "http_client",
  "imara-diff",
  "indoc",
  "itertools 0.14.0",
@@ -9484,6 +9486,7 @@ dependencies = [
  "unindent",
  "util",
  "watch",
+ "zed_http_client",
  "zlog",
  "ztracing",
 ]
@@ -9554,7 +9557,6 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "gpui_util",
- "http_client",
  "icons",
  "image",
  "language_model_core",
@@ -9562,6 +9564,7 @@ dependencies = [
  "parking_lot",
  "serde_json",
  "thiserror 2.0.17",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -9619,7 +9622,6 @@ dependencies = [
  "google_ai",
  "gpui",
  "gpui_tokio",
- "http_client",
  "language_model",
  "language_models_cloud",
  "llama_cpp",
@@ -9647,6 +9649,7 @@ dependencies = [
  "util",
  "x_ai",
  "x_ai_subscribed",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -9660,7 +9663,6 @@ dependencies = [
  "futures 0.3.34",
  "google_ai",
  "gpui",
- "http_client",
  "language_model",
  "log",
  "open_ai",
@@ -9669,6 +9671,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -10161,12 +10164,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.34",
- "http_client",
  "language_model_core",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "url",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -10186,11 +10189,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.34",
- "http_client",
  "language_model_core",
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -11025,11 +11028,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.34",
- "http_client",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "strum 0.28.0",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -11283,7 +11286,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures 0.3.34",
- "http_client",
  "log",
  "paths",
  "semver",
@@ -11295,6 +11297,7 @@ dependencies = [
  "util",
  "watch",
  "which",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -12050,11 +12053,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.34",
- "http_client",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings_content",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -12159,7 +12162,6 @@ dependencies = [
  "anyhow",
  "collections",
  "futures 0.3.34",
- "http_client",
  "language_model_core",
  "log",
  "pretty_assertions",
@@ -12169,6 +12171,7 @@ dependencies = [
  "serde_json",
  "strum 0.28.0",
  "thiserror 2.0.17",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -12198,7 +12201,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.34",
- "http_client",
  "language_model_core",
  "open_ai",
  "schemars 1.0.4",
@@ -12206,6 +12208,7 @@ dependencies = [
  "serde_json",
  "settings",
  "thiserror 2.0.17",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -12218,7 +12221,6 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "gpui_util",
- "http_client",
  "language_model",
  "log",
  "oauth_callback_server",
@@ -12230,6 +12232,7 @@ dependencies = [
  "sha2",
  "smol",
  "url",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -12240,13 +12243,13 @@ dependencies = [
  "anyhow",
  "futures 0.3.34",
  "google_ai",
- "http_client",
  "language_model_core",
  "log",
  "open_ai",
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -13869,7 +13872,6 @@ dependencies = [
  "github_releases",
  "globset",
  "gpui",
- "http_client",
  "image",
  "indexmap 2.14.0",
  "itertools 0.14.0",
@@ -13918,6 +13920,7 @@ dependencies = [
  "which",
  "worktree",
  "zed_credentials_provider",
+ "zed_http_client",
  "zeroize",
  "zlog",
  "ztracing",
@@ -13934,7 +13937,6 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "gpui_platform",
- "http_client",
  "language",
  "node_runtime",
  "project",
@@ -13944,6 +13946,7 @@ dependencies = [
  "semver",
  "settings",
  "watch",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -14752,7 +14755,6 @@ dependencies = [
  "futures 0.3.34",
  "fuzzy_nucleo",
  "gpui",
- "http_client",
  "indoc",
  "language",
  "log",
@@ -14778,6 +14780,7 @@ dependencies = [
  "workspace",
  "worktree",
  "zed_actions",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -14995,7 +14998,6 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "gpui_tokio",
- "http_client",
  "image",
  "json_schema_store",
  "language",
@@ -15037,6 +15039,7 @@ dependencies = [
  "watch",
  "workspace",
  "worktree",
+ "zed_http_client",
  "zlog",
 ]
 
@@ -15065,7 +15068,6 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "html_to_markdown",
- "http_client",
  "image",
  "indoc",
  "jupyter-protocol",
@@ -15100,6 +15102,7 @@ dependencies = [
  "uuid",
  "workspace",
  "zed_actions",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -16415,7 +16418,6 @@ dependencies = [
  "fuzzy",
  "gpui",
  "heck 0.5.0",
- "http_client",
  "http_proxy",
  "itertools 0.14.0",
  "language",
@@ -16449,6 +16451,7 @@ dependencies = [
  "workspace",
  "zed_actions",
  "zed_credentials_provider",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -16562,7 +16565,6 @@ dependencies = [
  "git",
  "git_ui_core",
  "gpui",
- "http_client",
  "itertools 0.14.0",
  "language",
  "language_model",
@@ -16591,6 +16593,7 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -20420,10 +20423,10 @@ dependencies = [
  "cloud_llm_client",
  "futures 0.3.34",
  "gpui",
- "http_client",
  "language_model",
  "serde_json",
  "web_search",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -21887,7 +21890,6 @@ dependencies = [
  "futures-lite 2.6.1",
  "git",
  "gpui",
- "http_client",
  "itertools 0.14.0",
  "language",
  "log",
@@ -21921,6 +21923,7 @@ dependencies = [
  "util",
  "uuid",
  "zed_actions",
+ "zed_http_client",
  "zlog",
 ]
 
@@ -22045,7 +22048,6 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "gpui_util",
- "http_client",
  "language_model",
  "log",
  "oauth_callback_server",
@@ -22058,6 +22060,7 @@ dependencies = [
  "smol",
  "url",
  "x_ai",
+ "zed_http_client",
 ]
 
 [[package]]
@@ -22447,7 +22450,6 @@ dependencies = [
  "gpui_platform",
  "gpui_tokio",
  "hang_telemetry",
- "http_client",
  "image",
  "image_viewer",
  "input_latency_ui",
@@ -22552,6 +22554,7 @@ dependencies = [
  "zed_actions",
  "zed_credentials_provider",
  "zed_env_vars",
+ "zed_http_client",
  "zlog",
  "zlog_settings",
  "ztracing",
@@ -22731,6 +22734,13 @@ name = "zed_html"
 version = "0.3.2"
 dependencies = [
  "zed_extension_api 0.7.0",
+]
+
+[[package]]
+name = "zed_http_client"
+version = "0.1.0"
+dependencies = [
+ "http_client",
 ]
 
 [[package]]

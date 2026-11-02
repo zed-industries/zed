@@ -12,8 +12,8 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, bail};
 use futures::AsyncReadExt as _;
 use gpui::BackgroundExecutor;
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::Deserialize;
+use zed_http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 
 use crate::CopilotChatConfiguration;
 

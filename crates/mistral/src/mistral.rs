@@ -1,13 +1,13 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, HttpRequestExt, Method, Request as HttpRequest,
-    RequestBuilderExt,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::TryFrom;
 use strum::EnumIter;
+use zed_http_client::{
+    AsyncBody, CustomHeaders, HttpClient, HttpRequestExt, Method, Request as HttpRequest,
+    RequestBuilderExt,
+};
 
 pub const MISTRAL_API_URL: &str = "https://api.mistral.ai/v1";
 

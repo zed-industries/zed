@@ -6,7 +6,6 @@
 use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 use futures::StreamExt;
 use google_ai::completion::{GoogleEventMapper, into_google};
-use http_client::{CustomHeaders, HttpClient};
 use language_model_core::{
     LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelRequest, ReasoningEffort,
@@ -16,6 +15,7 @@ use open_ai::completion::{
     ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response,
 };
+use zed_http_client::{CustomHeaders, HttpClient};
 
 use crate::{
     ApiProtocol,
@@ -191,10 +191,10 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use futures::{AsyncReadExt, TryStreamExt};
-    use http_client::{AsyncBody, FakeHttpClient, Response, http};
     use language_model_core::{
         LanguageModelCompletionEvent, LanguageModelRequestMessage, MessageContent, Role,
     };
+    use zed_http_client::{AsyncBody, FakeHttpClient, Response, http};
 
     #[test]
     fn completion_dispatches_protocols_and_maps_streamed_text() -> Result<()> {

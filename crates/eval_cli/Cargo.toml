@@ -51,3 +51,4 @@ theme.workspace = true
 theme_settings.workspace = true
 util.workspace = true
 watch.workspace = true
+zed_http_client.workspace = true

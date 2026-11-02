@@ -35,7 +35,7 @@ pub use crate::models::*;
 pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
-    extra_headers: http_client::CustomHeaders,
+    extra_headers: zed_http_client::CustomHeaders,
 ) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, anyhow::Error>>, BedrockError> {
     let mut response = bedrock::Client::converse_stream(&client)
         .model_id(request.model.clone())

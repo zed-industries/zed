@@ -6,7 +6,6 @@ use collections::HashMap;
 use edit_prediction::example_spec::ExampleSpec;
 use edit_prediction::udiff::OpenedBuffers;
 use gpui::Entity;
-use http_client::Url;
 use language::{Anchor, Buffer};
 use project::Project;
 use serde::{Deserialize, Serialize};
@@ -16,6 +15,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
+use zed_http_client::Url;
 use zeta_prompt::Zeta2PromptInput;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

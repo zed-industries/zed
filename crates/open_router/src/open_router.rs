@@ -1,8 +1,5 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncReadExt, StreamExt, stream::BoxStream};
-use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
-};
 pub use language_model_core::ReasoningEffort;
 use language_model_core::chat_completion::ResponseStreamResult;
 pub use language_model_core::chat_completion::{
@@ -18,6 +15,9 @@ pub use settings::OpenRouterAvailableModel as AvailableModel;
 pub use settings::OpenRouterProvider as Provider;
 use std::{convert::TryFrom, io, time::Duration};
 use thiserror::Error;
+use zed_http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
+};
 
 pub const OPEN_ROUTER_API_URL: &str = "https://openrouter.ai/api/v1";
 const OPEN_ROUTER_APP_TITLE: &str = "Zed";
@@ -678,11 +678,11 @@ impl OpenRouterError {
 /// present, but omits it on some rate-limited responses; a minute is a
 /// reasonable default backoff for those.
 fn retry_after_with_rate_limit_default(
-    status: http_client::StatusCode,
+    status: zed_http_client::StatusCode,
     headers: &http::HeaderMap,
 ) -> Option<Duration> {
     extract_retry_after(headers).or_else(|| {
-        (status == http_client::StatusCode::TOO_MANY_REQUESTS).then(|| Duration::from_secs(60))
+        (status == zed_http_client::StatusCode::TOO_MANY_REQUESTS).then(|| Duration::from_secs(60))
     })
 }
 
@@ -740,8 +740,8 @@ impl From<ApiError> for language_model_core::LanguageModelCompletionError {
         let provider = language_model_core::LanguageModelProviderName::new("OpenRouter");
         let status = error
             .status
-            .and_then(|status| http_client::StatusCode::from_u16(status).ok());
-        let category = http_client::StatusCode::from_u16(error.code)
+            .and_then(|status| zed_http_client::StatusCode::from_u16(status).ok());
+        let category = zed_http_client::StatusCode::from_u16(error.code)
             .ok()
             .map(|status| ProviderErrorCategory::from_http_status(status, &error.message))
             .filter(|category| *category != ProviderErrorCategory::Other)
@@ -764,11 +764,11 @@ impl From<ApiError> for language_model_core::LanguageModelCompletionError {
 mod tests {
     use super::*;
     use futures::executor::block_on;
-    use http_client::{
+    use std::sync::{Arc, Mutex};
+    use zed_http_client::{
         FakeHttpClient, Response,
         http::{HeaderName, HeaderValue},
     };
-    use std::sync::{Arc, Mutex};
 
     #[test]
     fn completion_uses_shared_transport_with_open_router_headers() {
@@ -861,7 +861,7 @@ mod tests {
         let error = OpenRouterError::from_chat_completion_request_error(
             open_ai::RequestError::HttpResponseError {
                 provider: "OpenRouter".to_string(),
-                status_code: http_client::StatusCode::INTERNAL_SERVER_ERROR,
+                status_code: zed_http_client::StatusCode::INTERNAL_SERVER_ERROR,
                 body: r#"{"error":{"code":499,"message":"upstream provider failed"}}"#.to_string(),
                 headers: Box::default(),
             },
@@ -880,7 +880,7 @@ mod tests {
                 code: Some(code),
                 category: language_model_core::ProviderErrorCategory::InternalServer,
                 ..
-            } if status == http_client::StatusCode::INTERNAL_SERVER_ERROR && code == "499"
+            } if status == zed_http_client::StatusCode::INTERNAL_SERVER_ERROR && code == "499"
         ));
     }
 

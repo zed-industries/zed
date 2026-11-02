@@ -6,7 +6,6 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
-use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyConfiguration, ApiKeyState,
     AuthenticateError, CompactionResult, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
@@ -20,6 +19,7 @@ use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
 use util::ResultExt;
+use zed_http_client::{CustomHeaders, HttpClient};
 
 use anthropic::completion::collect_compaction_result;
 pub use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
@@ -622,10 +622,10 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
 mod tests {
     use super::*;
     use futures::AsyncReadExt as _;
-    use http_client::{AsyncBody, FakeHttpClient};
     use language_model::{LanguageModelRequestMessage, MessageContent};
     use serde_json::json;
     use std::sync::Mutex;
+    use zed_http_client::{AsyncBody, FakeHttpClient};
 
     fn parse_available_model(json: &str) -> AvailableModel {
         serde_json::from_str(json).expect("test fixture should parse")
@@ -715,7 +715,7 @@ mod tests {
             let captured_request = captured_request_for_handler.clone();
             async move {
                 if request.uri().path() == "/v1/models" {
-                    return Ok(http_client::Response::builder()
+                    return Ok(zed_http_client::Response::builder()
                         .status(200)
                         .body(AsyncBody::from(r#"{"data":[]}"#))?);
                 }
@@ -792,7 +792,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(200)
                     .body(AsyncBody::from(format!("{response_lines}\n")))?)
             }
@@ -870,7 +870,7 @@ mod tests {
     #[gpui::test]
     async fn restart_fetch_models_task_records_error_on_failure(cx: &mut gpui::TestAppContext) {
         let http_client = FakeHttpClient::create(|_request| async move {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(401)
                 .body(AsyncBody::from(
                     r#"{"error":{"message":"invalid x-api-key"}}"#,
@@ -910,11 +910,11 @@ mod tests {
                     if let Some(release_rx) = release_rx {
                         release_rx.await.ok();
                     }
-                    Ok(http_client::Response::builder()
+                    Ok(zed_http_client::Response::builder()
                         .status(401)
                         .body(AsyncBody::from(r#"{"error":{"message":"stale"}}"#))?)
                 } else {
-                    Ok(http_client::Response::builder()
+                    Ok(zed_http_client::Response::builder()
                         .status(200)
                         .body(AsyncBody::from(r#"{"data":[]}"#))?)
                 }

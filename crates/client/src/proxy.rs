@@ -6,9 +6,9 @@
 //! through it with `proxy_handshake`.
 
 use anyhow::{Context as _, Result};
-use http_client::Url;
 use proxy_handshake::{ProxyScheme, ProxySpec, Target};
 use tokio::net::TcpStream;
+use zed_http_client::Url;
 
 pub(crate) trait AsyncReadWrite:
     tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static
@@ -23,7 +23,7 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> A
 /// matching the exclusions the HTTP client already applies to its own
 /// requests.
 pub(crate) fn excluded_from_proxy(host: &str) -> bool {
-    http_client::read_no_proxy_from_env()
+    zed_http_client::read_no_proxy_from_env()
         .is_some_and(|no_proxy| proxy_handshake::no_proxy_matches(&no_proxy, host))
 }
 

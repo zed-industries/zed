@@ -11,7 +11,6 @@ use futures::StreamExt as _;
 use gpui::{
     AppContext as _, BackgroundExecutor, TestAppContext, UpdateGlobal as _, VisualContext as _,
 };
-use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
     language_settings::{
@@ -47,6 +46,7 @@ use std::{
 };
 use task::TcpArgumentsTemplate;
 use util::{path, rel_path::rel_path};
+use zed_http_client::BlockedHttpClient;
 
 #[gpui::test(iterations = 10)]
 async fn test_sharing_an_ssh_remote_project(

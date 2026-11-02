@@ -42,7 +42,6 @@ git_hosting_providers.workspace = true
 gpui = { workspace = true, features = ["profiler"] }
 gpui_platform.workspace = true
 gpui_tokio.workspace = true
-http_client.workspace = true
 image.workspace = true
 json_schema_store.workspace = true
 language.workspace = true
@@ -75,6 +74,7 @@ worktree.workspace = true
 thiserror.workspace = true
 rayon.workspace = true
 uuid = { workspace = true, features = ["v4"] }
+zed_http_client.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
@@ -93,7 +93,6 @@ clock = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
@@ -107,6 +106,7 @@ theme = { workspace = true, features = ["test-support"] }
 theme_settings.workspace = true
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+zed_http_client = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 
 [build-dependencies]

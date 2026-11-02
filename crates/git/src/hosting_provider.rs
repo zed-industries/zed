@@ -4,10 +4,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use derive_more::{Deref, DerefMut};
 use gpui::{App, Global, SharedString};
-use http_client::HttpClient;
 use itertools::Itertools;
 use parking_lot::RwLock;
 use url::Url;
+use zed_http_client::HttpClient;
 
 use crate::repository::RepoPath;
 

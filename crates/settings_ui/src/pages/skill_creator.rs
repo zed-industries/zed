@@ -11,7 +11,6 @@ use gpui::{
     App, AsyncApp, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription, Task,
     TextStyle, WeakEntity, WindowHandle, actions,
 };
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
 use language::{Buffer, language_settings::SoftWrap};
 use project::{Project, Worktree};
 use settings::{ActionSequence, Settings};
@@ -24,6 +23,7 @@ use ui_input::{ErasedEditorEvent, InputField};
 use util::ResultExt;
 use util::rel_path::RelPath;
 use workspace::MultiWorkspace;
+use zed_http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
 
 use crate::{SettingsUiFile, SettingsWindow, all_projects};
 
@@ -1009,9 +1009,9 @@ async fn fetch_skill_url(
     // Authenticated raw.githubusercontent.com responses are served directly,
     // so a redirect on that path is unexpected anyway.
     let redirect_policy = if github_token.is_some() {
-        http_client::RedirectPolicy::NoFollow
+        zed_http_client::RedirectPolicy::NoFollow
     } else {
-        http_client::RedirectPolicy::FollowAll
+        zed_http_client::RedirectPolicy::FollowAll
     };
     let request = Request::get(raw_url)
         .follow_redirects(redirect_policy)
@@ -1338,7 +1338,7 @@ mod tests {
     struct TestHttpClient {
         responses: Mutex<VecDeque<(StatusCode, AsyncBody)>>,
         authorization_headers: Mutex<Vec<Option<String>>>,
-        redirect_policies: Mutex<Vec<http_client::RedirectPolicy>>,
+        redirect_policies: Mutex<Vec<zed_http_client::RedirectPolicy>>,
     }
 
     impl TestHttpClient {
@@ -1372,7 +1372,7 @@ mod tests {
                 .clone()
         }
 
-        fn redirect_policies(&self) -> Vec<http_client::RedirectPolicy> {
+        fn redirect_policies(&self) -> Vec<zed_http_client::RedirectPolicy> {
             self.redirect_policies
                 .lock()
                 .expect("redirect policy mutex should not be poisoned")
@@ -1381,7 +1381,7 @@ mod tests {
     }
 
     impl HttpClient for TestHttpClient {
-        fn user_agent(&self) -> Option<&http_client::http::HeaderValue> {
+        fn user_agent(&self) -> Option<&zed_http_client::http::HeaderValue> {
             None
         }
 
@@ -1391,8 +1391,9 @@ mod tests {
 
         fn send(
             &self,
-            req: http_client::Request<AsyncBody>,
-        ) -> futures::future::BoxFuture<'static, Result<http_client::Response<AsyncBody>>> {
+            req: zed_http_client::Request<AsyncBody>,
+        ) -> futures::future::BoxFuture<'static, Result<zed_http_client::Response<AsyncBody>>>
+        {
             let authorization_header = req
                 .headers()
                 .get("Authorization")
@@ -1412,7 +1413,7 @@ mod tests {
 
             let redirect_policy = req
                 .extensions()
-                .get::<http_client::RedirectPolicy>()
+                .get::<zed_http_client::RedirectPolicy>()
                 .cloned()
                 .unwrap_or_default();
             match self.redirect_policies.lock() {
@@ -1439,7 +1440,7 @@ mod tests {
             };
 
             Box::pin(async move {
-                http_client::Response::builder()
+                zed_http_client::Response::builder()
                     .status(status)
                     .body(body)
                     .map_err(anyhow::Error::new)
@@ -1622,8 +1623,8 @@ mod tests {
         assert_eq!(
             client.redirect_policies(),
             vec![
-                http_client::RedirectPolicy::FollowAll,
-                http_client::RedirectPolicy::NoFollow,
+                zed_http_client::RedirectPolicy::FollowAll,
+                zed_http_client::RedirectPolicy::NoFollow,
             ],
             "the authenticated retry must not follow redirects, so the token \
              can never be forwarded to another host"

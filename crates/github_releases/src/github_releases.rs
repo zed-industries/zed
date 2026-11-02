@@ -11,8 +11,8 @@ use anyhow::{Context, Result};
 use async_compression::futures::bufread::{BzDecoder, GzipDecoder};
 use futures::{AsyncRead, AsyncSeekExt, AsyncWrite, io::BufReader};
 use gpui::{BackgroundExecutor, Task};
-use http_client::HttpClient;
 use sha2::{Digest, Sha256};
+use zed_http_client::HttpClient;
 
 fn sha256_matches(actual: &str, expected: &str) -> bool {
     actual.eq_ignore_ascii_case(expected)
@@ -345,7 +345,7 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
 mod tests {
     use super::*;
     use futures::future::BoxFuture;
-    use http_client::{AsyncBody, Response, Url, http::HeaderValue};
+    use zed_http_client::{AsyncBody, Response, Url, http::HeaderValue};
 
     struct StaticResponseClient {
         status: u16,
@@ -355,7 +355,7 @@ mod tests {
     impl HttpClient for StaticResponseClient {
         fn send(
             &self,
-            _req: http_client::Request<AsyncBody>,
+            _req: zed_http_client::Request<AsyncBody>,
         ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
             let status = self.status;
             let body = self.body.clone();

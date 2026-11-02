@@ -5,13 +5,13 @@
 
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
-};
 use language_model_core::{
     LanguageModelCompletionError, LanguageModelProviderName, ReasoningEffort,
 };
 use serde::{Deserialize, Serialize};
+use zed_http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+};
 
 pub mod catalog;
 pub mod completion;

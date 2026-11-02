@@ -6,13 +6,13 @@ use edit_prediction_types::{
 };
 use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
-use http_client::HttpClient;
 use icons::IconName;
 use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, language_settings::all_language_settings,
 };
 use language_model::{ApiKeyState, AuthenticateError, EnvVar, env_var};
 use serde::{Deserialize, Serialize};
+use zed_http_client::HttpClient;
 
 use std::{
     ops::Range,
@@ -142,12 +142,12 @@ impl CodestralEditPredictionDelegate {
 
         log::debug!("Codestral: Sending FIM request");
 
-        let http_request = http_client::Request::builder()
-            .method(http_client::Method::POST)
+        let http_request = zed_http_client::Request::builder()
+            .method(zed_http_client::Method::POST)
             .uri(format!("{}/v1/fim/completions", api_url))
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", api_key))
-            .body(http_client::AsyncBody::from(request_body))?;
+            .body(zed_http_client::AsyncBody::from(request_body))?;
 
         let mut response = http_client.send(http_request).await?;
         let status = response.status();

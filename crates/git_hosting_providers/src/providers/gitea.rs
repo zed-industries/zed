@@ -5,9 +5,9 @@ use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use gpui::SharedString;
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use serde::Deserialize;
 use url::Url;
+use zed_http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
@@ -78,7 +78,7 @@ impl Gitea {
 
         let request = Request::get(&url)
             .header("Content-Type", "application/json")
-            .follow_redirects(http_client::RedirectPolicy::FollowAll);
+            .follow_redirects(zed_http_client::RedirectPolicy::FollowAll);
 
         let mut response = client
             .send(request.body(AsyncBody::default())?)

@@ -32,7 +32,6 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
-http_client.workspace = true
 http_client_tls.workspace = true
 log.workspace = true
 parking_lot.workspace = true
@@ -60,16 +59,17 @@ url.workspace = true
 util.workspace = true
 worktree.workspace = true
 zed_credentials_provider.workspace = true
+zed_http_client.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 fs.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+zed_http_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 semver.workspace = true

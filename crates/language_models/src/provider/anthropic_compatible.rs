@@ -4,7 +4,6 @@ use anyhow::Result;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
-use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelClient, LanguageModelCompletionError,
     LanguageModelCompletionStream, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -15,6 +14,7 @@ use language_model::{
 use settings::Settings;
 use std::sync::Arc;
 use ui::IconName;
+use zed_http_client::{CustomHeaders, HttpClient};
 
 use crate::provider::api_compatible::{
     ApiCompatibleProviderConfigurationView, ApiCompatibleProviderSettings,

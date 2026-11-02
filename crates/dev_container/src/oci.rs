@@ -3,8 +3,8 @@ use std::{path::PathBuf, pin::Pin, sync::Arc};
 use fs::Fs;
 use futures::{AsyncRead, AsyncReadExt, io::BufReader};
 use http::Request;
-use http_client::{AsyncBody, HttpClient};
 use serde::{Deserialize, Serialize};
+use zed_http_client::{AsyncBody, HttpClient};
 
 use crate::devcontainer_api::DevContainerError;
 
@@ -199,8 +199,8 @@ mod test {
 
     use fs::{FakeFs, Fs};
     use gpui::TestAppContext;
-    use http_client::{FakeHttpClient, anyhow};
     use serde::Deserialize;
+    use zed_http_client::{FakeHttpClient, anyhow};
 
     use crate::oci::{
         TokenResponse, download_oci_tarball, get_deserializable_oci_blob,
@@ -263,7 +263,7 @@ mod test {
     #[gpui::test]
     async fn test_get_deserialized_response(_cx: &mut TestAppContext) {
         let client = FakeHttpClient::create(|_request| async move {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
                 .body("{ \"token\": \"thisisatoken\" }".into())
                 .unwrap())
@@ -296,7 +296,7 @@ mod test {
             {
                 return Err(anyhow!("Unexpected query: {}", query.unwrap_or_default()));
             }
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
                 .body("{ \"token\": \"thisisatoken\" }".into())
                 .unwrap())
@@ -319,7 +319,7 @@ mod test {
             if path != format!("/v2/{}/manifests/latest", test_oci_repository()) {
                 return Err(anyhow!("Unexpected path: {}", path));
             }
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
                 .body("{
                     \"schemaVersion\": 2,
@@ -380,7 +380,7 @@ mod test {
             if path != format!("/v2/{}/blobs/blobdigest", test_oci_repository()) {
                 return Err(anyhow!("Unexpected path: {}", path));
             }
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
                 .body(
                     r#"
@@ -429,7 +429,7 @@ mod test {
                 if path != format!("/v2/{}/blobs/blobdigest", test_oci_repository()) {
                     return Err(anyhow!("Unexpected path: {}", path));
                 }
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(200)
                     .body(tarball.to_vec().into())
                     .unwrap())

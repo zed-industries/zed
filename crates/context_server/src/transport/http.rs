@@ -3,9 +3,9 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use gpui::BackgroundExecutor;
-use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
 use std::{pin::Pin, sync::Arc};
+use zed_http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
 
 use crate::oauth::{self, OAuthTokenProvider, WwwAuthenticate};
 use crate::transport::Transport;
@@ -103,7 +103,7 @@ impl HttpTransport {
     /// Build a POST request for the given message body, attaching all standard
     /// headers (content-type, accept, session ID, static headers, and bearer
     /// token if available).
-    fn build_request(&self, message: &[u8]) -> Result<http_client::Request<AsyncBody>> {
+    fn build_request(&self, message: &[u8]) -> Result<zed_http_client::Request<AsyncBody>> {
         let mut request_builder = Request::builder()
             .method(Method::POST)
             .uri(&self.endpoint)
@@ -478,14 +478,14 @@ mod tests {
 
     fn make_fake_http_client(
         handler: impl Fn(
-            http_client::Request<AsyncBody>,
+            zed_http_client::Request<AsyncBody>,
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = anyhow::Result<Response<AsyncBody>>> + Send>,
         > + Send
         + Sync
         + 'static,
     ) -> Arc<dyn HttpClient> {
-        http_client::FakeHttpClient::create(handler) as Arc<dyn HttpClient>
+        zed_http_client::FakeHttpClient::create(handler) as Arc<dyn HttpClient>
     }
 
     fn json_response(status: u16, body: &str) -> anyhow::Result<Response<AsyncBody>> {

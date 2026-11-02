@@ -2,7 +2,6 @@ use anyhow::Result;
 use context_server::test::create_fake_transport;
 use context_server::{ContextServer, ContextServerId};
 use gpui::{AppContext, AsyncApp, Entity, Subscription, Task, TestAppContext, UpdateGlobal as _};
-use http_client::{FakeHttpClient, Response};
 use project::context_server_store::registry::ContextServerDescriptorRegistry;
 use project::context_server_store::*;
 use project::project_settings::ContextServerSettings;
@@ -17,6 +16,7 @@ use settings::{ContextServerCommand, Settings, SettingsStore};
 use std::sync::Arc;
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 use util::path;
+use zed_http_client::{FakeHttpClient, Response};
 
 #[gpui::test]
 async fn test_context_server_status(cx: &mut TestAppContext) {
@@ -973,7 +973,7 @@ async fn test_remote_context_server(cx: &mut TestAppContext) {
     let server_url = "http://example.com/api";
 
     let client = FakeHttpClient::create(|_| async move {
-        use http_client::AsyncBody;
+        use zed_http_client::AsyncBody;
 
         let response = Response::builder()
             .status(200)
@@ -1367,7 +1367,7 @@ fn set_http_context_server_configuration(server_id: &ContextServerId, cx: &mut T
 /// to `respond_to_mcp_message` by the JSON-RPC message in the request body.
 fn set_fake_mcp_http_client(
     cx: &mut TestAppContext,
-    respond_to_mcp_message: impl Fn(&str) -> Result<Response<http_client::AsyncBody>>
+    respond_to_mcp_message: impl Fn(&str) -> Result<Response<zed_http_client::AsyncBody>>
     + Send
     + Sync
     + 'static,
@@ -1407,15 +1407,15 @@ fn set_fake_mcp_http_client(
     cx.update(|cx| cx.set_http_client(client));
 }
 
-fn json_response(body: serde_json::Value) -> Response<http_client::AsyncBody> {
+fn json_response(body: serde_json::Value) -> Response<zed_http_client::AsyncBody> {
     Response::builder()
         .status(200)
         .header("Content-Type", "application/json")
-        .body(http_client::AsyncBody::from(body.to_string()))
+        .body(zed_http_client::AsyncBody::from(body.to_string()))
         .unwrap()
 }
 
-fn initialize_response() -> Response<http_client::AsyncBody> {
+fn initialize_response() -> Response<zed_http_client::AsyncBody> {
     json_response(json!({
         "jsonrpc": "2.0",
         "id": 0,
@@ -1427,18 +1427,18 @@ fn initialize_response() -> Response<http_client::AsyncBody> {
     }))
 }
 
-fn notification_accepted_response() -> Response<http_client::AsyncBody> {
+fn notification_accepted_response() -> Response<zed_http_client::AsyncBody> {
     Response::builder()
         .status(202)
-        .body(http_client::AsyncBody::empty())
+        .body(zed_http_client::AsyncBody::empty())
         .unwrap()
 }
 
-fn unauthorized_response() -> Response<http_client::AsyncBody> {
+fn unauthorized_response() -> Response<zed_http_client::AsyncBody> {
     Response::builder()
         .status(401)
         .header("WWW-Authenticate", "Bearer")
-        .body(http_client::AsyncBody::empty())
+        .body(zed_http_client::AsyncBody::empty())
         .unwrap()
 }
 

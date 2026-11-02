@@ -9,8 +9,8 @@ use std::{
 use regex::Regex;
 
 use fs::Fs;
-use http_client::HttpClient;
 use util::{ResultExt, command::Command, paths::normalize_path};
+use zed_http_client::HttpClient;
 
 use crate::{
     DevContainerConfig, DevContainerContext,
@@ -3483,7 +3483,6 @@ mod test {
     use async_trait::async_trait;
     use fs::{FakeFs, Fs};
     use gpui::{AppContext, TestAppContext};
-    use http_client::{AsyncBody, FakeHttpClient, HttpClient};
     use indoc::indoc;
     use project::{
         ProjectEnvironment,
@@ -3491,6 +3490,7 @@ mod test {
     };
     use serde_json_lenient::Value;
     use util::{command::Command, paths::SanitizedPath};
+    use zed_http_client::{AsyncBody, FakeHttpClient, HttpClient};
 
     use crate::{
         DevContainerConfig, DevContainerContext,
@@ -7752,7 +7752,7 @@ RUN echo $RUBY_VERSION2
                 };
                 return Ok(http::Response::builder()
                     .status(200)
-                    .body(http_client::AsyncBody::from(
+                    .body(zed_http_client::AsyncBody::from(
                         serde_json_lenient::to_string(&token_response).unwrap(),
                     ))
                     .unwrap());
@@ -7787,7 +7787,7 @@ RUN echo $RUBY_VERSION2
                     "#;
                 return Ok(http::Response::builder()
                     .status(200)
-                    .body(http_client::AsyncBody::from(response))
+                    .body(zed_http_client::AsyncBody::from(response))
                     .unwrap());
             }
 
@@ -9022,7 +9022,7 @@ RUN echo $RUBY_VERSION2
 
                 return Ok(http::Response::builder()
                     .status(200)
-                    .body(http_client::AsyncBody::from(response))
+                    .body(zed_http_client::AsyncBody::from(response))
                     .unwrap());
             }
             if parts.uri.path()
@@ -9780,7 +9780,7 @@ RUN echo $RUBY_VERSION2
 
             Ok(http::Response::builder()
                 .status(404)
-                .body(http_client::AsyncBody::default())
+                .body(zed_http_client::AsyncBody::default())
                 .unwrap())
         })
     }

@@ -16,7 +16,6 @@ use cloud_llm_client::predict_edits_v3::{RawCompletionRequest, RawCompletionResp
 use edit_prediction::{DebugEvent, EditPredictionStore, Zeta2RawConfig};
 use futures::{AsyncReadExt as _, FutureExt as _, StreamExt as _, future::Shared};
 use gpui::{AppContext as _, AsyncApp, Task};
-use http_client::{AsyncBody, HttpClient, Method};
 use reqwest_client::ReqwestClient;
 use std::{
     fs,
@@ -25,6 +24,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
+use zed_http_client::{AsyncBody, HttpClient, Method};
 use zeta_prompt::ZetaFormat;
 
 static ANTHROPIC_CLIENT: OnceLock<AnthropicClient> = OnceLock::new();
@@ -654,7 +654,7 @@ pub async fn predict_baseten(
         serde_json::to_vec(&request_body).context("Failed to serialize request body")?;
 
     let http_client: Arc<dyn HttpClient> = Arc::new(ReqwestClient::new());
-    let request = http_client::Request::builder()
+    let request = zed_http_client::Request::builder()
         .method(Method::POST)
         .uri(&url)
         .header("Content-Type", "application/json")

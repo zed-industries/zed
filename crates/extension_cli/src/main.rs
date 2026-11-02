@@ -14,7 +14,6 @@ use extension::build_debug_adapter_schema_path;
 use extension::extension_builder::CompilationConcurrency;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets, copy_extension_resources};
-use http_client::Url;
 use language::LanguageConfig;
 use language::QueryFile;
 use reqwest_client::ReqwestClient;
@@ -24,6 +23,7 @@ use snippet_provider::format::VsSnippetsFile;
 use task::TaskTemplates;
 use tokio::process::Command;
 use tree_sitter::{Language, Query, WasmStore};
+use zed_http_client::Url;
 
 struct TestingContext {
     known_resources: BTreeSet<PathBuf>,

@@ -4,7 +4,6 @@ use futures::FutureExt as _;
 use futures::future::{BoxFuture, Shared};
 
 use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, Window};
-use http_client::HttpClient;
 use language_model::{
     AuthenticateError, IconOrSvg, InlineDescription, LanguageModel, LanguageModelClient,
     LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelProvider,
@@ -14,6 +13,7 @@ use language_model::{
 use std::sync::Arc;
 use ui::{ConfiguredApiCard, prelude::*};
 use x_ai_subscribed::{PROVIDER_ID, PROVIDER_NAME, State, SuperGrokModel, language_model};
+use zed_http_client::HttpClient;
 
 const SUBSCRIPTION_DESCRIPTION: &str =
     "Sign in with your SuperGrok subscription to use Grok models in Zed's agent.";
@@ -256,10 +256,10 @@ impl Render for ConfigurationView {
 mod tests {
     use super::*;
     use gpui::AsyncApp;
-    use http_client::FakeHttpClient;
     use parking_lot::Mutex;
     use std::future::Future;
     use std::pin::Pin;
+    use zed_http_client::FakeHttpClient;
 
     #[gpui::test]
     async fn test_authenticate_awaits_initial_load(cx: &mut gpui::TestAppContext) {
@@ -276,9 +276,9 @@ mod tests {
         ));
 
         let http_client = FakeHttpClient::create(|_| async {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
-                .body(http_client::AsyncBody::default())?)
+                .body(zed_http_client::AsyncBody::default())?)
         });
 
         let provider = cx.update(|cx| XAiSubscribedProvider::new(http_client, creds_provider, cx));

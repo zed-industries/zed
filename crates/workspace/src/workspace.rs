@@ -1417,7 +1417,7 @@ impl AppState {
         <dyn Fs>::set_global(fs.clone(), cx);
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let clock = Arc::new(clock::FakeSystemClock::new());
-        let http_client = http_client::FakeHttpClient::with_404_response();
+        let http_client = zed_http_client::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client, cx);
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));

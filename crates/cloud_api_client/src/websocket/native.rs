@@ -8,10 +8,10 @@ use futures::stream::{SplitSink, SplitStream};
 use futures::{FutureExt as _, SinkExt as _, StreamExt as _, TryStreamExt as _};
 use futures_lite::future::yield_now;
 use gpui::{App, AppContext, Task};
-use http_client::http::request;
 use tokio_rustls::TlsConnector;
 use yawc::frame::Frame;
 use yawc::{TcpWebSocket, WebSocket};
+use zed_http_client::http::request;
 
 use super::{MessageStream, forward_frame};
 use crate::CloudApiClient;

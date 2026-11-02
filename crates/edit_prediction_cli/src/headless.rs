@@ -2,7 +2,6 @@ use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore};
 use db::AppDatabase;
 use extension::ExtensionHostProxy;
 use fs::RealFs;
-use gpui::http_client::read_proxy_from_env;
 use gpui::{App, AppContext, Entity};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -15,6 +14,7 @@ use settings::{Settings, SettingsStore};
 use std::path::PathBuf;
 use std::sync::Arc;
 use util::ResultExt as _;
+use zed_http_client::read_proxy_from_env;
 
 /// Headless subset of `workspace::AppState`.
 pub struct EpAppState {

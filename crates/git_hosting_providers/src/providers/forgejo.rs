@@ -5,9 +5,9 @@ use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use gpui::SharedString;
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use serde::Deserialize;
 use url::Url;
+use zed_http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
@@ -121,7 +121,7 @@ impl Forgejo {
 
         let mut request = Request::get(&url)
             .header("Content-Type", "application/json")
-            .follow_redirects(http_client::RedirectPolicy::FollowAll);
+            .follow_redirects(zed_http_client::RedirectPolicy::FollowAll);
 
         // TODO: not renamed yet for compatibility reasons, may require a refactor later
         // see https://github.com/zed-industries/zed/issues/11043#issuecomment-3480446231

@@ -15,7 +15,7 @@ pub trait NeedsLlmTokenRefresh {
     fn needs_llm_token_refresh(&self) -> bool;
 }
 
-impl NeedsLlmTokenRefresh for http_client::Response<http_client::AsyncBody> {
+impl NeedsLlmTokenRefresh for zed_http_client::Response<zed_http_client::AsyncBody> {
     fn needs_llm_token_refresh(&self) -> bool {
         self.headers().get(EXPIRED_LLM_TOKEN_HEADER_NAME).is_some()
             || self.headers().get(OUTDATED_LLM_TOKEN_HEADER_NAME).is_some()

@@ -3,7 +3,6 @@ use client::{Client, telemetry::MINIDUMP_ENDPOINT};
 use feature_flags::FeatureFlagAppExt;
 use futures::{AsyncReadExt, TryStreamExt};
 use gpui::{App, AppContext, Entity, TaskExt, WeakEntity};
-use http_client::{AsyncBody, HttpClient, Request};
 use project::{Project, worktree_store::WorktreeStoreDiagnostics};
 use proto::{CrashReport, GetCrashFilesResponse};
 use reqwest::{
@@ -24,6 +23,7 @@ use std::{
 use sysinfo::{MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use util::ResultExt;
 use workspace::WorkspaceStore;
+use zed_http_client::{AsyncBody, HttpClient, Request};
 
 mod hang_detection;
 

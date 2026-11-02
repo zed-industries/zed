@@ -13,10 +13,6 @@ use futures::{
 };
 use google_ai::GoogleModelMode;
 use gpui::{App, AppContext, Context, Task};
-use http_client::http::{HeaderMap, HeaderValue};
-use http_client::{
-    AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
-};
 use language_model::{
     ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, CompactionResult, DisabledReason,
     GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel, LanguageModelCompletionError,
@@ -25,6 +21,10 @@ use language_model::{
     LanguageModelRequest, LanguageModelToolChoiceSupport, ModelRateLimiters, OPEN_AI_PROVIDER_ID,
     OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, RateLimiter, X_AI_PROVIDER_ID,
     X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME, unavailable_error,
+};
+use zed_http_client::http::{HeaderMap, HeaderValue};
+use zed_http_client::{
+    AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
 };
 
 use schemars::JsonSchema;
@@ -158,7 +158,7 @@ pub async fn authenticated_llm_request<TP: CloudLlmTokenProvider>(
     http_client: &HttpClientWithUrl,
     token_provider: &TP,
     auth_context: TP::AuthContext,
-    build_request: impl Fn(&str) -> Result<http_client::Request<AsyncBody>>,
+    build_request: impl Fn(&str) -> Result<zed_http_client::Request<AsyncBody>>,
 ) -> Result<Response<AsyncBody>, LlmRequestError> {
     let send = async |token: String| {
         let request = build_request(&token).map_err(LlmRequestError::BuildRequest)?;
@@ -268,7 +268,7 @@ impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
         })?;
         let mut response =
             authenticated_llm_request(http_client, token_provider, auth_context, |token| {
-                let mut request = http_client::Request::builder()
+                let mut request = zed_http_client::Request::builder()
                     .method(Method::POST)
                     .uri(url.as_ref())
                     .when_some(app_version.as_ref(), |builder, app_version| {
@@ -623,7 +623,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
         let url = http_client.build_zed_llm_url("/models", &[])?;
         let mut response =
             authenticated_llm_request(http_client, token_provider, auth_context, |token| {
-                Ok(http_client::Request::builder()
+                Ok(zed_http_client::Request::builder()
                     .method(Method::GET)
                     .header(CLIENT_SUPPORTS_X_AI_HEADER_NAME, "true")
                     .uri(url.as_ref())
@@ -1366,8 +1366,6 @@ pub fn response_lines<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use http_client::FakeHttpClient;
-    use http_client::http::{HeaderMap, StatusCode};
     use language_model::{
         LanguageModelCompletionError, LanguageModelRequestMessage, MessageContent,
         ProviderErrorCategory, Role, Speed, StopReason,
@@ -1375,6 +1373,8 @@ mod tests {
     use serde_json::json;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use zed_http_client::FakeHttpClient;
+    use zed_http_client::http::{HeaderMap, StatusCode};
 
     #[gpui::test]
     async fn cloud_google_completion_emits_stop(cx: &mut gpui::TestAppContext) {
@@ -1534,7 +1534,7 @@ mod tests {
                     body_text,
                 ));
 
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(200)
                     .body(AsyncBody::from(format!(
                         "{}\n",
@@ -1705,7 +1705,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(200)
                     .body(AsyncBody::from(format!("{response_lines}\n")))?)
             }
@@ -1771,7 +1771,7 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         let http_client = FakeHttpClient::create(|_| async move {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
                 .body(AsyncBody::from(format!(
                     "{}\n",

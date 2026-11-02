@@ -2,9 +2,9 @@ use super::*;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use gpui::{App, AppContext as _, Entity};
-use http_client::FakeHttpClient;
 use rpc::proto::{self};
 use settings::SettingsStore;
+use zed_http_client::FakeHttpClient;
 
 #[gpui::test]
 fn test_update_channels(cx: &mut App) {

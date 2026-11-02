@@ -27,7 +27,6 @@ use futures::{
     stream::BoxStream,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, TaskExt, WeakEntity, actions};
-use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use proxy::{connect_proxy_stream, excluded_from_proxy};
@@ -54,6 +53,7 @@ use thiserror::Error;
 use tokio::net::TcpStream;
 use url::Url;
 use util::{ConnectionResult, ResultExt};
+use zed_http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
 
 pub use llm_token::*;
 pub use rpc::*;
@@ -1629,15 +1629,15 @@ impl Client {
         &self,
         llm_token: &LlmApiToken,
         organization_id: OrganizationId,
-        build_request: impl Fn(&str) -> Result<http_client::Request<http_client::AsyncBody>>,
-    ) -> Result<http_client::Response<http_client::AsyncBody>> {
+        build_request: impl Fn(&str) -> Result<zed_http_client::Request<zed_http_client::AsyncBody>>,
+    ) -> Result<zed_http_client::Response<zed_http_client::AsyncBody>> {
         let http_client = self.http_client();
         let token = self
             .cached_llm_token(llm_token, organization_id.clone())
             .await?;
         let response = http_client.send(build_request(&token)?).await?;
         if !response.needs_llm_token_refresh()
-            && response.status() != http_client::http::StatusCode::UNAUTHORIZED
+            && response.status() != zed_http_client::http::StatusCode::UNAUTHORIZED
         {
             return Ok(response);
         }
@@ -1994,11 +1994,11 @@ mod tests {
 
     use clock::FakeSystemClock;
     use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
-    use http_client::FakeHttpClient;
     use parking_lot::Mutex;
     use proto::TypedEnvelope;
     use settings::SettingsStore;
     use std::future;
+    use zed_http_client::FakeHttpClient;
 
     #[test]
     fn test_proxy_settings_trims_and_ignores_empty_proxy() {
@@ -2072,7 +2072,7 @@ mod tests {
         http_client
             .as_fake()
             .replace_handler(|_, _request| async move {
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(503)
                     .body("".into())
                     .unwrap())
@@ -2084,7 +2084,7 @@ mod tests {
         http_client
             .as_fake()
             .replace_handler(|_, _request| async move {
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(200)
                     .body("".into())
                     .unwrap())
@@ -2168,7 +2168,7 @@ mod tests {
         init_test(cx);
         let auth_count = Arc::new(Mutex::new(0));
         let http_client = FakeHttpClient::create(|_request| async move {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
                 .body("".into())
                 .unwrap())
@@ -2202,7 +2202,7 @@ mod tests {
         http_client
             .as_fake()
             .replace_handler(|_, _request| async move {
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(503)
                     .body("".into())
                     .unwrap())
@@ -2216,12 +2216,12 @@ mod tests {
             .replace_handler(|_, request| async move {
                 let credentials = parse_authorization_header(&request).unwrap();
                 if credentials.access_token == "2" {
-                    Ok(http_client::Response::builder()
+                    Ok(zed_http_client::Response::builder()
                         .status(200)
                         .body("".into())
                         .unwrap())
                 } else {
-                    Ok(http_client::Response::builder()
+                    Ok(zed_http_client::Response::builder()
                         .status(401)
                         .body("".into())
                         .unwrap())
@@ -2236,7 +2236,7 @@ mod tests {
     async fn test_sign_in_reports_connection_failure(cx: &mut TestAppContext) {
         init_test(cx);
         let http_client = FakeHttpClient::create(|_request| async move {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
                 .body("".into())
                 .unwrap())

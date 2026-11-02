@@ -9,15 +9,13 @@ use anyhow::{Context as _, Result};
 use cloud_llm_client::EditPredictionRejectReason;
 use credentials_provider::CredentialsProvider;
 use futures::AsyncReadExt as _;
-use gpui::{
-    App, AppContext as _, Context, Entity, Global, SharedString, Task, TaskExt,
-    http_client::{self, AsyncBody, HttpClient, Method, StatusCode},
-};
+use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task, TaskExt};
 use language::{ToOffset, ToPoint as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use release_channel::AppVersion;
 use serde::{Deserialize, Serialize};
 use std::{mem, ops::Range, path::Path, sync::Arc};
+use zed_http_client::{AsyncBody, HttpClient, Method, StatusCode};
 use zeta_prompt::Zeta2PromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
@@ -162,7 +160,7 @@ impl Mercury {
             let buf = serde_json::to_vec(&request_body)?;
             let body: AsyncBody = buf.into();
 
-            let request = http_client::Request::builder()
+            let request = zed_http_client::Request::builder()
                 .uri(MERCURY_API_URL)
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {}", api_token))
@@ -473,7 +471,7 @@ fn send_feedback(
             provider_version: app_version.to_string(),
         };
 
-        let request = http_client::Request::builder()
+        let request = zed_http_client::Request::builder()
             .uri(FEEDBACK_API_URL)
             .method(Method::POST)
             .header("Content-Type", "application/json")

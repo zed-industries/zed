@@ -8,9 +8,9 @@ use cloud_api_client::{
 use cloud_llm_client::{CurrentUsage, UsageData, UsageLimit};
 use futures::{StreamExt, stream::BoxStream};
 use gpui::{AppContext as _, TestAppContext};
-use http_client::{AsyncBody, Method, Request, http};
 use parking_lot::Mutex;
 use rpc::{ConnectionId, Peer, Receipt, TypedEnvelope, proto};
+use zed_http_client::{AsyncBody, Method, Request, http};
 
 use crate::{Client, Connection, Credentials, EstablishConnectionError};
 
@@ -54,13 +54,13 @@ impl FakeServer {
                                     access_token: state.lock().access_token.to_string(),
                                 })
                             {
-                                return Ok(http_client::Response::builder()
+                                return Ok(zed_http_client::Response::builder()
                                     .status(401)
                                     .body("Unauthorized".into())
                                     .unwrap());
                             }
 
-                            Ok(http_client::Response::builder()
+                            Ok(zed_http_client::Response::builder()
                                 .status(200)
                                 .body(
                                     serde_json::to_string(&make_get_authenticated_user_response(

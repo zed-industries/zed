@@ -499,7 +499,6 @@ mod tests {
     use extension::ExtensionHostProxy;
     use fs::FakeFs;
     use gpui::{AppContext, Entity, TestAppContext};
-    use http_client::BlockedHttpClient;
     use node_runtime::NodeRuntime;
     use project::Project;
     use remote::RemoteClient;
@@ -508,6 +507,7 @@ mod tests {
     use serde_json::json;
     use util::path;
     use workspace::find_existing_workspace;
+    use zed_http_client::BlockedHttpClient;
 
     #[gpui::test]
     async fn test_open_remote_project_with_mock_connection(

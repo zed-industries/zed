@@ -23,11 +23,11 @@ use futures::AsyncReadExt as _;
 use futures::FutureExt as _;
 use futures::channel::mpsc;
 use futures::future::BoxFuture;
-use http_client::{AsyncBody, HttpClient, Request};
 use parking_lot::Mutex as SyncMutex;
 use rand::Rng as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use zed_http_client::{AsyncBody, HttpClient, Request};
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -946,7 +946,7 @@ pub async fn perform_dcr(
     let body_bytes = serde_json::to_vec(&body)?;
 
     let request = Request::builder()
-        .method(http_client::http::Method::POST)
+        .method(zed_http_client::http::Method::POST)
         .uri(registration_endpoint.as_str())
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
@@ -1029,7 +1029,7 @@ async fn post_token_request(
         .finish();
 
     let request = Request::builder()
-        .method(http_client::http::Method::POST)
+        .method(zed_http_client::http::Method::POST)
         .uri(token_endpoint.as_str())
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Accept", "application/json")
@@ -1130,7 +1130,7 @@ async fn fetch_json<T: serde::de::DeserializeOwned>(
     validate_oauth_url(url)?;
 
     let request = Request::builder()
-        .method(http_client::http::Method::GET)
+        .method(zed_http_client::http::Method::GET)
         .uri(url.as_str())
         .header("Accept", "application/json")
         .body(AsyncBody::default())?;
@@ -1295,7 +1295,7 @@ impl OAuthTokenProvider for McpOAuthTokenProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use http_client::Response;
+    use zed_http_client::Response;
 
     // -- require_https_or_loopback tests ------------------------------------
 
@@ -1950,14 +1950,14 @@ mod tests {
 
     fn make_fake_http_client(
         handler: impl Fn(
-            http_client::Request<AsyncBody>,
+            zed_http_client::Request<AsyncBody>,
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = anyhow::Result<Response<AsyncBody>>> + Send>,
         > + Send
         + Sync
         + 'static,
     ) -> Arc<dyn HttpClient> {
-        http_client::FakeHttpClient::create(handler) as Arc<dyn HttpClient>
+        zed_http_client::FakeHttpClient::create(handler) as Arc<dyn HttpClient>
     }
 
     fn json_response(status: u16, body: &str) -> anyhow::Result<Response<AsyncBody>> {

@@ -3,10 +3,10 @@ use std::sync::Arc;
 use super::{ChatLocation, copilot_request_headers};
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 pub use language_model::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use zed_http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 
 #[derive(Serialize, Debug)]
 pub struct Request {

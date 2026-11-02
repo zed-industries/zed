@@ -35,10 +35,8 @@ use futures::{
 use git::repository::FileHistoryChangedFileSets;
 use gpui::BackgroundExecutor;
 use gpui::TaskExt;
-use gpui::http_client::Url;
 use gpui::{
     App, AsyncApp, Context, Entity, EntityId, Global, SharedString, Task, WeakEntity, actions,
-    http_client::{self, AsyncBody, Method},
     prelude::*,
 };
 use heapless::Vec as ArrayVec;
@@ -63,6 +61,8 @@ use workspace::notifications::{
     NotificationId, show_app_notification, simple_message_notification::MessageNotification,
 };
 use workspace::{AppState, Workspace};
+use zed_http_client::Url;
+use zed_http_client::{AsyncBody, Method};
 use zeta_prompt::ContextSource;
 use zeta_prompt::{Zeta2PromptInput, Zeta3PromptInput, ZetaFormat};
 
@@ -1160,7 +1160,7 @@ impl EditPredictionStore {
                     )?;
                     let mut response = client
                         .authenticated_llm_request(&llm_token, organization_id, |token| {
-                            Ok(http_client::Request::builder()
+                            Ok(zed_http_client::Request::builder()
                                 .method(Method::GET)
                                 .uri(url.as_ref())
                                 .header("Authorization", format!("Bearer {token}"))
@@ -3085,7 +3085,9 @@ impl EditPredictionStore {
     }
 
     async fn send_api_request<Res>(
-        build: impl Fn(http_client::http::request::Builder) -> Result<http_client::Request<AsyncBody>>,
+        build: impl Fn(
+            zed_http_client::http::request::Builder,
+        ) -> Result<zed_http_client::Request<AsyncBody>>,
         client: Arc<Client>,
         llm_token: LlmApiToken,
         organization_id: Option<OrganizationId>,
@@ -3100,7 +3102,7 @@ impl EditPredictionStore {
         let response = client
             .authenticated_llm_request(&llm_token, organization_id, |token| {
                 build(
-                    http_client::Request::builder()
+                    zed_http_client::Request::builder()
                         .method(Method::POST)
                         .header("Content-Type", "application/json")
                         .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
@@ -3113,7 +3115,7 @@ impl EditPredictionStore {
     }
 
     async fn process_api_response<Res>(
-        mut response: http_client::Response<AsyncBody>,
+        mut response: zed_http_client::Response<AsyncBody>,
         app_version: &Version,
     ) -> Result<(Res, Option<EditPredictionUsage>)>
     where
@@ -3141,7 +3143,7 @@ impl EditPredictionStore {
             let status = response.status();
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
-            if status == http_client::http::StatusCode::REQUEST_TIMEOUT {
+            if status == zed_http_client::http::StatusCode::REQUEST_TIMEOUT {
                 return Err(anyhow::Error::new(CloudRequestTimeoutError));
             }
             anyhow::bail!("Request failed with status: {status:?}\nBody: {body}");

@@ -26,7 +26,7 @@ fn configured_runtime_keeps_node_available_when_npm_is_missing() -> Result<()> {
         return smol::block_on(async {
             for configured_npm in [PathBuf::from("npm"), PathBuf::from("./npm"), npm.clone()] {
                 let runtime = NodeRuntime::new(
-                    Arc::new(http_client::BlockedHttpClient),
+                    Arc::new(zed_http_client::BlockedHttpClient),
                     None,
                     watch::channel(Some(NodeBinaryOptions {
                         use_paths: Some((node.clone(), configured_npm)),

@@ -42,7 +42,6 @@ futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 heck.workspace = true
-http_client.workspace = true
 http_proxy.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -74,6 +73,7 @@ util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zed_credentials_provider.workspace = true
+zed_http_client.workspace = true
 
 [dev-dependencies]
 credentials_provider = { workspace = true, features = ["test-support"] }

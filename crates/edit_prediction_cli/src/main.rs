@@ -799,7 +799,7 @@ fn code_token_ngrams(code: &str, ngram_size: usize) -> Vec<String> {
 }
 
 async fn load_examples(
-    http_client: Arc<dyn http_client::HttpClient>,
+    http_client: Arc<dyn zed_http_client::HttpClient>,
     args: &EpArgs,
     output_path: Option<&PathBuf>,
     background_executor: BackgroundExecutor,

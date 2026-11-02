@@ -20,7 +20,6 @@ cloud_llm_client.workspace = true
 futures.workspace = true
 google_ai.workspace = true
 gpui.workspace = true
-http_client.workspace = true
 language_model.workspace = true
 log.workspace = true
 open_ai = { workspace = true, features = ["schemars"] }
@@ -29,8 +28,9 @@ semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+zed_http_client.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
+zed_http_client = { workspace = true, features = ["test-support"] }

@@ -1,13 +1,11 @@
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
-use gpui::{
-    SharedString,
-    http_client::{self, HttpClient},
-};
+use gpui::SharedString;
 use language::language_settings::OpenAiCompatibleEditPredictionSettings;
 use ollama::get_models;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use zed_http_client::HttpClient;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct OllamaGenerateRequest {
@@ -73,11 +71,11 @@ pub(crate) async fn make_request(
     };
 
     let request_body = serde_json::to_string(&request)?;
-    let http_request = http_client::Request::builder()
-        .method(http_client::Method::POST)
+    let http_request = zed_http_client::Request::builder()
+        .method(zed_http_client::Method::POST)
         .uri(format!("{}/api/generate", settings.api_url))
         .header("Content-Type", "application/json")
-        .body(http_client::AsyncBody::from(request_body))?;
+        .body(zed_http_client::AsyncBody::from(request_body))?;
 
     let mut response = http_client.send(http_request).await?;
     let status = response.status();
@@ -101,13 +99,14 @@ pub(crate) async fn make_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, http_client::FakeHttpClient};
+    use gpui::TestAppContext;
+    use zed_http_client::FakeHttpClient;
 
     #[gpui::test]
     async fn fetch_models_from_server_filters_to_fim_capable_models(_cx: &mut TestAppContext) {
         let http_client = FakeHttpClient::create(|_request| async move {
-            Ok(http_client::Response::builder().status(200).body(
-                http_client::AsyncBody::from(
+            Ok(zed_http_client::Response::builder().status(200).body(
+                zed_http_client::AsyncBody::from(
                     r#"{"models":[
                         {"name":"qwen2.5-coder:3b","modified_at":"","size":0,"digest":"","details":{"format":"gguf","family":"qwen2","families":null,"parameter_size":"3B","quantization_level":"Q4_0"}},
                         {"name":"llama3:70b","modified_at":"","size":0,"digest":"","details":{"format":"gguf","family":"llama","families":null,"parameter_size":"70B","quantization_level":"Q4_0"}},

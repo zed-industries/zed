@@ -4,12 +4,12 @@ use futures::{
     io::BufReader,
     stream::{BoxStream, StreamExt},
 };
-use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::TryFrom;
+use zed_http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+};
 
 pub const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/v1";
 

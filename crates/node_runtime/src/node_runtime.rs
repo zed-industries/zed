@@ -3,7 +3,6 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use chrono::{DateTime, Utc};
 use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
-use http_client::{Host, HttpClient, Url};
 use log::Level;
 use semver::{Version, VersionReq};
 use serde::Deserialize;
@@ -22,6 +21,7 @@ use std::{
 };
 use util::ResultExt;
 use util::archive::extract_zip;
+use zed_http_client::{Host, HttpClient, Url};
 
 const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
@@ -78,7 +78,7 @@ impl NodeRuntime {
 
     pub fn unavailable() -> Self {
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
-            http: Arc::new(http_client::BlockedHttpClient),
+            http: Arc::new(zed_http_client::BlockedHttpClient),
             instance: None,
             last_options: None,
             options: watch::channel(Some(NodeBinaryOptions::default())).1,
@@ -1376,8 +1376,8 @@ mod tests {
     };
 
     use anyhow::{Result, bail};
-    use http_client::Url;
     use semver::{Version, VersionReq};
+    use zed_http_client::Url;
 
     use super::{
         ManagedNodeRuntime, NodeDiscoveryError, NodeRuntimeTrait, NpmInfo, SystemNodeRuntime,

@@ -6,7 +6,6 @@ use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Global,
     Task, TaskExt, Window, actions,
 };
-use http_client::{HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use semver::Version;
@@ -31,6 +30,7 @@ use std::{
 };
 use util::command::new_command;
 use workspace::Workspace;
+use zed_http_client::{HttpClient, HttpClientWithUrl};
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 
@@ -1090,7 +1090,7 @@ async fn download_release(
 
     let total_bytes = response
         .headers()
-        .get(http_client::http::header::CONTENT_LENGTH)
+        .get(zed_http_client::http::header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|total_bytes| *total_bytes > 0);
@@ -1362,7 +1362,6 @@ mod tests {
     use clock::FakeSystemClock;
     use futures::channel::oneshot;
     use gpui::TestAppContext;
-    use http_client::{FakeHttpClient, Response};
     use settings::default_settings;
     use std::{
         rc::Rc,
@@ -1372,6 +1371,7 @@ mod tests {
         },
     };
     use tempfile::tempdir;
+    use zed_http_client::{FakeHttpClient, Response};
 
     #[ctor::ctor(unsafe)]
     fn init_logger() {
@@ -1523,7 +1523,7 @@ mod tests {
                 Ok(Response::builder()
                     .status(200)
                     .header(
-                        http_client::http::header::CONTENT_LENGTH,
+                        zed_http_client::http::header::CONTENT_LENGTH,
                         body.len().to_string(),
                     )
                     .body(body.into())

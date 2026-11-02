@@ -18,7 +18,6 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 anthropic.workspace = true
-http_client.workspace = true
 chrono.workspace = true
 clap = "4"
 client.workspace = true
@@ -71,6 +70,7 @@ similar.workspace = true
 flate2 = "1.1.8"
 toml.workspace = true
 gaoya = "0.2.0"
+zed_http_client.workspace = true
 
 # Wasmtime is included as a dependency in order to enable the same
 # features that are enabled in Zed.

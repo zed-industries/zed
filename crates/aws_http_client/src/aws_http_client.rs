@@ -11,8 +11,8 @@ use aws_smithy_runtime_api::client::result::ConnectorError;
 use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
 use aws_smithy_runtime_api::http::{Headers, StatusCode};
 use aws_smithy_types::body::SdkBody;
-use http_client::AsyncBody;
-use http_client::{HttpClient, Request};
+use zed_http_client::AsyncBody;
+use zed_http_client::{HttpClient, Request};
 
 struct AwsHttpConnector {
     client: Arc<dyn HttpClient>,

@@ -5,7 +5,6 @@ use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use gpui_util::ResultExt as _;
-use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest};
 use language_model::chat_completion::ChatCompletionEventMapper;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionStream,
@@ -20,6 +19,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::form_urlencoded;
+use zed_http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest};
 
 pub const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai_subscribed");
 pub const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("SuperGrok");
@@ -855,9 +855,9 @@ async fn refresh_token(
             status,
             redact_token_body(&body)
         );
-        if status == http_client::StatusCode::BAD_REQUEST
-            || status == http_client::StatusCode::UNAUTHORIZED
-            || status == http_client::StatusCode::FORBIDDEN
+        if status == zed_http_client::StatusCode::BAD_REQUEST
+            || status == zed_http_client::StatusCode::UNAUTHORIZED
+            || status == zed_http_client::StatusCode::FORBIDDEN
         {
             return Err(RefreshError::Fatal(err));
         }
@@ -900,11 +900,11 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
     use gpui::{AppContext as _, TestAppContext};
-    use http_client::FakeHttpClient;
     use parking_lot::Mutex;
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use zed_http_client::FakeHttpClient;
 
     #[test]
     fn grok_47_and_46_supports_xhigh_and_defaults_to_high() {
@@ -1032,9 +1032,9 @@ mod tests {
             async move {
                 refresh_count.fetch_add(1, Ordering::SeqCst);
                 let body = fake_token_response(true);
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(200)
-                    .body(http_client::AsyncBody::from(body))?)
+                    .body(zed_http_client::AsyncBody::from(body))?)
             }
         });
 
@@ -1077,9 +1077,9 @@ mod tests {
             async move {
                 refresh_count.fetch_add(1, Ordering::SeqCst);
                 let body = fake_token_response(true);
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(200)
-                    .body(http_client::AsyncBody::from(body))?)
+                    .body(zed_http_client::AsyncBody::from(body))?)
             }
         });
 
@@ -1101,9 +1101,9 @@ mod tests {
     #[gpui::test]
     async fn test_no_credentials_returns_no_api_key(cx: &mut TestAppContext) {
         let http: Arc<dyn HttpClient> = FakeHttpClient::create(|_| async {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
-                .body(http_client::AsyncBody::default())?)
+                .body(zed_http_client::AsyncBody::default())?)
         });
         let state = make_state(http.clone(), None, cx);
         let weak_state = cx.read(|_cx| state.downgrade());
@@ -1120,9 +1120,9 @@ mod tests {
     #[gpui::test]
     async fn test_fatal_refresh_clears_auth_state(cx: &mut TestAppContext) {
         let http: Arc<dyn HttpClient> = FakeHttpClient::create(move |_request| async move {
-            Ok(http_client::Response::builder()
-                .status(401)
-                .body(http_client::AsyncBody::from(r#"{"error":"invalid_grant"}"#))?)
+            Ok(zed_http_client::Response::builder().status(401).body(
+                zed_http_client::AsyncBody::from(r#"{"error":"invalid_grant"}"#),
+            )?)
         });
         let state = make_state(http.clone(), Some(make_expired_credentials()), cx);
         let weak_state = cx.read(|_cx| state.downgrade());
@@ -1142,9 +1142,9 @@ mod tests {
     #[gpui::test]
     async fn test_transient_refresh_keeps_credentials(cx: &mut TestAppContext) {
         let http: Arc<dyn HttpClient> = FakeHttpClient::create(move |_request| async move {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(500)
-                .body(http_client::AsyncBody::from("Internal Server Error"))?)
+                .body(zed_http_client::AsyncBody::from("Internal Server Error"))?)
         });
         let state = make_state(http.clone(), Some(make_expired_credentials()), cx);
         let weak_state = cx.read(|_cx| state.downgrade());
@@ -1165,9 +1165,9 @@ mod tests {
     async fn test_refresh_keeps_previous_refresh_token_when_omitted(cx: &mut TestAppContext) {
         let http: Arc<dyn HttpClient> = FakeHttpClient::create(move |_request| async move {
             let body = fake_token_response(false);
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
-                .body(http_client::AsyncBody::from(body))?)
+                .body(zed_http_client::AsyncBody::from(body))?)
         });
         let state = make_state(http.clone(), Some(make_expired_credentials()), cx);
         let weak_state = cx.read(|_cx| state.downgrade());
@@ -1194,9 +1194,9 @@ mod tests {
                     let _ = rx.await;
                 }
                 let body = fake_token_response(true);
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(200)
-                    .body(http_client::AsyncBody::from(body))?)
+                    .body(zed_http_client::AsyncBody::from(body))?)
             }
         });
 
@@ -1233,9 +1233,9 @@ mod tests {
                 if let Some(rx) = rx {
                     let _ = rx.await;
                 }
-                Ok(http_client::Response::builder()
-                    .status(401)
-                    .body(http_client::AsyncBody::from(r#"{"error":"invalid_grant"}"#))?)
+                Ok(zed_http_client::Response::builder().status(401).body(
+                    zed_http_client::AsyncBody::from(r#"{"error":"invalid_grant"}"#),
+                )?)
             }
         });
 
@@ -1294,9 +1294,9 @@ mod tests {
             .replace(("Bearer".to_string(), b"some-creds".to_vec()));
 
         let http: Arc<dyn HttpClient> = FakeHttpClient::create(|_| async {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
-                .body(http_client::AsyncBody::default())?)
+                .body(zed_http_client::AsyncBody::default())?)
         });
         let state = make_state_with_credentials_provider(
             http,
@@ -1326,9 +1326,9 @@ mod tests {
             .replace(("Bearer".to_string(), creds_json));
 
         let http: Arc<dyn HttpClient> = FakeHttpClient::create(|_| async {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
-                .body(http_client::AsyncBody::default())?)
+                .body(zed_http_client::AsyncBody::default())?)
         });
         let state = cx.new(|cx| State::new(http.clone(), creds_provider.clone(), cx));
         let load_task = cx

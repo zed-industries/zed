@@ -1,7 +1,6 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{Stream, StreamExt, stream::BoxStream};
-use http_client::StatusCode;
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
@@ -12,6 +11,7 @@ use language_model_core::{
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::sync::Arc;
+use zed_http_client::StatusCode;
 
 use crate::responses::{
     ContextManagement, Request as ResponseRequest, ResponseCustomToolCallItem,

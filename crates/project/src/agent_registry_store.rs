@@ -10,10 +10,10 @@ use gpui::{
     App, AppContext as _, BackgroundExecutor, Context, Entity, FutureExt as _, Global,
     SharedString, Task, TaskExt,
 };
-use http_client::{AsyncBody, HttpClient, StatusCode};
 use serde::Deserialize;
 use settings::Settings as _;
 use util::ResultExt;
+use zed_http_client::{AsyncBody, HttpClient, StatusCode};
 
 use crate::{AgentId, DisableAiSettings};
 
@@ -170,7 +170,7 @@ impl AgentRegistryStore {
         let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.background_executor().clone());
         let store = cx.new(|_cx| Self {
             fs,
-            http_client: http_client::FakeHttpClient::with_404_response(),
+            http_client: zed_http_client::FakeHttpClient::with_404_response(),
             agents,
             is_fetching: false,
             fetch_error: None,

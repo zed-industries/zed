@@ -23,7 +23,6 @@ collections.workspace = true
 derive_more.workspace = true
 file_content.workspace = true
 gpui.workspace = true
-http_client.workspace = true
 itertools.workspace = true
 log.workspace = true
 parking_lot.workspace = true
@@ -44,6 +43,7 @@ urlencoding.workspace = true
 util.workspace = true
 uuid.workspace = true
 futures.workspace = true
+zed_http_client.workspace = true
 ztracing.workspace = true
 
 [dev-dependencies]

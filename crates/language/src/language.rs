@@ -39,7 +39,7 @@ use futures::Future;
 use futures::future::LocalBoxFuture;
 use futures::lock::OwnedMutexGuard;
 use gpui::{App, AsyncApp, BackgroundExecutor, Entity, EntityId, SharedString};
-use http_client::HttpClient;
+use zed_http_client::HttpClient;
 
 pub use language_core::{
     SymbolKind,

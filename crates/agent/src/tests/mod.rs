@@ -20,10 +20,7 @@ use futures::{
     },
     future::{Fuse, Shared},
 };
-use gpui::{
-    App, AppContext, AsyncApp, Entity, Task, TestAppContext, UpdateGlobal,
-    http_client::FakeHttpClient,
-};
+use gpui::{App, AppContext, AsyncApp, Entity, Task, TestAppContext, UpdateGlobal};
 use indoc::indoc;
 use language_model::{
     CompletionIntent, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
@@ -53,6 +50,7 @@ use std::{
     time::Duration,
 };
 use util::path;
+use zed_http_client::FakeHttpClient;
 
 pub(crate) mod test_tools;
 use test_tools::*;
@@ -3436,7 +3434,7 @@ async fn test_retry_cancelled_promptly_on_new_send(cx: &mut TestAppContext) {
         &model_a,
         LanguageModelCompletionError::from_http_status(
             language_model::LanguageModelProviderName::new("test"),
-            http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            zed_http_client::StatusCode::INTERNAL_SERVER_ERROR,
             "Internal server error".to_string(),
             None,
         ),
@@ -3820,7 +3818,7 @@ async fn test_prompt_too_large_marks_token_usage_exceeded(cx: &mut TestAppContex
         &model,
         LanguageModelCompletionError::from_http_status(
             LanguageModelProviderName::new("test"),
-            http_client::StatusCode::PAYLOAD_TOO_LARGE,
+            zed_http_client::StatusCode::PAYLOAD_TOO_LARGE,
             "prompt too large".to_string(),
             None,
         ),
@@ -3856,7 +3854,7 @@ async fn test_prompt_too_large_uses_reported_token_count(cx: &mut TestAppContext
         &model,
         LanguageModelCompletionError::from_http_status(
             LanguageModelProviderName::new("test"),
-            http_client::StatusCode::PAYLOAD_TOO_LARGE,
+            zed_http_client::StatusCode::PAYLOAD_TOO_LARGE,
             "prompt is too long: 1500000 tokens".to_string(),
             None,
         ),
@@ -4301,7 +4299,7 @@ async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
         &summary_request,
         LanguageModelCompletionError::from_http_status(
             language_model::LanguageModelProviderName::new("test"),
-            gpui::http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            zed_http_client::StatusCode::INTERNAL_SERVER_ERROR,
             "Internal server error".to_string(),
             None,
         ),
@@ -4703,7 +4701,7 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
         &model,
         LanguageModelCompletionError::from_http_status(
             LanguageModelProviderName::new("Anthropic"),
-            http_client::StatusCode::SERVICE_UNAVAILABLE,
+            zed_http_client::StatusCode::SERVICE_UNAVAILABLE,
             "Anthropic's API servers are overloaded right now".to_string(),
             Some(Duration::from_secs(3)),
         ),
@@ -4791,7 +4789,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
         &model,
         LanguageModelCompletionError::from_http_status(
             LanguageModelProviderName::new("Anthropic"),
-            http_client::StatusCode::SERVICE_UNAVAILABLE,
+            zed_http_client::StatusCode::SERVICE_UNAVAILABLE,
             "Anthropic's API servers are overloaded right now".to_string(),
             Some(Duration::from_secs(3)),
         ),
@@ -4872,7 +4870,7 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
             &model,
             LanguageModelCompletionError::from_http_status(
                 LanguageModelProviderName::new("Anthropic"),
-                http_client::StatusCode::SERVICE_UNAVAILABLE,
+                zed_http_client::StatusCode::SERVICE_UNAVAILABLE,
                 "Anthropic's API servers are overloaded right now".to_string(),
                 Some(Duration::from_secs(3)),
             ),
@@ -4971,7 +4969,7 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
         &model,
         LanguageModelCompletionError::from_http_status(
             language_model::LanguageModelProviderName::new("test"),
-            http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            zed_http_client::StatusCode::INTERNAL_SERVER_ERROR,
             "Internal server error".to_string(),
             None,
         ),
@@ -7204,7 +7202,7 @@ async fn test_subagent_auto_compaction(cx: &mut TestAppContext) {
         vec!["tool output"],
     );
     test.fail_compaction(
-        http_client::StatusCode::SERVICE_UNAVAILABLE,
+        zed_http_client::StatusCode::SERVICE_UNAVAILABLE,
         Some(Duration::from_secs(3)),
         cx,
     );
@@ -7481,7 +7479,7 @@ async fn test_subagent_context_limit_preserves_result_after_turn_completes(
                 &test.model,
                 LanguageModelCompletionError::from_http_status(
                     LanguageModelProviderName::new("test"),
-                    http_client::StatusCode::BAD_REQUEST,
+                    zed_http_client::StatusCode::BAD_REQUEST,
                     "terminal provider error".to_string(),
                     None,
                 ),
@@ -7513,7 +7511,7 @@ async fn test_subagent_compaction_exhausts_transient_retries(cx: &mut TestAppCon
     test.tool_round(950_000, cx);
     for request_index in 0..5 {
         test.fail_compaction(
-            http_client::StatusCode::SERVICE_UNAVAILABLE,
+            zed_http_client::StatusCode::SERVICE_UNAVAILABLE,
             Some(Duration::from_secs(3)),
             cx,
         );
@@ -7600,7 +7598,7 @@ async fn test_subagent_compaction_error_propagation(cx: &mut TestAppContext) {
         let send = test.send("subagent task prompt", cx);
         test.tool_round(950_000, cx);
         let error = if provider_error {
-            test.fail_compaction(http_client::StatusCode::BAD_REQUEST, None, cx);
+            test.fail_compaction(zed_http_client::StatusCode::BAD_REQUEST, None, cx);
             "compaction provider error"
         } else {
             test.fake
@@ -7713,7 +7711,7 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
         &request,
         LanguageModelCompletionError::from_http_status(
             LanguageModelProviderName::new("test"),
-            http_client::StatusCode::PAYLOAD_TOO_LARGE,
+            zed_http_client::StatusCode::PAYLOAD_TOO_LARGE,
             "prompt too large".to_string(),
             None,
         ),
@@ -8245,7 +8243,7 @@ async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let http_client = gpui::http_client::FakeHttpClient::with_200_response();
+    let http_client = zed_http_client::FakeHttpClient::with_200_response();
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
@@ -8289,7 +8287,7 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let http_client = gpui::http_client::FakeHttpClient::with_200_response();
+    let http_client = zed_http_client::FakeHttpClient::with_200_response();
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
@@ -8330,7 +8328,7 @@ async fn test_fetch_tool_prompts_for_ungranted_host(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let http_client = gpui::http_client::FakeHttpClient::with_200_response();
+    let http_client = zed_http_client::FakeHttpClient::with_200_response();
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
@@ -8378,7 +8376,7 @@ async fn test_fetch_tool_granted_host_skips_prompt(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let http_client = gpui::http_client::FakeHttpClient::with_200_response();
+    let http_client = zed_http_client::FakeHttpClient::with_200_response();
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
@@ -8420,7 +8418,7 @@ async fn test_fetch_tool_refuses_loopback_without_unsandboxed(cx: &mut TestAppCo
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let http_client = gpui::http_client::FakeHttpClient::with_200_response();
+    let http_client = zed_http_client::FakeHttpClient::with_200_response();
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
@@ -8462,7 +8460,7 @@ async fn test_fetch_tool_unsandboxed_lifts_restrictions(cx: &mut TestAppContext)
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let http_client = gpui::http_client::FakeHttpClient::with_200_response();
+    let http_client = zed_http_client::FakeHttpClient::with_200_response();
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
@@ -8512,13 +8510,13 @@ async fn test_fetch_tool_refuses_redirect_to_loopback(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let http_client = gpui::http_client::FakeHttpClient::create(|req| async move {
+    let http_client = zed_http_client::FakeHttpClient::create(|req| async move {
         let uri = req.uri().to_string();
         assert!(
             uri.contains("example.com"),
             "the loopback redirect target must never be requested, but saw {uri}"
         );
-        Ok(gpui::http_client::Response::builder()
+        Ok(zed_http_client::Response::builder()
             .status(302)
             .header("location", "http://localhost:3000/internal")
             .body("".into())
@@ -8570,14 +8568,14 @@ async fn test_fetch_tool_reauthorizes_redirect_to_new_host(cx: &mut TestAppConte
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let http_client = gpui::http_client::FakeHttpClient::create(|req| async move {
+    let http_client = zed_http_client::FakeHttpClient::create(|req| async move {
         let uri = req.uri().to_string();
         assert!(
             uri.contains("example.com"),
             "the ungranted redirect target must not be requested before authorization, \
              but saw {uri}"
         );
-        Ok(gpui::http_client::Response::builder()
+        Ok(zed_http_client::Response::builder()
             .status(302)
             .header("location", "https://redirect-target.example/landing")
             .body("".into())
@@ -8633,16 +8631,16 @@ async fn test_fetch_tool_follows_same_host_redirect(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let http_client = gpui::http_client::FakeHttpClient::create(|req| async move {
+    let http_client = zed_http_client::FakeHttpClient::create(|req| async move {
         let uri = req.uri().to_string();
         if uri.ends_with("/start") {
-            Ok(gpui::http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(302)
                 .header("location", "https://example.com/final")
                 .body("".into())
                 .unwrap())
         } else if uri.ends_with("/final") {
-            Ok(gpui::http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
                 .header("content-type", "text/plain")
                 .body("final content".into())
@@ -9797,7 +9795,7 @@ impl SubagentCompactionTest {
 
     fn fail_compaction(
         &self,
-        status: http_client::StatusCode,
+        status: zed_http_client::StatusCode,
         retry_after: Option<Duration>,
         cx: &mut TestAppContext,
     ) {

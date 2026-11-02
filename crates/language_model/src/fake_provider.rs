@@ -7,9 +7,9 @@ use crate::{
 use anyhow::anyhow;
 use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::StreamExt};
 use gpui::{App, AsyncApp, Entity, Task};
-use http_client::Result;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
+use zed_http_client::Result;
 
 /// A provider for tests that serves any model id and records every request.
 ///

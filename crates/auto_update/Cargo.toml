@@ -18,7 +18,6 @@ client.workspace = true
 db.workspace = true
 futures-lite.workspace = true
 gpui.workspace = true
-http_client.workspace = true
 log.workspace = true
 paths.workspace = true
 release_channel.workspace = true
@@ -30,6 +29,7 @@ smol.workspace = true
 tempfile.workspace = true
 util.workspace = true
 workspace.workspace = true
+zed_http_client.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 which.workspace = true

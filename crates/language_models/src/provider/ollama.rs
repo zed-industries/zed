@@ -5,7 +5,6 @@ use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use futures::{Stream, TryFutureExt, stream};
 use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
-use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, DisabledReason, EnvVar, IconOrSvg, InlineDescription,
     LanguageModel, LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -30,6 +29,7 @@ use ui::{
 };
 use ui_input::InputField;
 use util::ResultExt;
+use zed_http_client::{CustomHeaders, HttpClient};
 
 use crate::AllLanguageModelSettings;
 
@@ -1286,10 +1286,10 @@ mod tests {
             cx.set_global(settings_store);
         });
 
-        let http_client = http_client::FakeHttpClient::create(|_request| async move {
-            Ok(http_client::Response::builder()
+        let http_client = zed_http_client::FakeHttpClient::create(|_request| async move {
+            Ok(zed_http_client::Response::builder()
                 .status(500)
-                .body(http_client::AsyncBody::from("server error"))?)
+                .body(zed_http_client::AsyncBody::from("server error"))?)
         });
         let provider = cx.update(|cx| {
             OllamaLanguageModelProvider::new(http_client, Arc::new(TestCredentialsProvider), cx)

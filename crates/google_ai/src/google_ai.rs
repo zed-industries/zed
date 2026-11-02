@@ -2,15 +2,15 @@ use std::mem;
 
 use anyhow::{Result, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
-    StatusCode, Url, http::HeaderMap,
-};
 pub use language_model_core::{GOOGLE_AI_API_URL as API_URL, ModelMode as GoogleModelMode};
 use language_model_core::{
     GOOGLE_PROVIDER_NAME, LanguageModelCompletionError, ProviderErrorCategory,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use zed_http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    StatusCode, Url, http::HeaderMap,
+};
 pub mod completion;
 
 // Google's model catalog reports token limits and whether a model thinks, but not the facts
@@ -294,7 +294,7 @@ fn completion_error_from_response(
     body: String,
 ) -> LanguageModelCompletionError {
     let retry_after = headers
-        .get(http_client::http::header::RETRY_AFTER)
+        .get(zed_http_client::http::header::RETRY_AFTER)
         .and_then(|value| value.to_str().ok()?.parse::<u64>().ok())
         .map(std::time::Duration::from_secs);
     let parsed_error = serde_json::from_str::<GoogleErrorEnvelope>(&body)
@@ -388,8 +388,8 @@ mod provider_error_tests {
     fn google_rejections_preserve_wire_details_and_semantic_category() {
         let mut headers = HeaderMap::new();
         headers.insert(
-            http_client::http::header::RETRY_AFTER,
-            http_client::http::HeaderValue::from_static("7"),
+            zed_http_client::http::header::RETRY_AFTER,
+            zed_http_client::http::HeaderValue::from_static("7"),
         );
         let error = completion_error_from_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -967,10 +967,10 @@ mod tests {
     use super::*;
     use completion::GoogleEventMapper;
     use futures::{TryStreamExt, stream};
-    use http_client::{FakeHttpClient, Response};
     use language_model_core::LanguageModelCompletionEvent;
     use serde_json::json;
     use std::io::{Error, ErrorKind};
+    use zed_http_client::{FakeHttpClient, Response};
 
     #[test]
     fn stream_body_failures_remain_retryable() {

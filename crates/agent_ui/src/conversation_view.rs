@@ -4494,7 +4494,7 @@ pub(crate) mod tests {
             language_model::OPEN_AI_PROVIDER_NAME,
             language_model::ANTHROPIC_PROVIDER_NAME,
         ] {
-            for status in [None, Some(http_client::StatusCode::PAYMENT_REQUIRED)] {
+            for status in [None, Some(zed_http_client::StatusCode::PAYMENT_REQUIRED)] {
                 let provider_error = LanguageModelCompletionError::from_provider_response(
                     provider.clone(),
                     status,
@@ -4522,7 +4522,7 @@ pub(crate) mod tests {
     fn test_payment_required_from_zed_uses_upgrade_prompt() {
         let provider_error = LanguageModelCompletionError::from_provider_response(
             ZED_CLOUD_PROVIDER_NAME,
-            Some(http_client::StatusCode::PAYMENT_REQUIRED),
+            Some(zed_http_client::StatusCode::PAYMENT_REQUIRED),
             None,
             "Payment required".to_string(),
             None,

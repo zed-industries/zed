@@ -1,7 +1,7 @@
 use anyhow::Result;
 use futures::AsyncReadExt;
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
+use zed_http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 
 use crate::{Request, RequestError, Response};
 

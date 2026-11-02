@@ -42,7 +42,6 @@ futures.workspace = true
 google_ai.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
-http_client.workspace = true
 language_model.workspace = true
 language_models_cloud.workspace = true
 llama_cpp = { workspace = true, features = ["schemars"] }
@@ -69,6 +68,7 @@ ui_input.workspace = true
 util.workspace = true
 x_ai = { workspace = true, features = ["schemars"] }
 x_ai_subscribed.workspace = true
+zed_http_client.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
@@ -78,10 +78,10 @@ credentials_provider = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 feature_flags.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+zed_http_client = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-shear]
 ignored = ["component"]

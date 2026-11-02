@@ -425,7 +425,7 @@ async fn start_remote_project(
             remote_server::HeadlessAppState {
                 session: server_session,
                 fs,
-                http_client: Arc::new(http_client::BlockedHttpClient),
+                http_client: Arc::new(zed_http_client::BlockedHttpClient),
                 node_runtime: node_runtime::NodeRuntime::unavailable(),
                 languages: Arc::new(language::LanguageRegistry::new(server_executor.clone())),
                 extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
@@ -440,7 +440,7 @@ async fn start_remote_project(
     let project = cx.update(|cx| {
         let project_client = client::Client::new(
             Arc::new(clock::FakeSystemClock::new()),
-            http_client::FakeHttpClient::with_404_response(),
+            zed_http_client::FakeHttpClient::with_404_response(),
             cx,
         );
         let user_store = cx.new(|cx| client::UserStore::new(project_client.clone(), cx));
@@ -14241,7 +14241,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
             remote_server::HeadlessAppState {
                 session: server_session,
                 fs: server_fs.clone(),
-                http_client: Arc::new(http_client::BlockedHttpClient),
+                http_client: Arc::new(zed_http_client::BlockedHttpClient),
                 node_runtime: node_runtime::NodeRuntime::unavailable(),
                 languages: Arc::new(language::LanguageRegistry::new(server_executor.clone())),
                 extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
@@ -14257,7 +14257,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
     let project = cx.update(|cx| {
         let project_client = client::Client::new(
             Arc::new(clock::FakeSystemClock::new()),
-            http_client::FakeHttpClient::with_404_response(),
+            zed_http_client::FakeHttpClient::with_404_response(),
             cx,
         );
         let user_store = cx.new(|cx| client::UserStore::new(project_client.clone(), cx));
@@ -14408,7 +14408,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
             remote_server::HeadlessAppState {
                 session: server_session_2,
                 fs: server_fs.clone(),
-                http_client: Arc::new(http_client::BlockedHttpClient),
+                http_client: Arc::new(zed_http_client::BlockedHttpClient),
                 node_runtime: node_runtime::NodeRuntime::unavailable(),
                 languages: Arc::new(language::LanguageRegistry::new(server_executor.clone())),
                 extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
@@ -15910,7 +15910,7 @@ async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
             remote_server::HeadlessAppState {
                 session: server_session,
                 fs: server_fs.clone(),
-                http_client: Arc::new(http_client::BlockedHttpClient),
+                http_client: Arc::new(zed_http_client::BlockedHttpClient),
                 node_runtime: node_runtime::NodeRuntime::unavailable(),
                 languages: Arc::new(language::LanguageRegistry::new(server_executor)),
                 extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),

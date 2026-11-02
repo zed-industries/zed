@@ -1,11 +1,11 @@
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
-};
 use serde::{Deserialize, Serialize, ser::SerializeSeq as _};
 use serde_json::Value;
 use std::sync::Arc;
+use zed_http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+};
 
 use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
 use language_model_core::{
@@ -1107,13 +1107,13 @@ mod tests {
     use crate::completion::OpenAiResponseEventMapper;
     use futures::executor::block_on;
     use futures::{TryStreamExt, stream};
-    use http_client::FakeHttpClient;
     use language_model_core::{
         LanguageModelCompletionError, LanguageModelCompletionEvent, OPEN_AI_PROVIDER_ID,
     };
     use serde_json::json;
     use std::io::{Error, ErrorKind};
     use std::sync::{Arc, Mutex};
+    use zed_http_client::FakeHttpClient;
 
     #[test]
     fn stream_body_failures_remain_retryable() {
@@ -1202,7 +1202,7 @@ mod tests {
             let client = FakeHttpClient::create(move |_| {
                 let body = body.clone();
                 async move {
-                    Ok(http_client::Response::builder()
+                    Ok(zed_http_client::Response::builder()
                         .status(200)
                         .body(AsyncBody::from(body))?)
                 }
@@ -1261,7 +1261,7 @@ mod tests {
                     },
                 ];
                 Ok(
-                    http_client::Response::builder().body(AsyncBody::from_reader(
+                    zed_http_client::Response::builder().body(AsyncBody::from_reader(
                         stream::iter(chunks).into_async_read(),
                     ))?,
                 )
@@ -1337,7 +1337,7 @@ mod tests {
                         "input": input
                     })
                 );
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(200)
                     .body(AsyncBody::from(
                         r#"{"object":"response.input_tokens","input_tokens":321}"#,
@@ -1359,7 +1359,7 @@ mod tests {
     #[test]
     fn count_input_tokens_preserves_transport_errors() {
         let client = FakeHttpClient::create(|_| async {
-            Ok(http_client::Response::builder().status(401).body(AsyncBody::from(
+            Ok(zed_http_client::Response::builder().status(401).body(AsyncBody::from(
                 r#"{"error":{"message":"Invalid API key","type":"invalid_request_error","code":"invalid_api_key"}}"#
             ))?)
         });
@@ -1377,7 +1377,7 @@ mod tests {
         );
 
         let client = FakeHttpClient::create(|_| async {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
                 .body(AsyncBody::from("{}"))?)
         });
@@ -1413,7 +1413,7 @@ mod tests {
                 body.read_to_string(&mut body_text).await?;
                 *captured_request.lock().unwrap() = Some((method, uri, authorization, body_text));
 
-                Ok(http_client::Response::builder()
+                Ok(zed_http_client::Response::builder()
                     .status(200)
                     .body(AsyncBody::from(
                         json!({
@@ -1490,7 +1490,7 @@ mod tests {
     #[test]
     fn compact_response_reports_http_and_deserialization_errors() {
         let http_client = FakeHttpClient::create(|_| async move {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(429)
                 .header("retry-after", "5")
                 .body(AsyncBody::from("rate limited"))?)
@@ -1522,7 +1522,7 @@ mod tests {
         }
 
         let http_client = FakeHttpClient::create(|_| async move {
-            Ok(http_client::Response::builder()
+            Ok(zed_http_client::Response::builder()
                 .status(200)
                 .body(AsyncBody::from("not valid JSON"))?)
         });

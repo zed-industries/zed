@@ -2,7 +2,6 @@ use anyhow::Result;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
-use http_client::{CustomHeaders, HttpClient};
 use language_model::chat_completion::ChatCompletionEventMapper;
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelClient, LanguageModelCompletionError,
@@ -20,6 +19,7 @@ use open_ai::{
 use settings::Settings;
 use std::sync::Arc;
 use ui::IconName;
+use zed_http_client::{CustomHeaders, HttpClient};
 
 use crate::provider::api_compatible::{
     ApiCompatibleProviderConfigurationView, ApiCompatibleProviderSettings,

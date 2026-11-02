@@ -6,13 +6,13 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 pub use cloud_api_types::*;
 use futures::AsyncReadExt as _;
-use http_client::http::request;
-use http_client::{
-    AsyncBody, HttpClientWithUrl, HttpRequestExt, Json, Method, Request, Response, StatusCode,
-};
 use parking_lot::RwLock;
 use serde::de::DeserializeOwned;
 use thiserror::Error;
+use zed_http_client::http::request;
+use zed_http_client::{
+    AsyncBody, HttpClientWithUrl, HttpRequestExt, Json, Method, Request, Response, StatusCode,
+};
 
 pub use llm_token::LlmApiToken;
 

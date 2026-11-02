@@ -8,7 +8,6 @@ use fs::Fs;
 use futures::io::BufReader;
 pub use github_releases::latest_github_release;
 use gpui::{AsyncApp, SharedString};
-pub use http_client::HttpClient;
 use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use schemars::JsonSchema;
@@ -26,6 +25,7 @@ use std::{
 };
 use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
 use util::{archive::extract_zip, rel_path::RelPath};
+pub use zed_http_client::HttpClient;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DapStatus {

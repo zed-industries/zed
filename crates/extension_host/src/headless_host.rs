@@ -18,11 +18,11 @@ use futures::{
     future::{FutureExt as _, join_all},
 };
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
-use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use util::ResultExt as _;
+use zed_http_client::HttpClient;
 
 use crate::wasm_host::{WasmExtension, WasmHost};
 

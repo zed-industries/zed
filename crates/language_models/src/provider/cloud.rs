@@ -679,11 +679,11 @@ mod tests {
     use clock::FakeSystemClock;
     use feature_flags::FeatureFlagAppExt as _;
     use gpui::TestAppContext;
-    use http_client::{FakeHttpClient, Method, Response};
     use std::sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
+    use zed_http_client::{FakeHttpClient, Method, Response};
 
     const TEST_USER_ID: u64 = 42;
 

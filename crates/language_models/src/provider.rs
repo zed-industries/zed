@@ -1,6 +1,6 @@
 use collections::HashMap;
-use http_client::CustomHeaders;
-use http_client::http::{HeaderName, HeaderValue};
+use zed_http_client::CustomHeaders;
+use zed_http_client::http::{HeaderName, HeaderValue};
 
 pub mod anthropic;
 pub mod anthropic_compatible;

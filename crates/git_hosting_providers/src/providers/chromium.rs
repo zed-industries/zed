@@ -9,10 +9,10 @@ use git::{
     PullRequest, RemoteUrl,
 };
 use gpui::SharedString;
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use regex::Regex;
 use serde::Deserialize;
 use url::Url;
+use zed_http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 
 const CHROMIUM_REVIEW_URL: &str = "https://chromium-review.googlesource.com";
 
@@ -53,7 +53,7 @@ impl Chromium {
 
         let request = Request::get(&url)
             .header("Content-Type", "application/json")
-            .follow_redirects(http_client::RedirectPolicy::FollowAll);
+            .follow_redirects(zed_http_client::RedirectPolicy::FollowAll);
 
         let mut response = client
             .send(request.body(AsyncBody::default())?)

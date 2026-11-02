@@ -982,7 +982,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
         cx.background_executor().clone(),
     ));
     let clock = Arc::new(clock::FakeSystemClock::new());
-    let http_client = http_client::FakeHttpClient::with_404_response();
+    let http_client = zed_http_client::FakeHttpClient::with_404_response();
     let client = client::Client::new(clock, http_client, cx);
     let session = cx.new(|cx| session::AppSession::new(Session::test(), cx));
     let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));

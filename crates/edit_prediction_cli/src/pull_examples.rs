@@ -1,7 +1,6 @@
 use anyhow::{Context as _, Result};
 use flate2::read::GzDecoder;
 use gpui::BackgroundExecutor;
-use http_client::{AsyncBody, HttpClient, Method, Request};
 use indoc::indoc;
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
@@ -11,6 +10,7 @@ use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 use telemetry_events::EditPredictionRating;
+use zed_http_client::{AsyncBody, HttpClient, Method, Request};
 
 use zeta_prompt::{Zeta2PromptInput, ZetaFormat, excerpt_range_for_format};
 

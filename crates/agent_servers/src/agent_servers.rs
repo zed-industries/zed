@@ -8,8 +8,8 @@ use client::ProxySettings;
 use collections::{HashMap, HashSet};
 pub use custom::*;
 use fs::Fs;
-use http_client::read_no_proxy_from_env;
 use project::{AgentId, Project, agent_server_store::AgentServerStore};
+use zed_http_client::read_no_proxy_from_env;
 
 use acp_thread::AgentConnection;
 use agent_client_protocol::schema::v2 as acp_v2;

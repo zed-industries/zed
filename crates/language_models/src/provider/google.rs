@@ -5,7 +5,6 @@ use futures::{FutureExt, StreamExt, future::BoxFuture};
 pub use google_ai::completion::{GoogleEventMapper, into_google};
 use google_ai::{GenerateContentResponse, ThinkingLevel};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
-use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, AuthenticateError, EnvVar, LanguageModelCompletionError,
     LanguageModelCompletionStream, LanguageModelToolChoiceSupport, unavailable_error,
@@ -23,6 +22,7 @@ use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
 use util::ResultExt as _;
+use zed_http_client::{CustomHeaders, HttpClient};
 
 use language_model::ApiKeyState;
 
