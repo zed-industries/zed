@@ -67,6 +67,12 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
             gpui_windows::WindowsPlatform::new(headless)
                 .expect("failed to initialize Windows platform"),
         ),
+        target_env = "ohos" => {
+            let _ = headless;
+            panic!(
+                "gpui_platform does not select an OpenHarmony backend; inject gpui-ohos with Application::with_platform"
+            )
+        },
         all(
             any(target_os = "linux", target_os = "freebsd"),
             not(target_env = "ohos")
