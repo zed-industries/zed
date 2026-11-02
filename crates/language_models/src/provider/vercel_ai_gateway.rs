@@ -592,6 +592,7 @@ async fn list_models(
                 images: supports_images,
                 parallel_tool_calls,
                 prompt_cache_key,
+                prompt_caching: false,
                 chat_completions: true,
                 interleaved_reasoning: false,
                 max_tokens_parameter: false,
