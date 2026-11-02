@@ -1116,6 +1116,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                     None,
                     false,
+                    false,
                 ) {
                     Ok(request) => request,
                     Err(error) => return async move { Err(error.into()) }.boxed(),

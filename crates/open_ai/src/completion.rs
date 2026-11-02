@@ -69,29 +69,6 @@ pub fn into_open_ai(
     max_tokens_parameter: ChatCompletionMaxTokensParameter,
     reasoning_effort: Option<ReasoningEffort>,
     interleaved_reasoning: bool,
-) -> Result<crate::Request> {
-    into_open_ai_with_prompt_caching(
-        request,
-        model_id,
-        supports_parallel_tool_calls,
-        supports_prompt_cache_key,
-        max_output_tokens,
-        max_tokens_parameter,
-        reasoning_effort,
-        interleaved_reasoning,
-        false,
-    )
-}
-
-pub fn into_open_ai_with_prompt_caching(
-    request: LanguageModelRequest,
-    model_id: &str,
-    supports_parallel_tool_calls: bool,
-    supports_prompt_cache_key: bool,
-    max_output_tokens: Option<u64>,
-    max_tokens_parameter: ChatCompletionMaxTokensParameter,
-    reasoning_effort: Option<ReasoningEffort>,
-    interleaved_reasoning: bool,
     prompt_caching: bool,
 ) -> Result<crate::Request> {
     let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
@@ -1662,7 +1639,7 @@ mod tests {
                 .collect(),
                 ..Default::default()
             };
-            let request = into_open_ai_with_prompt_caching(
+            let request = into_open_ai(
                 request,
                 "custom-model",
                 false,
@@ -1708,7 +1685,7 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        let request = into_open_ai_with_prompt_caching(
+        let request = into_open_ai(
             request,
             "custom-model",
             false,
@@ -1811,6 +1788,7 @@ mod tests {
                 None,
                 ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                 None,
+                false,
                 false,
             )?;
             let response = into_open_ai_response(
@@ -2662,6 +2640,7 @@ mod tests {
                 ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                 effort,
                 false,
+                false,
             )?;
             assert_eq!(
                 response.reasoning.as_ref().map(|config| config.effort),
@@ -2778,6 +2757,7 @@ mod tests {
                 ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                 None,
                 false,
+                false,
             )?;
 
             let serialized = serde_json::to_value(&chat)?;
@@ -2845,6 +2825,7 @@ mod tests {
                     model_maximum,
                     parameter,
                     None,
+                    false,
                     false,
                 )?;
                 let serialized = serde_json::to_value(chat)?;
@@ -4492,6 +4473,7 @@ mod tests {
             ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             None,
             true,
+            false,
         )
         .unwrap();
         assert_eq!(
@@ -4521,6 +4503,7 @@ mod tests {
             None,
             ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             None,
+            false,
             false,
         )
         .unwrap();

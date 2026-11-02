@@ -14,7 +14,6 @@ use language_model::{
 };
 use open_ai::{
     ResponseStreamEvent,
-    completion::into_open_ai_with_prompt_caching,
     responses::{Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, stream_response},
     stream_completion,
 };
@@ -26,7 +25,7 @@ use crate::provider::api_compatible::{
     ApiCompatibleProviderConfigurationView, ApiCompatibleProviderSettings,
     ApiCompatibleProviderState,
 };
-use crate::provider::open_ai::{OpenAiResponseEventMapper, into_open_ai_response};
+use crate::provider::open_ai::{OpenAiResponseEventMapper, into_open_ai, into_open_ai_response};
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
@@ -311,7 +310,7 @@ impl LanguageModelClient for OpenAiCompatibleLanguageModelProvider {
 
         if config.capabilities.chat_completions {
             let reasoning_effort = chat_completion_reasoning_effort(&request, &config);
-            let request = match into_open_ai_with_prompt_caching(
+            let request = match into_open_ai(
                 request,
                 &config.name,
                 config.capabilities.parallel_tool_calls,
@@ -677,7 +676,7 @@ mod tests {
         };
         let reasoning_effort = chat_completion_reasoning_effort(&request, &model);
 
-        let request = into_open_ai_with_prompt_caching(
+        let request = into_open_ai(
             request,
             &model.name,
             model.capabilities.parallel_tool_calls,

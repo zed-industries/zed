@@ -360,6 +360,7 @@ impl LanguageModelClient for VercelAiGatewayLanguageModelProvider {
             crate::provider::open_ai::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             None,
             false,
+            false,
         ) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
