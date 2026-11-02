@@ -11,6 +11,7 @@ workspace = true
 [lib]
 path = "src/zed_http_client.rs"
 doctest = false
+test = false
 
 [features]
 test-support = ["http_client/test-support"]
