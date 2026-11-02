@@ -500,7 +500,7 @@ By default, OpenAI-compatible models inherit these capabilities:
 - `chat_completions`: `true`
 - `interleaved_reasoning`: `false`
 - `max_tokens_parameter`: `false`
-- `supports_none_reasoning_effort`: `false`
+- `supports_none_reasoning_effort`: `true`
 
 If a model only works with the Responses API, set `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint for that model.
 
@@ -536,7 +536,7 @@ If the model requires the Responses API for reasoning state, set `capabilities.c
 }
 ```
 
-Valid settings values are `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, and `"max"`. Use `"none"` in `settings.json` when you need to force reasoning off for an endpoint; the provider setup UI exposes the non-`none` values for thinking-capable models. For chat-completions endpoints that should receive prior thinking back in a dedicated `reasoning_content` field, also set `capabilities.interleaved_reasoning` to `true`. If the endpoint expects the output-token limit as `max_tokens` instead of `max_completion_tokens`, set `capabilities.max_tokens_parameter` to `true`. If your endpoint specifically accepts `"none"` as a reasoning effort when thinking is disabled (such as official OpenAI proxy endpoints), set `capabilities.supports_none_reasoning_effort` to `true`.
+Valid settings values are `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, and `"max"`. Use `"none"` in `settings.json` when you need to force reasoning off for an endpoint; the provider setup UI exposes the non-`none` values for thinking-capable models. For chat-completions endpoints that should receive prior thinking back in a dedicated `reasoning_content` field, also set `capabilities.interleaved_reasoning` to `true`. If the endpoint expects the output-token limit as `max_tokens` instead of `max_completion_tokens`, set `capabilities.max_tokens_parameter` to `true`. By default, `capabilities.supports_none_reasoning_effort` is `true`, which sends `reasoning_effort: "none"` on reasoning-capable models when thinking is disabled (such as for thread title generation and context compaction). If your endpoint rejects `"none"` (for example, with `"Reasoning is mandatory for this endpoint and cannot be disabled"` or error 1210), set `capabilities.supports_none_reasoning_effort` to `false` so the parameter is omitted instead.
 
 For example, a chat-completions endpoint with the maximum OpenAI-style reasoning effort, streamed thinking, and `max_tokens` output limits can be configured as:
 
