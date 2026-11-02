@@ -83,12 +83,14 @@ impl HasDisplayHandle for TestWindow {
 }
 
 impl TestWindow {
+    #[cfg(feature = "bench-support")]
     pub(crate) fn set_gpu_metrics_enabled(&self, enabled: bool) {
         if let Some(renderer) = self.0.lock().renderer.as_mut() {
             renderer.set_gpu_metrics_enabled(enabled);
         }
     }
 
+    #[cfg(feature = "bench-support")]
     pub(crate) fn wait_for_gpu_idle(&self) -> anyhow::Result<()> {
         if let Some(renderer) = self.0.lock().renderer.as_mut() {
             renderer.wait_for_gpu_idle()?;
@@ -96,6 +98,7 @@ impl TestWindow {
         Ok(())
     }
 
+    #[cfg(feature = "bench-support")]
     pub(crate) fn take_gpu_stats(&self) -> Option<crate::GpuStats> {
         self.0.lock().renderer.as_mut()?.take_gpu_stats()
     }
