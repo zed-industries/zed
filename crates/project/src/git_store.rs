@@ -2460,18 +2460,18 @@ impl GitStore {
                 }
 
                 if is_active_repo_removed {
-                    if let Some((&repo_id, _)) = self.repositories.iter().next() {
-                        self.active_repo_id = Some(repo_id);
-                        cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(repo_id)));
-                    } else {
-                        self.active_repo_id = None;
-                        cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
-                    }
+                    self.select_fallback_active_repository(cx);
                 }
             }
             _ => {}
         }
     }
+
+    fn select_fallback_active_repository(&mut self, cx: &mut Context<Self>) {
+        self.active_repo_id = self.repositories.keys().next().copied();
+        cx.emit(GitStoreEvent::ActiveRepositoryChanged(self.active_repo_id));
+    }
+
     fn on_repository_event(
         &mut self,
         repo: Entity<Repository>,
@@ -3396,8 +3396,8 @@ impl GitStore {
                 client.send(update).log_err();
             }
             if this.active_repo_id == Some(id) {
-                this.active_repo_id = None;
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
+                this.active_repo_id = this.repositories.keys().next().copied();
+                cx.emit(GitStoreEvent::ActiveRepositoryChanged(this.active_repo_id));
             }
             cx.emit(GitStoreEvent::RepositoryRemoved(id));
         });
