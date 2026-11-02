@@ -1,4 +1,5 @@
-//! Painter-order assignment (`BoundsTree`) and `Scene::finish` for many primitives.
+//! Painting many primitives: draw-order assignment (`BoundsTree`), `Scene::finish`
+//! sorting and batching, and, through a window, everything from paint to GPU submission.
 //!
 //! The `random` cases are the general workload: seeded rectangles of every size,
 //! scattered and overlapping, painted as a mix of quads, shadows, underlines, filled paths
@@ -349,7 +350,7 @@ fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
 }
 
 fn scene_ordering(criterion: &mut criterion::Criterion<gpui::BenchMeasurement>) {
-    let mut group = criterion.benchmark_group("BoundsOrdering/scene");
+    let mut group = criterion.benchmark_group("Primitives/scene");
     for case in cases() {
         let mut fixture = None;
         let report = bench_metrics::MetricReport::new();
@@ -368,7 +369,7 @@ fn scene_ordering(criterion: &mut criterion::Criterion<gpui::BenchMeasurement>) 
             && let Some((_, scene)) = &fixture
         {
             eprintln!(
-                "scene stats BoundsOrdering/scene/{case}: batches={}",
+                "scene stats Primitives/scene/{case}: batches={}",
                 scene.batches().count()
             );
         }
@@ -376,7 +377,7 @@ fn scene_ordering(criterion: &mut criterion::Criterion<gpui::BenchMeasurement>) 
     group.finish();
 }
 
-#[gpui::bench(inputs = cases(), input_name = "case", group = "BoundsOrdering/paint", fps = 120)]
+#[gpui::bench(inputs = cases(), input_name = "case", group = "Primitives/paint", fps = 120)]
 fn paint_rectangles(case: &Case, cx: &mut BenchAppContext) {
     let mut window = cx.add_empty_window();
     let extent = window.update(|window, _| {
@@ -393,7 +394,7 @@ fn paint_rectangles(case: &Case, cx: &mut BenchAppContext) {
     window.update(|window, _| {
         if std::env::var("GPUI_BENCH_SCENE_STATS").as_deref() == Ok("1") {
             eprintln!(
-                "scene stats BoundsOrdering/paint/{case}: batches={}",
+                "scene stats Primitives/paint/{case}: batches={}",
                 window.rendered_scene().batches().count(),
             );
         }

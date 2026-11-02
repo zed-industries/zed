@@ -48,7 +48,7 @@ harness = false
 required-features = ["bench-support"]
 
 [[bench]]
-name = "bounds_ordering"
+name = "primitives"
 harness = false
 required-features = ["bench-support"]
 

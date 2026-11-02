@@ -13,7 +13,7 @@ switches the invoking checkout or publishes a branch.
 The default core suite keeps the mixed workload (plain and with cached views),
 five full-refresh tree shapes, element style, cached element style, pointer
 hover, warm installed-font text, text first frame, three scrolling workloads,
-random and patterned bounds ordering, and two inspector workloads. --full
+random and patterned primitive painting, and two inspector workloads. --full
 selects every variant; --slow restores the benchmarks' own Criterion settings
 (including inspector's five-second measurement). --repetitions controls
 independent runs, not random seeds. Use --seed to compare another fixed tree.
@@ -47,7 +47,7 @@ import tarfile
 import time
 
 
-TARGETS = ("randomized_element_tree", "bounds_ordering", "inspector_render")
+TARGETS = ("randomized_element_tree", "primitives", "inspector_render")
 FIXTURE_FILES = tuple(
     Path("crates/gpui_platform/benches") / f"{target}.rs" for target in TARGETS
 ) + (
@@ -66,10 +66,10 @@ CORE = {
         r"TextPanels/first populated installed font/panels/32$)"
     ),
     # Overlapping paint cases, including the random ones with large paths and text,
-    # primarily stress GPU overdraw, not bounds ordering; GPU queue backpressure makes
+    # primarily stress GPU overdraw, not draw ordering; GPU queue backpressure makes
     # their instruction counts vary by up to ~16% within a run.
-    "bounds_ordering": (
-        r"^BoundsOrdering/(scene/[a-z]+-1024(-seed-\d+)?|paint/case/grid-1024)$"
+    "primitives": (
+        r"^Primitives/(scene/[a-z]+-1024(-seed-\d+)?|paint/case/grid-1024)$"
     ),
     "inspector_render": (
         r"^closed_inspector_(grid/case/1000-nodes|panel/case/500-rows)-0-cycles$"
