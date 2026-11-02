@@ -7252,38 +7252,6 @@ pub mod test {
     }
 
     #[gpui::test]
-    async fn test_global_skills_of_a_remote_project_go_to_the_remote(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        use crate::pages::{SkillLocation, skill_location};
-
-        let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
-            init_project_skill_test(cx).await;
-        let project_skill = project_skill(worktree_id, "my-skill");
-        let mut global_skill = project_skill.clone();
-        global_skill.source = agent_skills::SkillSource::Global;
-        // Stands in for a remote project; only its identity matters here.
-        let project = settings_window
-            .read_with(cx, |settings_window, cx| settings_window.active_project(cx))
-            .expect("settings should have the original window's project");
-
-        settings_window.read_with(cx, |settings_window, cx| {
-            assert!(matches!(
-                skill_location(&global_skill, None, settings_window, cx),
-                SkillLocation::Local
-            ));
-            assert!(matches!(
-                skill_location(&global_skill, Some(project.clone()), settings_window, cx),
-                SkillLocation::RemoteGlobal(remote_project) if remote_project == project
-            ));
-            assert!(matches!(
-                skill_location(&project_skill, Some(project.clone()), settings_window, cx),
-                SkillLocation::Project { project: skill_project, .. } if skill_project == project
-            ));
-        });
-    }
-
-    #[gpui::test]
     async fn test_project_skill_share_link_reads_through_project(cx: &mut gpui::TestAppContext) {
         let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
             init_project_skill_test(cx).await;

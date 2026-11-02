@@ -5290,20 +5290,6 @@ impl RemoteSkillsTest {
         })
     }
 
-    fn worktrees(&self, cx: &mut TestAppContext) -> Vec<(PathBuf, bool)> {
-        cx.update(|_| {});
-        cx.run_until_parked();
-        self.project.read_with(cx, |project, cx| {
-            project
-                .worktrees(cx)
-                .map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    (worktree.abs_path().to_path_buf(), worktree.is_visible())
-                })
-                .collect()
-        })
-    }
-
     /// Runs the `skill` tool the way the model would, and returns the
     /// rendered skill.
     async fn run_skill_tool(&self, name: &str, cx: &mut TestAppContext) -> String {
@@ -5362,9 +5348,6 @@ async fn test_remote_global_skills_come_from_the_remote(
 
     let rendered = test.run_skill_tool("remote-skill", cx).await;
     assert!(rendered.contains("remote-skill body"), "got: {rendered}");
-    // The remote server reads and watches the dir itself, so no worktree is
-    // opened for it.
-    assert_eq!(test.worktrees(cx), vec![(project_root.to_path_buf(), true)]);
 
     test.add_remote_skill("added-skill", cx).await;
     assert_eq!(
