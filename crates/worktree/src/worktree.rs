@@ -2163,17 +2163,27 @@ impl LocalWorktree {
             vec![path.clone()]
         };
         let t0 = Instant::now();
+        let abs_path = self.absolutize(&path);
+        let fs = self.fs.clone();
         let mut refresh = self.refresh_entries_for_paths(paths);
         // todo(lw): Hot foreground spawn
         cx.spawn(async move |this, cx| {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
-            let new_entry = this.read_with(cx, |this, _| {
-                this.entry_for_path(&path).cloned().with_context(|| {
-                    format!("Could not find entry in worktree for {path:?} after refresh")
-                })
-            })??;
-            Ok(Some(new_entry))
+            let entry = this.read_with(cx, |this, _| this.entry_for_path(&path).cloned())?;
+            if let Some(entry) = entry {
+                return Ok(Some(entry));
+            }
+
+            // A path can be reachable on disk without being part of the worktree
+            // snapshot, for instance a file inside a gitignored directory that the
+            // scanner has not expanded yet. Report it the same way as an excluded
+            // path so that callers can still open it by absolute path.
+            if fs.metadata(&abs_path).await?.is_some() {
+                return Ok(None);
+            }
+
+            anyhow::bail!("Could not find entry in worktree for {path:?} after refresh")
         })
     }
 
