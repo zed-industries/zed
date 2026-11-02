@@ -1195,6 +1195,8 @@ pub struct ToolCall {
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
     raw_output_content: Option<Box<ToolCallContent>>,
+    /// Whether the agent accepts `tool_call/cancel` for this tool call.
+    advertises_cancel: bool,
     pub tool_name: Option<SharedString>,
     pub subagent_session_info: Option<SubagentSessionInfo>,
     pub sandbox_authorization_details: Option<SandboxAuthorizationDetails>,
@@ -1268,6 +1270,7 @@ struct ToolCallPatch {
     locations: MaybeUndefined<Vec<ToolCallLocation>>,
     raw_input: MaybeUndefined<serde_json::Value>,
     raw_output: MaybeUndefined<serde_json::Value>,
+    capabilities: MaybeUndefined<acp_v2::ToolCallCapabilities>,
     meta: ToolMetadataPatch,
 }
 
@@ -1371,6 +1374,7 @@ impl ToolCallPatch {
             ),
             raw_input: legacy_tool_field(fields.raw_input),
             raw_output: legacy_tool_field(fields.raw_output),
+            capabilities: MaybeUndefined::Undefined,
             meta: ToolMetadataPatch::Legacy(meta),
         }
     }
@@ -1387,6 +1391,7 @@ impl ToolCallPatch {
                 .map_value(|locations| locations.into_iter().map(Into::into).collect()),
             raw_input: update.raw_input,
             raw_output: update.raw_output,
+            capabilities: update.capabilities,
             meta: ToolMetadataPatch::Protocol(update.meta),
         }
     }
@@ -1476,6 +1481,11 @@ impl ToolCall {
             raw_input_markdown,
             raw_output: patch.raw_output.take(),
             raw_output_content: None,
+            advertises_cancel: patch
+                .capabilities
+                .as_opt_ref()
+                .flatten()
+                .is_some_and(|capabilities| capabilities.cancel.is_some()),
             tool_name,
             subagent_session_info,
             sandbox_authorization_details,
@@ -1502,6 +1512,16 @@ impl ToolCall {
 
     pub fn authorization_id(&self) -> Option<PermissionRequestId> {
         self.authorization
+    }
+
+    /// Whether Zed may stop this tool call with `tool_call/cancel`: the agent advertises it
+    /// and the tool call hasn't finished.
+    pub fn can_cancel(&self) -> bool {
+        self.advertises_cancel
+            && matches!(
+                self.underlying_status(),
+                ToolCallStatus::Pending | ToolCallStatus::InProgress | ToolCallStatus::Paused
+            )
     }
 
     fn underlying_status(&self) -> ToolCallStatus {
@@ -1589,8 +1609,13 @@ impl ToolCall {
             locations,
             raw_input,
             raw_output,
+            capabilities,
             meta,
         } = patch;
+        if let Some(capabilities) = capabilities.as_opt_ref() {
+            self.advertises_cancel =
+                capabilities.is_some_and(|capabilities| capabilities.cancel.is_some());
+        }
         let output_changed = !content.is_undefined() || !raw_output.is_undefined();
         // Completion remains authoritative even when output cannot be displayed;
         // otherwise a finished tool could leave its permission request waiting.
@@ -2007,6 +2032,8 @@ pub enum ToolCallStatus {
     WaitingForConfirmation,
     /// The tool call is currently running.
     InProgress,
+    /// The tool call has started but is not running now, until something resumes it.
+    Paused,
     /// The tool call completed successfully.
     Completed,
     /// The tool call failed.
@@ -2081,6 +2108,7 @@ impl ToolCallStatus {
         match status? {
             acp_v2::ToolCallStatus::Pending => Some(Self::Pending),
             acp_v2::ToolCallStatus::InProgress => Some(Self::InProgress),
+            acp_v2::ToolCallStatus::Paused => Some(Self::Paused),
             acp_v2::ToolCallStatus::Completed => Some(Self::Completed),
             acp_v2::ToolCallStatus::Failed => Some(Self::Failed),
             acp_v2::ToolCallStatus::Cancelled => Some(Self::Canceled),
@@ -2093,6 +2121,7 @@ impl ToolCallStatus {
         match self {
             ToolCallStatus::Pending => Some(acp_v2::ToolCallStatus::Pending),
             ToolCallStatus::InProgress => Some(acp_v2::ToolCallStatus::InProgress),
+            ToolCallStatus::Paused => Some(acp_v2::ToolCallStatus::Paused),
             ToolCallStatus::Completed => Some(acp_v2::ToolCallStatus::Completed),
             ToolCallStatus::Failed => Some(acp_v2::ToolCallStatus::Failed),
             // A new authorization can retry a locally canceled tool; the
@@ -2119,6 +2148,7 @@ impl Display for ToolCallStatus {
                 ToolCallStatus::Pending => "Pending",
                 ToolCallStatus::WaitingForConfirmation => "Waiting for confirmation",
                 ToolCallStatus::InProgress => "In Progress",
+                ToolCallStatus::Paused => "Paused",
                 ToolCallStatus::Completed => "Completed",
                 ToolCallStatus::Failed => "Failed",
                 ToolCallStatus::Rejected => "Rejected",
@@ -4296,6 +4326,12 @@ impl AcpThread {
 
     pub fn foreground_state(&self) -> Option<&acp_v2::StateUpdate> {
         self.activity.state()
+    }
+
+    /// The work the agent reported as running independently of foreground work in its latest
+    /// state snapshot. `None` means the agent hasn't reported it, not that nothing is running.
+    pub fn background_work(&self) -> Option<&[acp_v2::BackgroundWork]> {
+        self.foreground_state()?.background()
     }
 
     pub fn mark_activity_unconfirmed(&mut self, cx: &mut Context<Self>) {
@@ -7521,6 +7557,41 @@ impl AcpThread {
         }
     }
 
+    /// Asks the agent to stop one tool call, without cancelling the rest of the session's work.
+    pub fn cancel_tool_call(
+        &self,
+        tool_call_id: &acp_v2::ToolCallId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        // The agent must only receive `tool_call/cancel` for a tool call that advertises it.
+        let Some((_, call)) = self.tool_call(tool_call_id) else {
+            return Task::ready(Err(anyhow!("Unknown tool call")));
+        };
+        if !call.can_cancel() {
+            return Task::ready(Err(anyhow!("This tool call cannot be stopped")));
+        }
+        self.connection
+            .cancel_tool_call(self.session_id(), tool_call_id, cx)
+    }
+
+    /// Asks the agent to stop an agent-run terminal's process. Its output stays available.
+    pub fn cancel_terminal(
+        &self,
+        terminal_id: &acp_v2::TerminalId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        // The agent must only receive `terminal/cancel` for a terminal that advertises it.
+        if !self
+            .terminals
+            .get(terminal_id)
+            .is_some_and(|terminal| terminal.read(cx).can_cancel())
+        {
+            return Task::ready(Err(anyhow!("This terminal cannot be stopped")));
+        }
+        self.connection
+            .cancel_terminal(self.session_id(), terminal_id, cx)
+    }
+
     fn request_cancellation(
         &mut self,
         permission_outcome: RequestPermissionOutcome,
@@ -10669,6 +10740,7 @@ mod tests {
                     thread.upsert_display_terminal(
                         terminal_id.clone(),
                         DisplayTerminalPatch {
+                            capabilities: Default::default(),
                             command: MaybeUndefined::Value("actual command".into()),
                             ..Default::default()
                         },
@@ -10719,6 +10791,7 @@ mod tests {
                     thread.upsert_display_terminal(
                         terminal_id,
                         DisplayTerminalPatch {
+                            capabilities: Default::default(),
                             command: MaybeUndefined::Null,
                             ..Default::default()
                         },
@@ -10772,6 +10845,7 @@ mod tests {
                     thread.upsert_display_terminal(
                         "shared-terminal".into(),
                         DisplayTerminalPatch {
+                            capabilities: Default::default(),
                             meta: MaybeUndefined::Value(acp_v2::Meta::new()),
                             ..Default::default()
                         },
@@ -10823,6 +10897,7 @@ mod tests {
                 .upsert_display_terminal(
                     "mixed".into(),
                     DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         command: MaybeUndefined::Value("reported command".into()),
                         output: MaybeUndefined::Value(DisplayTerminalOutput {
                             data: b"new output".to_vec(),
@@ -10893,6 +10968,7 @@ mod tests {
                 .upsert_display_terminal(
                     "mixed".into(),
                     DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         exit_status: MaybeUndefined::Null,
                         ..Default::default()
                     },
@@ -10927,6 +11003,7 @@ mod tests {
                 thread.upsert_display_terminal(
                     terminal_id.clone(),
                     DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         command: MaybeUndefined::Value("first command".into()),
                         cwd: MaybeUndefined::Value(acp_v2::AbsolutePath::new(PathBuf::from(
                             path!("/work"),
@@ -10963,6 +11040,7 @@ mod tests {
                 thread.upsert_display_terminal(
                     terminal_id.clone(),
                     DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         output: MaybeUndefined::Value(DisplayTerminalOutput {
                             data: b"new line\r\n".to_vec(),
                             meta: None,
@@ -10975,6 +11053,7 @@ mod tests {
                 thread.upsert_display_terminal(
                     terminal_id.clone(),
                     DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         exit_status: MaybeUndefined::Value(acp_v2::TerminalExitStatus::new()),
                         ..Default::default()
                     },
@@ -11012,6 +11091,7 @@ mod tests {
                 thread.upsert_display_terminal(
                     terminal_id.clone(),
                     DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         output: MaybeUndefined::Null,
                         exit_status: MaybeUndefined::Null,
                         ..Default::default()
@@ -11066,6 +11146,7 @@ mod tests {
                 thread.upsert_display_terminal(
                     terminal_id,
                     DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         command: MaybeUndefined::Null,
                         cwd: MaybeUndefined::Null,
                         meta: MaybeUndefined::Null,
@@ -11127,6 +11208,7 @@ mod tests {
                     .upsert_display_terminal(
                         acp_v2::TerminalId::new("native-terminal"),
                         DisplayTerminalPatch {
+                            capabilities: Default::default(),
                             command: MaybeUndefined::Value("wrong command".into()),
                             output: MaybeUndefined::Null,
                             exit_status: MaybeUndefined::Value(acp_v2::TerminalExitStatus::new()),
@@ -14273,6 +14355,7 @@ mod tests {
                     .upsert_display_terminal(
                         "metadata".into(),
                         DisplayTerminalPatch {
+                            capabilities: Default::default(),
                             meta: metadata.clone(),
                             output: MaybeUndefined::Value(DisplayTerminalOutput {
                                 data: b"snapshot".to_vec(),

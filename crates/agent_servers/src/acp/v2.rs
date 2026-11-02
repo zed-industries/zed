@@ -1675,6 +1675,40 @@ impl AgentConnection for AcpV2Connection {
             .map_err(map_acp_error)
     }
 
+    fn cancel_tool_call(
+        &self,
+        session_id: &acp::SessionId,
+        tool_call_id: &acp::ToolCallId,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let response = Self::scoped_request(
+            &self.connection,
+            &self.dispatch_tx,
+            acp::CancelToolCallRequest::new(session_id.clone(), tool_call_id.clone()),
+        );
+        cx.foreground_executor().spawn(async move {
+            response.await?;
+            Ok(())
+        })
+    }
+
+    fn cancel_terminal(
+        &self,
+        session_id: &acp::SessionId,
+        terminal_id: &acp::TerminalId,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let response = Self::scoped_request(
+            &self.connection,
+            &self.dispatch_tx,
+            acp::CancelTerminalRequest::new(session_id.clone(), terminal_id.clone()),
+        );
+        cx.foreground_executor().spawn(async move {
+            response.await?;
+            Ok(())
+        })
+    }
+
     fn request_elicitations(&self) -> Option<Entity<ElicitationStore>> {
         Some(self.request_elicitations.clone())
     }
@@ -3188,6 +3222,129 @@ mod tests {
             thread.read_with(cx, |thread, _| thread.pending_permission_requests().count()),
             0
         );
+    }
+
+    #[gpui::test]
+    async fn v2_background_work_is_tracked_and_stoppable(cx: &mut TestAppContext) {
+        use acp_thread::ToolCallStatus;
+
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness.thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::ToolCallUpdate(
+                acp::ToolCallUpdate::new("watcher")
+                    .status(acp::ToolCallStatus::Paused)
+                    .capabilities(
+                        acp::ToolCallCapabilities::new()
+                            .cancel(acp::ToolCallCancelCapabilities::new()),
+                    ),
+            ),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::ToolCallUpdate(
+                acp::ToolCallUpdate::new("fixed").status(acp::ToolCallStatus::InProgress),
+            ),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::TerminalUpdate(acp::TerminalUpdate::new("server").capabilities(
+                acp::TerminalCapabilities::new().cancel(acp::TerminalCancelCapabilities::new()),
+            )),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::StateUpdate(acp::StateUpdate::Idle(
+                acp::IdleStateUpdate::new()
+                    .stop_reason(acp::StopReason::EndTurn)
+                    .background(vec![
+                        acp::BackgroundWork::Terminal(acp::BackgroundTerminal::new("server")),
+                        acp::BackgroundWork::ToolCall(acp::BackgroundToolCall::new("watcher")),
+                    ]),
+            )),
+        );
+        harness.drain_updates(cx).await;
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.background_work().map(<[_]>::len), Some(2));
+            let (_, watcher) = thread.tool_call(&"watcher".into()).expect("watcher");
+            assert_eq!(watcher.status(), ToolCallStatus::Paused);
+            assert!(
+                watcher.can_cancel(),
+                "paused tool calls can advertise cancel"
+            );
+            let (_, fixed) = thread.tool_call(&"fixed".into()).expect("fixed");
+            assert!(!fixed.can_cancel());
+            assert!(
+                thread
+                    .terminal("server".into())
+                    .expect("server")
+                    .read(cx)
+                    .can_cancel()
+            );
+        });
+
+        // The agent has no handler for these methods, so the SDK answers -32602 once a
+        // request reaches it. A local refusal never sends one.
+        let sent_code = |result: Result<()>| {
+            result
+                .expect_err("the harness agent rejects cancellation")
+                .downcast_ref::<agent_client_protocol::Error>()
+                .map(|error| error.code)
+        };
+        let invalid_params = Some(agent_client_protocol::ErrorCode::INVALID_PARAMS);
+        let stop_watcher = thread.update(cx, |thread, cx| {
+            thread.cancel_tool_call(&"watcher".into(), cx)
+        });
+        assert_eq!(sent_code(bounded(stop_watcher, cx).await), invalid_params);
+        let stop_fixed = thread.update(cx, |thread, cx| {
+            thread.cancel_tool_call(&"fixed".into(), cx)
+        });
+        assert_eq!(
+            sent_code(bounded(stop_fixed, cx).await),
+            None,
+            "an unadvertised tool call is never sent tool_call/cancel"
+        );
+        let stop_server = thread.update(cx, |thread, cx| {
+            thread.cancel_terminal(&"server".into(), cx)
+        });
+        assert_eq!(sent_code(bounded(stop_server, cx).await), invalid_params);
+
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::TerminalUpdate(
+                acp::TerminalUpdate::new("server").exit_status(acp::TerminalExitStatus::new()),
+            ),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::ToolCallUpdate(
+                acp::ToolCallUpdate::new("watcher").status(acp::ToolCallStatus::Cancelled),
+            ),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::StateUpdate(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+        );
+        harness.drain_updates(cx).await;
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.background_work(),
+                None,
+                "an omitted list means background work is unknown"
+            );
+            let (_, watcher) = thread.tool_call(&"watcher".into()).expect("watcher");
+            assert!(!watcher.can_cancel(), "final tool calls can't be stopped");
+            assert!(
+                !thread
+                    .terminal("server".into())
+                    .expect("server")
+                    .read(cx)
+                    .can_cancel(),
+                "exited terminals can't be stopped"
+            );
+        });
     }
 
     #[gpui::test]
