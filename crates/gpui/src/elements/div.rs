@@ -2066,6 +2066,7 @@ impl Element for Div {
             scroll_handle.scroll_to_active_item();
         }
 
+        let scroll_handle = self.interactivity.tracked_scroll_handle.clone();
         self.interactivity.prepaint(
             global_id,
             inspector_id,
@@ -2074,6 +2075,13 @@ impl Element for Div {
             window,
             cx,
             |style, scroll_offset, hitbox, window, cx| {
+                if let Some(handle) = scroll_handle.as_ref() {
+                    window.next_frame.scroll_dependencies.push((
+                        window.current_view(),
+                        handle.clone(),
+                        handle.snapshot(),
+                    ));
+                }
                 // skip children
                 if style.display == Display::None {
                     return hitbox;
@@ -4290,13 +4298,13 @@ struct ScrollHandleState {
     active_item: Option<ScrollActiveItem>,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 struct ScrollActiveItem {
     index: usize,
     strategy: ScrollStrategy,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 enum ScrollStrategy {
     #[default]
     FirstVisible,
@@ -4306,8 +4314,17 @@ enum ScrollStrategy {
 /// A handle to the scrollable aspects of an element.
 /// Used for accessing scroll state, like the current scroll offset,
 /// and for mutating the scroll state, like scrolling to a specific child.
+///
+/// Programmatic changes take effect on the next draw; they do not request a frame.
 #[derive(Clone, Debug)]
 pub struct ScrollHandle(Rc<RefCell<ScrollHandleState>>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ScrollHandleSnapshot {
+    offset: Point<Pixels>,
+    active_item: Option<ScrollActiveItem>,
+    scroll_to_bottom: bool,
+}
 
 impl Default for ScrollHandle {
     fn default() -> Self {
@@ -4316,6 +4333,15 @@ impl Default for ScrollHandle {
 }
 
 impl ScrollHandle {
+    pub(crate) fn snapshot(&self) -> ScrollHandleSnapshot {
+        let state = self.0.borrow();
+        ScrollHandleSnapshot {
+            offset: *state.offset.borrow(),
+            active_item: state.active_item,
+            scroll_to_bottom: state.scroll_to_bottom,
+        }
+    }
+
     /// Construct a new scroll handle.
     pub fn new() -> Self {
         Self(Rc::default())

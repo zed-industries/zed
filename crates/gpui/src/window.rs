@@ -1047,6 +1047,8 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
+    pub(crate) scroll_dependencies:
+        Vec<(EntityId, crate::ScrollHandle, crate::ScrollHandleSnapshot)>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
@@ -1066,6 +1068,7 @@ pub(crate) struct Frame {
 #[derive(Clone, Default)]
 pub(crate) struct PrepaintStateIndex {
     hitboxes_index: usize,
+    scroll_dependencies_index: usize,
     tooltips_index: usize,
     deferred_draws_index: usize,
     dispatch_tree_index: usize,
@@ -1103,6 +1106,7 @@ impl Frame {
             dispatch_tree,
             scene: Scene::default(),
             hitboxes: Vec::new(),
+            scroll_dependencies: Vec::new(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
             input_handlers: Vec::new(),
@@ -1133,6 +1137,7 @@ impl Frame {
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
+        self.scroll_dependencies.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.tab_stops.clear();
@@ -3673,6 +3678,14 @@ impl Window {
             self.refresh();
         }
         self.invalidate_entities();
+        // Scroll handles can change without an entity notification, including inside
+        // cached ancestors whose prepaint would otherwise be replayed.
+        for index in 0..self.rendered_frame.scroll_dependencies.len() {
+            let (view, handle, snapshot) = &self.rendered_frame.scroll_dependencies[index];
+            if handle.snapshot() != *snapshot {
+                self.mark_view_dirty(*view);
+            }
+        }
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
@@ -4233,6 +4246,7 @@ impl Window {
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
         PrepaintStateIndex {
             hitboxes_index: self.next_frame.hitboxes.len(),
+            scroll_dependencies_index: self.next_frame.scroll_dependencies.len(),
             tooltips_index: self.next_frame.tooltip_requests.len(),
             deferred_draws_index: self.next_frame.deferred_draws.len(),
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
@@ -4242,6 +4256,12 @@ impl Window {
     }
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
+        self.next_frame.scroll_dependencies.extend(
+            self.rendered_frame.scroll_dependencies
+                [range.start.scroll_dependencies_index..range.end.scroll_dependencies_index]
+                .iter()
+                .cloned(),
+        );
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
@@ -4487,6 +4507,9 @@ impl Window {
         let result = f(self);
         if result.is_err() {
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
+            self.next_frame
+                .scroll_dependencies
+                .truncate(index.scroll_dependencies_index);
             self.next_frame
                 .tooltip_requests
                 .truncate(index.tooltips_index);
