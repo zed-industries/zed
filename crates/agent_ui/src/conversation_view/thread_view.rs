@@ -14527,19 +14527,19 @@ pub(crate) fn open_link(
                 crate::ui::open_migrated_rule(workspace, &name, window, cx);
             }
             MentionUri::Skill {
-                source,
-                skill_file_path,
-                origin,
-                ..
+                skill_file_path, ..
             } => {
-                crate::ui::open_skill_mention(
-                    workspace,
-                    origin,
-                    &source,
-                    skill_file_path,
-                    window,
-                    cx,
-                );
+                workspace
+                    .open_abs_path(
+                        skill_file_path,
+                        workspace::OpenOptions {
+                            focus: Some(true),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
             }
         })
     } else {

@@ -34,7 +34,7 @@ pub use tools::*;
 use acp_thread::{
     AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
     AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, ProcessOutput,
-    SkillOrigin, TokenUsageRatio,
+    TokenUsageRatio,
 };
 use agent_client_protocol::v2::schema as acp_v2;
 use agent_skills::{
@@ -168,24 +168,16 @@ pub struct NativeAvailableSkill {
     pub description: String,
     pub source: SharedString,
     pub skill_file_path: PathBuf,
-    pub origin: SkillOrigin,
     pub warning: Option<SharedString>,
 }
 
-impl NativeAvailableSkill {
-    fn new(skill: &Skill, project: &Project) -> Self {
-        let origin = match skill.source {
-            SkillSource::BuiltIn => SkillOrigin::BuiltIn,
-            SkillSource::Global if global_skills_are_remote(project) => SkillOrigin::RemoteGlobal,
-            SkillSource::Global => SkillOrigin::LocalGlobal,
-            SkillSource::ProjectLocal { .. } => SkillOrigin::Project,
-        };
+impl From<&Skill> for NativeAvailableSkill {
+    fn from(skill: &Skill) -> Self {
         Self {
             name: skill.name.clone(),
             description: skill.description.clone(),
             source: skill.source.display_label().to_string().into(),
             skill_file_path: skill.skill_file_path.clone(),
-            origin,
             warning: skill
                 .load_warnings
                 .first()
@@ -2433,11 +2425,10 @@ impl NativeAgentConnection {
             .read(cx)
             .session_project_state(session_id)
             .map(|state| {
-                let project = state.project.read(cx);
                 state
                     .skills
                     .iter()
-                    .map(|skill| NativeAvailableSkill::new(skill, project))
+                    .map(NativeAvailableSkill::from)
                     .collect()
             })
             .unwrap_or_default()

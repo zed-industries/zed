@@ -72,54 +72,9 @@ pub enum MentionUri {
     },
     Skill {
         name: String,
-        /// Display label: "global", "built-in", or the worktree root name.
         source: String,
         skill_file_path: PathBuf,
-        #[serde(default, skip_serializing_if = "SkillOrigin::is_unknown")]
-        origin: SkillOrigin,
     },
-}
-
-/// Which machine a mentioned skill's file is read from.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[serde(rename_all = "kebab-case")]
-pub enum SkillOrigin {
-    BuiltIn,
-    /// `~/.agents/skills` on the machine Zed runs on.
-    LocalGlobal,
-    /// `~/.agents/skills` on the project's remote machine.
-    RemoteGlobal,
-    Project,
-    /// Saved before origins existed, or by a newer Zed.
-    #[default]
-    #[serde(other)]
-    Unknown,
-}
-
-impl SkillOrigin {
-    fn is_unknown(&self) -> bool {
-        *self == SkillOrigin::Unknown
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            SkillOrigin::BuiltIn => "built-in",
-            SkillOrigin::LocalGlobal => "local-global",
-            SkillOrigin::RemoteGlobal => "remote-global",
-            SkillOrigin::Project => "project",
-            SkillOrigin::Unknown => "unknown",
-        }
-    }
-
-    fn from_str(value: &str) -> Self {
-        match value {
-            "built-in" => SkillOrigin::BuiltIn,
-            "local-global" => SkillOrigin::LocalGlobal,
-            "remote-global" => SkillOrigin::RemoteGlobal,
-            "project" => SkillOrigin::Project,
-            _ => SkillOrigin::Unknown,
-        }
-    }
 }
 
 impl MentionUri {
@@ -289,7 +244,6 @@ impl MentionUri {
                     let mut name = None;
                     let mut source = None;
                     let mut skill_file_path = None;
-                    let mut origin = None;
 
                     for (key, value) in url.query_pairs() {
                         match key.as_ref() {
@@ -311,11 +265,6 @@ impl MentionUri {
                                     bail!("duplicate skill file path query parameter");
                                 }
                             }
-                            "origin" => {
-                                if origin.replace(value.to_string()).is_some() {
-                                    bail!("duplicate skill origin query parameter");
-                                }
-                            }
                             _ => bail!("invalid query parameter"),
                         }
                     }
@@ -324,10 +273,6 @@ impl MentionUri {
                         name: name.context("missing skill name")?,
                         source: source.context("missing skill source")?,
                         skill_file_path: skill_file_path.context("missing skill file path")?,
-                        origin: origin
-                            .as_deref()
-                            .map(SkillOrigin::from_str)
-                            .unwrap_or_default(),
                     })
                 } else {
                     bail!("invalid zed url: {:?}", input);
@@ -629,7 +574,6 @@ impl MentionUri {
                 name,
                 source,
                 skill_file_path,
-                origin,
             } => {
                 let mut url = Url::parse("zed:///").unwrap();
                 url.set_path("/agent/skill");
@@ -637,9 +581,6 @@ impl MentionUri {
                     .append_pair("name", name)
                     .append_pair("source", source)
                     .append_pair("path", &skill_file_path.to_string_lossy());
-                if !origin.is_unknown() {
-                    url.query_pairs_mut().append_pair("origin", origin.as_str());
-                }
                 url
             }
         }
@@ -1456,79 +1397,16 @@ mod tests {
 
     #[test]
     fn test_parse_skill_uri_round_trip() {
-        for origin in [
-            SkillOrigin::Unknown,
-            SkillOrigin::BuiltIn,
-            SkillOrigin::LocalGlobal,
-            SkillOrigin::RemoteGlobal,
-            SkillOrigin::Project,
-        ] {
-            let skill_uri = MentionUri::Skill {
-                name: "rust-best-practices".to_string(),
-                source: "my-personal-project".to_string(),
-                skill_file_path: PathBuf::from(path!(
-                    "/path/to/skills/rust-best-practices/SKILL.md"
-                )),
-                origin,
-            };
+        let skill_uri = MentionUri::Skill {
+            name: "rust-best-practices".to_string(),
+            source: "my-personal-project".to_string(),
+            skill_file_path: PathBuf::from(path!("/path/to/skills/rust-best-practices/SKILL.md")),
+        };
 
-            let serialized = skill_uri.to_uri().to_string();
-            let parsed = MentionUri::parse(&serialized, PathStyle::local()).unwrap();
-            assert_eq!(parsed, skill_uri);
+        let serialized = skill_uri.to_uri().to_string();
+        let parsed = MentionUri::parse(&serialized, PathStyle::local()).unwrap();
 
-            let json = serde_json::to_value(&skill_uri).unwrap();
-            if origin.is_unknown() {
-                assert!(json["Skill"].get("origin").is_none());
-            } else {
-                // Saved threads and URIs spell origins the same way.
-                assert_eq!(json["Skill"]["origin"], origin.as_str());
-            }
-            assert_eq!(
-                serde_json::from_value::<MentionUri>(json).unwrap(),
-                skill_uri
-            );
-        }
-    }
-
-    #[test]
-    fn test_deserialize_skill_mention_with_unknown_origin() {
-        let mention: MentionUri = serde_json::from_value(serde_json::json!({
-            "Skill": {
-                "name": "my-skill",
-                "source": "global",
-                "skill_file_path": "/skills/my-skill/SKILL.md",
-                "origin": "somewhere-new",
-            }
-        }))
-        .expect("a saved thread with a newer origin should still load");
-        assert_eq!(
-            mention,
-            MentionUri::Skill {
-                name: "my-skill".to_string(),
-                source: "global".to_string(),
-                skill_file_path: PathBuf::from("/skills/my-skill/SKILL.md"),
-                origin: SkillOrigin::Unknown,
-            }
-        );
-    }
-
-    #[test]
-    fn test_parse_skill_uri_with_unknown_origin() {
-        let parsed = MentionUri::parse(
-            "zed:///agent/skill?name=my-skill&source=global&path=%2Fskills%2Fmy-skill%2FSKILL.md&origin=somewhere-new",
-            PathStyle::Unix,
-        )
-        .unwrap();
-
-        assert_eq!(
-            parsed,
-            MentionUri::Skill {
-                name: "my-skill".to_string(),
-                source: "global".to_string(),
-                skill_file_path: PathBuf::from("/skills/my-skill/SKILL.md"),
-                origin: SkillOrigin::Unknown,
-            }
-        );
+        assert_eq!(parsed, skill_uri);
     }
 
     #[test]
@@ -1884,13 +1762,11 @@ mod tests {
             name: "create-skill".into(),
             source: "".into(),
             skill_file_path: PathBuf::from("/global/create-skill/SKILL.md"),
-            origin: SkillOrigin::Unknown,
         };
         let project_skill = MentionUri::Skill {
             name: "create-skill".into(),
             source: "my-project".into(),
             skill_file_path: PathBuf::from("/project/create-skill/SKILL.md"),
-            origin: SkillOrigin::Unknown,
         };
         assert_eq!(global_skill.name(), "create-skill");
         assert_eq!(global_skill.disambiguated_name(0), "create-skill");

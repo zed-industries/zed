@@ -1,6 +1,6 @@
 use std::{borrow::Cow, path::PathBuf, time::Duration};
 
-use acp_thread::{MentionUri, SkillOrigin};
+use acp_thread::MentionUri;
 use agent_client_protocol::v2::schema as acp;
 use editor::Editor;
 use gpui::{
@@ -14,7 +14,6 @@ use theme_settings::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*, utils::replace_control_characters};
 use workspace::{OpenOptions, Workspace};
 
-use crate::mention_set::{SkillFileLocation, skill_file_location};
 use crate::open_abs_path_at_point;
 
 #[derive(IntoElement)]
@@ -200,12 +199,9 @@ fn open_mention_uri(
             open_thread(workspace, id, name, window, cx);
         }
         MentionUri::Skill {
-            source,
-            skill_file_path,
-            origin,
-            ..
+            skill_file_path, ..
         } => {
-            open_skill_mention(workspace, origin, &source, skill_file_path, window, cx);
+            open_skill_file(workspace, skill_file_path, window, cx);
         }
         MentionUri::Rule { name, .. } => {
             open_migrated_rule(workspace, &name, window, cx);
@@ -273,38 +269,6 @@ pub(crate) fn open_migrated_rule(
         })
     })
     .detach_and_log_err(cx);
-}
-
-pub(crate) fn open_skill_mention(
-    workspace: &mut Workspace,
-    origin: SkillOrigin,
-    source: &str,
-    skill_file_path: PathBuf,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    match skill_file_location(origin, source, &skill_file_path) {
-        SkillFileLocation::BuiltIn(content) => {
-            let title = skill_content_buffer_title(&skill_file_path);
-            open_skill_content_buffer(workspace, title, content, window, cx);
-        }
-        SkillFileLocation::Local if !workspace.project().read(cx).is_local() => {
-            // `open_abs_path` would look for this local file on the remote,
-            // so read it locally and show it read-only.
-            let fs = workspace.app_state().fs.clone();
-            cx.spawn_in(window, async move |workspace, cx| {
-                let content = fs.load(&skill_file_path).await?;
-                let title = skill_content_buffer_title(&skill_file_path);
-                workspace.update_in(cx, |workspace, window, cx| {
-                    open_skill_content_buffer(workspace, title, content, window, cx);
-                })
-            })
-            .detach_and_log_err(cx);
-        }
-        SkillFileLocation::Local | SkillFileLocation::Project => {
-            open_skill_file(workspace, skill_file_path, window, cx);
-        }
-    }
 }
 
 fn open_skill_file(

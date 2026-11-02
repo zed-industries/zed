@@ -2,7 +2,6 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
-use acp_thread::SkillOrigin;
 use agent::{
     AgentTool, NativeAgent, NativeAgentConnection, ReadFileTool, ReadFileToolInput, SkillTool,
     SkillToolInput, SkillToolOutput, Templates, ThreadStore, ToolCallEventStream, ToolInput,
@@ -5276,7 +5275,8 @@ impl RemoteSkillsTest {
         cx.run_until_parked();
     }
 
-    fn global_skills(&self, cx: &mut TestAppContext) -> Vec<(String, SkillOrigin)> {
+    /// The remote's skills have different names than the local `local-skill`.
+    fn global_skills(&self, cx: &mut TestAppContext) -> Vec<String> {
         let session_id = self
             .acp_thread
             .read_with(cx, |thread, _| thread.session_id().clone());
@@ -5285,7 +5285,7 @@ impl RemoteSkillsTest {
                 .available_skills(&session_id, cx)
                 .into_iter()
                 .filter(|skill| skill.source == "global")
-                .map(|skill| (skill.name, skill.origin))
+                .map(|skill| skill.name)
                 .collect()
         })
     }
@@ -5339,11 +5339,8 @@ fn skill_dir(name: &str) -> serde_json::Value {
     json!({ "SKILL.md": format!("---\nname: {name}\ndescription: test skill\n---\n{name} body") })
 }
 
-fn remote_global(names: &[&str]) -> Vec<(String, SkillOrigin)> {
-    names
-        .iter()
-        .map(|name| (name.to_string(), SkillOrigin::RemoteGlobal))
-        .collect()
+fn remote_global(names: &[&str]) -> Vec<String> {
+    names.iter().map(|name| name.to_string()).collect()
 }
 
 #[gpui::test]
@@ -5427,7 +5424,7 @@ async fn test_remote_global_skills_dir_deleted_and_recreated(
         .await
         .unwrap();
     cx.run_until_parked();
-    assert_eq!(test.global_skills(cx), Vec::new());
+    assert!(test.global_skills(cx).is_empty());
 
     // The watch ended with the dir, so a refresh is what finds the recreated
     // dir and watches it again.
@@ -5450,7 +5447,7 @@ async fn test_create_and_trash_remote_global_skills(
     use fs::Fs as _;
 
     let test = RemoteSkillsTest::new(Path::new(path!("/project")), &[], cx, server_cx).await;
-    assert_eq!(test.global_skills(cx), Vec::new());
+    assert!(test.global_skills(cx).is_empty());
 
     let create = |name: &str, cx: &mut TestAppContext| {
         cx.update(|cx| {
@@ -5506,7 +5503,7 @@ async fn test_create_and_trash_remote_global_skills(
             .await
     );
     cx.run_until_parked();
-    assert_eq!(test.global_skills(cx), Vec::new());
+    assert!(test.global_skills(cx).is_empty());
 }
 
 #[gpui::test]
