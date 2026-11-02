@@ -1115,10 +1115,8 @@ impl WorkspaceDb {
         // and we've grabbed the most recent workspace
         let (
             workspace_id,
-            paths,
-            paths_order,
-            identity_paths,
-            identity_paths_order,
+            paths_list,
+            identity_paths_list,
             window_bounds,
             display,
             centered_layout,
@@ -1126,10 +1124,8 @@ impl WorkspaceDb {
             window_id,
         ): (
             WorkspaceId,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
+            SerializedPathList,
+            Option<SerializedPathList>,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
@@ -1176,16 +1172,8 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        let paths = PathList::deserialize(&SerializedPathList {
-            paths,
-            order: paths_order,
-        });
-        let identity_paths = identity_paths.map(|paths| {
-            PathList::deserialize(&SerializedPathList {
-                paths,
-                order: identity_paths_order.unwrap_or_default(),
-            })
-        });
+        let paths = PathList::deserialize(&paths_list);
+        let identity_paths = identity_paths_list.map(|paths| PathList::deserialize(&paths));
 
         let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
             self.remote_connection(remote_connection_id)
@@ -1226,10 +1214,8 @@ impl WorkspaceDb {
         workspace_id: WorkspaceId,
     ) -> Option<SerializedWorkspace> {
         let (
-            paths,
-            paths_order,
-            identity_paths,
-            identity_paths_order,
+            paths_list,
+            identity_paths_list,
             window_bounds,
             display,
             centered_layout,
@@ -1237,10 +1223,8 @@ impl WorkspaceDb {
             window_id,
             remote_connection_id,
         ): (
-            String,
-            String,
-            Option<String>,
-            Option<String>,
+            SerializedPathList,
+            Option<SerializedPathList>,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
@@ -1280,16 +1264,8 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        let paths = PathList::deserialize(&SerializedPathList {
-            paths,
-            order: paths_order,
-        });
-        let identity_paths = identity_paths.map(|paths| {
-            PathList::deserialize(&SerializedPathList {
-                paths,
-                order: identity_paths_order.unwrap_or_default(),
-            })
-        });
+        let paths = PathList::deserialize(&paths_list);
+        let identity_paths = identity_paths_list.map(|paths| PathList::deserialize(&paths));
 
         let remote_connection_id = remote_connection_id.map(|id| RemoteConnectionId(id as u64));
         let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
@@ -1841,23 +1817,16 @@ impl WorkspaceDb {
             .map(
                 |(
                     id,
-                    paths,
-                    order,
-                    identity_paths,
-                    identity_paths_order,
+                    paths_list,
+                    identity_paths_list,
                     remote_connection_id,
                     session_id,
                     timestamp,
                 )| {
                     (
                         id,
-                        PathList::deserialize(&SerializedPathList { paths, order }),
-                        identity_paths.map(|paths| {
-                            PathList::deserialize(&SerializedPathList {
-                                paths,
-                                order: identity_paths_order.unwrap_or_default(),
-                            })
-                        }),
+                        PathList::deserialize(&paths_list),
+                        identity_paths_list.map(|paths| PathList::deserialize(&paths)),
                         remote_connection_id.map(RemoteConnectionId),
                         session_id,
                         parse_timestamp(&timestamp),
@@ -1868,7 +1837,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<String>, Option<String>, Option<u64>, Option<String>, String)>> {
+        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, SerializedPathList, Option<SerializedPathList>, Option<u64>, Option<String>, String)>> {
             SELECT workspace_id, paths, paths_order, identity_paths, identity_paths_order, remote_connection_id, session_id, timestamp
             FROM workspaces
             WHERE
@@ -1893,10 +1862,10 @@ impl WorkspaceDb {
             .session_workspaces_query(session_id)?
             .into_iter()
             .map(
-                |(workspace_id, paths, order, window_id, remote_connection_id)| {
+                |(workspace_id, paths_list, window_id, remote_connection_id)| {
                     (
                         WorkspaceId(workspace_id),
-                        PathList::deserialize(&SerializedPathList { paths, order }),
+                        PathList::deserialize(&paths_list),
                         window_id,
                         remote_connection_id.map(RemoteConnectionId),
                     )
@@ -1906,7 +1875,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn session_workspaces_query(session_id: String) -> Result<Vec<(i64, String, String, Option<u64>, Option<u64>)>> {
+        fn session_workspaces_query(session_id: String) -> Result<Vec<(i64, SerializedPathList, Option<u64>, Option<u64>)>> {
             SELECT workspace_id, paths, paths_order, window_id, remote_connection_id
             FROM workspaces
             WHERE session_id = ?1
