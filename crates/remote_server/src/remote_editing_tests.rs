@@ -5115,8 +5115,8 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
     authorization
         .response
         .send(acp_thread::SelectedPermissionOutcome::new(
-            agent_client_protocol::schema::v2::PermissionOptionId::new("allow"),
-            agent_client_protocol::schema::v2::PermissionOptionKind::AllowOnce,
+            agent_client_protocol::v2::schema::PermissionOptionId::new("allow"),
+            agent_client_protocol::v2::schema::PermissionOptionKind::AllowOnce,
         ))
         .unwrap();
 
@@ -5165,8 +5165,8 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
     authorization
         .response
         .send(acp_thread::SelectedPermissionOutcome::new(
-            agent_client_protocol::schema::v2::PermissionOptionId::new("allow"),
-            agent_client_protocol::schema::v2::PermissionOptionKind::AllowOnce,
+            agent_client_protocol::v2::schema::PermissionOptionId::new("allow"),
+            agent_client_protocol::v2::schema::PermissionOptionKind::AllowOnce,
         ))
         .unwrap();
 
