@@ -6,7 +6,7 @@ use crate::{
     DisplayRow, EditorStyle, ToOffset, ToPoint,
     scroll::{ScrollOffset, SharedScrollAnchor},
 };
-use gpui::{Pixels, WindowTextSystem};
+use gpui::{Pixels, TextDirection, WindowTextSystem, natural_text_direction};
 use language::{CharClassifier, Point};
 use multi_buffer::{MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
@@ -32,6 +32,20 @@ pub struct TextLayoutDetails {
     pub scroll_anchor: SharedScrollAnchor,
     pub visible_rows: Option<f64>,
     pub vertical_scroll_margin: ScrollOffset,
+}
+
+/// Returns true when the line at `row` is laid out in right-to-left order, so
+/// that visual left/right movement has to be inverted relative to logical
+/// columns.
+fn line_is_rtl(map: &DisplaySnapshot, row: DisplayRow) -> bool {
+    let mut text = String::new();
+    for chunk in map.text_chunks(row) {
+        text.push_str(chunk);
+        if chunk.contains('\n') {
+            break;
+        }
+    }
+    natural_text_direction(&text) == TextDirection::RightToLeft
 }
 
 /// Returns a column to the left of the current point, wrapping
@@ -78,6 +92,82 @@ pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
 pub fn saturating_right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     *point.column_mut() += 1;
     map.clip_point(point, Bias::Right)
+}
+
+/// Visual word movement: on right-to-left lines these invert the logical word
+/// movement so the caret follows the visual order of the text.
+pub fn visual_previous_word_start(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    skip_punctuation: bool,
+) -> DisplayPoint {
+    if line_is_rtl(map, point.row()) {
+        next_word_end(map, point, skip_punctuation)
+    } else {
+        previous_word_start(map, point, skip_punctuation)
+    }
+}
+
+pub fn visual_next_word_end(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    skip_punctuation: bool,
+) -> DisplayPoint {
+    if line_is_rtl(map, point.row()) {
+        previous_word_start(map, point, skip_punctuation)
+    } else {
+        next_word_end(map, point, skip_punctuation)
+    }
+}
+
+pub fn visual_previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    if line_is_rtl(map, point.row()) {
+        next_subword_end(map, point)
+    } else {
+        previous_subword_start(map, point)
+    }
+}
+
+pub fn visual_next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    if line_is_rtl(map, point.row()) {
+        previous_subword_start(map, point)
+    } else {
+        next_subword_end(map, point)
+    }
+}
+
+/// Visual movement helpers: on right-to-left lines these invert the logical
+/// movement so the caret follows the visual order of the text.
+pub fn visual_left(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    if line_is_rtl(map, point.row()) {
+        right(map, point)
+    } else {
+        left(map, point)
+    }
+}
+
+pub fn visual_right(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    if line_is_rtl(map, point.row()) {
+        left(map, point)
+    } else {
+        right(map, point)
+    }
+}
+
+pub fn visual_saturating_left(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    if line_is_rtl(map, point.row()) {
+        saturating_right(map, point)
+    } else {
+        saturating_left(map, point)
+    }
+}
+
+pub fn visual_saturating_right(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    if line_is_rtl(map, point.row()) {
+        saturating_left(map, point)
+    } else {
+        saturating_right(map, point)
+    }
 }
 
 /// Returns a display point for the preceding displayed line (which might be a soft-wrapped line).

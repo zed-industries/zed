@@ -1218,6 +1218,9 @@ impl EditorElement {
                         + cursor_row_layout
                             .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
                     let mut cell_width = cursor_next_x - cursor_character_x;
+                    if cell_width < Pixels::ZERO {
+                        cell_width = cursor_character_x - cursor_next_x;
+                    }
                     if cell_width == Pixels::ZERO {
                         cell_width = em_advance;
                     }
@@ -11187,7 +11190,7 @@ pub struct HighlightedRange {
     pub corner_radius: Pixels,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct HighlightedRangeLine {
     pub start_x: Pixels,
     pub end_x: Pixels,
@@ -11220,6 +11223,19 @@ impl HighlightedRange {
         if lines.is_empty() {
             return;
         }
+        // RTL lines can yield inverted x ranges (start > end); normalize them so
+        // the highlight quad always spans from the smaller to the larger x.
+        let normalized: Vec<HighlightedRangeLine> = lines
+            .iter()
+            .copied()
+            .map(|mut line| {
+                if line.start_x > line.end_x {
+                    std::mem::swap(&mut line.start_x, &mut line.end_x);
+                }
+                line
+            })
+            .collect();
+        let lines = normalized.as_slice();
 
         let first_line = lines.first().unwrap();
         let last_line = lines.last().unwrap();

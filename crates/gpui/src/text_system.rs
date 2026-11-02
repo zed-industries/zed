@@ -1394,3 +1394,33 @@ mod missing_glyph_tests {
         MissingGlyph::new(grapheme.into(), FallbackFontClass::Proportional)
     }
 }
+
+/// The natural reading direction of a piece of text, inferred from its first
+/// strong directional character (UAX #9).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TextDirection {
+    #[default]
+    LeftToRight,
+    RightToLeft,
+}
+
+/// Returns the natural reading direction of `text`, based on the first strong
+/// directional character. Returns `LeftToRight` when no strong character is
+/// found.
+pub fn natural_text_direction(text: &str) -> TextDirection {
+    for character in text.chars() {
+        match unicode_bidi::bidi_class(character) {
+            unicode_bidi::BidiClass::R
+            | unicode_bidi::BidiClass::AL
+            | unicode_bidi::BidiClass::RLE
+            | unicode_bidi::BidiClass::RLO
+            | unicode_bidi::BidiClass::RLI => return TextDirection::RightToLeft,
+            unicode_bidi::BidiClass::L
+            | unicode_bidi::BidiClass::LRE
+            | unicode_bidi::BidiClass::LRO
+            | unicode_bidi::BidiClass::LRI => return TextDirection::LeftToRight,
+            _ => {}
+        }
+    }
+    TextDirection::LeftToRight
+}

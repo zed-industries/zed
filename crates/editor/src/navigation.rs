@@ -5,7 +5,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
                 let cursor = if selection.is_empty() {
-                    movement::left(map, selection.start)
+                    movement::visual_left(map, selection.start)
                 } else {
                     selection.start
                 };
@@ -16,7 +16,7 @@ impl Editor {
 
     pub fn select_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {
         self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, _| (movement::left(map, head), SelectionGoal::None));
+            s.move_heads_with(&mut |map, head, _| (movement::visual_left(map, head), SelectionGoal::None));
         })
     }
 
@@ -24,7 +24,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
                 let cursor = if selection.is_empty() {
-                    movement::right(map, selection.end)
+                    movement::visual_right(map, selection.end)
                 } else {
                     selection.end
                 };
@@ -36,7 +36,7 @@ impl Editor {
     pub fn select_right(&mut self, _: &SelectRight, window: &mut Window, cx: &mut Context<Self>) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
-                (movement::right(map, head), SelectionGoal::None)
+                (movement::visual_right(map, head), SelectionGoal::None)
             });
         });
     }
@@ -391,7 +391,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (
-                    movement::previous_word_start(map, head, false),
+                    movement::visual_previous_word_start(map, head, false),
                     SelectionGoal::None,
                 )
             });
@@ -407,7 +407,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (
-                    movement::previous_subword_start(map, head),
+                    movement::visual_previous_subword_start(map, head),
                     SelectionGoal::None,
                 )
             });
@@ -423,7 +423,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (
-                    movement::previous_word_start(map, head, false),
+                    movement::visual_previous_word_start(map, head, false),
                     SelectionGoal::None,
                 )
             });
@@ -439,7 +439,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (
-                    movement::previous_subword_start(map, head),
+                    movement::visual_previous_subword_start(map, head),
                     SelectionGoal::None,
                 )
             });
@@ -455,7 +455,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (
-                    movement::next_word_end(map, head, false),
+                    movement::visual_next_word_end(map, head, false),
                     SelectionGoal::None,
                 )
             });
@@ -470,7 +470,7 @@ impl Editor {
     ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
-                (movement::next_subword_end(map, head), SelectionGoal::None)
+                (movement::visual_next_subword_end(map, head), SelectionGoal::None)
             });
         })
     }
@@ -484,7 +484,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (
-                    movement::next_word_end(map, head, false),
+                    movement::visual_next_word_end(map, head, false),
                     SelectionGoal::None,
                 )
             });
@@ -499,7 +499,7 @@ impl Editor {
     ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
-                (movement::next_subword_end(map, head), SelectionGoal::None)
+                (movement::visual_next_subword_end(map, head), SelectionGoal::None)
             });
         })
     }
