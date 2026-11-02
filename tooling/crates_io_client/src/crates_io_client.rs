@@ -14,6 +14,13 @@ use serde::Deserialize;
 pub use real_crates_io_client::RealCratesIoClient;
 pub use types::*;
 
+pub type Result<T, E = CratesIoError> = std::result::Result<T, E>;
+
+#[async_trait]
+pub trait CratesIoClient: Send + Sync {
+    async fn get_site_metadata(&self) -> Result<SiteMetadata>;
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CratesIoError {
     /// The token is invalid, or lacks the scope or crate ownership the
@@ -60,9 +67,15 @@ impl CratesIoError {
     }
 }
 
-pub type Result<T, E = CratesIoError> = std::result::Result<T, E>;
+#[derive(Clone)]
+pub struct ApiToken(String);
 
-#[async_trait]
-pub trait CratesIoClient: Send + Sync {
-    async fn get_site_metadata(&self) -> Result<SiteMetadata>;
+impl ApiToken {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub(crate) fn value(&self) -> &str {
+        &self.0
+    }
 }
