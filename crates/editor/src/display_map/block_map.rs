@@ -8,7 +8,7 @@ use crate::{
     display_map::{Companion, dimensions::RowDelta, wrap_map::WrapRow},
 };
 use collections::{Bound, HashMap, HashSet};
-use gpui::{AnyElement, App, EntityId, Pixels, Window};
+use gpui::{AnyElement, App, EntityId, ParentElement as _, Pixels, Styled as _, Window, div};
 use language::{LanguageAwareStyling, Patch, Point};
 use multi_buffer::{
     Anchor, ExcerptBoundaryInfo, MultiBuffer, MultiBufferOffset, MultiBufferPoint, MultiBufferRow,
@@ -1776,19 +1776,36 @@ pub(crate) fn balancing_block(
         // Not supported for balancing
         BlockPlacement::Near(_) | BlockPlacement::Replace(_) => return None,
     };
+    // A sticky block ignores horizontal scrolling and spans only the visible width, so its
+    // balancing block must too; otherwise content rendered into it (see
+    // `SplittableEditor::set_lhs_block_renderer`) drifts and stretches to the scroll width.
+    let is_sticky = my_block.style == BlockStyle::Sticky;
     Some(BlockProperties {
         placement: their_placement,
         height: my_block.height,
-        style: BlockStyle::Spacer,
+        style: if is_sticky {
+            BlockStyle::Sticky
+        } else {
+            BlockStyle::Spacer
+        },
         render: Arc::new(move |cx| {
-            crate::EditorElement::render_spacer_block(
+            let spacer = crate::EditorElement::render_spacer_block(
                 cx.block_id,
                 cx.height,
                 cx.line_height,
                 cx.indent_guide_padding,
                 cx.window,
                 cx.app,
-            )
+            );
+            if is_sticky {
+                // Spacer blocks are laid out after the gutter; sticky ones start at the gutter.
+                div()
+                    .pl(cx.margins.gutter.full_width())
+                    .child(spacer)
+                    .into_any_element()
+            } else {
+                spacer
+            }
         }),
         priority: my_block.priority,
     })
@@ -2900,6 +2917,11 @@ impl CustomBlock {
 
     pub fn style(&self) -> BlockStyle {
         self.style
+    }
+
+    #[cfg(test)]
+    pub(crate) fn renderer(&self) -> RenderBlock {
+        self.render.lock().clone()
     }
 
     pub fn properties(&self) -> BlockProperties<Anchor> {
