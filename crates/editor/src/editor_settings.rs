@@ -86,10 +86,10 @@ pub struct CommitViewSettings {
     ///
     /// Default: false
     pub expand_description: bool,
-    /// Whether newly opened commit views collapse every changed file.
+    /// Whether newly opened commit views expand every changed file.
     ///
-    /// Default: false
-    pub collapse_files: bool,
+    /// Default: true
+    pub expand_files: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -356,7 +356,7 @@ impl Settings for EditorSettings {
             minimum_split_diff_width: editor.minimum_split_diff_width.unwrap(),
             commit_view: CommitViewSettings {
                 expand_description: commit_view.expand_description.unwrap(),
-                collapse_files: commit_view.collapse_files.unwrap(),
+                expand_files: commit_view.expand_files.unwrap(),
             },
             file_diff: FileDiffSettings {
                 show_full_file: file_diff.show_full_file.unwrap(),

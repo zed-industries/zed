@@ -889,10 +889,10 @@ pub struct CommitViewSettingsContent {
     ///
     /// Default: false
     pub expand_description: Option<bool>,
-    /// Whether newly opened commit views collapse every changed file.
+    /// Whether newly opened commit views expand every changed file.
     ///
-    /// Default: false
-    pub collapse_files: Option<bool>,
+    /// Default: true
+    pub expand_files: Option<bool>,
 }
 
 #[with_fallible_options]
