@@ -2,7 +2,7 @@ use acp_thread::{
     AcpThread, AgentThreadEntry, MessageIdentity, SessionMessage, SessionMessageSide, ToolCall,
     ToolCallContent, ToolCallStatus,
 };
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use gpui::{App, Entity, SharedString};
 use std::{fmt, ops::Range};
 

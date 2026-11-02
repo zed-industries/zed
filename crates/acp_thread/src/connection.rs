@@ -1,5 +1,5 @@
 use crate::{AcpThread, ElicitationStore, ReceiptSubmission};
-use agent_client_protocol::schema::{MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::{schema::MaybeUndefined, v1::schema as acp_v1, v2::schema as acp_v2};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
@@ -139,6 +139,12 @@ pub trait AgentConnection {
     /// only through their parent's announcements, and must never be loaded or resumed.
     fn announces_subagents(&self) -> bool {
         false
+    }
+
+    /// Whether cancelling a session's work answers its pending permission requests with
+    /// `cancelled` locally instead of waiting for the agent to cancel them.
+    fn answers_permission_requests_on_cancel(&self) -> bool {
+        true
     }
 
     /// Whether conversation teardown should invoke `close_session`.
@@ -583,6 +589,13 @@ pub struct ProtocolErrorInfo<'a> {
 
 impl<'a> ProtocolErrorInfo<'a> {
     pub fn from_error(error: &'a anyhow::Error) -> Option<Self> {
+        if let Some(error) = error.downcast_ref::<agent_client_protocol::Error>() {
+            return Some(Self {
+                code: error.code.into(),
+                message: &error.message,
+                data: error.data.as_ref(),
+            });
+        }
         if let Some(error) = error.downcast_ref::<acp_v1::Error>() {
             return Some(Self {
                 code: error.code.into(),
