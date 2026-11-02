@@ -115,7 +115,7 @@ impl RequestBuilderExt for http::request::Builder {
     }
 }
 
-pub trait HttpClient: 'static + Send + Sync {
+pub trait HttpClient<E = anyhow::Error>: 'static + Send + Sync {
     fn user_agent(&self) -> Option<&HeaderValue>;
 
     fn proxy(&self) -> Option<&Url>;
@@ -123,14 +123,17 @@ pub trait HttpClient: 'static + Send + Sync {
     fn send(
         &self,
         req: http::Request<AsyncBody>,
-    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>>;
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, E>>;
 
     fn get(
         &self,
         uri: &str,
         body: AsyncBody,
         follow_redirects: bool,
-    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, E>>
+    where
+        E: From<http::Error> + 'static,
+    {
         let request = Builder::new()
             .uri(uri)
             .follow_redirects(if follow_redirects {
@@ -150,7 +153,10 @@ pub trait HttpClient: 'static + Send + Sync {
         &self,
         uri: &str,
         body: AsyncBody,
-    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, E>>
+    where
+        E: From<http::Error> + 'static,
+    {
         let request = Builder::new()
             .uri(uri)
             .method(Method::POST)
@@ -170,21 +176,21 @@ pub trait HttpClient: 'static + Send + Sync {
 }
 
 /// An [`HttpClient`] that may have a proxy.
-pub struct HttpClientWithProxy {
-    client: Arc<dyn HttpClient>,
+pub struct HttpClientWithProxy<E = anyhow::Error> {
+    client: Arc<dyn HttpClient<E>>,
     proxy: Option<Url>,
 }
 
-impl HttpClientWithProxy {
+impl<E> HttpClientWithProxy<E> {
     /// Returns a new [`HttpClientWithProxy`] with the given proxy URL.
-    pub fn new(client: Arc<dyn HttpClient>, proxy_url: Option<String>) -> Self {
+    pub fn new(client: Arc<dyn HttpClient<E>>, proxy_url: Option<String>) -> Self {
         let proxy_url = proxy_url
             .and_then(|proxy| proxy.parse().ok())
             .or_else(read_proxy_from_env);
 
         Self::new_url(client, proxy_url)
     }
-    pub fn new_url(client: Arc<dyn HttpClient>, proxy_url: Option<Url>) -> Self {
+    pub fn new_url(client: Arc<dyn HttpClient<E>>, proxy_url: Option<Url>) -> Self {
         Self {
             client,
             proxy: proxy_url,
@@ -192,8 +198,8 @@ impl HttpClientWithProxy {
     }
 }
 
-impl Deref for HttpClientWithProxy {
-    type Target = Arc<dyn HttpClient>;
+impl<E> Deref for HttpClientWithProxy<E> {
+    type Target = Arc<dyn HttpClient<E>>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -201,11 +207,8 @@ impl Deref for HttpClientWithProxy {
     }
 }
 
-impl HttpClient for HttpClientWithProxy {
-    fn send(
-        &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
+impl<E: 'static> HttpClient<E> for HttpClientWithProxy<E> {
+    fn send(&self, req: Request<AsyncBody>) -> BoxFuture<'static, Result<Response<AsyncBody>, E>> {
         self.client.send(req)
     }
 
@@ -224,15 +227,15 @@ impl HttpClient for HttpClientWithProxy {
 }
 
 /// An [`HttpClient`] that has a base URL.
-pub struct HttpClientWithUrl {
+pub struct HttpClientWithUrl<E = anyhow::Error> {
     base_url: Mutex<String>,
-    client: HttpClientWithProxy,
+    client: HttpClientWithProxy<E>,
 }
 
-impl HttpClientWithUrl {
+impl<E> HttpClientWithUrl<E> {
     /// Returns a new [`HttpClientWithUrl`] with the given base URL.
     pub fn new(
-        client: Arc<dyn HttpClient>,
+        client: Arc<dyn HttpClient<E>>,
         base_url: impl Into<String>,
         proxy_url: Option<String>,
     ) -> Self {
@@ -245,7 +248,7 @@ impl HttpClientWithUrl {
     }
 
     pub fn new_url(
-        client: Arc<dyn HttpClient>,
+        client: Arc<dyn HttpClient<E>>,
         base_url: impl Into<String>,
         proxy_url: Option<Url>,
     ) -> Self {
@@ -332,8 +335,8 @@ impl HttpClientWithUrl {
     }
 }
 
-impl Deref for HttpClientWithUrl {
-    type Target = HttpClientWithProxy;
+impl<E> Deref for HttpClientWithUrl<E> {
+    type Target = HttpClientWithProxy<E>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -341,11 +344,8 @@ impl Deref for HttpClientWithUrl {
     }
 }
 
-impl HttpClient for HttpClientWithUrl {
-    fn send(
-        &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
+impl<E: 'static> HttpClient<E> for HttpClientWithUrl<E> {
+    fn send(&self, req: Request<AsyncBody>) -> BoxFuture<'static, Result<Response<AsyncBody>, E>> {
         self.client.send(req)
     }
 

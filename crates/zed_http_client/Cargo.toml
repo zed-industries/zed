@@ -16,4 +16,9 @@ doctest = false
 test-support = ["http_client/test-support"]
 
 [dependencies]
+anyhow.workspace = true
 http_client.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+futures.workspace = true

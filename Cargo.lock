@@ -22740,7 +22740,10 @@ dependencies = [
 name = "zed_http_client"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "futures 0.3.34",
  "http_client",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
