@@ -14,9 +14,10 @@ static REDACT_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
     // Only match sensitive names so a non-sensitive assignment does not
     // consume a nested or adjacent secret assignment as part of its value.
     // Use ASCII-only case folding for names; util does not enable regex's unicode-case feature.
-    // Stop unquoted values at shell separators, unless they are escaped.
+    // Match entire shell words, including quoted segments and escapes, so
+    // punctuation cannot leave part of a secret visible.
     regex::Regex::new(&format!(
-        r#"(?i-u:((?:[a-z_][a-z0-9_]*)?(?:{})))=(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?:\\.|[^\s;&|\\])+)"#,
+        r#"(?i-u:((?:[a-z_][a-z0-9_]*)?(?:{})))=(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\\.|\S)+"#,
         REDACTED_SUFFIXES.join("|"),
     ))
     .unwrap()
@@ -110,11 +111,11 @@ mod tests {
         for (input, expected) in [
             (
                 "access_token=public;API_KEY='synthetic secret' command",
-                r#"access_token="[REDACTED]";API_KEY="[REDACTED]" command"#,
+                r#"access_token="[REDACTED]" command"#,
             ),
             (
                 r#"access_token=public;API_KEY="synthetic secret" command"#,
-                r#"access_token="[REDACTED]";API_KEY="[REDACTED]" command"#,
+                r#"access_token="[REDACTED]" command"#,
             ),
             (
                 "mode=debug;API_KEY='synthetic secret' command",
@@ -122,27 +123,52 @@ mod tests {
             ),
             (
                 "Access_Token=public&&api_key='synthetic secret' command",
-                r#"Access_Token="[REDACTED]"&&api_key="[REDACTED]" command"#,
+                r#"Access_Token="[REDACTED]" command"#,
             ),
             (
                 "access_token=public||API_KEY='synthetic secret' command",
-                r#"access_token="[REDACTED]"||API_KEY="[REDACTED]" command"#,
+                r#"access_token="[REDACTED]" command"#,
             ),
             (
                 "access_token=public|API_KEY='synthetic secret' command",
-                r#"access_token="[REDACTED]"|API_KEY="[REDACTED]" command"#,
+                r#"access_token="[REDACTED]" command"#,
             ),
             (
                 r"access_token=public\;escaped;API_KEY='synthetic secret' command",
-                r#"access_token="[REDACTED]";API_KEY="[REDACTED]" command"#,
+                r#"access_token="[REDACTED]" command"#,
             ),
             (
                 r"access_token=public\ with\ spaces;API_KEY='synthetic secret' command",
-                r#"access_token="[REDACTED]";API_KEY="[REDACTED]" command"#,
+                r#"access_token="[REDACTED]" command"#,
             ),
             (
                 "API_KEY='secret with; semicolon';access_token=plain",
-                r#"API_KEY="[REDACTED]";access_token="[REDACTED]""#,
+                r#"API_KEY="[REDACTED]""#,
+            ),
+        ] {
+            assert_eq!(redact_command(input), expected, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn test_redact_command_with_unquoted_punctuation_and_quoted_segments() {
+        for (input, expected) in [
+            ("API_KEY=abc&def cmd", r#"API_KEY="[REDACTED]" cmd"#),
+            ("api_key=abc;def cmd", r#"api_key="[REDACTED]" cmd"#),
+            ("Access_Token=abc|def cmd", r#"Access_Token="[REDACTED]" cmd"#),
+            ("clientSecret=abc,def cmd", r#"clientSecret="[REDACTED]" cmd"#),
+            (r"API_KEY=abc\ def cmd", r#"API_KEY="[REDACTED]" cmd"#),
+            (
+                r#"API_KEY=abc" two words"def cmd"#,
+                r#"API_KEY="[REDACTED]" cmd"#,
+            ),
+            (
+                "access_token=public,API_KEY='synthetic secret' command",
+                r#"access_token="[REDACTED]" command"#,
+            ),
+            (
+                "mode=debug,API_KEY='synthetic secret' command",
+                r#"mode=debug,API_KEY="[REDACTED]" command"#,
             ),
         ] {
             assert_eq!(redact_command(input), expected, "input: {input}");
