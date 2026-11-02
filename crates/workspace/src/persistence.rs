@@ -3493,7 +3493,7 @@ mod tests {
             recent_navigation_history: (0..20)
                 .map(|index| PathBuf::from(format!("/tmp2/src/{index}.rs")))
                 .collect(),
-            path_style: PathStyle::local(),
+            path_style: non_local_path_style(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -3510,6 +3510,115 @@ mod tests {
 
         assert!(db.delete_workspace_by_id(workspace.id).await.is_ok());
         assert!(db.recent_navigation_history(workspace.id).is_empty());
+    }
+
+    fn non_local_path_style() -> PathStyle {
+        match PathStyle::local() {
+            PathStyle::Unix => PathStyle::Windows,
+            PathStyle::Windows => PathStyle::Unix,
+        }
+    }
+
+    #[gpui::test]
+    async fn test_path_style_round_trip(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db("test_path_style_round_trip").await;
+
+        // The recent-workspaces list only includes local workspaces whose paths exist.
+        fs.insert_tree("/path-style/local", json!({})).await;
+        fs.insert_tree("/path-style/remote", json!({})).await;
+
+        let local_paths = [Path::new("/path-style/local")];
+        let remote_paths = [Path::new("/path-style/remote")];
+
+        let mut local_workspace = workspace_with(1, &local_paths, empty_pane_group(), None);
+        local_workspace.path_style = non_local_path_style();
+        db.save_workspace(local_workspace.clone()).await;
+
+        let remote_connection_id = db
+            .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "path-style-host".into(),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let mut remote_workspace = remote_workspace_with(2, "path-style-host", &remote_paths);
+        remote_workspace.path_style = non_local_path_style();
+        db.save_workspace(remote_workspace).await;
+
+        assert_eq!(
+            db.workspace_for_id(WorkspaceId(1)).unwrap().path_style,
+            local_workspace.path_style
+        );
+        assert_eq!(
+            db.workspace_for_roots(&local_paths).unwrap().path_style,
+            local_workspace.path_style
+        );
+        assert_eq!(
+            db.remote_workspace_for_roots(&remote_paths, remote_connection_id)
+                .unwrap()
+                .path_style,
+            non_local_path_style()
+        );
+
+        let recent_workspaces = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        let recent_local_workspace = recent_workspaces
+            .iter()
+            .find(|workspace| workspace.workspace_id == WorkspaceId(1))
+            .expect("local workspace should be listed as a recent workspace");
+        assert_eq!(recent_local_workspace.path_style, non_local_path_style());
+
+        let mut updated_workspace = local_workspace;
+        updated_workspace.path_style = PathStyle::local();
+        db.save_workspace(updated_workspace).await;
+        assert_eq!(
+            db.workspace_for_id(WorkspaceId(1)).unwrap().path_style,
+            PathStyle::local()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_missing_or_unknown_path_style_falls_back_to_local() {
+        let db =
+            WorkspaceDb::open_test_db("test_missing_or_unknown_path_style_falls_back_to_local")
+                .await;
+        let workspace_id = WorkspaceId(1);
+
+        let mut workspace = workspace_with(
+            1,
+            &[Path::new("/legacy/path-style")],
+            empty_pane_group(),
+            None,
+        );
+        workspace.path_style = non_local_path_style();
+        db.save_workspace(workspace).await;
+
+        // The NULL case
+        db.write(move |conn| {
+            conn.exec_bound(sql!(
+                UPDATE workspaces SET path_style = NULL WHERE workspace_id = ?1
+            ))?(workspace_id)
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db.workspace_for_id(workspace_id).unwrap().path_style,
+            PathStyle::local()
+        );
+
+        // The invalid case
+        db.write(move |conn| {
+            conn.exec_bound(sql!(
+                UPDATE workspaces SET path_style = ?2 WHERE workspace_id = ?1
+            ))?((workspace_id, "plan9"))
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            db.workspace_for_id(workspace_id).unwrap().path_style,
+            PathStyle::local()
+        );
     }
 
     #[gpui::test]
