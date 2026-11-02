@@ -773,16 +773,8 @@ impl TerminalView {
             && matches!(self.mode, TerminalMode::Standalone)
             && EditorSettings::get_global(cx).mouse_wheel_zoom
         {
-            let delta_y = match event.delta {
-                ScrollDelta::Pixels(pixels) => pixels.y.into(),
-                ScrollDelta::Lines(lines) => lines.y,
-            };
-            if delta_y > 0.0 {
-                theme_settings::increase_buffer_font_size(cx);
-            } else if delta_y < 0.0 {
-                theme_settings::decrease_buffer_font_size(cx);
-            }
-            return;
+            theme_settings::adjust_buffer_font_size_for_scroll(event.delta, cx);
+            return cx.stop_propagation();
         }
 
         let terminal_content = self.terminal.read(cx).last_content();
@@ -2434,39 +2426,83 @@ mod tests {
         let (project, _workspace, window_handle) = init_test_with_window(cx).await;
         let (_pane, _terminal, terminal_view) =
             add_display_only_terminal(&project, window_handle, true, false, cx);
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.editor.mouse_wheel_zoom = Some(true);
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        let set_mouse_wheel_zoom = |enabled: bool, cx: &mut VisualTestContext| {
+            cx.update(|_window, cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.editor.mouse_wheel_zoom = Some(enabled);
+                    });
                 });
             });
-        });
+        };
 
-        let scroll = |lines: f32, cx: &mut TestAppContext| {
-            terminal_view.update(cx, |terminal_view, cx| {
-                let event = ScrollEvent {
+        let buffer_font_size = |cx: &VisualTestContext| {
+            cx.read(|cx| theme_settings::ThemeSettings::get_global(cx).buffer_font_size(cx))
+        };
+
+        let zoom_scroll =
+            |position: gpui::Point<Pixels>, lines: f32, cx: &mut VisualTestContext| {
+                let modifiers = cx.read(|cx| gpui::Modifiers::secondary_key(cx));
+
+                cx.simulate_event(ScrollEvent {
+                    position,
                     delta: ScrollDelta::Lines(gpui::point(0., lines)),
-                    modifiers: gpui::Modifiers::secondary_key(cx),
+                    modifiers,
                     ..Default::default()
-                };
-                terminal_view.scroll_wheel(&event, cx);
+                });
+            };
+
+        cx.simulate_resize(gpui::size(px(400.), px(200.)));
+        cx.draw(
+            gpui::Point::default(),
+            gpui::size(px(400.), px(200.)),
+            |_, _| terminal_view.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        let position =
+            terminal_view.read_with(&cx, |view, cx| view.terminal_bounds(cx).bounds.center());
+
+        set_mouse_wheel_zoom(true, &mut cx);
+        let initial_font_size = buffer_font_size(&cx);
+        zoom_scroll(position, 1., &mut cx);
+        assert!(buffer_font_size(&cx) > initial_font_size);
+        zoom_scroll(position, -1., &mut cx);
+        assert_eq!(buffer_font_size(&cx), initial_font_size);
+        zoom_scroll(position, -1., &mut cx);
+        assert!(buffer_font_size(&cx) < initial_font_size);
+
+        set_mouse_wheel_zoom(false, &mut cx);
+        let initial_font_size = buffer_font_size(&cx);
+        zoom_scroll(position, 1., &mut cx);
+        assert_eq!(buffer_font_size(&cx), initial_font_size);
+
+        set_mouse_wheel_zoom(true, &mut cx);
+        cx.update(|window, cx| {
+            terminal_view.update(cx, |terminal_view, cx| {
+                terminal_view.set_embedded_mode(None, cx);
+
+                // Embedded terminals ignore scroll events unless focused.
+                window.focus(&terminal_view.focus_handle, cx)
             });
-        };
-        let buffer_font_size = |cx: &mut TestAppContext| {
-            cx.update(|cx| theme_settings::ThemeSettings::get_global(cx).buffer_font_size(cx))
-        };
-
-        let initial_font_size = buffer_font_size(cx);
-        scroll(1., cx);
-        assert!(buffer_font_size(cx) > initial_font_size);
-        scroll(-1., cx);
-        assert_eq!(buffer_font_size(cx), initial_font_size);
-
-        terminal_view.update(cx, |terminal_view, cx| {
-            terminal_view.set_embedded_mode(None, cx);
         });
-        scroll(1., cx);
-        assert_eq!(buffer_font_size(cx), initial_font_size);
+
+        cx.draw(
+            gpui::Point::default(),
+            gpui::size(px(400.), px(200.)),
+            |_, _| terminal_view.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        let position =
+            terminal_view.read_with(&cx, |view, cx| view.terminal_bounds(cx).bounds.center());
+
+        let initial_font_size = buffer_font_size(&cx);
+        zoom_scroll(position, 1., &mut cx);
+        assert_eq!(buffer_font_size(&cx), initial_font_size);
     }
 
     #[gpui::test]
