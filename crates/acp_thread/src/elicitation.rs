@@ -69,9 +69,17 @@ fn scope_from_v1(scope: v1::ElicitationScope) -> Result<v2::ElicitationScope> {
                 .into()
         }
         v1::ElicitationScope::Request(scope) => {
-            v2::ElicitationRequestScope::new(scope.request_id).into()
+            v2::ElicitationRequestScope::new(request_id_from_v1(scope.request_id)?).into()
         }
         _ => bail!("unsupported v1 elicitation scope"),
+    })
+}
+
+fn request_id_from_v1(id: v1::RequestId) -> Result<v2::RequestId> {
+    Ok(match id {
+        v1::RequestId::Number(id) => v2::RequestId::Number(id),
+        v1::RequestId::Str(id) => v2::RequestId::Str(id),
+        v1::RequestId::Null => bail!("elicitation cannot be scoped to a null request ID"),
     })
 }
 
@@ -333,7 +341,9 @@ mod tests {
             });
             let request: v1::CreateElicitationRequest = serde_json::from_value(fixture.clone())?;
             let request_id = match request.scope() {
-                v1::ElicitationScope::Request(scope) => scope.request_id.clone(),
+                v1::ElicitationScope::Request(scope) => {
+                    request_id_from_v1(scope.request_id.clone())?
+                }
                 _ => bail!("expected request scope"),
             };
             let converted = request_from_v1(request)?;

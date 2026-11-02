@@ -89,7 +89,7 @@ use task::Shell;
 use text::{Bias, BufferId, OffsetRangeExt, Rope, ToOffset};
 use util::{
     ResultExt, debug_panic,
-    paths::{PathStyle, SanitizedPath, normalize_path},
+    paths::{PathStyle, SanitizedPath},
     post_inc,
     rel_path::RelPath,
 };
@@ -703,6 +703,23 @@ pub struct Repository {
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
+    auto_fetch: AutoFetchState,
+}
+
+struct AutoFetchState {
+    enabled: bool,
+    interval_secs: u64,
+    task: Option<Task<()>>,
+}
+
+impl Default for AutoFetchState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 60,
+            task: None,
+        }
+    }
 }
 
 type RemoteAskPassDelegates = Arc<Mutex<HashMap<u64, RemoteAskPassDelegate>>>;
@@ -3437,7 +3454,7 @@ impl GitStore {
 
         let remote_output = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.fetch(fetch_options, askpass, cx)
+                repository_handle.fetch(fetch_options, Some(askpass), cx)
             })
             .await??;
 
@@ -6139,11 +6156,10 @@ impl RepositorySnapshot {
 
     /// The path that anchors a linked worktree's location: the main worktree
     /// when one exists, otherwise the repository's identity path (relevant for
-    /// bare repositories), falling back to the common Git directory.
-    fn linked_worktree_anchor_path(&self) -> &Path {
+    /// bare repositories).
+    pub fn linked_worktree_anchor_path(&self) -> &Path {
         self.main_worktree_abs_path()
-            .or_else(|| repo_identity_path_if_local(&self.common_dir_abs_path, self.path_style))
-            .unwrap_or(self.common_dir_abs_path.as_ref())
+            .unwrap_or_else(|| repo_identity_path(&self.common_dir_abs_path, self.path_style))
     }
 
     /// Computes the path where a new linked worktree for this repository
@@ -6153,6 +6169,11 @@ impl RepositorySnapshot {
         worktree_name: &str,
         worktree_directory_setting: &str,
     ) -> Result<PathBuf> {
+        anyhow::ensure!(
+            !self.path_style.has_root(Path::new(worktree_name)),
+            "worktree name must not contain a root directory component"
+        );
+
         let repository_anchor = self.linked_worktree_anchor_path();
         let project_name = self
             .path_style
@@ -6163,8 +6184,17 @@ impl RepositorySnapshot {
             worktree_directory_setting,
             self.path_style,
         )?;
-        let directory = self.path_style.join_path(&directory, worktree_name)?;
-        self.path_style.join_path(&directory, project_name)
+        let worktree_directory = self
+            .path_style
+            .normalize_lexically(self.path_style.join(&directory, worktree_name));
+
+        anyhow::ensure!(
+            self.path_style.starts_with(&worktree_directory, &directory),
+            "Worktree name {worktree_name:?} resolves to {worktree_directory:?}, \
+             which is outside the configured worktree directory {directory:?}"
+        );
+
+        Ok(self.path_style.join(&worktree_directory, project_name))
     }
 
     /// The main worktree is the original checkout that other worktrees were
@@ -6216,11 +6246,8 @@ impl RepositorySnapshot {
 
     pub fn repo_path_to_abs_path(&self, repo_path: &RepoPath) -> PathBuf {
         let repo_path = repo_path.display(self.path_style);
-        PathBuf::from(
-            self.path_style
-                .join(&self.work_directory_abs_path, repo_path.as_ref())
-                .unwrap(),
-        )
+        self.path_style
+            .join(&self.work_directory_abs_path, repo_path.as_ref())
     }
 
     #[inline]
@@ -6336,7 +6363,9 @@ impl MergeDetails {
 
 impl Repository {
     pub fn is_trusted(&self) -> bool {
-        match self.repository_state.peek() {
+        // The worker awaits its own shared state. Poll this wrapper too, so
+        // auto-fetch does not depend on a manual operation initializing it first.
+        match self.repository_state.clone().now_or_never() {
             Some(Ok(RepositoryState::Local(state))) => state.backend.is_trusted(),
             _ => false,
         }
@@ -6442,6 +6471,19 @@ impl Repository {
             PathStyle::local(),
         );
 
+        cx.observe_global::<SettingsStore>(|this: &mut Self, cx| {
+            this.restart_auto_fetch_timer(cx);
+        })
+        .detach();
+
+        let weak = cx.weak_entity();
+        cx.defer(move |cx| {
+            weak.update(cx, |this, cx| {
+                this.restart_auto_fetch_timer(cx);
+            })
+            .ok();
+        });
+
         let mut repo = Repository {
             this: cx.weak_entity(),
             git_store,
@@ -6462,6 +6504,7 @@ impl Repository {
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
+            auto_fetch: AutoFetchState::default(),
         };
         repo.respawn_local_worker(project_environment, fs, is_trusted, cx);
         cx.subscribe_self(Self::handle_subscribe_self).detach();
@@ -6514,6 +6557,7 @@ impl Repository {
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
+            auto_fetch: AutoFetchState::default(),
         }
     }
 
@@ -8570,6 +8614,99 @@ impl Repository {
         Ok(())
     }
 
+    fn restart_auto_fetch_timer(&mut self, cx: &mut Context<Self>) {
+        let git_settings = &ProjectSettings::get_global(cx).git;
+        let enabled = git_settings.auto_fetch.enabled;
+        let interval_secs = git_settings.auto_fetch.interval_secs;
+
+        if self.auto_fetch.enabled == enabled && self.auto_fetch.interval_secs == interval_secs {
+            return;
+        }
+
+        self.auto_fetch.enabled = enabled;
+        self.auto_fetch.interval_secs = interval_secs;
+
+        if !enabled {
+            self.auto_fetch.task = None;
+            return;
+        }
+
+        let interval = Duration::from_secs(interval_secs);
+
+        self.auto_fetch.task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(interval).await;
+                // Re-checked every tick rather than once up front, because a
+                // repository can be trusted (or restricted) at any point in the
+                // session.
+                let fetch = this.update(cx, |this, cx| {
+                    this.is_trusted().then(|| this.auto_fetch(cx))
+                });
+                match fetch {
+                    Ok(Some(fetch)) => {
+                        if let Err(error) = fetch.await {
+                            log::debug!("auto-fetch failed: {error:#}");
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) => break,
+                }
+            }
+        }));
+    }
+
+    fn auto_fetch(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let default_branch = self.default_branch(true);
+        let remotes = self.get_remotes(None, false);
+        cx.spawn(async move |this, cx| {
+            let default_branch = default_branch.await??;
+            let remotes = remotes.await??;
+            let (default_remote, branch_remote) = this.read_with(cx, |this, _| {
+                let default_remote = default_branch
+                    .and_then(|name| {
+                        this.branch_list
+                            .iter()
+                            .find(|branch| branch.is_remote() && branch.name() == name.as_ref())
+                            .or_else(|| {
+                                this.branch_list.iter().find(|branch| {
+                                    !branch.is_remote() && branch.name() == name.as_ref()
+                                })
+                            })
+                    })
+                    .and_then(|branch| {
+                        branch.remote_name().or_else(|| {
+                            branch
+                                .upstream
+                                .as_ref()
+                                .and_then(|upstream| upstream.remote_name())
+                        })
+                    })
+                    .map(str::to_owned);
+                let branch_remote = this
+                    .branch
+                    .as_ref()
+                    .and_then(|branch| branch.upstream.as_ref())
+                    .and_then(|upstream| upstream.remote_name())
+                    .map(str::to_owned);
+                (default_remote, branch_remote)
+            })?;
+            for remote in remotes {
+                if Some(remote.name.as_ref()) != default_remote.as_deref()
+                    && Some(remote.name.as_ref()) != branch_remote.as_deref()
+                {
+                    continue;
+                }
+                let fetch = this.update(cx, |this, cx| {
+                    this.fetch(FetchOptions::Remote(remote), None, cx)
+                })?;
+                if let Err(error) = fetch.await? {
+                    log::debug!("auto-fetch failed: {error:#}");
+                }
+            }
+            Ok(())
+        })
+    }
+
     pub fn unshallow_state(&self) -> UnshallowState {
         self.unshallow_state
     }
@@ -8579,7 +8716,7 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        let receiver = self.fetch(FetchOptions::Unshallow, askpass, cx);
+        let receiver = self.fetch(FetchOptions::Unshallow, Some(askpass), cx);
         self.unshallow_state = UnshallowState::InProgress;
         cx.notify();
         let (tx, rx) = oneshot::channel();
@@ -8606,7 +8743,7 @@ impl Repository {
     pub fn fetch(
         &mut self,
         fetch_options: FetchOptions,
-        askpass: AskPassDelegate,
+        askpass: Option<AskPassDelegate>,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let askpass_delegates = self.askpass_delegates.clone();
@@ -8623,46 +8760,49 @@ impl Repository {
             });
 
         let this = cx.weak_entity();
-        self.send_job(
-            "fetch",
-            Some("git fetch".into()),
-            move |git_repo, mut cx| async move {
-                match git_repo {
-                    RepositoryState::Local(LocalRepositoryState {
-                        backend,
-                        environment,
-                        ..
-                    }) => {
-                        let result = backend
-                            .fetch(fetch_options, askpass, environment, cx.clone())
-                            .await;
-                        if result.is_ok() {
-                            Self::refresh_branch_list(&this, backend, updates_tx, &mut cx).await?;
-                        }
-                        result
+        let status = askpass.is_some().then(|| "git fetch".into());
+        self.send_job("fetch", status, move |git_repo, mut cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState {
+                    backend,
+                    environment,
+                    ..
+                }) => {
+                    if askpass.is_none() && !backend.is_trusted() {
+                        bail!("auto-fetch requires a trusted repository");
                     }
-                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        let _askpass_operation =
-                            RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
-
-                        let response = client
-                            .request(proto::Fetch {
-                                project_id: project_id.0,
-                                repository_id: id.to_proto(),
-                                askpass_id,
-                                remote: fetch_options.to_proto(),
-                                unshallow: fetch_options == FetchOptions::Unshallow,
-                            })
-                            .await?;
-
-                        Ok(RemoteCommandOutput {
-                            stdout: response.stdout,
-                            stderr: response.stderr,
-                        })
+                    let result = backend
+                        .fetch(fetch_options, askpass, environment, cx.clone())
+                        .await;
+                    if result.is_ok() {
+                        Self::refresh_branch_list(&this, backend, updates_tx, &mut cx).await?;
                     }
+                    result
                 }
-            },
-        )
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let Some(askpass) = askpass else {
+                        bail!("auto-fetch must run on the repository host");
+                    };
+                    let _askpass_operation =
+                        RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
+
+                    let response = client
+                        .request(proto::Fetch {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            askpass_id,
+                            remote: fetch_options.to_proto(),
+                            unshallow: fetch_options == FetchOptions::Unshallow,
+                        })
+                        .await?;
+
+                    Ok(RemoteCommandOutput {
+                        stdout: response.stdout,
+                        stderr: response.stderr,
+                    })
+                }
+            }
+        })
     }
 
     pub fn push(
@@ -10593,19 +10733,11 @@ pub fn worktrees_directory_for_repo(
         anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
     }
 
-    let joined = path_style.join_path(repository_anchor_path, trimmed)?;
-    let resolved = if path_style.is_posix() {
-        joined
-    } else {
-        normalize_path(&joined)
-    };
+    let resolved = path_style.normalize_lexically(path_style.join(repository_anchor_path, trimmed));
     let resolved = if path_style.starts_with(resolved.as_path(), repository_anchor_path) {
         resolved
-    } else if let Some(repo_dir_name) = path_style
-        .file_name(repository_anchor_path)
-        .and_then(|name| name.to_str())
-    {
-        path_style.join_path(&resolved, repo_dir_name)?
+    } else if let Some(repo_dir_name) = path_style.file_name(repository_anchor_path) {
+        path_style.normalize_lexically(path_style.join(&resolved, repo_dir_name))
     } else {
         resolved
     };
@@ -10686,14 +10818,6 @@ pub fn repo_identity_path(common_dir: &Path, path_style: PathStyle) -> &Path {
     } else {
         common_dir
     }
-}
-
-/// Returns the repository identity only when `std::path` can interpret the path correctly.
-///
-/// Callers whose downstream path operations are not yet `PathStyle`-aware use this to preserve
-/// their existing behavior for foreign path styles.
-pub fn repo_identity_path_if_local(common_dir: &Path, path_style: PathStyle) -> Option<&Path> {
-    (path_style == PathStyle::local()).then(|| repo_identity_path(common_dir, path_style))
 }
 
 /// Returns true if `git_dir` is a Git submodule's git directory.
@@ -11226,6 +11350,174 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[gpui::test]
+    async fn test_auto_fetch_without_manual_git_operation(cx: &mut TestAppContext) {
+        use git::repository::{Upstream, UpstreamTracking};
+        use util::path;
+
+        init_test(cx);
+        cx.update(|cx| {
+            crate::trusted_worktrees::init(Default::default(), cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.set_user_settings(
+                    r#"{"session":{"trust_all_worktrees":true},"git":{"auto_fetch":{"enabled":true,"interval_secs":15}}}"#,
+                    cx,
+                ).expect("valid settings");
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({".git": {}, "README.md": "project"}),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+        let fetches = fs
+            .with_git_state(Path::new(path!("/project/.git")), false, |state| {
+                state.fetches.clone()
+            })
+            .expect("repository exists");
+        assert!(fetches.lock().is_empty());
+        cx.executor().advance_clock(Duration::from_secs(15));
+        cx.run_until_parked();
+        assert!(fetches.lock().is_empty(), "no remotes to fetch");
+
+        for (default_branch, branch, upstream, expected) in [
+            (
+                Some("refs/remotes/upstream/main"),
+                Some("refs/heads/feature"),
+                Some("refs/remotes/fork/topic"),
+                vec!["fork", "upstream"],
+            ),
+            (
+                Some("refs/remotes/upstream/main"),
+                Some("refs/heads/feature"),
+                Some("refs/remotes/upstream/topic"),
+                vec!["upstream"],
+            ),
+            (
+                Some("refs/remotes/origin/main"),
+                Some("refs/heads/feature"),
+                Some("refs/remotes/fork/topic"),
+                vec!["fork", "origin"],
+            ),
+            (
+                Some("refs/heads/main"),
+                Some("refs/heads/feature"),
+                Some("refs/remotes/fork/topic"),
+                vec!["central", "fork"],
+            ),
+            (
+                Some("refs/heads/release/stable"),
+                Some("refs/heads/feature"),
+                Some("refs/remotes/central/topic"),
+                vec!["central"],
+            ),
+            (
+                Some("refs/heads/untracked"),
+                Some("refs/heads/feature"),
+                Some("refs/remotes/fork/topic"),
+                vec!["fork"],
+            ),
+            (
+                Some("refs/remotes/upstream/main"),
+                Some("refs/heads/feature"),
+                None,
+                vec!["upstream"],
+            ),
+            (
+                Some("refs/remotes/upstream/main"),
+                None,
+                None,
+                vec!["upstream"],
+            ),
+            (
+                None,
+                Some("refs/heads/feature"),
+                Some("refs/remotes/fork/topic"),
+                vec!["fork"],
+            ),
+            (
+                None,
+                Some("refs/heads/feature"),
+                Some("refs/heads/other"),
+                vec![],
+            ),
+            (None, None, None, vec![]),
+        ] {
+            fs.with_git_state(Path::new(path!("/project/.git")), true, |state| {
+                state.branches = [
+                    "refs/heads/main",
+                    "refs/heads/release/stable",
+                    "refs/heads/untracked",
+                    "refs/heads/feature",
+                    "refs/remotes/origin/main",
+                    "refs/remotes/upstream/main",
+                ]
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+                state.default_branch_ref = default_branch.map(str::to_owned);
+                state.current_branch_name = branch.map(str::to_owned);
+                state.branch_upstreams.clear();
+                for (branch, upstream) in [
+                    ("refs/heads/main", Some("refs/remotes/central/main")),
+                    (
+                        "refs/heads/release/stable",
+                        Some("refs/remotes/central/stable"),
+                    ),
+                    ("refs/heads/feature", upstream),
+                ] {
+                    let Some(upstream) = upstream else {
+                        continue;
+                    };
+                    state.branch_upstreams.insert(
+                        branch.into(),
+                        Upstream {
+                            ref_name: upstream.into(),
+                            tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
+                                ahead: 0,
+                                behind: 0,
+                            }),
+                        },
+                    );
+                }
+                state.remotes = ["origin", "upstream", "central", "fork", "unrelated"]
+                    .into_iter()
+                    .map(|remote| {
+                        (
+                            remote.to_owned(),
+                            format!("https://example.com/{remote}.git"),
+                        )
+                    })
+                    .collect();
+                state.fetches.lock().clear();
+            })
+            .expect("repository exists");
+            project
+                .update(cx, |project, cx| project.git_scans_complete(cx))
+                .await;
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(15));
+            cx.run_until_parked();
+
+            let mut fetched_remotes = fetches
+                .lock()
+                .iter()
+                .map(|options| options.name().to_string())
+                .collect::<Vec<_>>();
+            fetched_remotes.sort();
+            assert_eq!(
+                fetched_remotes, expected,
+                "default_branch={default_branch:?}, branch={branch:?}, upstream={upstream:?}"
+            );
+        }
     }
 
     type TestPasswordPrompt = (
@@ -12070,8 +12362,8 @@ mod tests {
         let work_dir = Path::new("/home/user/dev/lsp-tests");
         let directory =
             worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap();
-        let directory = PathStyle::Unix.join_path(&directory, "nimble-sky").unwrap();
-        let path = PathStyle::Unix.join_path(&directory, "lsp-tests").unwrap();
+        let directory = PathStyle::Unix.join(&directory, "nimble-sky");
+        let path = PathStyle::Unix.join(&directory, "lsp-tests");
 
         assert_eq!(
             path,
@@ -12124,6 +12416,147 @@ mod tests {
                 .unwrap(),
             PathBuf::from(r"C:\Users\user\dev\worktrees\lsp-tests\nimble-sky\lsp-tests")
         );
+    }
+
+    #[test]
+    fn test_new_worktree_path_rejects_names_outside_worktree_directory() {
+        let unix_snapshot = RepositorySnapshot::empty(
+            RepositoryId(0),
+            Path::new("/home/user/dev/lsp-tests").into(),
+            None,
+            None,
+            None,
+            PathStyle::Unix,
+        );
+
+        let windows_snapshot = RepositorySnapshot::empty(
+            RepositoryId(0),
+            Path::new(r"C:\Users\user\dev\lsp-tests").into(),
+            None,
+            None,
+            None,
+            PathStyle::Windows,
+        );
+
+        for (snapshot, worktree_name) in [
+            (&unix_snapshot, ".."),
+            (&unix_snapshot, "../.."),
+            (&unix_snapshot, "../../test_worktree"),
+            (&unix_snapshot, "feature/../../escaped"),
+            (&windows_snapshot, "D:trial"),
+            (&windows_snapshot, "C:trial"),
+        ] {
+            assert!(
+                snapshot
+                    .path_for_new_linked_worktree(worktree_name, "../worktrees")
+                    .is_err(),
+                "{worktree_name:?} should be rejected"
+            );
+        }
+
+        // Nested names remain valid as long as they resolve inside the directory.
+        assert_eq!(
+            unix_snapshot
+                .path_for_new_linked_worktree("feature/nested", "../worktrees")
+                .unwrap(),
+            PathBuf::from("/home/user/dev/worktrees/lsp-tests/feature/nested/lsp-tests")
+        );
+    }
+
+    #[test]
+    fn test_linked_worktree_anchor_path() {
+        let cases = [
+            // Normal clone (`.git`): the main worktree's checkout is the anchor.
+            (
+                "/worktrees/zed/feature/zed",
+                "/repos/zed/.git/worktrees/feature",
+                "/worktrees/zed/feature/zed/.git",
+                "/repos/zed/.git",
+                PathStyle::Unix,
+                Some("/repos/zed"),
+                "/repos/zed",
+            ),
+            (
+                r"C:\worktrees\zed\feature\zed",
+                r"C:\repos\zed\.git\worktrees\feature",
+                r"C:\worktrees\zed\feature\zed\.git",
+                r"C:\repos\zed\.git",
+                PathStyle::Windows,
+                Some(r"C:\repos\zed"),
+                r"C:\repos\zed",
+            ),
+            // Bare clone stored in `.bare`: there is no main worktree, so the parent
+            // of `.bare` is the anchor.
+            (
+                "/worktrees/zed/plum-warbler/zed",
+                "/repos/zed/.bare/worktrees/plum-warbler",
+                "/worktrees/zed/plum-warbler/zed/.git",
+                "/repos/zed/.bare",
+                PathStyle::Unix,
+                None,
+                "/repos/zed",
+            ),
+            (
+                r"C:\worktrees\zed\plum-warbler\zed",
+                r"C:\repos\zed\.bare\worktrees\plum-warbler",
+                r"C:\worktrees\zed\plum-warbler\zed\.git",
+                r"C:\repos\zed\.bare",
+                PathStyle::Windows,
+                None,
+                r"C:\repos\zed",
+            ),
+            // Bare clone named `repo.git`: there is no main worktree and no parent to
+            // strip, so the common directory itself is the anchor.
+            (
+                "/worktrees/zed.git/plum-warbler/zed.git",
+                "/repos/zed.git/worktrees/plum-warbler",
+                "/worktrees/zed.git/plum-warbler/zed.git/.git",
+                "/repos/zed.git",
+                PathStyle::Unix,
+                None,
+                "/repos/zed.git",
+            ),
+            (
+                r"C:\worktrees\zed.git\plum-warbler\zed.git",
+                r"C:\repos\zed.git\worktrees\plum-warbler",
+                r"C:\worktrees\zed.git\plum-warbler\zed.git\.git",
+                r"C:\repos\zed.git",
+                PathStyle::Windows,
+                None,
+                r"C:\repos\zed.git",
+            ),
+        ];
+
+        for (
+            work_directory,
+            repository_dir,
+            dot_git,
+            common_dir,
+            path_style,
+            expected_main_worktree,
+            expected_anchor,
+        ) in cases
+        {
+            let snapshot = RepositorySnapshot::empty(
+                RepositoryId(0),
+                Path::new(work_directory).into(),
+                Some(Path::new(repository_dir).into()),
+                Some(Path::new(dot_git).into()),
+                Some(Path::new(common_dir).into()),
+                path_style,
+            );
+
+            assert_eq!(
+                snapshot.main_worktree_abs_path(),
+                expected_main_worktree.map(Path::new),
+                "main worktree for {work_directory:?} with {path_style:?}",
+            );
+            assert_eq!(
+                snapshot.linked_worktree_anchor_path(),
+                Path::new(expected_anchor),
+                "anchor for {work_directory:?} with {path_style:?}",
+            );
+        }
     }
 
     fn verify_invariants(repository: &Repository) -> anyhow::Result<()> {

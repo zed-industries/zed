@@ -1317,6 +1317,7 @@ mod tests {
         child_thread.subagent_context = Some(crate::SubagentContext {
             parent_thread_id: parent_id.clone(),
             depth: 1,
+            outcomes: Vec::new(),
         });
 
         let mut grandchild_thread = make_thread(
@@ -1326,6 +1327,7 @@ mod tests {
         grandchild_thread.subagent_context = Some(crate::SubagentContext {
             parent_thread_id: child_id.clone(),
             depth: 2,
+            outcomes: Vec::new(),
         });
 
         let unrelated_thread = make_thread(
@@ -1366,6 +1368,7 @@ mod tests {
         child_thread.subagent_context = Some(crate::SubagentContext {
             parent_thread_id: parent_id.clone(),
             depth: 2,
+            outcomes: Vec::new(),
         });
 
         database

@@ -8,9 +8,9 @@
 //! private inherent methods on `Prefix` live in the local [`PrefixExt`] trait.
 
 use crate::PathStyle;
-use std::ffi::OsStr;
-use std::path::Path;
+use std::ffi::{OsStr, OsString};
 pub use std::path::Prefix;
+use std::path::{Path, PathBuf};
 
 pub(crate) trait PrefixExt {
     fn len(&self) -> usize;
@@ -486,5 +486,92 @@ pub(crate) fn rsplit_file_at_dot(file: &OsStr) -> (Option<&OsStr>, Option<&OsStr
                 after.map(|s| OsStr::from_encoded_bytes_unchecked(s)),
             )
         }
+    }
+}
+
+pub(crate) trait PathBufExt {
+    fn styled_push(&mut self, path: impl AsRef<Path>, path_style: PathStyle);
+}
+
+impl PathBufExt for PathBuf {
+    fn styled_push(&mut self, path: impl AsRef<Path>, path_style: PathStyle) {
+        let path = path.as_ref();
+        // in general, a separator is needed if the rightmost byte is not a separator
+        let buf = self.as_os_str().as_encoded_bytes();
+        let mut need_sep = buf
+            .last()
+            .map(|c| !path_style.is_sep_byte(*c))
+            .unwrap_or(false);
+
+        // in the special case of `C:` on Windows, do *not* add a separator
+        let comps = path_style.components(self);
+
+        if comps.prefix_len() > 0
+            && comps.prefix_len() == comps.path.len()
+            && comps.prefix.is_some_and(|p| p.is_drive())
+        {
+            need_sep = false
+        }
+
+        let path_comps = path_style.components(path);
+
+        // absolute `path` replaces `self`
+        if path_style.is_absolute(path) || path_comps.prefix().is_some() {
+            self.clear();
+
+        // verbatim paths need . and .. removed
+        } else if comps.prefix_verbatim() && !path.is_empty() {
+            let mut buf: Vec<_> = comps.collect();
+            for c in path_comps {
+                match c {
+                    Component::RootDir => {
+                        buf.truncate(1);
+                        buf.push(c);
+                    }
+                    Component::CurDir => (),
+                    Component::ParentDir => {
+                        if let Some(Component::Normal(_)) = buf.last() {
+                            buf.pop();
+                        }
+                    }
+                    _ => buf.push(c),
+                }
+            }
+
+            let mut res = OsString::new();
+            let mut need_sep = false;
+
+            for c in buf {
+                if need_sep && c != Component::RootDir {
+                    res.push(path_style.primary_separator());
+                }
+                res.push(c.as_os_str(path_style));
+
+                need_sep = match c {
+                    Component::RootDir => false,
+                    Component::Prefix(prefix) => {
+                        !prefix.parsed.is_drive() && prefix.parsed.len() > 0
+                    }
+                    _ => true,
+                }
+            }
+
+            *self.as_mut_os_string() = res;
+            return;
+
+        // `path` has a root but no prefix, e.g., `\windows` (Windows only)
+        } else if path_style.has_root(path) {
+            let prefix = match path_style.components(self).next() {
+                Some(Component::Prefix(prefix)) => prefix.raw.to_os_string(),
+                _ => OsString::new(),
+            };
+            *self.as_mut_os_string() = prefix;
+
+        // `path` is a pure relative path
+        } else if need_sep {
+            self.as_mut_os_string().push(path_style.primary_separator());
+        }
+
+        self.as_mut_os_string().push(path);
     }
 }

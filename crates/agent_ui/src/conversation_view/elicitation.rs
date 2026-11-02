@@ -51,14 +51,23 @@ impl ElicitationFormState {
         let mut fields = HashMap::default();
 
         for (name, property) in &schema.properties {
+            // The store rejects forms whose required properties can't be rendered, so these
+            // are optional and left out of the form.
+            if !acp_thread::is_renderable_elicitation_property(property) {
+                continue;
+            }
             let is_required = required.iter().any(|required| required == name);
+            let title = property_title(name, property);
             let field = match property {
                 acp::ElicitationPropertySchema::String(schema) => {
                     let options = single_select_options(schema);
                     if options.is_empty() {
+                        let default = schema.default.as_ref().filter(|default| {
+                            validate_string_value(title.clone(), schema, default).is_ok()
+                        });
                         let editor = cx.new(|cx| {
                             let mut editor = Editor::single_line(window, cx);
-                            if let Some(default) = &schema.default {
+                            if let Some(default) = default {
                                 editor.set_text(default.clone(), window, cx);
                             }
                             editor
@@ -74,20 +83,34 @@ impl ElicitationFormState {
                     }
                 }
                 acp::ElicitationPropertySchema::Number(schema) => {
+                    let default =
+                        schema
+                            .default
+                            .map(|default| default.to_string())
+                            .filter(|default| {
+                                validate_number_value(title.clone(), schema, default).is_ok()
+                            });
                     let editor = cx.new(|cx| {
                         let mut editor = Editor::single_line(window, cx);
-                        if let Some(default) = schema.default {
-                            editor.set_text(default.to_string(), window, cx);
+                        if let Some(default) = default {
+                            editor.set_text(default, window, cx);
                         }
                         editor
                     });
                     ElicitationFieldState::Text(editor)
                 }
                 acp::ElicitationPropertySchema::Integer(schema) => {
+                    let default =
+                        schema
+                            .default
+                            .map(|default| default.to_string())
+                            .filter(|default| {
+                                validate_integer_value(title.clone(), schema, default).is_ok()
+                            });
                     let editor = cx.new(|cx| {
                         let mut editor = Editor::single_line(window, cx);
-                        if let Some(default) = schema.default {
-                            editor.set_text(default.to_string(), window, cx);
+                        if let Some(default) = default {
+                            editor.set_text(default, window, cx);
                         }
                         editor
                     });
@@ -98,9 +121,7 @@ impl ElicitationFormState {
                 }
                 acp::ElicitationPropertySchema::Array(schema) => {
                     ElicitationFieldState::MultiSelect(
-                        schema
-                            .default
-                            .clone()
+                        multi_select_default_value(schema)
                             .unwrap_or_default()
                             .into_iter()
                             .collect(),
@@ -1160,6 +1181,42 @@ mod tests {
     }
 
     #[gpui::test]
+    fn form_state_skips_unrenderable_optional_properties_and_invalid_defaults(
+        cx: &mut TestAppContext,
+    ) {
+        crate::conversation_view::tests::init_test(cx);
+
+        cx.add_window(|window, cx| {
+            let schema: acp::ElicitationSchema = serde_json::from_value(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "when": {"type": "_future"},
+                    "labels": {"type": "array", "items": {"type": "_future"}},
+                    "code": {"type": "string", "pattern": "^[0-9]+$", "default": "abc"},
+                    "count": {"type": "integer", "minimum": 1, "default": 0},
+                    "ratio": {"type": "number", "maximum": 1, "default": 2},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["a", "b"]},
+                        "default": ["a", "c"],
+                    },
+                },
+            }))
+            .expect("form schema");
+            let form_state = ElicitationFormState::new(&schema, window, cx);
+            assert!(!form_state.fields.contains_key("when"));
+            assert!(!form_state.fields.contains_key("labels"));
+            let content = form_state
+                .collect(&schema, cx)
+                .expect("invalid defaults should be ignored");
+
+            assert!(content.is_empty(), "{content:?}");
+
+            Editor::single_line(window, cx)
+        });
+    }
+
+    #[gpui::test]
     fn form_state_replaces_invalid_required_single_select_default(cx: &mut TestAppContext) {
         crate::conversation_view::tests::init_test(cx);
 
@@ -1524,6 +1581,20 @@ fn single_select_default_value(
                 .any(|option| option.value.as_str() == default.as_str())
         })
         .cloned()
+}
+
+/// A default with an unknown value or the wrong number of selections doesn't match its schema
+/// and is ignored.
+fn multi_select_default_value(schema: &acp::MultiSelectPropertySchema) -> Option<Vec<String>> {
+    let default = schema.default.as_ref()?;
+    let options = multi_select_options(schema);
+    let all_offered = default
+        .iter()
+        .all(|value| options.iter().any(|option| &option.value == value));
+    let count = default.len() as u64;
+    let count_allowed = schema.min_items.is_none_or(|min_items| count >= min_items)
+        && schema.max_items.is_none_or(|max_items| count <= max_items);
+    (all_offered && count_allowed).then(|| default.clone())
 }
 
 fn multi_select_options(schema: &acp::MultiSelectPropertySchema) -> Vec<ElicitationOption> {

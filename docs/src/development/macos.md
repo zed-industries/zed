@@ -77,7 +77,7 @@ You must grant Screen Recording permission to your terminal:
 ### Running Visual Tests
 
 ```sh
-cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+cargo run -p zed --bin zed-visual-test-runner --features visual-tests
 ```
 
 ### Baseline Images
@@ -92,7 +92,7 @@ Before making any UI changes, generate baseline images from a known-good state:
 
 ```sh
 git checkout origin/main
-UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+UPDATE_BASELINE=1 cargo run -p zed --bin zed-visual-test-runner --features visual-tests
 git checkout -
 ```
 
@@ -103,7 +103,7 @@ This creates baselines that reflect the current expected UI.
 When UI changes are intentional, update the baseline images after your changes:
 
 ```sh
-UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+UPDATE_BASELINE=1 cargo run -p zed --bin zed-visual-test-runner --features visual-tests
 ```
 
 > **Note:** In the future, baselines may be stored externally. For now, they
