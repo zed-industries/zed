@@ -13,7 +13,7 @@ pub fn global_skills_are_remote(project: &Project) -> bool {
     project.is_via_remote_server()
 }
 
-fn remote_server_client(project: &Entity<Project>, cx: &App) -> Result<AnyProtoClient> {
+pub(crate) fn remote_server_client(project: &Entity<Project>, cx: &App) -> Result<AnyProtoClient> {
     let remote_client = project
         .read(cx)
         .remote_client()

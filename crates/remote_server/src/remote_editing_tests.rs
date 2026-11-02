@@ -3,9 +3,10 @@
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
 use agent::{
-    AgentTool, NativeAgent, NativeAgentConnection, ReadFileTool, ReadFileToolInput, SkillTool,
-    SkillToolInput, SkillToolOutput, Templates, ThreadStore, ToolCallEventStream, ToolInput,
-    skill_body_resolver_for_project, skills_resolver_for_project,
+    AgentTool, ListDirectoryTool, ListDirectoryToolInput, NativeAgent, NativeAgentConnection,
+    ReadFileTool, ReadFileToolInput, SkillTool, SkillToolInput, SkillToolOutput, Templates,
+    ThreadStore, ToolCallEventStream, ToolInput, skill_body_resolver_for_project,
+    skills_resolver_for_project,
 };
 use agent_skills::SkillIndex;
 use client::{Client, UserStore};
@@ -5419,6 +5420,92 @@ async fn test_remote_global_skills_dir_deleted_and_recreated(
     assert_eq!(
         test.global_skills(cx),
         remote_global(&["another-skill", "new-skill"])
+    );
+}
+
+#[gpui::test]
+async fn test_agent_file_tools_reach_remote_global_skill_files(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(
+        Path::new(path!("/project")),
+        &["remote-skill"],
+        cx,
+        server_cx,
+    )
+    .await;
+    let remote_skill_dir = test.skills_dir.join("remote-skill");
+    test.server_fs
+        .insert_tree(
+            remote_skill_dir.join("references"),
+            json!({ "api.md": "remote reference" }),
+        )
+        .await;
+    // This machine has its own skill at the same path, which must not be read.
+    let local_fs = test
+        .project
+        .read_with(cx, |project, _| project.fs().clone())
+        .as_fake();
+    local_fs
+        .insert_tree(
+            test.skills_dir.join("local-only"),
+            json!({ "SKILL.md": "local skill" }),
+        )
+        .await;
+
+    let action_log = cx.new(|_| action_log::ActionLog::new(test.project.clone()));
+    let read_tool = Arc::new(ReadFileTool::new(test.project.clone(), action_log, false));
+    let read = |path: &str, cx: &mut TestAppContext| {
+        let (event_stream, _) = ToolCallEventStream::test();
+        let input = ReadFileToolInput {
+            path: path.to_string(),
+            start_line: None,
+            end_line: None,
+        };
+        cx.update(|cx| {
+            read_tool
+                .clone()
+                .run(ToolInput::resolved(input), event_stream, cx)
+        })
+    };
+    assert_eq!(
+        read("~/.agents/skills/remote-skill/references/api.md", cx)
+            .await
+            .unwrap(),
+        LanguageModelToolResultContent::Text("     1\tremote reference".into())
+    );
+    read("~/.agents/skills/local-only/SKILL.md", cx)
+        .await
+        .expect_err("a skill only on this machine isn't in the remote project");
+
+    let list_tool = Arc::new(ListDirectoryTool::new(test.project.clone()));
+    let (event_stream, _) = ToolCallEventStream::test();
+    let listing = cx
+        .update(|cx| {
+            list_tool.run(
+                ToolInput::resolved(ListDirectoryToolInput {
+                    path: remote_skill_dir.to_string_lossy().into_owned(),
+                }),
+                event_stream,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    assert!(
+        listing.contains(
+            &remote_skill_dir
+                .join("references")
+                .to_string_lossy()
+                .into_owned()
+        ) && listing.contains(
+            &remote_skill_dir
+                .join("SKILL.md")
+                .to_string_lossy()
+                .into_owned()
+        ),
+        "got: {listing}"
     );
 }
 

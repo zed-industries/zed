@@ -1,13 +1,13 @@
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_global_skill_path, resolve_project_path,
+    resolve_global_skill_path, resolve_project_path, resolve_remote_global_skill_path,
 };
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ToolCallEventStream, ToolInput, global_skills_are_remote};
 use agent_client_protocol::v2::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
 use fs::Fs;
 use futures::StreamExt as _;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use project::{Project, ProjectPath, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -91,6 +91,46 @@ impl ListDirectoryTool {
             }
         }
 
+        Ok(Self::global_skill_directory_output(
+            folders, files, input_path,
+        ))
+    }
+
+    /// Like [`Self::list_global_skill_directory`], for a remote project's
+    /// global skills, which are on the remote machine.
+    async fn list_remote_global_skill_directory(
+        canonical_path: &Path,
+        project: &Entity<Project>,
+        input_path: &str,
+        cx: &mut AsyncApp,
+    ) -> Result<String, String> {
+        let entries = project
+            .update(cx, |project, cx| {
+                project.list_directory(canonical_path.to_string_lossy().into_owned(), cx)
+            })
+            .await
+            .map_err(|err| err.to_string())?;
+        let (folders, files) = entries
+            .into_iter()
+            .partition::<Vec<_>, _>(|entry| entry.is_dir);
+        let display = |entry: project::DirectoryItem| {
+            canonical_path
+                .join(entry.path)
+                .to_string_lossy()
+                .into_owned()
+        };
+        Ok(Self::global_skill_directory_output(
+            folders.into_iter().map(display).collect(),
+            files.into_iter().map(display).collect(),
+            input_path,
+        ))
+    }
+
+    fn global_skill_directory_output(
+        mut folders: Vec<String>,
+        mut files: Vec<String>,
+        input_path: &str,
+    ) -> String {
         folders.sort();
         files.sort();
 
@@ -104,7 +144,7 @@ impl ListDirectoryTool {
         if output.is_empty() {
             writeln!(output, "{input_path} is empty.").unwrap();
         }
-        Ok(output)
+        output
     }
 
     fn build_directory_output(
@@ -241,7 +281,20 @@ impl AgentTool for ListDirectoryTool {
             // Fast path: a global skill resource lives outside any worktree, so
             // standard project-path resolution would refuse it. If the path
             // expands and resolves under the global skills tree, list it directly.
-            if let Some(skill_path) =
+            // In remote projects they're on the remote machine.
+            if project.read_with(cx, |project, _| global_skills_are_remote(project)) {
+                if let Some(skill_path) =
+                    resolve_remote_global_skill_path(Path::new(&input.path), &project, cx).await
+                {
+                    return Self::list_remote_global_skill_directory(
+                        &skill_path,
+                        &project,
+                        &input.path,
+                        cx,
+                    )
+                    .await;
+                }
+            } else if let Some(skill_path) =
                 resolve_global_skill_path(Path::new(&input.path), fs.as_ref()).await
             {
                 return Self::list_global_skill_directory(
