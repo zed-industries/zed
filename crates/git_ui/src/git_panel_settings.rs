@@ -34,6 +34,10 @@ pub struct GitPanelSettings {
     pub commit_title_max_length: usize,
     pub entry_primary_click_action: GitPanelClickBehavior,
     pub commit_editor: GitPanelCommitEditor,
+    pub commit_message_prefix_regex: Option<String>,
+    pub commit_message_prefix_replacement: Option<String>,
+    pub commit_message_prefix_is_postfix: bool,
+    pub commit_message_prefix_enabled: bool,
 }
 
 #[derive(Default)]
@@ -84,6 +88,12 @@ impl Settings for GitPanelSettings {
             commit_title_max_length: git_panel.commit_title_max_length.unwrap(),
             entry_primary_click_action: git_panel.entry_primary_click_action.unwrap(),
             commit_editor: git_panel.commit_editor.unwrap(),
+            commit_message_prefix_regex: git_panel.commit_message_prefix_regex.clone(),
+            commit_message_prefix_replacement: git_panel.commit_message_prefix_replacement.clone(),
+            commit_message_prefix_is_postfix: git_panel
+                .commit_message_prefix_is_postfix
+                .unwrap_or(false),
+            commit_message_prefix_enabled: git_panel.commit_message_prefix_enabled.unwrap_or(false),
         }
     }
 }
