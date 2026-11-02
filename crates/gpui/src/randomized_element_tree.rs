@@ -218,15 +218,49 @@ fn sample_range(range: &RangeInclusive<f64>, rng: &mut StdRng) -> f64 {
 }
 
 /// Work performed while converting randomized entities and elements into an element tree.
+///
+/// Recorded only in tests: benchmarks must not pay for bookkeeping, and the rendered-ID
+/// history would otherwise grow for as long as a benchmark draws without resetting it.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RandomizedElementTreeWorkCounters {
+    #[cfg(test)]
     root_render_count: usize,
+    #[cfg(test)]
     entity_render_count: usize,
+    #[cfg(test)]
     element_render_count: usize,
+    #[cfg(test)]
     handler_registration_count: usize,
+    #[cfg(test)]
     rendered_entity_ids: Vec<u64>,
 }
 
+impl RandomizedElementTreeWorkCounters {
+    fn record_root_render(&mut self) {
+        #[cfg(test)]
+        {
+            self.root_render_count += 1;
+        }
+    }
+
+    fn record_entity_render(&mut self, _element_id: u64) {
+        #[cfg(test)]
+        {
+            self.entity_render_count += 1;
+            self.rendered_entity_ids.push(_element_id);
+        }
+    }
+
+    fn record_element_render(&mut self, _handler_count: usize) {
+        #[cfg(test)]
+        {
+            self.element_render_count += 1;
+            self.handler_registration_count += _handler_count;
+        }
+    }
+}
+
+#[cfg(test)]
 impl RandomizedElementTreeWorkCounters {
     /// Returns how many times the persistent root's `Render` implementation ran.
     pub fn root_render_count(&self) -> usize {
@@ -600,11 +634,13 @@ impl RandomizedElementTree {
     }
 
     /// Clears render work accumulated since construction or the previous reset.
+    #[cfg(test)]
     pub fn reset_work_counters(&mut self) {
         self.work_counters.borrow_mut().reset();
     }
 
     /// Returns work accumulated since construction or the previous reset.
+    #[cfg(test)]
     pub fn work_counters(&self) -> RandomizedElementTreeWorkCounters {
         self.work_counters.borrow().clone()
     }
@@ -846,7 +882,7 @@ impl RandomizedElementTree {
         locality: ChangeLocality,
         cx: &mut Context<Self>,
     ) -> RecoloredChildren {
-        let owners = {
+        let (owners, recolored) = {
             let mut snapshot = self.snapshot.borrow_mut();
             let mut paths = node_paths(&snapshot.children);
             let count = count.min(paths.len());
@@ -889,10 +925,9 @@ impl RandomizedElementTree {
                     node.style.background = random_color(&mut self.rng);
                 }
             }
-            owners
+            (owners, count)
         };
         let notified = owners.len();
-        let recolored = count.min(self.snapshot.borrow().descendant_count());
         for owner in owners {
             self.notify_owner(owner, cx);
         }
@@ -1053,14 +1088,6 @@ impl RandomizedElementTree {
             });
             self.entities.borrow_mut().insert(element_id, entity);
         }
-
-        let entity_count = self.entities.borrow().len();
-        let mut work_counters = self.work_counters.borrow_mut();
-        let additional_capacity =
-            entity_count.saturating_sub(work_counters.rendered_entity_ids.len());
-        work_counters
-            .rendered_entity_ids
-            .reserve(additional_capacity);
     }
 
     fn notify_owner(&self, owner_entity_id: Option<u64>, cx: &mut Context<Self>) {
@@ -1080,7 +1107,7 @@ impl Render for RandomizedElementTree {
         let root = &snapshot.root;
         let entities = self.entities.borrow();
         let mut work_counters = self.work_counters.borrow_mut();
-        work_counters.root_render_count += 1;
+        work_counters.record_root_render();
 
         div()
             .flex()
@@ -1132,8 +1159,7 @@ impl Render for RandomizedElementEntity {
         let entities = self.entities.upgrade();
         let entities = entities.as_ref().map(|entities| entities.borrow());
         let mut work_counters = self.work_counters.borrow_mut();
-        work_counters.entity_render_count += 1;
-        work_counters.rendered_entity_ids.push(self.element_id);
+        work_counters.record_entity_render(self.element_id);
 
         snapshot
             .node(self.element_id)
@@ -1340,8 +1366,7 @@ fn render_node_body(
     cached_views: bool,
     hover_styles: bool,
 ) -> AnyElement {
-    work_counters.element_render_count += 1;
-    work_counters.handler_registration_count += node.features.handler_count();
+    work_counters.record_element_render(node.features.handler_count());
     let style = &node.style;
     div()
         .id(ElementId::NamedInteger(
@@ -1643,19 +1668,65 @@ mod tests {
     #[derive(Debug, PartialEq)]
     struct SceneSnapshot {
         quads: Vec<QuadSnapshot>,
+        /// Every other primitive kind, formatted without the per-window atlas tile and
+        /// path IDs, which differ between two windows drawing the same scene.
+        other_primitives: Vec<String>,
         element_ids: BTreeSet<u64>,
     }
 
     impl SceneSnapshot {
         fn from_window(window: &Window) -> Self {
+            let scene = &window.rendered_frame.scene;
+            let other_primitives = scene
+                .shadows
+                .iter()
+                .map(|shadow| format!("{shadow:?}"))
+                .chain(
+                    scene
+                        .underlines
+                        .iter()
+                        .map(|underline| format!("{underline:?}")),
+                )
+                .chain(scene.paths.iter().map(|path| {
+                    format!(
+                        "path {} {:?} {:?} {:?} {:?}",
+                        path.order, path.bounds, path.content_mask, path.color, path.vertices
+                    )
+                }))
+                .chain(scene.monochrome_sprites.iter().map(|sprite| {
+                    format!(
+                        "monochrome {} {:?} {:?} {:?} {:?}",
+                        sprite.order,
+                        sprite.bounds,
+                        sprite.content_mask,
+                        sprite.color,
+                        sprite.transformation
+                    )
+                }))
+                .chain(scene.subpixel_sprites.iter().map(|sprite| {
+                    format!(
+                        "subpixel {} {:?} {:?} {:?} {:?}",
+                        sprite.order,
+                        sprite.bounds,
+                        sprite.content_mask,
+                        sprite.color,
+                        sprite.transformation
+                    )
+                }))
+                .chain(scene.polychrome_sprites.iter().map(|sprite| {
+                    format!(
+                        "polychrome {} {:?} {:?} {:?} {}",
+                        sprite.order,
+                        sprite.bounds,
+                        sprite.content_mask,
+                        sprite.grayscale,
+                        sprite.opacity
+                    )
+                }))
+                .collect();
             Self {
-                quads: window
-                    .rendered_frame
-                    .scene
-                    .quads
-                    .iter()
-                    .map(QuadSnapshot::from)
-                    .collect(),
+                quads: scene.quads.iter().map(QuadSnapshot::from).collect(),
+                other_primitives,
                 element_ids: window
                     .rendered_frame
                     .element_states

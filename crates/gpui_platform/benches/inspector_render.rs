@@ -120,15 +120,24 @@ fn measure_closed_inspector<V: Render + 'static>(
             "the measured window's inspector must be closed"
         );
         // Keep the other window alive, with its inspector open, while this one is measured.
-        input.other_window_inspected.then(|| {
-            let mut window = cx.add_empty_window();
-            window.update(|window, cx| window.toggle_inspector(cx));
+        let other_window = input.other_window_inspected.then(|| {
+            let mut other_window = cx.add_empty_window();
+            other_window.update(|window, cx| window.toggle_inspector(cx));
             assert!(
-                window.update(|window, cx| window.is_inspector_picking(cx)),
+                other_window.update(|window, cx| window.is_inspector_picking(cx)),
                 "the other window's inspector must be open"
             );
-            window
-        })
+            other_window
+        });
+        // Opening the other window activated it, and inactive windows draw at a throttled
+        // rate, so give activation back to the measured window.
+        window.update(|window, _| window.activate_window());
+        cx.run_until_idle();
+        assert!(
+            window.update(|window, _| window.is_window_active()),
+            "the measured window must be active"
+        );
+        other_window
     };
     cx.run_until_idle();
     window.update(|window, _| window.refresh());

@@ -1,10 +1,13 @@
-//! Frame cost of a seeded element tree under one class of change per frame.
+//! Frame cost of seeded element trees, text panels, layout churn and scrolling.
 //!
-//! Each benchmark builds a [`RandomizedElementTree`] before timing, then measures frames in
-//! which exactly one thing happens: nothing (a notified root that re-renders an unchanged
-//! tree), a leaf's style, a leaf's bounds, the root's layout, one structural change, or a
-//! sibling reorder. The same fixture runs on any GPUI revision, so it doubles as the
-//! before/after harness for changes to rendering.
+//! The `mixed` groups are the general benchmark: each iteration applies a fixed, seeded
+//! sequence of many kinds of change to a freshly built [`RandomizedElementTree`], one per
+//! frame. The other tree groups each measure frames in which exactly one kind of thing
+//! happens, such as nothing (a notified root that re-renders an unchanged tree), one
+//! element's style, a leaf's bounds, the root's layout, one structural change, a sibling
+//! reorder or a pointer move, to explain where a difference in `mixed` comes from. The
+//! same fixture runs on any GPUI revision, so it doubles as the before/after harness for
+//! changes to rendering.
 //!
 //! Trees come from *families*: bounds on topology, element count and entity density that
 //! a seeded RNG is drawn against (see [`RandomizedElementTreeBounds`]). Each family is an
@@ -15,8 +18,9 @@
 //! `--bench randomized_element_tree -- 'tree/tall/'`. Each tree is described once, with
 //! the heap its window holds after the first frame, before it is measured.
 //!
-//! Benchmarks only measure. The randomized tree's tests check that what these workloads
-//! render is correct, so a faster frame here still needs those tests to pass.
+//! Benchmarks don't check their output; the randomized tree's tests check that what these
+//! workloads render is correct, so a faster frame here still needs those tests to pass.
+//! The only assertions are one-time setup checks before timing.
 
 use std::{
     cell::RefCell,
@@ -40,11 +44,11 @@ use gpui::{
 struct TreeFamily {
     name: &'static str,
     bounds: RandomizedElementTreeBounds,
-    /// Frames per measured iteration of the mixed workload, sized so one iteration of
-    /// this family's trees takes well under half a second on an M-series Mac. Fixed per
+    /// Changes per measured iteration of the mixed workload, sized so one iteration of
+    /// this family's trees takes at most about half a second on an M-series Mac. Fixed per
     /// family rather than calibrated at run time, so two revisions always measure the
     /// same changes.
-    mixed_frames: usize,
+    mixed_changes: usize,
 }
 
 impl TreeFamily {
@@ -118,14 +122,14 @@ fn families() -> Vec<TreeFamily> {
     vec![
         TreeFamily {
             name: "any",
-            mixed_frames: 192,
+            mixed_changes: 192,
             bounds: RandomizedElementTreeBounds::new(32..=TALL_MAX_ELEMENTS)
                 .with_entity_density(MIN_ENTITY_DENSITY..=0.5)
                 .with_handler_density(handlers.clone()),
         },
         TreeFamily {
             name: "wide",
-            mixed_frames: 16,
+            mixed_changes: 16,
             bounds: RandomizedElementTreeBounds::new(128..=2048)
                 .with_topologies([RandomizedElementTreeTopology::Wide])
                 .with_entity_density(MIN_ENTITY_DENSITY..=0.25)
@@ -133,7 +137,7 @@ fn families() -> Vec<TreeFamily> {
         },
         TreeFamily {
             name: "tall",
-            mixed_frames: 512,
+            mixed_changes: 512,
             bounds: RandomizedElementTreeBounds::new(32..=TALL_MAX_ELEMENTS)
                 .with_topologies(
                     RandomizedElementTreeTopology::ALL
@@ -145,7 +149,7 @@ fn families() -> Vec<TreeFamily> {
         },
         TreeFamily {
             name: "mixed",
-            mixed_frames: 192,
+            mixed_changes: 192,
             bounds: RandomizedElementTreeBounds::new(128..=1024)
                 .with_topologies([RandomizedElementTreeTopology::Mixed])
                 .with_entity_density(MIN_ENTITY_DENSITY..=0.25)
@@ -153,7 +157,7 @@ fn families() -> Vec<TreeFamily> {
         },
         TreeFamily {
             name: "dense-entities",
-            mixed_frames: 64,
+            mixed_changes: 64,
             bounds: RandomizedElementTreeBounds::new(128..=1024)
                 .with_topologies([
                     RandomizedElementTreeTopology::Wide,
@@ -237,8 +241,6 @@ fn measure_prepared<State>(
         }
         previous_iteration = Some((now, stats));
 
-        // The tree records every rendered entity; clear it so the list stays one frame long.
-        tree.reset_work_counters();
         mutate(&mut state, tree, window, cx);
     });
     window.update(|window, _| report_scene_stats(group, input.family, window));
@@ -353,6 +355,16 @@ fn family_summary(_: &mut criterion::Criterion<gpui::BenchMeasurement>) {
         "group", "family", "seeds", "time/iter", "allocs/iter"
     );
     for (group, family, seeds) in summary {
+        // A routine call measures from one iteration's start to the next, so a run with a
+        // single iteration per call, such as `--test`, has nothing to summarize.
+        if seeds.iter().all(|(_, totals)| totals.iterations == 0) {
+            eprintln!(
+                "  {group:<34} {family:<15} {:>5} {:>14}",
+                seeds.len(),
+                "unavailable"
+            );
+            continue;
+        }
         let per_iteration = |value: fn(&SeedTotals) -> f64| {
             geometric_mean(
                 seeds
@@ -466,7 +478,7 @@ fn reorder(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
 }
 
 /// Where the pointer goes in hover workloads: the center of each painted quad's visible
-/// part, in scene order. Hairline quads are skipped: their centers sit on an element's
+/// part, sorted by position. Hairline quads are skipped: their centers sit on an element's
 /// edge, where moving the pointer rarely changes what's hovered.
 fn hover_targets(window: &Window) -> Vec<gpui::Point<gpui::Pixels>> {
     let scale_factor = window.scale_factor();
@@ -482,10 +494,14 @@ fn hover_targets(window: &Window) -> Vec<gpui::Point<gpui::Pixels>> {
             gpui::px(center.x.0 / scale_factor),
             gpui::px(center.y.0 / scale_factor),
         );
-        if targets.last() != Some(&target) {
-            targets.push(target);
-        }
+        targets.push(target);
     }
+    // Sorted by position so a change to scene order, which is renderer output, doesn't
+    // change where the pointer goes.
+    targets.sort_by(|a, b| {
+        (a.y.as_f32().total_cmp(&b.y.as_f32())).then(a.x.as_f32().total_cmp(&b.x.as_f32()))
+    });
+    targets.dedup();
     targets
 }
 
@@ -529,14 +545,16 @@ fn hover(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
 /// moves, window resizes and bare notifies, on top of entities that animate every frame.
 struct MixedWorkload {
     rng: StdRng,
-    pointer_targets: Vec<gpui::Point<gpui::Pixels>>,
+    /// Draws pointer positions and scroll distances, separately from `rng`, so input
+    /// details never shift which changes come next.
+    input_rng: StdRng,
     initial_size: usize,
     size: usize,
     root_kinds: Vec<RandomizedElementTreeMutationKind>,
 }
 
 impl MixedWorkload {
-    fn new(seed: u64, initial_size: usize, cached_views: bool, window: &Window) -> Self {
+    fn new(seed: u64, initial_size: usize, cached_views: bool) -> Self {
         use RandomizedElementTreeMutationKind::*;
         let mut root_kinds = vec![RootColor, RootOpacity, RootBorder, RootBounds, RootClipping];
         // Hiding an ancestor of `.cached()` views reuses stale output, and can panic, on
@@ -546,16 +564,21 @@ impl MixedWorkload {
         }
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x6d69_7865_6421),
-            pointer_targets: hover_targets(window),
+            input_rng: StdRng::seed_from_u64(seed ^ 0x696e_7075_7473),
             initial_size,
             size: initial_size,
             root_kinds,
         }
     }
 
-    fn pointer_target(&mut self) -> Option<gpui::Point<gpui::Pixels>> {
-        let index = self.rng.random_range(0..self.pointer_targets.len().max(1));
-        self.pointer_targets.get(index).copied()
+    /// A position over the tree's root, whose largest size is 980 × 760, or just past it.
+    /// Drawn from the model's coordinates rather than the rendered scene, so a renderer
+    /// change can't move the pointer.
+    fn pointer_position(&mut self) -> gpui::Point<gpui::Pixels> {
+        gpui::point(
+            gpui::px(self.input_rng.random_range(0.0..1000.0)),
+            gpui::px(self.input_rng.random_range(0.0..800.0)),
+        )
     }
 
     fn apply(
@@ -574,9 +597,9 @@ impl MixedWorkload {
         }
     }
 
-    /// Applies one change. Weights are percentages of frames. Returns a new window size
-    /// when this frame's change is a resize, which the caller applies outside the update.
-    fn frame(
+    /// Applies one change. Weights are percentages of changes. Returns a new window size
+    /// when the change is a resize, which the caller applies outside the window update.
+    fn change(
         &mut self,
         tree: &mut RandomizedElementTree,
         window: &mut Window,
@@ -614,46 +637,58 @@ impl MixedWorkload {
                 tree.recolor_children(count, ChangeLocality::Spread, cx);
             }
             74..84 => {
-                if let Some(position) = self.pointer_target() {
-                    window.dispatch_event(
-                        gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
-                            position,
-                            modifiers: gpui::Modifiers::default(),
-                            pressed_button: None,
-                        }),
-                        cx,
-                    );
-                }
+                let position = self.pointer_position();
+                window.dispatch_event(
+                    gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                        position,
+                        modifiers: gpui::Modifiers::default(),
+                        pressed_button: None,
+                    }),
+                    cx,
+                );
             }
             84..92 => {
-                if let Some(position) = self.pointer_target() {
-                    let distance = gpui::px(self.rng.random_range(-160.0..160.0));
-                    let delta = if self.rng.random_bool(0.8) {
-                        gpui::point(gpui::px(0.), distance)
-                    } else {
-                        gpui::point(distance, gpui::px(0.))
-                    };
-                    window.dispatch_event(
-                        gpui::PlatformInput::Scroll(gpui::ScrollEvent {
-                            position,
-                            delta: gpui::ScrollDelta::Pixels(delta),
-                            ..Default::default()
-                        }),
-                        cx,
-                    );
-                }
+                let position = self.pointer_position();
+                let distance = gpui::px(self.input_rng.random_range(-160.0..160.0));
+                let delta = if self.input_rng.random_bool(0.8) {
+                    gpui::point(gpui::px(0.), distance)
+                } else {
+                    gpui::point(distance, gpui::px(0.))
+                };
+                window.dispatch_event(
+                    gpui::PlatformInput::Scroll(gpui::ScrollEvent {
+                        position,
+                        delta: gpui::ScrollDelta::Pixels(delta),
+                        ..Default::default()
+                    }),
+                    cx,
+                );
             }
             92..95 => window.focus_next(cx),
             // Sizes on both sides of the tree's root, which shrinks to fit a smaller window.
             95..98 => {
                 return Some(gpui::size(
-                    gpui::px(self.rng.random_range(480.0..1600.0)),
-                    gpui::px(self.rng.random_range(360.0..1000.0)),
+                    gpui::px(self.input_rng.random_range(480.0..1600.0)),
+                    gpui::px(self.input_rng.random_range(360.0..1000.0)),
                 ));
             }
             _ => cx.notify(),
         }
         None
+    }
+}
+
+/// One mixed-workload iteration's window, tree and workload, built before timing and
+/// removed after it.
+struct MixedRun<'a, 'measurement> {
+    window: gpui::BenchWindowContext<'a, 'measurement>,
+    tree: Entity<RandomizedElementTree>,
+    workload: MixedWorkload,
+}
+
+impl Drop for MixedRun<'_, '_> {
+    fn drop(&mut self) {
+        self.window.update(|window, _| window.remove_window());
     }
 }
 
@@ -668,37 +703,48 @@ fn measure_mixed(
         .with_cached_views(cached_views)
         .with_hover_styles(true)
         .with_animation_density(0.15);
-    let mut window = cx.add_empty_window();
-    let tree = window.update(|window, cx| {
-        window.replace_root(cx, |_, cx| {
-            RandomizedElementTree::new_with_config(config, cx)
-        })
-    });
-    cx.run_until_idle();
-    window.update(|window, _| window.refresh());
-    cx.run_until_idle();
-    let initial_size = tree.read_with(cx, |tree, _| tree.snapshot().descendant_count());
-    let mut workload = window
-        .update(|window, _| MixedWorkload::new(config.seed(), initial_size, cached_views, window));
-
-    cx.bench_iter(|cx| {
-        for _ in 0..family.mixed_frames {
-            let resize = window
-                .update(|window, cx| tree.update(cx, |tree, cx| workload.frame(tree, window, cx)));
-            if let Some(size) = resize {
-                window.simulate_resize(size);
-            }
+    // Every iteration starts from the same freshly built tree and RNG state, so every
+    // iteration applies exactly the same changes, however many Criterion runs.
+    cx.bench_batched_task(
+        |cx| {
+            let mut window = cx.add_empty_window();
+            let tree = window.update(|window, cx| {
+                window.replace_root(cx, |_, cx| {
+                    RandomizedElementTree::new_with_config(config, cx)
+                })
+            });
             cx.run_until_idle();
-        }
-    });
-    window.update(|window, _| report_scene_stats("mixed", input.family, window));
-    window.update(|window, _| window.remove_window());
+            window.update(|window, _| window.refresh());
+            cx.run_until_idle();
+            let initial_size = tree.read_with(cx, |tree, _| tree.snapshot().descendant_count());
+            MixedRun {
+                window,
+                tree,
+                workload: MixedWorkload::new(config.seed(), initial_size, cached_views),
+            }
+        },
+        |run, cx| {
+            // A change that leaves the window clean draws nothing, as in a real window, so
+            // this counts changes, not frames. Animated entities make most changes draw.
+            for _ in 0..family.mixed_changes {
+                let resize = run.window.update(|window, cx| {
+                    run.tree
+                        .update(cx, |tree, cx| run.workload.change(tree, window, cx))
+                });
+                if let Some(size) = resize {
+                    run.window.simulate_resize(size);
+                }
+                cx.run_until_idle();
+            }
+            gpui::Task::ready(())
+        },
+    );
 }
 
 /// The general benchmark: many kinds of change, one per frame, in a seeded random order,
-/// with some entities animating every frame. One iteration draws the family's
-/// `mixed_frames` frames, enough that every iteration samples the whole mix and costs
-/// about the same. The single-change groups explain where a difference here comes from.
+/// with some entities animating every frame. One iteration applies the family's
+/// `mixed_changes` changes to a freshly built tree; the single-change groups explain where
+/// a difference here comes from.
 #[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "RandomizedTree/mixed", fps = 120)]
 fn mixed(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = family.sample(&mut rng);
@@ -925,6 +971,9 @@ fn text_shaping_available() -> bool {
     } else if cfg!(all(target_os = "macos", not(feature = "font-kit"))) {
         eprintln!("text benchmarks require font-kit on macOS for production text shaping");
         false
+    } else if cfg!(target_os = "windows") {
+        eprintln!("text benchmarks are unavailable on Windows: headless platforms shape no text");
+        false
     } else {
         true
     }
@@ -945,12 +994,10 @@ fn text_panel_updates(panel_count: &usize, cx: &mut BenchAppContext) {
 
 /// A monospace family the text workloads name explicitly, so they measure shaping and
 /// rasterization with one known font rather than whatever the platform's `monospace`
-/// fallback resolves to. Linux machines must install it; macOS and Windows ship it.
+/// fallback resolves to. Linux machines must install it; macOS ships it.
 #[cfg(target_os = "macos")]
 const INSTALLED_FONT: &str = "Menlo";
-#[cfg(target_os = "windows")]
-const INSTALLED_FONT: &str = "Consolas";
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(target_os = "macos"))]
 const INSTALLED_FONT: &str = "Noto Sans Mono";
 
 /// Fails setup, before anything is measured, if the named font would fall back to another
@@ -1227,6 +1274,8 @@ fn churn_workloads() -> Vec<Churn> {
 fn layout_churn_heap(workload: &Churn, cx: &mut BenchAppContext) {
     require_installed_font(cx);
     // One iteration is a complete 3,000-frame lifetime, not a frame comparison.
+    let mut last_checkpoints = Vec::new();
+    let mut before_last_window = None;
     cx.bench_iter(|cx| {
         let before_window = bench_metrics::allocation_stats();
         let mut window = cx.add_empty_window();
@@ -1242,21 +1291,23 @@ fn layout_churn_heap(workload: &Churn, cx: &mut BenchAppContext) {
                 checkpoints.push((frame, bench_metrics::allocation_stats()));
             }
         }
-        // Logging allocates, so it waits until every heap reading is taken.
-        for (frame, stats) in checkpoints {
-            match before_window.zip(stats) {
-                Some((before, after)) => eprintln!(
-                    "layout churn {workload}: frame {frame}, live heap {} B, window delta {} B (process-wide requested bytes)",
-                    after.live_bytes(),
-                    after.live_bytes() - before.live_bytes(),
-                ),
-                None => eprintln!("layout churn {workload}: frame {frame}, heap unavailable"),
-            }
-        }
         window.update(|window, _| window.remove_window());
         drop(root);
         cx.run_until_idle();
+        last_checkpoints = checkpoints;
+        before_last_window = before_window;
     });
+    // Logging allocates and takes time, so it reports the last iteration after timing.
+    for (frame, stats) in last_checkpoints {
+        match before_last_window.zip(stats) {
+            Some((before, after)) => eprintln!(
+                "layout churn {workload}: frame {frame}, live heap {} B, window delta {} B (process-wide requested bytes)",
+                after.live_bytes(),
+                after.live_bytes() - before.live_bytes(),
+            ),
+            None => eprintln!("layout churn {workload}: frame {frame}, heap unavailable"),
+        }
+    }
 }
 
 #[gpui::bench(inputs = churn_workloads(), input_name = "workload", group = "LayoutChurn", fps = 120)]

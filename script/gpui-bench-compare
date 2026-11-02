@@ -39,6 +39,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -85,13 +86,23 @@ FAST = [
 def run(command, *, cwd, environment, log, timeout):
     started = time.monotonic()
     with log.open("w") as output:
+        # A session of its own lets a timeout or interrupt stop the whole process tree:
+        # killing only Cargo would leave its compiler and build-script children running
+        # after this script exits and releases the comparison lock.
+        process = subprocess.Popen(
+            command, cwd=cwd, env=environment, stdout=output,
+            stderr=subprocess.STDOUT, start_new_session=True,
+        )
         try:
-            subprocess.run(
-                command, cwd=cwd, env=environment, stdout=output,
-                stderr=subprocess.STDOUT, check=True, timeout=timeout,
-            )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-            raise RuntimeError(f"{error}; see {log}") from error
+            returncode = process.wait(timeout=timeout)
+        except BaseException as error:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            if isinstance(error, subprocess.TimeoutExpired):
+                raise RuntimeError(f"{error}; see {log}") from error
+            raise
+    if returncode != 0:
+        raise RuntimeError(f"{command[0]} exited with status {returncode}; see {log}")
     return time.monotonic() - started
 
 
