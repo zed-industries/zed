@@ -77,6 +77,73 @@ impl LineLayout {
     /// closest_index_for_x returns the character boundary closest to the given x coordinate
     /// (e.g. to handle aligning up/down arrow keys)
     pub fn closest_index_for_x(&self, x: Pixels) -> usize {
+        if self.has_visually_reordered_glyphs() {
+            let mut glyph_positions = self
+                .runs
+                .iter()
+                .flat_map(|run| {
+                    run.glyphs
+                        .iter()
+                        .map(|glyph| (glyph.index, glyph.position.x))
+                })
+                .collect::<Vec<_>>();
+            glyph_positions.sort_unstable_by_key(|(index, _)| *index);
+
+            let mut visual_positions = glyph_positions
+                .iter()
+                .map(|(_, position)| *position)
+                .collect::<Vec<_>>();
+            visual_positions.sort_by(|left, right| {
+                left.partial_cmp(right)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            visual_positions.dedup();
+
+            let mut closest_index = 0;
+            let mut closest_distance = Pixels::MAX;
+            let mut has_start_index = false;
+            let mut index_start = 0;
+            while index_start < glyph_positions.len() {
+                let index = glyph_positions[index_start].0;
+                let mut glyph_x = glyph_positions[index_start].1;
+                index_start += 1;
+                while glyph_positions
+                    .get(index_start)
+                    .is_some_and(|(next_index, _)| *next_index == index)
+                {
+                    glyph_x = glyph_x.max(glyph_positions[index_start].1);
+                    index_start += 1;
+                }
+
+                let visual_position_index =
+                    visual_positions.partition_point(|position| *position <= glyph_x);
+                let caret_x = visual_positions
+                    .get(visual_position_index)
+                    .copied()
+                    .unwrap_or(self.width);
+                let distance = (caret_x - x).abs();
+                if distance < closest_distance {
+                    closest_index = index;
+                    closest_distance = distance;
+                }
+                has_start_index |= index == 0;
+            }
+
+            if self.len > 0 {
+                let distance = x.abs();
+                if distance < closest_distance {
+                    closest_index = self.len;
+                    closest_distance = distance;
+                }
+            }
+
+            if !has_start_index && (self.width - x).abs() < closest_distance {
+                closest_index = 0;
+            }
+
+            return closest_index;
+        }
+
         let mut prev_index = 0;
         let mut prev_x = px(0.);
 
@@ -998,6 +1065,27 @@ mod tests {
                 "{text:?}",
             );
         }
+    }
+
+    #[test]
+    fn closest_index_for_x_uses_logical_boundaries_for_arabic() {
+        let text = "مرحبا";
+        let mut layout = make_layout(
+            [8, 6, 4, 2, 0]
+                .into_iter()
+                .enumerate()
+                .map(|(position, index)| glyph_at(position as f32 * 10., index))
+                .collect(),
+        );
+        layout.width = px(50.);
+        layout.len = text.len();
+
+        assert_eq!(layout.closest_index_for_x(px(0.)), 10);
+        assert_eq!(layout.closest_index_for_x(px(10.)), 8);
+        assert_eq!(layout.closest_index_for_x(px(20.)), 6);
+        assert_eq!(layout.closest_index_for_x(px(30.)), 4);
+        assert_eq!(layout.closest_index_for_x(px(40.)), 2);
+        assert_eq!(layout.closest_index_for_x(px(50.)), 0);
     }
 
     #[test]
