@@ -7553,6 +7553,7 @@ dependencies = [
  "objc2-core-media",
  "objc2-core-video",
  "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
  "objc2-screen-capture-kit",
  "objc2-uniform-type-identifiers",
  "objc2-user-notifications",
@@ -9545,6 +9546,7 @@ name = "language_model"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
  "base64 0.22.1",
  "collections",
  "credentials_provider",
@@ -11334,7 +11336,6 @@ name = "notifications"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "channel",
  "client",
  "component",
  "futures-lite 2.6.1",
@@ -13910,6 +13911,7 @@ dependencies = [
  "tracing",
  "unindent",
  "url",
+ "usvg",
  "util",
  "watch",
  "wax",

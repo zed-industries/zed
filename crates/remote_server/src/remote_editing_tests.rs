@@ -674,7 +674,11 @@ async fn test_remote_project_image_source(cx: &mut TestAppContext, server_cx: &m
         json!({
             "project": {
                 "docs": {
-                    "image.ppm": "P3\n1 1\n255\n255 0 0\n"
+                    "image.ppm": "P3\n1 1\n255\n255 0 0\n",
+                    "image.svg": r#"<?xml version="1.0"?>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1">
+                            <rect width="1" height="1" fill="red"/>
+                        </svg>"#
                 }
             }
         }),
@@ -689,48 +693,47 @@ async fn test_remote_project_image_source(cx: &mut TestAppContext, server_cx: &m
         .await
         .expect("remote worktree should open");
     let worktree_id = worktree.read_with(cx, |worktree, _cx| worktree.id());
-    let source = image_store::project_image_source(
-        project.downgrade(),
-        ProjectPath {
-            worktree_id,
-            path: rel_path("docs/image.ppm").into(),
-        },
-    );
-    let ImageSource::Custom(load_image) = source else {
-        panic!("expected a project-backed image source");
-    };
-    let loaded_bytes = Arc::new(std::sync::Mutex::new(None));
-    let observed_source = ImageSource::from({
-        let loaded_bytes = loaded_bytes.clone();
-        move |window: &mut gpui::Window, cx: &mut gpui::App| {
-            let result = load_image(window, cx);
-            if let Some(Ok(image)) = &result {
-                *loaded_bytes.lock().expect("loaded image mutex poisoned") =
-                    image.as_bytes(0).map(ToOwned::to_owned);
+    for image_path in ["docs/image.ppm", "docs/image.svg"] {
+        let source = image_store::project_image_source(
+            project.downgrade(),
+            ProjectPath {
+                worktree_id,
+                path: rel_path(image_path).into(),
+            },
+        );
+        let ImageSource::Custom(load_image) = source else {
+            panic!("expected a project-backed image source");
+        };
+        let loaded_bytes = Arc::new(std::sync::Mutex::new(None));
+        let observed_source = ImageSource::from({
+            let loaded_bytes = loaded_bytes.clone();
+            move |window: &mut gpui::Window, cx: &mut gpui::App| {
+                let result = load_image(window, cx);
+                if let Some(Ok(image)) = &result {
+                    *loaded_bytes.lock().expect("loaded image mutex poisoned") =
+                        image.as_bytes(0).map(ToOwned::to_owned);
+                }
+                result
             }
-            result
-        }
-    });
+        });
 
-    let (view, cx) = cx.add_window_view(|_window, _cx| RemoteImageTestView {
-        source: observed_source,
-    });
-    cx.draw(Default::default(), size(px(10.), px(10.)), {
-        let view = view.clone();
-        move |_, _| view.into_any_element()
-    });
-    cx.run_until_parked();
-    cx.draw(Default::default(), size(px(10.), px(10.)), move |_, _| {
-        view.into_any_element()
-    });
+        let (view, cx) = cx.add_window_view(|_window, _cx| RemoteImageTestView {
+            source: observed_source,
+        });
+        cx.draw(Default::default(), size(px(10.), px(10.)), {
+            let view = view.clone();
+            move |_, _| view.into_any_element()
+        });
+        cx.run_until_parked();
+        cx.draw(Default::default(), size(px(10.), px(10.)), move |_, _| {
+            view.into_any_element()
+        });
 
-    assert_eq!(
-        loaded_bytes
-            .lock()
-            .expect("loaded image mutex poisoned")
-            .as_deref(),
-        Some([0, 0, 255, 255].as_slice())
-    );
+        let loaded_bytes = loaded_bytes.lock().expect("loaded image mutex poisoned");
+        let bytes = loaded_bytes.as_ref().expect("remote image should render");
+        let pixel_count = if image_path.ends_with(".ppm") { 1 } else { 4 };
+        assert_eq!(bytes, &[0, 0, 255, 255].repeat(pixel_count), "{image_path}");
+    }
 }
 
 #[gpui::test]
