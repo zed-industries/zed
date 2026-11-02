@@ -17,6 +17,8 @@ Defaults shown here are the top-level defaults; language, platform, and release-
 
 ## Accessible Mode {#accessible-mode}
 
+> **Warning:** Accessible mode is experimental and incomplete, and may not work as expected.
+
 - Description: Optimize the interface for assistive technology, including keeping application menus expanded and individually reachable.
 - Setting: `accessible_mode`
 - Default: `false`
@@ -219,21 +221,21 @@ Open the Settings Editor and search for “Threads Sidebar Auto Open”. Or add 
 
 - Description: Font family for agent responses in the Agent Panel.
 - Setting: `agent_ui_font_family`
-- Default: `null`
+- Default: `null` (inherits `ui_font_family`)
 
 **Options**
 
-A font family name, or `null` to use `ui_font_family`.
+A font family name, or leave unset to inherit the configured `ui_font_family`.
 
 ## Agent Buffer Font Family {#agent-buffer-font-family}
 
 - Description: Font family for the Agent Panel's message editor, user messages, and code.
 - Setting: `agent_buffer_font_family`
-- Default: `null`
+- Default: `null` (inherits `buffer_font_family`)
 
 **Options**
 
-A font family name, or `null` to use `buffer_font_family`.
+A font family name, or leave unset to inherit the configured `buffer_font_family`.
 
 ## Agent Buffer Font Size {#agent-buffer-font-size}
 
@@ -411,7 +413,7 @@ page ({#action zed::Extensions}) does this automatically.
 
 ## Granted Extension Capabilities {#granted-extension-capabilities}
 
-- Description: Capabilities available through extension APIs.
+- Description: Restrict what extensions are allowed to do: run processes, download files, and install npm packages.
 - Setting: `granted_extension_capabilities`
 - Default:
 
@@ -425,9 +427,13 @@ page ({#action zed::Extensions}) does this automatically.
 }
 ```
 
-The default grants unrestricted access to these capabilities.
-An empty list revokes them and can prevent extensions from working.
-See [Restricting Capabilities](../extensions/capabilities.md#restricting-capabilities) for the matching rules.
+By default, no limitations are applied to extensions.
+
+> **Warning:** This setting is experimental and may change in a backward-incompatible way.
+> Restrictions apply to all extensions at once, and any extension that needs a revoked capability stops working.
+
+Patterns are not globs: `*` matches exactly one whole value, such as a command, host, package, argument, or path segment, and `**` as the last element matches all remaining ones.
+See [Restricting Capabilities](../extensions/capabilities.md#restricting-capabilities) for examples.
 
 ## Audio {#audio}
 
@@ -448,7 +454,7 @@ Select devices in the Settings Editor, which stores their device IDs in these fi
 Use `null` for the system default.
 Unavailable devices fall back to the system default.
 The dots are part of the literal property names, not nested objects.
-See [Audio Settings](../collaboration/overview.md#audio-settings).
+See [Audio Settings](../collaboration/overview.md#audio-settings) for more information.
 
 ## Autosave
 
@@ -1072,29 +1078,107 @@ Only open-source projects are eligible.
 Other providers' data policies are not affected.
 See [Switching Modes](../ai/edit-prediction.md#switching-modes) and [Edit Prediction Training Data](../ai/ai-improvement.md#edit-predictions).
 
-### Provider Configuration {#edit-prediction-provider-configuration}
+### Copilot Predictions {#edit-predictions-copilot}
 
-These settings belong inside the `edit_predictions` object.
+- Description: GitHub Copilot settings for edit predictions.
+- Setting: `copilot`
+- Default:
 
-| Setting                                    | Default                          | Description                                                       |
-| ------------------------------------------ | -------------------------------- | ----------------------------------------------------------------- |
-| `copilot.proxy`                            | `null`                           | Optional HTTP or HTTPS proxy override.                            |
-| `copilot.proxy_no_verify`                  | `null`                           | Skip proxy certificate verification when `true`; not recommended. |
-| `copilot.enable_next_edit_suggestions`     | `true`                           | Enable Copilot Next Edit Suggestions.                             |
-| `codestral.api_url`                        | `"https://codestral.mistral.ai"` | Codestral API URL.                                                |
-| `codestral.model`                          | `"codestral-latest"`             | Model used for Codestral completions.                             |
-| `codestral.max_tokens`                     | `150`                            | Maximum generated tokens per completion.                          |
-| `ollama.api_url`                           | `"http://localhost:11434"`       | Ollama server URL.                                                |
-| `ollama.model`                             | `"qwen2.5-coder:7b-base"`        | Ollama model used for predictions.                                |
-| `ollama.prompt_format`                     | `"infer"`                        | Prompt format, inferred from the model name by default.           |
-| `ollama.max_output_tokens`                 | `64`                             | Maximum generated tokens.                                         |
-| `open_ai_compatible_api.api_url`           | `""`                             | Completion endpoint for a custom OpenAI-compatible server.        |
-| `open_ai_compatible_api.model`             | `""`                             | Model identifier for the custom server.                           |
-| `open_ai_compatible_api.prompt_format`     | `"infer"`                        | Prompt format, inferred from the model name by default.           |
-| `open_ai_compatible_api.max_output_tokens` | `64`                             | Maximum generated tokens.                                         |
+```json [settings]
+{
+  "edit_predictions": {
+    "copilot": {
+      "proxy": null,
+      "proxy_no_verify": null,
+      "enable_next_edit_suggestions": true
+    }
+  }
+}
+```
 
-Configure a nonempty URL and model before using an OpenAI-compatible server.
-See [Local and Self-Hosted Models](../ai/edit-prediction.md#local-and-self-hosted-models) for supported prompt formats and complete examples.
+**Options**
+
+- `proxy`: HTTP or HTTPS proxy URL for the Copilot language server.
+- `proxy_no_verify`: Skip certificate verification for the proxy when `true`; not recommended.
+- `enable_next_edit_suggestions`: Enable Copilot Next Edit Suggestions.
+
+### Codestral Predictions {#edit-predictions-codestral}
+
+- Description: Codestral settings for edit predictions.
+- Setting: `codestral`
+- Default:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "codestral": {
+      "api_url": "https://codestral.mistral.ai",
+      "model": "codestral-latest",
+      "max_tokens": 150
+    }
+  }
+}
+```
+
+**Options**
+
+- `api_url`: Codestral API URL.
+- `model`: Model used for completions.
+- `max_tokens`: Maximum generated tokens per completion.
+
+### Ollama Predictions {#edit-predictions-ollama}
+
+- Description: Ollama settings for edit predictions.
+- Setting: `ollama`
+- Default:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "model": "qwen2.5-coder:7b-base",
+      "prompt_format": "infer",
+      "max_output_tokens": 64
+    }
+  }
+}
+```
+
+**Options**
+
+- `api_url`: URL of your Ollama server.
+- `model`: Ollama model used for predictions.
+- `prompt_format`: Prompt format for the model; `"infer"` picks one from the model name.
+- `max_output_tokens`: Maximum generated tokens.
+
+### OpenAI-Compatible API Predictions {#edit-predictions-open-ai-compatible-api}
+
+- Description: Settings for edit predictions from a self-hosted, OpenAI-compatible server.
+- Setting: `open_ai_compatible_api`
+- Default:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "open_ai_compatible_api": {
+      "api_url": "",
+      "model": "",
+      "prompt_format": "infer",
+      "max_output_tokens": 64
+    }
+  }
+}
+```
+
+**Options**
+
+- `api_url`: Completion endpoint of your server; required.
+- `model`: Model identifier sent to the server; required.
+- `prompt_format`: Prompt format for the model; `"infer"` picks one from the model name.
+- `max_output_tokens`: Maximum generated tokens.
+
+The [Local and Self-Hosted Models](../ai/edit-prediction.md#local-and-self-hosted-models) guide lists the supported prompt formats and has complete Ollama and OpenAI-compatible examples.
 
 ### Disabled Globs
 
@@ -1714,7 +1798,7 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 ### Display In {#minimap-display-in}
 
 - Description: Which editors display the minimap when it is enabled.
-- Setting: `minimap.display_in`
+- Setting: `display_in`
 - Default: `"active_editor"`
 
 **Options**
@@ -1724,8 +1808,12 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 ### Maximum Width Columns {#minimap-max-width-columns}
 
 - Description: Maximum number of columns to display in the minimap.
-- Setting: `minimap.max_width_columns`
+- Setting: `max_width_columns`
 - Default: `80`
+
+**Options**
+
+Positive `integer` values
 
 ### Thumb Display
 
@@ -1921,8 +2009,12 @@ or
 ### Pinned Tabs in a Separate Row {#tab-bar-pinned-tabs}
 
 - Description: Show pinned tabs in a top row and unpinned tabs in a bottom row, instead of keeping all tabs in one row.
-- Setting: `tab_bar.show_pinned_tabs_in_separate_row`
+- Setting: `show_pinned_tabs_in_separate_row`
 - Default: `false`
+
+**Options**
+
+`boolean` values
 
 ## Tab Switcher {#tab-switcher}
 
@@ -2338,7 +2430,7 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 
 ## Extend List on Newline {#extend-list-on-newline}
 
-- Description: Continue Markdown lists when pressing Enter.
+- Description: Continue a list when pressing Enter at the end of a list item, in languages that define list syntax.
 - Setting: `extend_list_on_newline`
 - Default: `true`
 
@@ -2346,11 +2438,24 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 
 `boolean` values
 
-See [List Continuation](../languages/markdown.md#list-continuation).
+Markdown is the only built-in language that defines list syntax; extension languages can define their own.
+Like other language settings, this can be set per language:
+
+```json [settings]
+{
+  "languages": {
+    "Markdown": {
+      "extend_list_on_newline": false
+    }
+  }
+}
+```
+
+The [Markdown List Continuation](../languages/markdown.md#list-continuation) section lists the supported list types.
 
 ## Indent List on Tab {#indent-list-on-tab}
 
-- Description: Indent list items when pressing Tab.
+- Description: Indent a list item when pressing Tab on a line that contains only a list marker, in languages that define list syntax.
 - Setting: `indent_list_on_tab`
 - Default: `true`
 
@@ -2358,7 +2463,7 @@ See [List Continuation](../languages/markdown.md#list-continuation).
 
 `boolean` values
 
-See [List Indentation](../languages/markdown.md#list-indentation).
+Like `extend_list_on_newline`, this can be set per language under `languages`.
 
 ## Status Bar
 
@@ -2478,7 +2583,7 @@ While other options may be changed at a runtime and should be placed under `sett
 ### Semantic Token Rules {#global-lsp-semantic-token-rules}
 
 - Description: Customize semantic-token highlighting with rules that take precedence over the built-in rules.
-- Setting: `global_lsp_settings.semantic_token_rules`
+- Setting: `semantic_token_rules`
 - Default: `[]`
 
 Each rule can match a `token_type` and a list of `token_modifiers` that must all be present.
@@ -2640,7 +2745,7 @@ Tools that rewrite files on disk instead of printing the formatted contents to s
 
 3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like Prettier support receiving the file path via a command line argument which can then be used to impact formatting decisions.
 
-WARNING: `{buffer_path}` should not be used to direct your formatter to read from a filename. Your formatter should only read from standard input and should not read or write files directly.
+> **Warning:** `{buffer_path}` should not be used to direct your formatter to read from a filename. Your formatter should only read from standard input and should not read or write files directly.
 
 ```json [settings]
   "formatter": {
@@ -2944,7 +3049,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 ### LSP Pull Diagnostics {#lsp-pull-diagnostics}
 
 - Description: Configure requests to language servers that support pull diagnostics.
-- Setting: `diagnostics.lsp_pull_diagnostics`
+- Setting: `lsp_pull_diagnostics`
 
 | Setting       | Default | Description                                                                            |
 | ------------- | ------- | -------------------------------------------------------------------------------------- |
@@ -4045,19 +4150,25 @@ Edit-prediction providers are configured separately under `edit_predictions`.
 
 ## Log {#log}
 
-- Description: Override log verbosity by scope.
+- Description: Change how much Zed writes to its log for specific parts of the app.
 - Setting: `log`
 - Default: `{}`
 
+Use this to get more detail while troubleshooting a feature, or to silence noisy messages in the Zed log ({#action zed::OpenLog}).
+By default, Zed logs messages at `info` level and above.
+
 **Options**
 
-Map scope names to `"off"`, `"error"`, `"warn"`, `"info"`, `"debug"`, or `"trace"`.
+Keys are log scopes, usually crate names such as `client` or `project`.
+Use a `::`-separated module path, such as `project::lsp_store`, for finer control.
+Values are `"off"`, `"error"`, `"warn"`, `"info"`, `"debug"`, or `"trace"`.
 Changes apply without restarting Zed.
 
 ```json [settings]
 {
   "log": {
-    "client": "warn"
+    "client": "warn",
+    "project::lsp_store": "debug"
   }
 }
 ```
@@ -4092,17 +4203,15 @@ Changes apply without restarting Zed.
 - `limit_content_width`: Whether to constrain and center preview content using `max_width`.
 - `max_width`: Maximum content width in pixels when `limit_content_width` is enabled.
 
-See [Fonts](../visual-customization.md#fonts).
-
 ## Mermaid Font Family {#mermaid-font-family}
 
-- Description: Font family for Mermaid diagrams in the Agent Panel and Markdown preview.
+- Description: Font family for text in Mermaid diagrams rendered in the Agent Panel and Markdown preview.
 - Setting: `mermaid_font_family`
-- Default: `null`
+- Default: `null` (inherits `ui_font_family`)
 
 **Options**
 
-A font family name, or `null` to use `ui_font_family`.
+A font family name, or leave unset to inherit the configured `ui_font_family`.
 
 ## Max Tabs
 
@@ -4485,7 +4594,7 @@ Examples:
 
 ## Call Hierarchy
 
-- Setting: `call_hierarchy`
+These settings belong inside the `call_hierarchy` object.
 
 ### Modal Max Width
 
@@ -4494,6 +4603,8 @@ Examples:
 - Default: `medium`
 
 ## File Finder
+
+These settings belong inside the `file_finder` object.
 
 ### File Icons
 
@@ -4516,7 +4627,7 @@ Examples:
 ### Include Ignored {#file-finder-include-ignored}
 
 - Description: Which ignored files to include in file finder results.
-- Setting: `file_finder.include_ignored`
+- Setting: `include_ignored`
 - Default: `"smart"`
 
 **Options**
@@ -4528,14 +4639,22 @@ Examples:
 ### Include Channels {#file-finder-include-channels}
 
 - Description: Include text channels in file finder results.
-- Setting: `file_finder.include_channels`
+- Setting: `include_channels`
 - Default: `false`
+
+**Options**
+
+`boolean` values
 
 ### Prefill Query from Selection {#file-finder-prefill-query-from-selection}
 
 - Description: Prefill the file finder query with text selected in the focused item, such as an editor or terminal.
-- Setting: `file_finder.prefill_query_from_selection`
+- Setting: `prefill_query_from_selection`
 - Default: `true`
+
+**Options**
+
+`boolean` values
 
 ## Pane Split Direction Horizontal
 
@@ -4629,13 +4748,27 @@ Inherited patterns are inserted at `"..."`, and duplicates keep their first occu
 
 ## SSH Connections {#ssh-connections}
 
-- Description: Saved SSH connections and remote projects.
+- Description: SSH servers and their projects shown in the Remote Projects dialog ({#kb projects::OpenRemote}).
 - Setting: `ssh_connections`
 - Default: `[]`
 
-Each entry requires `host` and can include `username`, `port`, `args`, `nickname`, and `projects` containing `paths`.
-Additional options include `upload_binary_over_ssh`, `port_forwards`, and `connection_timeout` in seconds.
-See [Remote Development Configuration](../remote-development.md#configuration).
+Zed adds an entry when you connect to a new server from that dialog, and you can edit the entries directly:
+
+```json [settings]
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "username": "me",
+      "nickname": "dev-box",
+      "projects": [{ "paths": ["~/code/zed/zed"] }]
+    }
+  ]
+}
+```
+
+Each entry requires `host`.
+Optional fields include `username`, `port`, `args`, `nickname`, `projects`, `upload_binary_over_ssh`, `port_forwards`, and `connection_timeout` in seconds, all described in [Remote Development Configuration](../remote-development.md#configuration).
 
 ## Read SSH Config
 
@@ -5370,8 +5503,12 @@ List of `integer` column numbers
 ### Anthropic Retention {#telemetry-anthropic-retention}
 
 - Description: Allow requests to Anthropic models that cannot be offered with Zero Data Retention.
-- Setting: `telemetry.anthropic_retention`
+- Setting: `anthropic_retention`
 - Default: `false`
+
+**Options**
+
+`boolean` values
 
 ## Terminal
 
@@ -5423,15 +5560,15 @@ List of `integer` column numbers
 
 These settings belong inside the `terminal` object.
 
-| Setting                    | Default | Description                                                                                                                              |
-| -------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `flexible`                 | `true`  | Use flexible, proportional width when docked to the left or right.                                                                       |
-| `default_width`            | `640`   | Default width in pixels when docked to the left or right with fixed sizing.                                                              |
-| `default_height`           | `320`   | Default height in pixels when docked to the bottom.                                                                                      |
-| `font_weight`              | `400`   | Font weight in CSS units, from `100` to `900`.                                                                                           |
-| `max_scroll_history_lines` | `10000` | Scrollback line limit for non-task terminals, capped at `100000`; `0` disables scrollback, and changes apply to newly created terminals. |
-| `show_count_badge`         | `false` | Show the number of open terminals on the panel icon.                                                                                     |
-| `bell`                     | `"off"` | Use `"system"` to play the OS alert sound for the terminal bell, or `"off"` for silence.                                                 |
+| Setting                    | Default | Description                                                                                                                          |
+| -------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `flexible`                 | `true`  | Use flexible, proportional width when docked to the left or right.                                                                   |
+| `default_width`            | `640`   | Default width in pixels when docked to the left or right with fixed sizing.                                                          |
+| `default_height`           | `320`   | Default height in pixels when docked to the bottom.                                                                                  |
+| `font_weight`              | `400`   | Font weight in CSS units, from `100` to `900`.                                                                                       |
+| `max_scroll_history_lines` | `10000` | Scrollback line limit for non-task terminals, capped at `100000`; `0` disables scrollback. Changes apply to newly created terminals. |
+| `show_count_badge`         | `false` | Show the number of open terminals on the panel icon.                                                                                 |
+| `bell`                     | `"off"` | Use `"system"` to play the OS alert sound for the terminal bell, or `"off"` for silence.                                             |
 
 ### Terminal: Dock
 
@@ -6085,7 +6222,9 @@ Processing stops at the first regex that matches the terminal line, even if the 
 
 ## Jupyter {#jupyter}
 
-- Description: Enable the Jupyter REPL and configure preferred kernels.
+> **Note:** The REPL and its Jupyter kernel integration are experimental.
+
+- Description: Enable the [REPL](../repl.md), which runs code through Jupyter kernels, and choose preferred kernels.
 - Setting: `jupyter`
 - Default:
 
@@ -6098,9 +6237,9 @@ Processing stops at the first regex that matches the terminal line, even if the 
 }
 ```
 
+Set `enabled` to `false` to disable the REPL commands.
 Map language code-fence names, such as `python`, to installed kernel names in `kernel_selections`.
-Explicit kernel selections and matching Python environments take precedence over these fallback preferences.
-See [Changing Kernels](../repl.md#changing-kernels).
+Kernels you pick in the UI and matching Python environments take precedence over these preferences, as described in [Changing Kernels](../repl.md#changing-kernels).
 
 ## REPL
 
@@ -6138,7 +6277,10 @@ Image output width follows `max_columns`.
 **Options**
 
 `"platform_default"`, `"subpixel"`, or `"grayscale"`.
-Subpixel rendering requires an opaque window and backend support.
+
+Subpixel rendering is used only in opaque windows.
+It is not available on macOS, and on Linux it requires a GPU that supports dual-source blending.
+Where subpixel rendering is unavailable, Zed renders text in grayscale.
 
 ## Use Display P3 {#use-display-p3}
 
@@ -6154,7 +6296,17 @@ Subpixel rendering requires an opaque window and backend support.
 
 - Description: The theme setting can be specified in two forms - either as the name of a theme or as an object containing the `mode`, `dark`, and `light` themes for the Zed UI.
 - Setting: `theme`
-- Default: `{"mode": "system", "light": "One Light", "dark": "One Dark"}`
+- Default:
+
+```json [settings]
+{
+  "theme": {
+    "mode": "system",
+    "light": "One Light",
+    "dark": "One Dark"
+  }
+}
+```
 
 ### Theme Object
 
@@ -6381,7 +6533,7 @@ Available variables:
 `default_mode` accepts `"normal"` or `"insert"`.
 `show_edit_predictions_in_normal_mode` enables predictions in normal mode in addition to insert and replace modes.
 Each `cursor_shape` accepts `"block"`, `"bar"`, `"underline"`, or `"hollow"`; insert mode also accepts `"inherit"` to use the editor's `cursor_shape`.
-See [Changing Vim Mode Settings](../vim.md#changing-vim-mode-settings) for the other options.
+See [Changing Vim Mode Settings](../vim.md#changing-vim-mode-settings) for a more comprehensive overview.
 
 ## Which-key Menu
 
@@ -6904,8 +7056,7 @@ See [Agent Panel](#agent-panel) for width, flexible sizing, and Threads Sidebar 
 | `show_turn_stats`                      | `false`                                         | Show generation time and completed-turn duration.                                                     |
 | `show_merge_conflict_indicator`        | `true`                                          | Show the status-bar merge-conflict indicator for agent-assisted resolution.                           |
 
-For complete configuration examples, see [Model Temperature](../ai/agent-settings.md#model-temperature), [Automatic Compaction](../ai/agent-settings.md#automatic-compaction), [Profiles](../ai/agent-profiles.md#settings), and [Tool Permissions](../ai/tool-permissions.md#configuration).
-See [Notifications](../ai/agent-panel.md#get-notified) and [Terminal Thread Initialization](../ai/terminal-threads.md#terminal-thread-init-command) for the related behavior.
+Several of these settings have their own documentation with complete examples: [Model Temperature](../ai/agent-settings.md#model-temperature), [Automatic Compaction](../ai/agent-settings.md#automatic-compaction), [Agent Profiles](../ai/agent-profiles.md#settings), [Tool Permissions](../ai/tool-permissions.md#configuration), [Notifications](../ai/agent-panel.md#get-notified), and [Terminal Thread Initialization](../ai/terminal-threads.md#terminal-thread-init-command).
 
 ### Prevent Idle Sleep
 
@@ -6924,14 +7075,32 @@ See [Notifications](../ai/agent-panel.md#get-notified) and [Terminal Thread Init
 
 ## Context Servers {#context-servers}
 
-- Description: Configure Model Context Protocol (MCP) servers by server ID.
+- Description: Model Context Protocol (MCP) servers available to the agent, keyed by server ID.
 - Setting: `context_servers`
 - Default: `{}`
 
-Use `command`, `args`, and `env` for stdio servers, or `url` and optional `headers` for HTTP servers.
-Extension-provided servers accept extension-defined `settings`.
-Servers can be disabled with `enabled: false`.
-See [Custom MCP Servers](../ai/mcp.md#as-custom-servers) for complete examples.
+Adding a server from **Settings → AI → MCP Servers** writes an entry here.
+Local servers use `command`, `args`, and `env`; remote servers use `url` and optional `headers`:
+
+```json [settings]
+{
+  "context_servers": {
+    "local-mcp-server": {
+      "command": "some-command",
+      "args": ["arg-1", "arg-2"],
+      "env": {}
+    },
+    "remote-mcp-server": {
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+For servers installed from extensions, the configuration form Zed shows after installation stores the extension's options in the entry's `settings` object.
+Any server can be turned off with `"enabled": false`.
+The [MCP documentation](../ai/mcp.md#as-custom-servers) covers authentication and other options.
 
 ## Context Server Timeout {#context-server-timeout}
 
@@ -6944,14 +7113,32 @@ Timeouts are capped at `600` seconds.
 
 ## Agent Servers {#agent-servers}
 
-- Description: Configure external ACP agents by agent ID.
+- Description: [External agents](../ai/external-agents.md) available in the Agent Panel, keyed by agent ID.
 - Setting: `agent_servers`
 - Default: `{}`
 
-Custom agents use `type: "custom"`, `command`, and optional `args` and `env`.
-Registry agents use `type: "registry"` and optional `env` overrides.
-Both support `default_mode`, `default_config_options`, and `favorite_config_option_values`.
-See [Custom Agents](../ai/external-agents.md#custom-agents).
+Adding a custom agent from the **External Agents** page in Agent Settings writes an entry here.
+A custom agent runs a command that speaks the Agent Client Protocol (ACP):
+
+```json [settings]
+{
+  "agent_servers": {
+    "my-agent": {
+      "type": "custom",
+      "command": "node",
+      "args": ["~/projects/agent/index.js", "--acp"],
+      "env": {}
+    }
+  }
+}
+```
+
+Agents installed from the ACP Registry use `"type": "registry"` and accept only `env` overrides in place of `command` and `args`.
+Both types also accept:
+
+- `default_mode`: Mode that new threads start in, for agents that support modes.
+- `default_config_options`: Default values for the agent's session options, keyed by option ID.
+- `favorite_config_option_values`: Favorited values for the agent's session options, keyed by option ID.
 
 ## Collaboration Panel
 
@@ -7004,8 +7191,7 @@ See [Automatic Scenario Creation](../debugger.md#automatic-scenario-creation).
 }
 ```
 
-Each adapter accepts optional `binary`, `args`, and `env` fields.
-See [Customizing Debug Adapters](../debugger.md#customizing-debug-adapters).
+Each adapter accepts optional `binary`, `args`, and `env` fields to customize how Zed launches it, as described in [Customizing Debug Adapters](../debugger.md#customizing-debug-adapters).
 
 ## Debugger
 
@@ -7362,10 +7548,18 @@ To preview and enable a settings profile, open the command palette via {#kb comm
 
 ## Platform and Release-Channel Overrides {#platform-and-release-channel-overrides}
 
-Apply settings only on a matching operating system with `linux`, `macos`, or `windows`, or on a matching build channel with `dev`, `stable`, `preview`, or `nightly`.
-Within user settings, the matching channel block overrides ordinary settings, then the matching platform block overrides both.
+Apply settings only on a specific operating system or release channel by nesting them under these keys in your user settings:
 
-For example:
+- `stable` or `preview`: applies only to that release channel.
+- `linux`, `macos`, or `windows`: applies only to that operating system.
+
+When the same setting is set in several places, Zed applies them in this order, with later layers taking precedence:
+
+1. Top-level user settings
+2. The block for the current release channel
+3. The block for the current operating system
+
+For example, this uses One Light on Preview and disables middle-click paste on Linux:
 
 ```json [settings]
 {
@@ -7378,9 +7572,7 @@ For example:
 }
 ```
 
-The default `linux`, `macos`, `stable`, and `preview` blocks are empty.
-The `dev` and `nightly` defaults enable `instrumentation.performance_profiler.enabled`, and `windows` supplies a PHP language-server override.
-See [Per-Release Channel Overrides](../configuring-zed.md#per-release-channel-overrides).
+The [Per-Release Channel Overrides](../configuring-zed.md#per-release-channel-overrides) section has a longer example.
 
 ## An example configuration:
 
