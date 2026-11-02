@@ -454,7 +454,7 @@ pub struct OpenAiCompatibleModelCapabilities {
     pub interleaved_reasoning: bool,
     #[serde(default)]
     pub max_tokens_parameter: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub supports_none_reasoning_effort: bool,
 }
 
@@ -468,7 +468,7 @@ impl Default for OpenAiCompatibleModelCapabilities {
             chat_completions: default_true(),
             interleaved_reasoning: false,
             max_tokens_parameter: false,
-            supports_none_reasoning_effort: false,
+            supports_none_reasoning_effort: default_true(),
         }
     }
 }
