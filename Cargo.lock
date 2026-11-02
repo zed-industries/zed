@@ -15023,6 +15023,7 @@ dependencies = [
  "agent",
  "agent-client-protocol",
  "agent_servers",
+ "agent_skills",
  "anyhow",
  "askpass",
  "async-channel 2.5.0",

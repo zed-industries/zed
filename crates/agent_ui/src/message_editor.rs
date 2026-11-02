@@ -1564,11 +1564,7 @@ impl MessageEditor {
             return;
         };
 
-        let mention_uri = MentionUri::Skill {
-            name: skill.name.to_string(),
-            source: skill.source.to_string(),
-            skill_file_path: skill.skill_file_path.clone(),
-        };
+        let mention_uri = skill.mention_uri();
 
         let link_text = mention_uri.as_link().to_string();
         let content_len = link_text.len();
@@ -2314,7 +2310,7 @@ mod tests {
     use std::{ops::Range, path::Path, path::PathBuf, rc::Rc, sync::Arc};
 
     use super::PromptLocalCommand;
-    use acp_thread::MentionUri;
+    use acp_thread::{MentionUri, SkillOrigin};
     use agent::{ThreadStore, outline};
     use agent_client_protocol::v2::schema as acp_v2;
     use base64::Engine as _;
@@ -2357,6 +2353,7 @@ mod tests {
             description: "Deploy the app".into(),
             source: "".into(),
             skill_file_path: skill_file_path.clone(),
+            origin: SkillOrigin::LocalGlobal,
             warning: None,
         };
         let session_capabilities = SessionCapabilities::new(
@@ -2444,6 +2441,7 @@ mod tests {
             description: "desc".into(),
             source: source.into(),
             skill_file_path: PathBuf::from(format!("/tmp/{source}-{name}/SKILL.md")),
+            origin: SkillOrigin::LocalGlobal,
             warning: None,
         };
 

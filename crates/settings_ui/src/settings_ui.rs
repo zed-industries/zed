@@ -983,7 +983,7 @@ pub struct SettingsWindow {
     list_state: ListState,
     bottom_spacer_height: Pixels,
     shown_errors: HashSet<String>,
-    pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
+    pub(crate) hidden_deleted_skills: HashSet<crate::pages::DeletedSkill>,
     pub(crate) regex_validation_error: Option<String>,
     pub(crate) sandbox_host_validation_error: Option<String>,
     last_copied_link_path: Option<&'static str>,
@@ -1848,9 +1848,16 @@ impl SettingsWindow {
 
         cx.observe_global_in::<SkillIndex>(window, |this, _window, cx| {
             if let Some(skill_index) = cx.try_global::<SkillIndex>() {
-                this.hidden_deleted_skill_directory_paths
-                    .retain(|directory_path| {
-                        skill_index
+                this.hidden_deleted_skills.retain(|deleted_skill| {
+                    let is_deleted_skill = |skill: &agent_skills::Skill| {
+                        skill.directory_path == deleted_skill.directory_path
+                    };
+                    match deleted_skill.remote_project_id {
+                        Some(project_id) => skill_index
+                            .remote_global_skills
+                            .get(&project_id)
+                            .is_some_and(|skills| skills.iter().any(is_deleted_skill)),
+                        None => skill_index
                             .global_skills
                             .iter()
                             .chain(
@@ -1859,10 +1866,11 @@ impl SettingsWindow {
                                     .iter()
                                     .flat_map(|group| group.skills.iter()),
                             )
-                            .any(|skill| skill.directory_path.as_path() == directory_path.as_path())
-                    });
+                            .any(is_deleted_skill),
+                    }
+                });
             } else {
-                this.hidden_deleted_skill_directory_paths.clear();
+                this.hidden_deleted_skills.clear();
             }
             cx.notify();
         })
@@ -2020,7 +2028,7 @@ impl SettingsWindow {
                 .tab_stop(false),
             search_index: None,
             shown_errors: HashSet::default(),
-            hidden_deleted_skill_directory_paths: HashSet::default(),
+            hidden_deleted_skills: HashSet::default(),
             regex_validation_error: None,
             sandbox_host_validation_error: None,
             list_state,
@@ -5494,7 +5502,7 @@ pub mod test {
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 bottom_spacer_height: px(0.),
                 shown_errors: HashSet::default(),
-                hidden_deleted_skill_directory_paths: HashSet::default(),
+                hidden_deleted_skills: HashSet::default(),
                 regex_validation_error: None,
                 sandbox_host_validation_error: None,
                 last_copied_link_path: None,
@@ -5634,7 +5642,7 @@ pub mod test {
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             bottom_spacer_height: px(0.),
             shown_errors: HashSet::default(),
-            hidden_deleted_skill_directory_paths: HashSet::default(),
+            hidden_deleted_skills: HashSet::default(),
             regex_validation_error: None,
             sandbox_host_validation_error: None,
             last_copied_link_path: None,
@@ -7046,6 +7054,7 @@ pub mod test {
         cx.update(|cx| {
             cx.set_global(SkillIndex {
                 global_skills,
+                remote_global_skills: Default::default(),
                 project_skills: vec![ProjectSkillGroup {
                     worktree_id: SkillScopeId(worktree_id.to_usize()),
                     worktree_root_name: "project".into(),
@@ -7077,7 +7086,7 @@ pub mod test {
 
         settings_window.update_in(cx, |settings_window, window, cx| {
             fn displayed_skill_names(settings_window: &SettingsWindow, cx: &App) -> Vec<String> {
-                crate::pages::displayed_skills(settings_window, cx)
+                crate::pages::displayed_skills(settings_window, None, cx)
                     .iter()
                     .map(|skill| skill.name.to_string())
                     .collect()
@@ -7207,6 +7216,74 @@ pub mod test {
     }
 
     #[gpui::test]
+    async fn test_skills_page_lists_the_remote_global_skills_of_a_remote_project(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        let mut local_skill = project_skill(worktree_id, "local-skill");
+        local_skill.source = agent_skills::SkillSource::Global;
+        let mut remote_skill = project_skill(worktree_id, "remote-skill");
+        remote_skill.source = agent_skills::SkillSource::Global;
+        // Stands in for a remote project; only its identity matters here.
+        let project = settings_window
+            .read_with(cx, |settings_window, cx| settings_window.active_project(cx))
+            .expect("settings should have the original window's project");
+        cx.update(|_window, cx| {
+            cx.set_global(SkillIndex {
+                global_skills: vec![local_skill],
+                remote_global_skills: [(project.entity_id(), vec![remote_skill])]
+                    .into_iter()
+                    .collect(),
+                project_skills: Vec::new(),
+            });
+        });
+
+        settings_window.read_with(cx, |settings_window, cx| {
+            let displayed_names = |remote_project| {
+                crate::pages::displayed_skills(settings_window, remote_project, cx)
+                    .into_iter()
+                    .map(|skill| skill.name)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(displayed_names(None), ["local-skill"]);
+            assert_eq!(displayed_names(Some(&project)), ["remote-skill"]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_global_skills_of_a_remote_project_go_to_the_remote(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::pages::{SkillLocation, skill_location};
+
+        let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        let project_skill = project_skill(worktree_id, "my-skill");
+        let mut global_skill = project_skill.clone();
+        global_skill.source = agent_skills::SkillSource::Global;
+        // Stands in for a remote project; only its identity matters here.
+        let project = settings_window
+            .read_with(cx, |settings_window, cx| settings_window.active_project(cx))
+            .expect("settings should have the original window's project");
+
+        settings_window.read_with(cx, |settings_window, cx| {
+            assert!(matches!(
+                skill_location(&global_skill, None, settings_window, cx),
+                SkillLocation::Local
+            ));
+            assert!(matches!(
+                skill_location(&global_skill, Some(project.clone()), settings_window, cx),
+                SkillLocation::RemoteGlobal(remote_project) if remote_project == project
+            ));
+            assert!(matches!(
+                skill_location(&project_skill, Some(project.clone()), settings_window, cx),
+                SkillLocation::Project { project: skill_project, .. } if skill_project == project
+            ));
+        });
+    }
+
+    #[gpui::test]
     async fn test_project_skill_share_link_reads_through_project(cx: &mut gpui::TestAppContext) {
         let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
             init_project_skill_test(cx).await;
@@ -7249,8 +7326,8 @@ pub mod test {
         settings_window.read_with(cx, |settings_window, _| {
             assert!(
                 settings_window
-                    .hidden_deleted_skill_directory_paths
-                    .contains(&skill.directory_path)
+                    .hidden_deleted_skills
+                    .contains(&crate::pages::DeletedSkill::new(&skill, None))
             );
         });
     }
@@ -7300,8 +7377,8 @@ pub mod test {
         settings_window.read_with(cx, |settings_window, _| {
             assert!(
                 !settings_window
-                    .hidden_deleted_skill_directory_paths
-                    .contains(&skill.directory_path)
+                    .hidden_deleted_skills
+                    .contains(&crate::pages::DeletedSkill::new(&skill, None))
             );
         });
     }
@@ -7323,8 +7400,73 @@ pub mod test {
         settings_window.read_with(cx, |settings_window, _| {
             assert!(
                 settings_window
-                    .hidden_deleted_skill_directory_paths
-                    .contains(&skill.directory_path)
+                    .hidden_deleted_skills
+                    .contains(&crate::pages::DeletedSkill::new(&skill, None))
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deleted_remote_global_skill_stays_hidden_only_on_its_machine(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::pages::DeletedSkill;
+
+        let (settings_window, cx, _project_fs, _host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        // The local and remote machines can have a skill at the same path.
+        let mut skill = project_skill(worktree_id, "same-path-skill");
+        skill.source = agent_skills::SkillSource::Global;
+        // Stands in for a remote project; only its identity matters here.
+        let project = settings_window
+            .read_with(cx, |settings_window, cx| settings_window.active_project(cx))
+            .expect("settings should have the original window's project");
+        let deleted_skill = DeletedSkill::new(&skill, Some(project.entity_id()));
+        settings_window.update(cx, |settings_window, _| {
+            settings_window
+                .hidden_deleted_skills
+                .insert(deleted_skill.clone());
+        });
+
+        // An index update can arrive before the remote finishes deleting the skill.
+        cx.update(|_window, cx| {
+            cx.set_global(SkillIndex {
+                global_skills: vec![skill.clone()],
+                remote_global_skills: [(project.entity_id(), vec![skill.clone()])]
+                    .into_iter()
+                    .collect(),
+                project_skills: Vec::new(),
+            });
+        });
+        cx.run_until_parked();
+        settings_window.read_with(cx, |settings_window, cx| {
+            assert!(
+                settings_window
+                    .hidden_deleted_skills
+                    .contains(&deleted_skill)
+            );
+            assert!(crate::pages::displayed_skills(settings_window, Some(&project), cx).is_empty());
+            assert_eq!(
+                crate::pages::displayed_skills(settings_window, None, cx).len(),
+                1,
+                "the local skill at the same path should stay visible"
+            );
+        });
+
+        // Once the remote no longer lists it, the local copy doesn't keep it hidden.
+        cx.update(|_window, cx| {
+            cx.set_global(SkillIndex {
+                global_skills: vec![skill.clone()],
+                remote_global_skills: Default::default(),
+                project_skills: Vec::new(),
+            });
+        });
+        cx.run_until_parked();
+        settings_window.read_with(cx, |settings_window, _| {
+            assert!(
+                !settings_window
+                    .hidden_deleted_skills
+                    .contains(&deleted_skill)
             );
         });
     }

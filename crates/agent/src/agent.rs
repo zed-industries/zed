@@ -3,6 +3,7 @@ mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
+mod remote_global_skills;
 mod sandboxing;
 mod templates;
 #[cfg(test)]
@@ -18,6 +19,7 @@ use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 use parking_lot::Mutex;
 pub use pattern_extraction::*;
+pub use remote_global_skills::*;
 pub use sandboxing::{
     ThreadSandbox, sandbox_worktree_writable_paths, settings_sandbox_policy,
     settings_thread_sandbox,
@@ -32,7 +34,7 @@ pub use tools::*;
 use acp_thread::{
     AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
     AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, ProcessOutput,
-    TokenUsageRatio,
+    SkillOrigin, TokenUsageRatio,
 };
 use agent_client_protocol::v2::schema as acp_v2;
 use agent_skills::{
@@ -166,16 +168,24 @@ pub struct NativeAvailableSkill {
     pub description: String,
     pub source: SharedString,
     pub skill_file_path: PathBuf,
+    pub origin: SkillOrigin,
     pub warning: Option<SharedString>,
 }
 
-impl From<&Skill> for NativeAvailableSkill {
-    fn from(skill: &Skill) -> Self {
+impl NativeAvailableSkill {
+    fn new(skill: &Skill, project: &Project) -> Self {
+        let origin = match skill.source {
+            SkillSource::BuiltIn => SkillOrigin::BuiltIn,
+            SkillSource::Global if global_skills_are_remote(project) => SkillOrigin::RemoteGlobal,
+            SkillSource::Global => SkillOrigin::LocalGlobal,
+            SkillSource::ProjectLocal { .. } => SkillOrigin::Project,
+        };
         Self {
             name: skill.name.clone(),
             description: skill.description.clone(),
             source: skill.source.display_label().to_string().into(),
             skill_file_path: skill.skill_file_path.clone(),
+            origin,
             warning: skill
                 .load_warnings
                 .first()
@@ -756,6 +766,15 @@ impl NativeAgent {
             .detach();
     }
 
+    /// Remote projects get their global skills from the remote server instead.
+    fn refresh_projects_with_local_global_skills(&mut self, cx: &App) {
+        for state in self.projects.values_mut() {
+            if !global_skills_are_remote(state.project.read(cx)) {
+                state.project_context_needs_refresh.send(()).ok();
+            }
+        }
+    }
+
     async fn run_skills_scan(this: WeakEntity<Self>, fs: Arc<dyn Fs>, cx: &mut AsyncApp) {
         let skills_dir = global_skills_dir();
         if !fs.is_dir(&skills_dir).await {
@@ -778,9 +797,7 @@ impl NativeAgent {
             })
             .detach();
             this.skills_state = SkillsState::Watching;
-            for state in this.projects.values_mut() {
-                state.project_context_needs_refresh.send(()).ok();
-            }
+            this.refresh_projects_with_local_global_skills(cx);
         });
     }
 
@@ -791,10 +808,8 @@ impl NativeAgent {
         cx: &mut AsyncApp,
     ) {
         let watched_root_removed = agent_skills::watch_skills_dir(fs, skills_dir, || {
-            this.update(cx, |this, _cx| {
-                for state in this.projects.values_mut() {
-                    state.project_context_needs_refresh.send(()).ok();
-                }
+            this.update(cx, |this, cx| {
+                this.refresh_projects_with_local_global_skills(cx);
             })
             .is_ok()
         })
@@ -1203,7 +1218,9 @@ impl NativeAgent {
             .collect::<Vec<_>>();
 
         // Load global skills
-        let global_skills_task = {
+        let global_skills_task = if global_skills_are_remote(project.read(cx)) {
+            load_remote_global_skills(project, cx)
+        } else {
             let global_skills_dir = global_skills_dir();
             let global_skills_fs = fs.clone();
             cx.background_spawn(async move {
@@ -1539,6 +1556,9 @@ impl NativeAgent {
                     state.project_context_needs_refresh.send(()).ok();
                 }
             }
+            project::Event::GlobalSkillsChanged => {
+                state.project_context_needs_refresh.send(()).ok();
+            }
             _ => {}
         }
     }
@@ -1615,47 +1635,56 @@ impl NativeAgent {
     }
 
     fn publish_skill_index(&self, cx: &mut Context<Self>) {
-        let mut global_skills = Vec::new();
+        let mut local_global_skills: Option<Vec<Skill>> = None;
+        let mut remote_global_skills = HashMap::default();
         let mut project_groups: Vec<ProjectSkillGroup> = Vec::new();
-        let mut seen_global = false;
 
-        for state in self.projects.values() {
+        for (project_id, state) in &self.projects {
+            let global_skills = state
+                .skills
+                .iter()
+                .filter(|skill| skill.source == SkillSource::Global)
+                .cloned()
+                .collect::<Vec<_>>();
+            if global_skills_are_remote(state.project.read(cx)) {
+                remote_global_skills.insert(*project_id, global_skills);
+            } else if local_global_skills
+                .as_ref()
+                .is_none_or(|skills| skills.is_empty())
+            {
+                local_global_skills = Some(global_skills);
+            }
+
             for skill in state.skills.iter() {
-                match &skill.source {
-                    SkillSource::BuiltIn => {}
-                    SkillSource::Global => {
-                        if !seen_global {
-                            global_skills.push(skill.clone());
-                        }
-                    }
-                    SkillSource::ProjectLocal {
-                        worktree_id,
-                        worktree_root_name,
-                    } => {
-                        if let Some(group) = project_groups
-                            .iter_mut()
-                            .find(|g| g.worktree_id == *worktree_id)
-                        {
-                            group.skills.push(skill.clone());
-                        } else {
-                            project_groups.push(ProjectSkillGroup {
-                                worktree_id: *worktree_id,
-                                worktree_root_name: SharedString::from(worktree_root_name.clone()),
-                                skills: vec![skill.clone()],
-                            });
-                        }
+                if let SkillSource::ProjectLocal {
+                    worktree_id,
+                    worktree_root_name,
+                } = &skill.source
+                {
+                    if let Some(group) = project_groups
+                        .iter_mut()
+                        .find(|g| g.worktree_id == *worktree_id)
+                    {
+                        group.skills.push(skill.clone());
+                    } else {
+                        project_groups.push(ProjectSkillGroup {
+                            worktree_id: *worktree_id,
+                            worktree_root_name: SharedString::from(worktree_root_name.clone()),
+                            skills: vec![skill.clone()],
+                        });
                     }
                 }
             }
-            if !global_skills.is_empty() {
-                seen_global = true;
-            }
         }
 
-        cx.set_global(SkillIndex {
-            global_skills,
-            project_skills: project_groups,
-        });
+        let index = cx.default_global::<SkillIndex>();
+        // Each workspace has its own agent, so keep the global skills of
+        // machines this agent has no project on.
+        if let Some(local_global_skills) = local_global_skills {
+            index.global_skills = local_global_skills;
+        }
+        index.remote_global_skills.extend(remote_global_skills);
+        index.project_skills = project_groups;
     }
 
     fn update_available_commands_for_project(&self, project_id: EntityId, cx: &mut Context<Self>) {
@@ -1922,6 +1951,9 @@ impl NativeAgent {
         let has_remaining = self.sessions.values().any(|s| s.project_id == project_id);
         if !has_remaining {
             self.projects.remove(&project_id);
+            cx.default_global::<SkillIndex>()
+                .remote_global_skills
+                .remove(&project_id);
             self.publish_skill_index(cx);
         }
     }
@@ -2401,10 +2433,11 @@ impl NativeAgentConnection {
             .read(cx)
             .session_project_state(session_id)
             .map(|state| {
+                let project = state.project.read(cx);
                 state
                     .skills
                     .iter()
-                    .map(NativeAvailableSkill::from)
+                    .map(|skill| NativeAvailableSkill::new(skill, project))
                     .collect()
             })
             .unwrap_or_default()
@@ -4275,6 +4308,21 @@ pub fn skill_body_resolver_for_project(
                     anyhow::Ok(buffer.read(cx).as_text_snapshot().as_rope().to_string())
                 })?;
 
+                read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
+            })
+        }
+        SkillSource::Global
+            if project.read_with(cx, |project, _| global_skills_are_remote(project)) =>
+        {
+            let project = project.clone();
+            cx.spawn(async move |cx| {
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.open_local_buffer(&skill.skill_file_path, cx)
+                    })
+                    .await?;
+                let content =
+                    cx.update(|cx| buffer.read(cx).as_text_snapshot().as_rope().to_string());
                 read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
             })
         }

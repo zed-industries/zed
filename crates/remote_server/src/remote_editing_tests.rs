@@ -2,11 +2,13 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
+use acp_thread::SkillOrigin;
 use agent::{
     AgentTool, NativeAgent, NativeAgentConnection, ReadFileTool, ReadFileToolInput, SkillTool,
     SkillToolInput, SkillToolOutput, Templates, ThreadStore, ToolCallEventStream, ToolInput,
     skill_body_resolver_for_project, skills_resolver_for_project,
 };
+use agent_skills::SkillIndex;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
@@ -5190,6 +5192,321 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
             rendered: expected2
         }
     );
+}
+
+struct RemoteSkillsTest {
+    project: Entity<Project>,
+    agent: Entity<NativeAgent>,
+    connection: Rc<NativeAgentConnection>,
+    acp_thread: Entity<acp_thread::AcpThread>,
+    server_fs: Arc<FakeFs>,
+    skills_dir: PathBuf,
+}
+
+impl RemoteSkillsTest {
+    /// With no `remote_skills`, the remote has no `~/.agents/skills`.
+    async fn new(
+        project_root: &Path,
+        remote_skills: &[&str],
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> Self {
+        use acp_thread::AgentConnection as _;
+
+        let skills_dir = paths::home_dir().join(".agents").join("skills");
+        let server_fs = FakeFs::new(server_cx.executor());
+        server_fs.insert_tree(project_root, json!({})).await;
+        for name in remote_skills {
+            server_fs
+                .insert_tree(skills_dir.join(name), skill_dir(name))
+                .await;
+        }
+        // The same path on this machine holds a different skill.
+        let local_fs = FakeFs::new(cx.executor());
+        local_fs
+            .insert_tree(skills_dir.join("local-skill"), skill_dir("local-skill"))
+            .await;
+
+        let (project, _headless_project) = init_test(&server_fs, cx, server_cx).await;
+        cx.update(|cx| {
+            LanguageModelRegistry::test(cx);
+        });
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(project_root, true, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), local_fs, cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::new(&[project_root]), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        Self {
+            project,
+            agent,
+            connection,
+            acp_thread,
+            server_fs,
+            skills_dir,
+        }
+    }
+
+    async fn add_remote_skill(&self, name: &str, cx: &mut TestAppContext) {
+        self.server_fs
+            .insert_tree(self.skills_dir.join(name), skill_dir(name))
+            .await;
+        cx.run_until_parked();
+    }
+
+    /// Like focusing the agent input.
+    fn refresh(&self, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            self.connection
+                .refresh_skills_for_project(self.project.clone(), cx)
+        });
+        cx.run_until_parked();
+    }
+
+    fn global_skills(&self, cx: &mut TestAppContext) -> Vec<(String, SkillOrigin)> {
+        let session_id = self
+            .acp_thread
+            .read_with(cx, |thread, _| thread.session_id().clone());
+        cx.update(|cx| {
+            self.connection
+                .available_skills(&session_id, cx)
+                .into_iter()
+                .filter(|skill| skill.source == "global")
+                .map(|skill| (skill.name, skill.origin))
+                .collect()
+        })
+    }
+
+    fn worktrees(&self, cx: &mut TestAppContext) -> Vec<(PathBuf, bool)> {
+        cx.update(|_| {});
+        cx.run_until_parked();
+        self.project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    (worktree.abs_path().to_path_buf(), worktree.is_visible())
+                })
+                .collect()
+        })
+    }
+
+    /// Runs the `skill` tool the way the model would, and returns the
+    /// rendered skill.
+    async fn run_skill_tool(&self, name: &str, cx: &mut TestAppContext) -> String {
+        let skill_tool = Arc::new(SkillTool::with_body_resolver(
+            skills_resolver_for_project(self.agent.downgrade(), self.project.entity_id()),
+            skill_body_resolver_for_project(self.project.clone(), FakeFs::new(cx.executor())),
+        ));
+        let (event_stream, mut event_stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            skill_tool.run(
+                ToolInput::resolved(SkillToolInput { name: name.into() }),
+                event_stream,
+                cx,
+            )
+        });
+        event_stream_rx
+            .expect_authorization()
+            .await
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                agent_client_protocol::v2::schema::PermissionOptionId::new("allow"),
+                agent_client_protocol::v2::schema::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+        let SkillToolOutput::Found { rendered } = task.await.unwrap() else {
+            panic!("{name} should be found");
+        };
+        rendered
+    }
+}
+
+fn skill_dir(name: &str) -> serde_json::Value {
+    json!({ "SKILL.md": format!("---\nname: {name}\ndescription: test skill\n---\n{name} body") })
+}
+
+fn remote_global(names: &[&str]) -> Vec<(String, SkillOrigin)> {
+    names
+        .iter()
+        .map(|name| (name.to_string(), SkillOrigin::RemoteGlobal))
+        .collect()
+}
+
+#[gpui::test]
+async fn test_remote_global_skills_come_from_the_remote(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let project_root = Path::new(path!("/project"));
+    let test = RemoteSkillsTest::new(project_root, &["remote-skill"], cx, server_cx).await;
+
+    assert_eq!(test.global_skills(cx), remote_global(&["remote-skill"]));
+    cx.update(|cx| {
+        let index = cx.global::<SkillIndex>();
+        assert!(index.global_skills.is_empty());
+        let remote_skills = &index.remote_global_skills[&test.project.entity_id()];
+        assert_eq!(remote_skills.len(), 1);
+        assert_eq!(remote_skills[0].name, "remote-skill");
+    });
+
+    let rendered = test.run_skill_tool("remote-skill", cx).await;
+    assert!(rendered.contains("remote-skill body"), "got: {rendered}");
+    // The remote server reads and watches the dir itself, so no worktree is
+    // opened for it.
+    assert_eq!(test.worktrees(cx), vec![(project_root.to_path_buf(), true)]);
+
+    test.add_remote_skill("added-skill", cx).await;
+    assert_eq!(
+        test.global_skills(cx),
+        remote_global(&["added-skill", "remote-skill"])
+    );
+
+    // Closing the window drops the thread, agent and project.
+    let RemoteSkillsTest {
+        project,
+        agent,
+        connection,
+        acp_thread,
+        ..
+    } = test;
+    let project_id = project.entity_id();
+    let weak_project = project.downgrade();
+    let weak_agent = agent.downgrade();
+    drop((acp_thread, connection, agent, project));
+    // Dropped entities are only freed when effects are next flushed.
+    cx.update(|_| {});
+    cx.run_until_parked();
+    weak_agent.assert_released();
+    weak_project.assert_released();
+    cx.update(|cx| {
+        assert!(
+            !cx.global::<SkillIndex>()
+                .remote_global_skills
+                .contains_key(&project_id),
+            "a closed project's remote global skills should be removed"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_remote_global_skills_dir_deleted_and_recreated(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(
+        Path::new(path!("/project")),
+        &["remote-skill"],
+        cx,
+        server_cx,
+    )
+    .await;
+    assert_eq!(test.global_skills(cx), remote_global(&["remote-skill"]));
+
+    test.server_fs
+        .remove_dir(
+            &test.skills_dir,
+            fs::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(test.global_skills(cx), Vec::new());
+
+    // The watch ended with the dir, so a refresh is what finds the recreated
+    // dir and watches it again.
+    test.add_remote_skill("new-skill", cx).await;
+    test.refresh(cx);
+    assert_eq!(test.global_skills(cx), remote_global(&["new-skill"]));
+
+    test.add_remote_skill("another-skill", cx).await;
+    assert_eq!(
+        test.global_skills(cx),
+        remote_global(&["another-skill", "new-skill"])
+    );
+}
+
+#[gpui::test]
+async fn test_create_and_trash_remote_global_skills(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    use fs::Fs as _;
+
+    let test = RemoteSkillsTest::new(Path::new(path!("/project")), &[], cx, server_cx).await;
+    assert_eq!(test.global_skills(cx), Vec::new());
+
+    let create = |name: &str, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            agent::create_remote_global_skill(&test.project, name, "test skill", "body", false, cx)
+        })
+    };
+    let skill_file_path = create("new-skill", cx).await.unwrap();
+    assert_eq!(
+        skill_file_path,
+        test.skills_dir.join("new-skill").join("SKILL.md")
+    );
+    assert!(test.server_fs.is_file(&skill_file_path).await);
+    test.refresh(cx);
+    assert_eq!(test.global_skills(cx), remote_global(&["new-skill"]));
+
+    let error = create("new-skill", cx).await.unwrap_err();
+    assert!(
+        error.to_string().contains("already exists"),
+        "got: {error:#}"
+    );
+    let error = create("../escape", cx).await.unwrap_err();
+    assert!(
+        !test
+            .server_fs
+            .is_dir(&paths::home_dir().join(".agents").join("escape"))
+            .await,
+        "an invalid name must not write outside the skills dir: {error:#}"
+    );
+
+    let client = test.project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    for directory_name in ["..", "../.agents", "new-skill/SKILL.md", ""] {
+        client
+            .request(proto::TrashGlobalSkill {
+                project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                directory_name: directory_name.to_string(),
+            })
+            .await
+            .expect_err("only a direct child of the skills dir can be trashed");
+    }
+    assert!(test.server_fs.is_file(&skill_file_path).await);
+
+    cx.update(|cx| {
+        agent::trash_remote_global_skill(&test.project, &test.skills_dir.join("new-skill"), cx)
+    })
+    .await
+    .unwrap();
+    assert!(
+        !test
+            .server_fs
+            .is_dir(&test.skills_dir.join("new-skill"))
+            .await
+    );
+    cx.run_until_parked();
+    assert_eq!(test.global_skills(cx), Vec::new());
 }
 
 #[gpui::test]
