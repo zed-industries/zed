@@ -14,6 +14,7 @@ mod tests {
     use language::{AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
+    use tree_sitter::StreamingIterator;
     use unindent::Unindent;
 
     #[gpui::test]
@@ -648,5 +649,46 @@ mod tests {
 
             buffer
         });
+    }
+
+    #[test]
+    fn test_cpp_highlights_query_captures_lambda_and_defined_keywords() {
+        let language: tree_sitter::Language = tree_sitter_cpp::LANGUAGE.into();
+        let query_source = include_str!("../../grammars/src/cpp/highlights.scm");
+
+        let query = tree_sitter::Query::new(&language, query_source)
+            .expect("C++ highlights query should compile");
+
+        let source = r#"
+            auto mutable_lambda = []() mutable {};
+            auto static_lambda = []() static {};
+
+            #if defined(MY_MACRO)
+            #endif
+        "#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language).unwrap();
+
+        let tree = parser.parse(source, None).expect("C++ source should parse");
+
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+        let mut captures = Vec::new();
+
+        while let Some(query_match) = matches.next() {
+            for capture in query_match.captures() {
+                let capture_name = query.capture_names()[capture.index as usize];
+                let captured_text = &source[capture.node.byte_range()];
+
+                captures.push((captured_text.to_owned(), capture_name.to_owned()));
+            }
+        }
+
+        assert!(captures.contains(&("mutable".into(), "keyword".into())));
+        assert!(captures.contains(&("static".into(), "keyword".into())));
+        assert!(captures.contains(&("defined".into(), "keyword.preproc".into())));
+        assert!(captures.contains(&("MY_MACRO".into(), "constant.macro".into())));
     }
 }
