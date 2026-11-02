@@ -1,5 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use gpui::{
     App, Bounds, Context, FocusHandle, Window, WindowBounds, WindowOptions, div, prelude::*, px,
     rgb, size,
@@ -78,6 +81,9 @@ fn open_test_window(
 
 fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         let window_size = size(px(420.), px(280.0));
         let base = Bounds::centered(None, window_size, cx);
 

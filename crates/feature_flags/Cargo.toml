@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/feature_flags.rs"
+doctest = false
 
 [dependencies]
 collections.workspace = true

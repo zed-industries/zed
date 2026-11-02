@@ -18,7 +18,7 @@ This page embeds data from Orb, our invoicing and metering partner.
 
 ### Billing cycles {#billing-cycles}
 
-Zed is billed on a monthly basis based on the date you initially subscribe. You'll receive _at least_ one invoice from Zed each month you're subscribed to Zed Pro, and may receive more than one invoice if you use hosted models beyond your included monthly token credit.
+Zed is billed on a monthly basis based on the date you initially subscribe. You'll receive _at least_ one invoice from Zed each month you're subscribed to Zed Pro, and may receive more than one invoice if you use [hosted models](./zed-hosted-models.md) beyond your included monthly token credit.
 
 ### Zed Pro threshold billing {#threshold-billing}
 

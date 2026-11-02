@@ -19,6 +19,12 @@ Terminal Threads also appear as entries in the sidebar alongside agent threads, 
 
 To focus the sidebar without toggling it, use {#kb multi_workspace::FocusWorkspaceSidebar}. To search your threads, press {#kb agents_sidebar::FocusSidebarFilter} while the sidebar is focused.
 
+To change the sidebar’s position, open the Settings Editor and search for “Threads Sidebar Position”, which writes `agent.threads_sidebar.position`. To change its default width, search for “Threads Sidebar Default Width”. See [`agent.threads_sidebar.default_width`](../reference/all-settings.md#agent-threads-sidebar-default-width) for values and a configuration example.
+
+Drag the divider to resize the sidebar. Changing the default width updates even a manually resized sidebar. Double-click the divider to return to the configured width.
+
+The “Threads Sidebar Auto Open” setting controls whether opening a folder in an existing window opens the sidebar. Its JSON key is `agent.threads_sidebar.auto_open`.
+
 ### Switching Threads {#switching-threads}
 
 Click any thread in the sidebar to switch to it. The Agent Panel updates to show that thread's conversation.
@@ -53,11 +59,11 @@ Each thread can use a different agent, so you can run Zed's built-in agent in on
 
 The Threads Sidebar can hold different thread types:
 
-| Thread type                                   | Configuration                                                                   |
-| --------------------------------------------- | ------------------------------------------------------------------------------- |
-| [Zed Agent thread](./zed-agent.md)            | Uses Zed Agent settings, profiles, tools, Skills, Instructions, and MCP         |
-| [External Agent thread](./external-agents.md) | Uses the ACP integration and the agent's native configuration                   |
-| [Terminal Thread](./terminal-threads.md)      | Runs a CLI/TUI in a terminal-backed thread; the CLI owns auth and configuration |
+| Thread type                                   | Configuration                                                                          |
+| --------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [Zed Agent thread](./zed-agent.md)            | Uses Zed Agent settings, profiles, tools, [Skills](./skills.md), Instructions, and MCP |
+| [External Agent thread](./external-agents.md) | Uses the ACP integration and the agent's native configuration                          |
+| [Terminal Thread](./terminal-threads.md)      | Runs a CLI/TUI in a terminal-backed thread; the CLI owns auth and configuration        |
 
 ## Multiple Projects {#multiple-projects}
 

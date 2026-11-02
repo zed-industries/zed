@@ -51,6 +51,7 @@ pub fn switch_source_header(
             let request = proto::LspExtSwitchSourceHeader {
                 project_id,
                 buffer_id: buffer_id.to_proto(),
+                server_id: server_to_query.to_proto(),
             };
             let response = client
                 .request(request)
@@ -63,7 +64,9 @@ pub fn switch_source_header(
                     project.request_lsp(
                         buffer,
                         project::LanguageServerToQuery::Other(server_to_query),
-                        project::lsp_store::lsp_ext_command::SwitchSourceHeader,
+                        project::lsp_store::lsp_ext_command::SwitchSourceHeader {
+                            server_id: server_to_query,
+                        },
                         cx,
                     )
                 })

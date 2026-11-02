@@ -743,7 +743,10 @@ impl Bounds<Pixels> {
             .or_else(|| cx.primary_display());
 
         display
-            .map(|display| Bounds::centered_at(display.bounds().center(), size))
+            .map(|display| {
+                let visible_bounds = display.visible_bounds();
+                Bounds::centered_at(visible_bounds.center(), size.min(&visible_bounds.size))
+            })
             .unwrap_or_else(|| Bounds {
                 origin: point(px(0.), px(0.)),
                 size,
@@ -2239,12 +2242,21 @@ impl Anchor {
         }
     }
 
-    /// Returns true if at the center.
+    /// Returns whether the anchor is center-positioned.
     #[inline]
     pub fn is_center(&self) -> bool {
         matches!(
             self,
             Self::TopCenter | Self::BottomCenter | Self::LeftCenter | Self::RightCenter
+        )
+    }
+
+    /// Returns whether the anchor is bottom-positioned.
+    #[inline]
+    pub fn is_bottom(&self) -> bool {
+        matches!(
+            self,
+            Self::BottomCenter | Self::BottomLeft | Self::BottomRight
         )
     }
 }
@@ -2789,6 +2801,12 @@ impl Pixels {
     /// Returns the raw `f32` value of this `Pixels`.
     pub fn as_f32(self) -> f32 {
         self.0
+    }
+
+    /// Converts to `i32`, truncating toward zero.
+    /// Out-of-range values saturate, and NaN becomes zero.
+    pub fn to_i32(self) -> i32 {
+        self.0 as i32
     }
 
     /// Floors the `Pixels` value to the nearest whole number.
@@ -3971,6 +3989,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_pixels_to_i32() {
+        for (value, expected) in [
+            (12.9, 12),
+            (-12.9, -12),
+            (f32::MAX, i32::MAX),
+            (f32::MIN, i32::MIN),
+            (f32::INFINITY, i32::MAX),
+            (f32::NEG_INFINITY, i32::MIN),
+            (f32::NAN, 0),
+        ] {
+            assert_eq!(px(value).to_i32(), expected);
+        }
+    }
 
     #[test]
     fn test_bounds_intersects() {

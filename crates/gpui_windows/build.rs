@@ -1,6 +1,8 @@
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 
 fn main() {
+    #[cfg(not(all(target_os = "windows", not(debug_assertions))))]
+    println!("cargo:rerun-if-changed=build.rs");
     #[cfg(target_os = "windows")]
     {
         // Compile HLSL shaders

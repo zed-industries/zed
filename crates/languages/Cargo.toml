@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[lib]
+doctest = false
+
 [features]
 test-support = [
     "load-grammars"
@@ -27,10 +30,10 @@ async-trait.workspace = true
 chrono.workspace = true
 collections.workspace = true
 futures.workspace = true
+github_releases.workspace = true
 globset.workspace = true
 gpui.workspace = true
 grammars.workspace = true
-http_client = { workspace = true, features = ["github-download"] }
 itertools.workspace = true
 json_schema_store.workspace = true
 language.workspace = true
@@ -66,8 +69,9 @@ util.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
-tempfile = { workspace = true}
+tempfile.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-bash.workspace = true

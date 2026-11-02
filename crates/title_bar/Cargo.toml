@@ -46,6 +46,7 @@ git_ui_core.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
 icons.workspace = true
 livekit_client.workspace = true
+path.workspace = true
 project.workspace = true
 recent_projects.workspace = true
 remote.workspace = true
@@ -74,5 +75,6 @@ remote = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+theme_settings.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

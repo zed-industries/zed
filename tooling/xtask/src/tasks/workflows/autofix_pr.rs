@@ -74,7 +74,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
     }
 
     fn run_cargo_shear_fix() -> Step<Run> {
-        named::bash("cargo shear --fix")
+        named::bash("cargo shear --fix --check-test-targets")
     }
 
     fn run_clippy_fix() -> Step<Run> {

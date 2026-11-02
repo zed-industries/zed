@@ -13,7 +13,7 @@ pub use language::*;
 
 use crate::{
     json::JsonTaskProvider,
-    python::{BasedPyrightLspAdapter, RuffLspAdapter},
+    python::{BasedPyrightLspAdapter, PyreflyLspAdapter, RuffLspAdapter},
 };
 
 mod bash;
@@ -43,7 +43,7 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
                 name: "Git Commit".into(),
                 soft_wrap: Some(language::SoftWrap::EditorWidth),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["COMMIT_EDITMSG".to_owned()],
+                    path_suffixes: vec!["COMMIT_EDITMSG".into()],
                     first_line_pattern: None,
                     ..LanguageMatcher::default()
                 })
@@ -74,6 +74,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let python_lsp_adapter = Arc::new(python::PyrightLspAdapter::new(node.clone()));
     let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new(node.clone()));
     let ruff_lsp_adapter = Arc::new(RuffLspAdapter::new(fs.clone()));
+    let pyrefly_lsp_adapter = Arc::new(PyreflyLspAdapter::new(fs.clone()));
     let python_toolchain_provider = Arc::new(python::PythonToolchainProvider::new(fs.clone()));
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
@@ -112,6 +113,11 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         },
         LanguageInfo {
             name: "diff",
+            adapters: vec![],
+            ..Default::default()
+        },
+        LanguageInfo {
+            name: "env",
             adapters: vec![],
             ..Default::default()
         },
@@ -164,6 +170,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
                 ty_lsp_adapter,
                 py_lsp_adapter,
                 python_lsp_adapter,
+                pyrefly_lsp_adapter,
             ],
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
@@ -350,8 +357,8 @@ fn register_language(
 ) {
     let config = load_config(name);
     if let Some(rules) = &semantic_token_rules {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.set_language_semantic_token_rules(config.name.0.clone(), rules.clone(), cx);
+        SettingsStore::update_global(cx, |store, _| {
+            store.set_language_semantic_token_rules(config.name.0.clone(), rules.clone());
         });
     }
     for adapter in adapters {
@@ -394,4 +401,39 @@ pub fn language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
 fn load_config(name: &str) -> LanguageConfig {
     let grammars_loaded = cfg!(any(feature = "load-grammars", test));
     grammars::load_config_for_feature(name, grammars_loaded)
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::App;
+    use language::{File, LanguageRegistry, TestFile};
+    use settings::SettingsStore;
+    use std::sync::Arc;
+    use util::rel_path::rel_path;
+
+    #[gpui::test]
+    fn test_env_files_are_not_shell_scripts(cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+
+        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        registry.add(crate::language("env", tree_sitter_bash::LANGUAGE.into()));
+        registry.add(crate::language("bash", tree_sitter_bash::LANGUAGE.into()));
+
+        let language_of = |path: &str, cx: &App| {
+            let file: Arc<dyn File> = Arc::new(TestFile {
+                path: Arc::from(rel_path(path)),
+                root_name: "zed".into(),
+                local_root: None,
+            });
+
+            registry
+                .language_for_file(&file, None, cx)
+                .and_then(|id| registry.language_name_for_id(id))
+        };
+
+        assert_eq!(language_of(".env", cx), Some("Env".into()));
+        assert_eq!(language_of(".envrc", cx), Some("Shell Script".into()));
+        assert_eq!(language_of("deploy.sh", cx), Some("Shell Script".into()));
+    }
 }

@@ -128,6 +128,8 @@ In this example:
 
 The `"..."` entry acts as a wildcard that includes any registered language server you haven't explicitly mentioned. Servers you list by name keep their position, and `"..."` fills in the remaining ones at that point in the list. Servers prefixed with `!` are excluded entirely. This means that if a new language server extension is installed or a new server is registered for a language, `"..."` will automatically include it. If you want full control over which servers are enabled, omit `"..."` — only the servers you list by name will be used.
 
+Some language servers are disabled by default for some of their languages, e.g. `typescript-language-server` for TypeScript, or `ty` for Python. Extensions can also mark their language servers as [disabled by default](./extensions/languages.md#opt-in-language-servers). Such servers are never included by `"..."`, regardless of your configuration, and only start when you list them by name, e.g. `["my-alternative-server", "..."]`.
+
 #### Examples
 
 Suppose you're working with Ruby. The default configuration is:
@@ -319,7 +321,7 @@ Zed supports both built-in and external formatters. See [`formatter`](./referenc
 }
 ```
 
-This example uses Prettier for JavaScript and the language server's formatter for Rust, both set to format on save.
+This example uses Prettier for JavaScript and the language server's formatter for [Rust](./languages/rust.md), both set to format on save.
 
 To disable formatting for a specific language:
 
@@ -347,7 +349,7 @@ Linting in Zed is typically handled by language servers. Many language servers a
 }
 ```
 
-This configuration sets up ESLint to organize imports on save for JavaScript files.
+This configuration sets up ESLint to organize imports on save for [JavaScript](./languages/javascript.md) files.
 
 To run linter fixes automatically on save:
 
@@ -487,6 +489,11 @@ Inlay hints provide additional information inline in your code, such as paramete
   "show_other_hints": true
 }
 ```
+
+Hover a hint to see its tooltip, and double-click it to insert it into the code, if the language server provides the edits for that (for example, rust-analyzer's type hints).
+If a hint has a command, clicking it runs that command instead.
+
+{#action editor::AcceptInlayHint} inserts the first editable hint within the selection, one hint per invocation.
 
 For language-specific inlay hint settings, refer to the documentation for each language.
 

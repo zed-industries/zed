@@ -52,7 +52,7 @@ const MIN_EDGE_CHARS: usize = 64;
 ///
 /// The element and every value/selection write on it are private to this
 /// module; other code interacts through read accessors, focus and
-/// read-only control, and [`ImeMirror::schedule_sync`].
+/// virtual-keyboard control, and [`ImeMirror::schedule_sync`].
 pub(crate) struct ImeMirror {
     element: web_sys::HtmlTextAreaElement,
     /// The mirror text most recently synced to (or observed in) the hidden
@@ -83,19 +83,11 @@ pub(crate) struct ImeMirror {
     selection_import_rejected: Cell<bool>,
 }
 
-/// Whether the device's primary pointer is coarse (a touch screen). The
-/// distinction drives virtual-keyboard policy: touch-first browsers summon
-/// the keyboard for any focused editable element on a user gesture.
-fn primary_pointer_is_coarse() -> bool {
-    web_sys::window()
-        .and_then(|window| window.match_media("(pointer: coarse)").ok().flatten())
-        .is_some_and(|media_query_list| media_query_list.matches())
-}
-
 impl ImeMirror {
     pub(crate) fn new(
         document: &web_sys::Document,
         body: &web_sys::HtmlElement,
+        touch_input: bool,
     ) -> anyhow::Result<Self> {
         // A textarea rather than an input: single-line inputs silently strip
         // newlines from assigned values, which would make the mirror text
@@ -118,14 +110,16 @@ impl ImeMirror {
         style.set_property("font-size", "16px").ok();
         body.append_child(&element)
             .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
-        element.focus().ok();
+        Self::focus_element(&element);
         // The element must stay focused to receive hardware-key and IME
         // events, but on touch-first devices a focused *editable* element
         // invites the browser to summon the virtual keyboard on the next
-        // user gesture — including a scroll. Start read-only there; only a
-        // recognized tap on text input lifts it (`sync_virtual_keyboard`).
-        if primary_pointer_is_coarse() {
-            element.set_read_only(true);
+        // user gesture — including a scroll. Suppress the virtual keyboard
+        // until an editable tap, without disabling hardware IME composition.
+        if touch_input {
+            element
+                .set_attribute("inputmode", "none")
+                .map_err(|error| anyhow::anyhow!("Failed to configure input mode: {error:?}"))?;
         }
 
         let this = Self {
@@ -189,7 +183,17 @@ impl ImeMirror {
     }
 
     pub(crate) fn focus(&self) {
-        self.element.focus().ok();
+        Self::focus_element(&self.element);
+    }
+
+    fn focus_element(element: &web_sys::HtmlTextAreaElement) {
+        // The hidden mirror is not a scroll target: revealing its caret can
+        // pan Android Chrome's visual viewport when the keyboard opens.
+        let options = web_sys::FocusOptions::new();
+        options.set_prevent_scroll(true);
+        if let Err(error) = element.focus_with_options(&options) {
+            log::warn!("Failed to focus IME mirror: {error:?}");
+        }
     }
 
     pub(crate) fn is_focused(&self) -> bool {
@@ -204,12 +208,21 @@ impl ImeMirror {
         self.element.blur().ok();
     }
 
-    pub(crate) fn read_only(&self) -> bool {
-        self.element.read_only()
+    pub(crate) fn virtual_keyboard_enabled(&self) -> bool {
+        self.element.get_attribute("inputmode").as_deref() != Some("none")
     }
 
     pub(crate) fn set_read_only(&self, read_only: bool) {
         self.element.set_read_only(read_only);
+    }
+
+    pub(crate) fn set_virtual_keyboard_enabled(&self, enabled: bool) {
+        if let Err(error) = self
+            .element
+            .set_attribute("inputmode", if enabled { "text" } else { "none" })
+        {
+            log::warn!("Failed to configure input mode: {error:?}");
+        }
     }
 
     pub(crate) fn remove(&self) {

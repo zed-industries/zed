@@ -11,6 +11,7 @@ workspace = true
 [lib]
 name = "git_ui_core"
 path = "src/git_ui_core.rs"
+doctest = false
 
 [dependencies]
 anyhow.workspace = true

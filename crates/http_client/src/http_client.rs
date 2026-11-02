@@ -1,12 +1,7 @@
 mod async_body;
-#[cfg(not(target_family = "wasm"))]
-pub mod github;
-#[cfg(all(not(target_family = "wasm"), feature = "github-download"))]
-pub mod github_download;
 
 pub use anyhow::{Result, anyhow};
 pub use async_body::{AsyncBody, Inner, Json};
-use derive_more::Deref;
 pub use http::{self, Method, Request, Response, StatusCode, Uri, request::Builder};
 use http::{HeaderName, HeaderValue};
 
@@ -15,7 +10,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 #[cfg(feature = "test-support")]
 use std::{any::type_name, fmt};
-use std::{sync::Arc, time::Duration};
+use std::{ops::Deref, sync::Arc, time::Duration};
 pub use url::{Host, Url};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
@@ -175,9 +170,7 @@ pub trait HttpClient: 'static + Send + Sync {
 }
 
 /// An [`HttpClient`] that may have a proxy.
-#[derive(Deref)]
 pub struct HttpClientWithProxy {
-    #[deref]
     client: Arc<dyn HttpClient>,
     proxy: Option<Url>,
 }
@@ -196,6 +189,15 @@ impl HttpClientWithProxy {
             client,
             proxy: proxy_url,
         }
+    }
+}
+
+impl Deref for HttpClientWithProxy {
+    type Target = Arc<dyn HttpClient>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.client
     }
 }
 
@@ -222,10 +224,8 @@ impl HttpClient for HttpClientWithProxy {
 }
 
 /// An [`HttpClient`] that has a base URL.
-#[derive(Deref)]
 pub struct HttpClientWithUrl {
     base_url: Mutex<String>,
-    #[deref]
     client: HttpClientWithProxy,
 }
 
@@ -329,6 +329,15 @@ impl HttpClientWithUrl {
             &format!("{}{}", base_api_url, path),
             query,
         )?)
+    }
+}
+
+impl Deref for HttpClientWithUrl {
+    type Target = HttpClientWithProxy;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.client
     }
 }
 

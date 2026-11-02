@@ -57,13 +57,25 @@ jobs:
           github-token: ${{ steps.get-app-token.outputs.token }}
           script: |
             const issue = context.payload.issue;
-            const hasTriageLabel = issue.labels.some(
-              label => label.name === 'state:needs triage'
-            );
+            const labelNames = issue.labels.map(label => label.name);
 
-            if (hasTriageLabel) {
+            if (labelNames.includes('state:needs triage')) {
               console.log('Issue already has state:needs triage, skipping');
               return;
+            }
+
+            if (context.payload.action === 'reopened') {
+              const requiredPrefixes = ['area:', 'reach:', 'severity:'];
+              const alreadyTriaged = requiredPrefixes.every(
+                prefix => labelNames.some(name => name.startsWith(prefix))
+              );
+
+              if (alreadyTriaged) {
+                console.log(
+                  `Reopened issue #${issue.number} already has area:, reach: and severity: labels, skipping`
+                );
+                return;
+              }
             }
 
             await github.rest.issues.addLabels({

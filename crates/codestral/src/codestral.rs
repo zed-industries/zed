@@ -51,7 +51,7 @@ pub fn load_codestral_api_key(cx: &mut App) -> Task<Result<(), AuthenticateError
     let credentials_provider = zed_credentials_provider::global(cx);
     let api_url = codestral_api_url(cx);
     codestral_api_key_state(cx).update(cx, |key_state, cx| {
-        key_state.load_if_needed(api_url, |s| s, credentials_provider, cx)
+        key_state.load_cached(api_url, |key_state| key_state, credentials_provider, cx)
     })
 }
 
@@ -101,10 +101,6 @@ impl CodestralEditPredictionDelegate {
             pending_request: None,
             current_completion: None,
         }
-    }
-
-    pub fn ensure_api_key_loaded(cx: &mut App) {
-        load_codestral_api_key(cx).detach();
     }
 
     /// Uses Codestral's Fill-in-the-Middle API for code completion.
@@ -239,10 +235,10 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         let snapshot = buffer.read(cx).snapshot();
 
         // Check if current completion is still valid
-        if let Some(current_completion) = self.current_completion.as_ref() {
-            if current_completion.interpolate(&snapshot).is_some() {
-                return;
-            }
+        if let Some(current_completion) = self.current_completion.as_ref()
+            && current_completion.interpolate(&snapshot).is_some()
+        {
+            return;
         }
 
         let http_client = self.http_client.clone();

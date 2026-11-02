@@ -9,7 +9,7 @@ This guide covers common troubleshooting techniques for Zed.
 Sometimes you'll be able to identify and resolve issues on your own using this information.
 Other times, troubleshooting means gathering the right information (logs, profiles, or reproduction steps) to help us diagnose and fix the problem.
 
-> **Note**: To open the command palette, use `cmd-shift-p` on macOS or `ctrl-shift-p` on Windows / Linux.
+> **Note**: To open the [command palette](./command-palette.md), use `cmd-shift-p` on macOS or `ctrl-shift-p` on Windows / Linux.
 
 ## Retrieve Zed and System Information
 

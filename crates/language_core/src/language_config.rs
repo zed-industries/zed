@@ -150,9 +150,14 @@ pub struct LanguageConfig {
 impl LanguageConfig {
     pub const FILE_NAME: &str = "config.toml";
 
+    #[inline(never)]
+    pub fn from_toml(config: &str) -> Result<Self, toml::de::Error> {
+        toml::from_str::<Self>(config)
+    }
+
     pub fn load(config_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let config = std::fs::read_to_string(config_path.as_ref())?;
-        toml::from_str(&config).map_err(Into::into)
+        Self::from_toml(&config).map_err(anyhow::Error::from)
     }
 }
 
@@ -227,7 +232,7 @@ pub struct TaskListConfig {
 pub struct LanguageMatcher {
     /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
     #[serde(default)]
-    pub path_suffixes: Vec<String>,
+    pub path_suffixes: Vec<SharedString>,
     /// A regex pattern that determines whether the language should be assigned to a file or not.
     #[serde(
         default,
@@ -240,7 +245,7 @@ pub struct LanguageMatcher {
     /// These are matched case-insensitively against the `mode` (emacs) or
     /// `filetype`/`ft` (vim) specified in the modeline.
     #[serde(default)]
-    pub modeline_aliases: Vec<String>,
+    pub modeline_aliases: Vec<SharedString>,
 }
 
 impl Ord for LanguageMatcher {

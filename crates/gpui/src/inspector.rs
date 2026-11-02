@@ -22,7 +22,7 @@ pub use conditional::*;
 mod conditional {
     use super::*;
     use crate::{AnyElement, App, Context, Empty, IntoElement, Render, Window};
-    use collections::{FxHashMap, TypeIdHashMap};
+    use collections::{FxHashMap, TypeIdHashMap, hash_map::Entry};
     use std::any::{Any, TypeId};
 
     /// `GlobalElementId` qualified by source location of element construction.
@@ -60,6 +60,7 @@ mod conditional {
     pub struct Inspector {
         active_element: Option<InspectedElement>,
         pub(crate) pick_depth: Option<f32>,
+        renderers: TypeIdHashMap<InspectorElementRenderer>,
     }
 
     struct InspectedElement {
@@ -81,6 +82,7 @@ mod conditional {
             Self {
                 active_element: None,
                 pick_depth: Some(0.0),
+                renderers: TypeIdHashMap::default(),
             }
         }
 
@@ -161,22 +163,29 @@ mod conditional {
             let mut elements = Vec::new();
             if let Some(active_element) = self.active_element.take() {
                 for (type_id, state) in &active_element.states {
-                    if let Some(render_inspector) = cx
-                        .inspector_element_registry
-                        .renderers_by_type_id
-                        .remove(type_id)
-                    {
-                        let mut element = (render_inspector)(
-                            active_element.id.clone(),
-                            state.as_ref(),
-                            window,
-                            cx,
-                        );
-                        elements.push(element);
-                        cx.inspector_element_registry
-                            .renderers_by_type_id
-                            .insert(*type_id, render_inspector);
-                    }
+                    let renderer = match self.renderers.entry(*type_id) {
+                        Entry::Occupied(entry) => entry.into_mut(),
+                        Entry::Vacant(entry) => {
+                            let Some(factory) = cx
+                                .inspector_element_registry
+                                .factories_by_type_id
+                                .remove(type_id)
+                            else {
+                                continue;
+                            };
+                            let renderer = factory(window, cx);
+                            cx.inspector_element_registry
+                                .factories_by_type_id
+                                .insert(*type_id, factory);
+                            entry.insert(renderer)
+                        }
+                    };
+                    elements.push(renderer(
+                        active_element.id.clone(),
+                        state.as_ref(),
+                        window,
+                        cx,
+                    ));
                 }
 
                 self.active_element = Some(active_element);
@@ -200,26 +209,34 @@ mod conditional {
 
     #[derive(Default)]
     pub(crate) struct InspectorElementRegistry {
-        renderers_by_type_id: FxHashMap<
-            TypeId,
-            Box<dyn Fn(InspectorElementId, &dyn Any, &mut Window, &mut App) -> AnyElement>,
-        >,
+        factories_by_type_id:
+            FxHashMap<TypeId, Box<dyn Fn(&mut Window, &mut App) -> InspectorElementRenderer>>,
     }
 
     impl InspectorElementRegistry {
-        pub fn register<T: 'static, R: IntoElement>(
+        pub fn register<T: 'static, R: IntoElement, F>(
             &mut self,
-            f: impl 'static + Fn(InspectorElementId, &T, &mut Window, &mut App) -> R,
-        ) {
-            self.renderers_by_type_id.insert(
+            factory: impl 'static + Fn(&mut Window, &mut App) -> F,
+        ) where
+            F: 'static + FnMut(InspectorElementId, &T, &mut Window, &mut App) -> R,
+        {
+            self.factories_by_type_id.insert(
                 TypeId::of::<T>(),
-                Box::new(move |id, value, window, cx| {
-                    let value = value.downcast_ref().unwrap();
-                    f(id, value, window, cx).into_any_element()
+                Box::new(move |window, cx| {
+                    let mut renderer = factory(window, cx);
+                    Box::new(move |id, value, window, cx| {
+                        let value = value
+                            .downcast_ref()
+                            .expect("registered inspector state type");
+                        renderer(id, value, window, cx).into_any_element()
+                    })
                 }),
             );
         }
     }
+
+    type InspectorElementRenderer =
+        Box<dyn FnMut(InspectorElementId, &dyn Any, &mut Window, &mut App) -> AnyElement>;
 }
 
 /// Provides definitions used by `#[derive_inspector_reflection]`.

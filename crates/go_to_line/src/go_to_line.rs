@@ -291,7 +291,7 @@ impl GoToLine {
                 return;
             };
             editor.change_selections(
-                SelectionEffects::scroll(Autoscroll::center()),
+                SelectionEffects::scroll(Autoscroll::center()).unfold(),
                 window,
                 cx,
                 |s| s.select_anchor_ranges([start..start]),
@@ -475,6 +475,52 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_go_to_line_unfolds_enclosing_sections(cx: &mut TestAppContext) {
+        init_test(cx);
+        let cx = cx.add_empty_window();
+        let buffer = cx
+            .new(|cx| Buffer::local("first\nouter\ninner\ntarget\nend\nunrelated\nend\nlast", cx));
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        editor.update_in(cx, |editor, window, cx| {
+            editor.fold_ranges(
+                vec![
+                    Point::new(1, 0)..Point::new(4, 0),
+                    Point::new(2, 0)..Point::new(3, 6),
+                    Point::new(5, 0)..Point::new(6, 3),
+                ],
+                false,
+                window,
+                cx,
+            );
+        });
+        let go_to_line_view = cx.new_window_entity(|window, cx| {
+            GoToLine::new(editor.clone(), buffer.clone(), window, cx)
+        });
+        go_to_line_view.update_in(cx, |go_to_line_view, window, cx| {
+            go_to_line_view.line_editor.update(cx, |line_editor, cx| {
+                line_editor.set_text("4:3", window, cx);
+            });
+            go_to_line_view.confirm(&menu::Confirm, window, cx);
+        });
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            assert_eq!(
+                editor.selections.newest::<Point>(&snapshot).head(),
+                Point::new(3, 2)
+            );
+            let remaining_folds = snapshot
+                .folds_in_range(Point::zero()..Point::new(7, 4))
+                .map(|fold| {
+                    fold.range.start.to_point(snapshot.buffer_snapshot())
+                        ..fold.range.end.to_point(snapshot.buffer_snapshot())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(remaining_folds, vec![Point::new(5, 0)..Point::new(6, 3)]);
+        });
+    }
+
+    #[gpui::test]
     async fn test_go_to_line_uses_buffer_rows_in_multibuffers(cx: &mut TestAppContext) {
         init_test(cx);
         let cx = cx.add_empty_window();
@@ -504,6 +550,17 @@ mod tests {
             GoToLine::new(editor.clone(), buffer.clone(), window, cx)
         });
 
+        editor.update_in(cx, |editor, window, cx| {
+            let multibuffer = editor.buffer().read(cx);
+            let start = multibuffer
+                .buffer_point_to_anchor(&buffer, Point::new(50, 0), cx)
+                .expect("target excerpt start");
+            let end = multibuffer
+                .buffer_point_to_anchor(&buffer, Point::new(52, 6), cx)
+                .expect("target excerpt end");
+            editor.fold_ranges(vec![start..end], false, window, cx);
+            editor.fold_buffer(buffer.read(cx).remote_id(), cx);
+        });
         go_to_line_view.update_in(cx, |go_to_line_view, window, cx| {
             go_to_line_view.line_editor.update(cx, |line_editor, cx| {
                 line_editor.set_text("52", window, cx);
@@ -511,6 +568,11 @@ mod tests {
             go_to_line_view.confirm(&menu::Confirm, window, cx);
         });
         assert_single_caret_at_buffer_row(&editor, 51, cx);
+        editor.update(cx, |editor, cx| {
+            assert!(!editor.is_buffer_folded(buffer.read(cx).remote_id(), cx));
+            let snapshot = editor.display_snapshot(cx);
+            assert!(!snapshot.intersects_fold(editor.selections.newest_anchor().head()));
+        });
 
         go_to_line_view.update_in(cx, |go_to_line_view, window, cx| {
             go_to_line_view.line_editor.update(cx, |line_editor, cx| {

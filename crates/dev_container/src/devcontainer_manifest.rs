@@ -10,7 +10,7 @@ use regex::Regex;
 
 use fs::Fs;
 use http_client::HttpClient;
-use util::{ResultExt, command::Command, normalize_path};
+use util::{ResultExt, command::Command, paths::normalize_path};
 
 use crate::{
     DevContainerConfig, DevContainerContext,
@@ -2731,6 +2731,9 @@ pub(crate) async fn spawn_dev_container(
     .await?;
 
     devcontainer_manifest.parse_nonremote_vars()?;
+    devcontainer_manifest
+        .dev_container()
+        .validate_environment_names()?;
 
     log::debug!("Checking for existing container");
     if let Some(devcontainer) = devcontainer_manifest

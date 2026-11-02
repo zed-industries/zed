@@ -43,7 +43,7 @@ fn danger_job() -> NamedJob {
         name: "danger".to_string(),
         job: Job::default()
             .with_repository_owner_guard()
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::DANGERBOT)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_pnpm())
             .add_step(

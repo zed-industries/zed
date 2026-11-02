@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/tasks_ui.rs"
+doctest = false
 
 [dependencies]
 anyhow.workspace = true

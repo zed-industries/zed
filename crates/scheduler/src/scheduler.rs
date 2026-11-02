@@ -8,6 +8,20 @@ pub use clock::*;
 pub use executor::*;
 pub use test_scheduler::*;
 
+static TEST_SCHEDULER_CREATED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Whether this process has created a [`TestScheduler`].
+///
+/// Test harnesses create one before the test body runs, and applications never
+/// do. Code with no executor at hand, such as expensive data-structure invariant
+/// checks, can use this to run only in test processes. Code that has an
+/// executor should prefer [`BackgroundExecutor::is_test`], which is correct per
+/// executor.
+pub fn test_scheduler_created() -> bool {
+    TEST_SCHEDULER_CREATED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 use async_task::Runnable;
 use futures::channel::oneshot;
 use std::{
@@ -83,6 +97,7 @@ pub trait Scheduler: Send + Sync {
     /// Returns `true` if the future completed, `false` if it timed out.
     /// The future is passed as a pinned mutable reference so the caller
     /// retains ownership and can continue polling or return it on timeout.
+    #[cfg(not(target_family = "wasm"))]
     fn block(
         &self,
         session_id: Option<SessionId>,

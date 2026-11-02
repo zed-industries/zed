@@ -128,7 +128,8 @@ Use this when Zed is using a lot of CPU. It is not useful for hangs.
   On Ubuntu (derivatives) run `sudo apt install linux-tools`.
 
 - Perf record:
-  Run `sudo perf record -p <pid you just found>`, wait a few seconds to gather data, then press Ctrl+C. You should now have a `perf.data` file.
+  Run `sudo perf record -g --call-graph dwarf -p <pid you just found>`, wait a few seconds to gather data, then press Ctrl+C. You should now have a `perf.data` file.
+  The `--call-graph dwarf` option records callers of every sampled function and unwinds through the `.eh_frame` data kept in stripped release binaries; plain `-g` does not work without frame pointers.
 
 - Make the output file user owned:
   run `sudo chown $USER:$USER perf.data`
@@ -142,8 +143,13 @@ The `perf.data` file can be sent to Zed together with the exact commit.
 
 This can be done by Zed staff.
 
-- Build Zed with symbols:
-  Check out the commit found previously and modify `Cargo.toml`.
+Released Linux binaries are stripped, but the unstripped binary for every release is archived in Sentry (uploaded by `script/bundle-linux`).
+Download it from the Sentry project's Debug Files page (search by the release version or the binary's build id), then continue with the `perf buildid-cache` step below.
+Stripping preserves the build id, so the downloaded binary matches the user's `perf.data`.
+
+Alternatively, rebuild the binary with symbols:
+
+- Check out the commit found previously and modify `Cargo.toml`.
   Apply the following diff, then make a release build.
 
 ```diff

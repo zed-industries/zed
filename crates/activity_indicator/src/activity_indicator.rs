@@ -7,8 +7,7 @@ use gpui::{
     SharedString, Styled, Task, Window, actions,
 };
 use language::{
-    BinaryStatus, LanguageRegistry, LanguageServerId, LanguageServerName,
-    LanguageServerStatusUpdate, ServerHealth,
+    BinaryStatus, LanguageServerId, LanguageServerName, LanguageServerStatusUpdate, ServerHealth,
 };
 use project::{
     LanguageServerProgress, LspStoreEvent, ProgressToken, Project, ProjectEnvironmentEvent,
@@ -91,28 +90,11 @@ struct Content {
 impl ActivityIndicator {
     pub fn new(
         workspace: &mut Workspace,
-        languages: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<ActivityIndicator> {
         let project = workspace.project().clone();
         let this = cx.new(|cx| {
-            let mut status_events = languages.language_server_binary_statuses();
-            cx.spawn(async move |this, cx| {
-                while let Some((name, binary_status)) = status_events.next().await {
-                    this.update(cx, |this: &mut ActivityIndicator, cx| {
-                        this.statuses.retain(|s| s.name != name);
-                        this.statuses.push(ServerStatus {
-                            name,
-                            status: LanguageServerStatusUpdate::Binary(binary_status),
-                        });
-                        cx.notify();
-                    })?;
-                }
-                anyhow::Ok(())
-            })
-            .detach();
-
             let fs = project.read(cx).fs().clone();
             let mut job_events = fs.subscribe_to_jobs();
             cx.spawn(async move |this, cx| {
@@ -120,11 +102,17 @@ impl ActivityIndicator {
                     this.update(cx, |this: &mut ActivityIndicator, cx| {
                         match job_event {
                             fs::JobEvent::Started { info } => {
-                                this.fs_jobs.retain(|j| j.id != info.id);
+                                this.fs_jobs.retain(|job| job.id != info.id);
                                 this.fs_jobs.push(info);
                             }
+                            fs::JobEvent::Updated { id, message } => {
+                                if let Some(job) = this.fs_jobs.iter_mut().find(|job| job.id == id)
+                                {
+                                    job.message = message;
+                                }
+                            }
                             fs::JobEvent::Completed { id } => {
-                                this.fs_jobs.retain(|j| j.id != id);
+                                this.fs_jobs.retain(|job| job.id != id);
                             }
                         }
                         cx.notify();

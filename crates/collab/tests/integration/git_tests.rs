@@ -21,7 +21,7 @@ use gpui::{
 };
 use project::{
     ProjectPath,
-    git_store::{CommitDataState, Repository},
+    git_store::{CommitDataState, MAX_CONCURRENT_OBJECT_READS, Repository},
 };
 use rand::{SeedableRng, rngs::StdRng};
 use serde_json::json;
@@ -447,6 +447,149 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
             ]
         );
     });
+}
+
+#[gpui::test]
+async fn test_blob_read_rpcs_are_bounded_on_host(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    const FILE_COUNT: usize = MAX_CONCURRENT_OBJECT_READS + 4;
+    let names = (0..FILE_COUNT)
+        .map(|index| format!("f{index:02}.txt"))
+        .collect::<Vec<_>>();
+
+    let mut tree = serde_json::Map::new();
+    tree.insert(".git".to_owned(), json!({}));
+    for (index, name) in names.iter().enumerate() {
+        tree.insert(name.clone(), json!(format!("new-{index:02}\n")));
+    }
+    client_a
+        .fs()
+        .insert_tree(path!("/dir"), serde_json::Value::Object(tree))
+        .await;
+
+    let merge_base = names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.as_str(), format!("old-{index:02}\n")))
+        .collect::<Vec<_>>();
+    let dot_git = Path::new(path!("/dir/.git"));
+    let oids = client_a
+        .fs()
+        .set_merge_base_content_for_repo(dot_git, &merge_base);
+    let gate = client_a.fs().install_blob_read_gate_for_repo(dot_git);
+
+    let (project_local, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| {
+            call.share_project(project_local.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let project_c = client_c.join_remote_project(project_id, cx_c).await;
+    executor.run_until_parked();
+
+    // Two guests exceed the cap combined; only the host's own limiter holds them to it.
+    let mut diffs = Vec::with_capacity(names.len() * 2);
+    for (project, cx) in [(&project_b, &mut *cx_b), (&project_c, &mut *cx_c)] {
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        let repo = project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+        for (index, name) in names.iter().enumerate() {
+            let buffer = project
+                .update(cx, |project, cx| {
+                    project.open_buffer((worktree_id, rel_path(name)), cx)
+                })
+                .await
+                .unwrap();
+            diffs.push(git_store.update(cx, |git_store, cx| {
+                git_store.open_diff_since(Some(oids[index]), buffer, repo.clone(), cx)
+            }));
+        }
+    }
+    executor.run_until_parked();
+
+    assert_eq!(gate.peak_concurrent(), MAX_CONCURRENT_OBJECT_READS);
+
+    gate.open();
+    executor.run_until_parked();
+    for diff in diffs {
+        diff.await.unwrap();
+    }
+}
+
+#[gpui::test]
+async fn test_show_rpcs_are_routed_by_revision_kind_on_host(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    use futures::FutureExt as _;
+
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(path!("/dir"), json!({ ".git": {} }))
+        .await;
+    let head_sha = "1".repeat(40);
+    client_a
+        .fs()
+        .set_head_for_repo(Path::new(path!("/dir/.git")), &[], head_sha.clone());
+
+    let (project_a, _) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let repo_a = project_a.read_with(cx_a, |project, cx| project.active_repository(cx).unwrap());
+    let repo_b = project_b.read_with(cx_b, |project, cx| project.active_repository(cx).unwrap());
+
+    let (release_tx, release_rx) = futures::channel::oneshot::channel::<()>();
+    let held = repo_a.update(cx_a, |repo, _| {
+        repo.send_job("hold", None, move |_, _| async move {
+            release_rx.await.ok();
+        })
+    });
+
+    let mut by_sha = repo_b.update(cx_b, |repo, cx| repo.show_commit(head_sha.clone(), cx));
+    let mut by_ref = repo_b.update(cx_b, |repo, _| repo.show("HEAD".into()));
+    executor.run_until_parked();
+    let details = (&mut by_sha)
+        .now_or_never()
+        .expect("show_commit waited on the host job queue")
+        .unwrap();
+    assert_eq!(details.sha.as_ref(), head_sha);
+    assert!(
+        (&mut by_ref).now_or_never().is_none(),
+        "show by ref skipped the host job queue"
+    );
+
+    release_tx.send(()).ok();
+    held.await.unwrap();
+    executor.run_until_parked();
+    assert_eq!(by_ref.await.unwrap().unwrap().sha.as_ref(), head_sha);
 }
 
 #[gpui::test]

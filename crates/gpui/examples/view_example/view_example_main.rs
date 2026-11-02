@@ -13,6 +13,9 @@
 //!
 //! Run: `cargo run -p gpui --example view_example`
 
+#[path = "../example_support/fonts.rs"]
+mod example_support;
+
 mod example_editor;
 mod example_input;
 mod example_text_area;
@@ -134,6 +137,9 @@ fn section(title: &str) -> Div {
 
 fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         let bounds = Bounds::centered(None, size(px(560.0), px(480.0)), cx);
         cx.bind_keys([
             KeyBinding::new("backspace", Backspace, None),
