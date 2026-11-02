@@ -1090,7 +1090,16 @@ impl VsCodeSettings {
                 None
             },
             on_new_window: None,
-            on_last_window_closed: None,
+            window_closing: self.read_bool("window.closeWhenEmpty").map(|close| {
+                settings_content::WindowClosingSettingsContent {
+                    on_close_with_no_tabs: Some(if close {
+                        CloseWindowWhenNoItems::CloseWindow
+                    } else {
+                        CloseWindowWhenNoItems::KeepWindowOpen
+                    }),
+                    ..Default::default()
+                }
+            }),
             pane_split_direction_horizontal: None,
             pane_split_direction_vertical: None,
             resize_all_panels_in_dock: None,
@@ -1111,13 +1120,6 @@ impl VsCodeSettings {
             }),
             window_title_format: self.read_window_title_format(),
             window_title_separator: self.read_string("window.titleSeparator"),
-            when_closing_with_no_tabs: self.read_bool("window.closeWhenEmpty").map(|b| {
-                if b {
-                    CloseWindowWhenNoItems::CloseWindow
-                } else {
-                    CloseWindowWhenNoItems::KeepWindowOpen
-                }
-            }),
             zoomed_padding: None,
             focus_follows_mouse: None,
         }

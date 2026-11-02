@@ -5240,8 +5240,11 @@ mod tests {
 
         cx.update_global::<settings::SettingsStore, ()>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.workspace.on_last_window_closed =
-                    Some(settings::OnLastWindowClosed::QuitApp);
+                settings
+                    .workspace
+                    .window_closing
+                    .get_or_insert_default()
+                    .on_last_window_closed = Some(settings::OnLastWindowClosed::QuitApp);
             });
         });
 

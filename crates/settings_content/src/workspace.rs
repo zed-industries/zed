@@ -81,10 +81,8 @@ pub struct WorkspaceSettingsContent {
     /// Default: `0.2` (20% of the smaller dimension of the workspace)
     #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub drop_target_size: Option<f32>,
-    /// Whether to close the window when using 'close active item' on a workspace with no tabs
-    ///
-    /// Default: auto ("on" on macOS, "off" otherwise)
-    pub when_closing_with_no_tabs: Option<CloseWindowWhenNoItems>,
+    /// Controls what happens when closing tabs and windows.
+    pub window_closing: Option<WindowClosingSettingsContent>,
     /// Whether to optimize Zed's interface for assistive technology such as
     /// screen readers.
     ///
@@ -117,10 +115,6 @@ pub struct WorkspaceSettingsContent {
     /// Values: empty_tab, launchpad, readme
     /// Default: launchpad
     pub on_new_window: Option<OnNewWindow>,
-    /// What to do when the last window is closed
-    ///
-    /// Default: auto (nothing on macOS, "app quit" otherwise)
-    pub on_last_window_closed: Option<OnLastWindowClosed>,
     /// Whether to resize all the panels in a dock when resizing the dock.
     ///
     /// Default: ["left"]
@@ -445,6 +439,44 @@ pub enum CloseWindowWhenNoItems {
     CloseWindow,
     /// Leave the window open when there are no tabs
     KeepWindowOpen,
+}
+
+#[with_fallible_options]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct WindowClosingSettingsContent {
+    /// What to do when invoking Close while no tabs are open.
+    ///
+    /// Default: platform_default (close window on macOS, keep open elsewhere)
+    pub on_close_with_no_tabs: Option<CloseWindowWhenNoItems>,
+    /// What to do after closing the last tab in a window.
+    ///
+    /// Default: keep_window_open
+    pub on_last_tab_closed: Option<LastTabCloseBehavior>,
+    /// What to do after the last window closes.
+    ///
+    /// Default: platform_default (quit the app outside macOS)
+    pub on_last_window_closed: Option<OnLastWindowClosed>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LastTabCloseBehavior {
+    #[default]
+    KeepWindowOpen,
+    /// Close when there is no project folder open and no other workspace in the window.
+    CloseWindowIfNoProject,
 }
 
 impl CloseWindowWhenNoItems {
