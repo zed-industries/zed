@@ -10351,6 +10351,59 @@ mod tests {
     }
 
     #[gpui::test]
+    fn cached_view_follows_ancestor_visibility(cx: &mut TestAppContext) {
+        use crate::util::FluentBuilder;
+
+        struct Child;
+
+        impl Render for Child {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().bg(crate::rgb(0xff0000))
+            }
+        }
+
+        struct Root {
+            hidden: bool,
+            child: crate::Entity<Child>,
+        }
+
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .when(self.hidden, |div| div.invisible())
+                    .child(
+                        self.child
+                            .clone()
+                            .cached(crate::StyleRefinement::default().size(px(100.))),
+                    )
+            }
+        }
+
+        let child = cx.new(|_| Child);
+        let window = cx.add_window(|_, _| Root {
+            hidden: false,
+            child,
+        });
+        for hidden in [false, false, true, true, false, false] {
+            window
+                .update(cx, |root, _, cx| {
+                    root.hidden = hidden;
+                    cx.notify();
+                })
+                .expect("update visibility");
+            cx.update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                assert_eq!(
+                    window.rendered_frame.scene.quads.len(),
+                    usize::from(!hidden)
+                );
+            })
+            .expect("draw visibility transition");
+        }
+    }
+
+    #[gpui::test]
     fn cached_view_follows_inherited_opacity(cx: &mut TestAppContext) {
         struct Child {
             renders: usize,
