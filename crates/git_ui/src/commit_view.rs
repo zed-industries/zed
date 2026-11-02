@@ -406,7 +406,7 @@ impl CommitView {
                     }),
                 );
 
-                if is_binary || commit_view_settings.collapse_files {
+                if is_binary || !commit_view_settings.expand_files {
                     folded_buffer_ids.insert(buffer_id);
                 }
 
@@ -1660,7 +1660,7 @@ mod tests {
                         .commit_view
                         .get_or_insert_default();
                     commit_view.expand_description = Some(true);
-                    commit_view.collapse_files = Some(true);
+                    commit_view.expand_files = Some(false);
                 })
             });
         });

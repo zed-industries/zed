@@ -8691,18 +8691,18 @@ fn version_control_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Collapse Files by Default",
-                description: "Whether newly opened commit views collapse every changed file.",
+                title: "Expand Files by Default",
+                description: "Whether newly opened commit views expand every changed file.",
                 field: Box::new(SettingField {
                     organization_override: None,
-                    json_path: Some("git.commit_view.collapse_files"),
+                    json_path: Some("git.commit_view.expand_files"),
                     pick: |settings_content| {
                         settings_content
                             .git
                             .as_ref()?
                             .commit_view
                             .as_ref()?
-                            .collapse_files
+                            .expand_files
                             .as_ref()
                     },
                     write: |settings_content, value, _| {
@@ -8711,7 +8711,7 @@ fn version_control_page() -> SettingsPage {
                             .get_or_insert_default()
                             .commit_view
                             .get_or_insert_default()
-                            .collapse_files = value;
+                            .expand_files = value;
                     },
                 }),
                 metadata: None,
