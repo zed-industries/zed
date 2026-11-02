@@ -2045,18 +2045,18 @@ impl GitGraph {
                 let short_sha = commit.data.sha.display_short();
                 let mut formatted_time = String::new();
                 let subject: SharedString;
-                let author_name: Option<SharedString>;
+                let author_name: SharedString;
                 let author_email: Option<SharedString>;
 
                 if let CommitDataState::Loaded(ref data) = data {
                     subject = data.subject.clone();
-                    author_name = (!data.author_name.is_empty()).then(|| data.author_name.clone());
+                    author_name = data.author_name.clone();
                     author_email =
                         (!data.author_email.is_empty()).then(|| data.author_email.clone());
                     formatted_time = format_timestamp(data.commit_timestamp);
                 } else {
                     subject = "Loading…".into();
-                    author_name = None;
+                    author_name = SharedString::default();
                     author_email = None;
                 }
 
@@ -2121,14 +2121,11 @@ impl GitGraph {
                             .render(window, cx);
                         h_flex()
                             .id(ElementId::NamedInteger("commit-author".into(), idx as u64))
-                            .h(row_height)
                             .items_center()
                             .gap_1p5()
                             .overflow_hidden()
                             .child(avatar)
-                            .when_some(author_name, |this, author_name| {
-                                this.child(column_label(author_name))
-                            })
+                            .child(column_label(author_name))
                             .into_any_element()
                     },
                     column_label(short_sha.into()),

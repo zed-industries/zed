@@ -7,8 +7,8 @@ use crate::{
     buffer_search::registrar::WithResultsOrExternalQuery,
     search_bar::{
         ActionButtonState, HistoryNavigationDirection, alignment_element,
-        filter_search_results_input, input_base_styles, render_action_button, render_text_input,
-        should_navigate_history,
+        filter_search_results_input, input_base_styles, render_local_action_button,
+        render_text_input, should_navigate_history,
     },
 };
 use any_vec::AnyVec;
@@ -242,21 +242,21 @@ impl Render for BufferSearchBar {
                     .when(case, |div| {
                         div.child(SearchOption::CaseSensitive.as_button(
                             self.search_options,
-                            SearchSource::Buffer,
+                            SearchSource::BufferSearchBar(cx),
                             focus_handle.clone(),
                         ))
                     })
                     .when(word, |div| {
                         div.child(SearchOption::WholeWord.as_button(
                             self.search_options,
-                            SearchSource::Buffer,
+                            SearchSource::BufferSearchBar(cx),
                             focus_handle.clone(),
                         ))
                     })
                     .when(regex, |div| {
                         div.child(SearchOption::Regex.as_button(
                             self.search_options,
-                            SearchSource::Buffer,
+                            SearchSource::BufferSearchBar(cx),
                             focus_handle.clone(),
                         ))
                     }),
@@ -266,13 +266,15 @@ impl Render for BufferSearchBar {
             .gap_1()
             .min_w_64()
             .when(replacement, |this| {
-                this.child(render_action_button(
+                this.child(render_local_action_button(
                     "buffer-search-bar-toggle",
                     IconName::Replace,
                     self.replace_enabled.then_some(ActionButtonState::Toggled),
                     "Toggle Replace",
                     &ToggleReplace,
                     focus_handle.clone(),
+                    cx,
+                    Self::toggle_replace,
                 ))
             })
             .when(selection, |this| {
@@ -310,7 +312,7 @@ impl Render for BufferSearchBar {
                     .ml_2()
                     .border_l_1()
                     .border_color(theme_colors.border_variant)
-                    .child(render_action_button(
+                    .child(render_local_action_button(
                         "buffer-search-nav-button",
                         ui::IconName::ChevronLeft,
                         self.active_match_index
@@ -319,8 +321,10 @@ impl Render for BufferSearchBar {
                         "Select Previous Match",
                         &SelectPreviousMatch,
                         query_focus.clone(),
+                        cx,
+                        Self::select_prev_match,
                     ))
-                    .child(render_action_button(
+                    .child(render_local_action_button(
                         "buffer-search-nav-button",
                         ui::IconName::ChevronRight,
                         self.active_match_index
@@ -329,6 +333,8 @@ impl Render for BufferSearchBar {
                         "Select Next Match",
                         &SelectNextMatch,
                         query_focus.clone(),
+                        cx,
+                        Self::select_next_match,
                     ))
                     .when(!narrow_mode, |this| {
                         this.child(div().ml_2().min_w(rems_from_px(40_f32)).child(
@@ -343,25 +349,29 @@ impl Render for BufferSearchBar {
                     });
 
                 el.when(select_all, |el| {
-                    el.child(render_action_button(
+                    el.child(render_local_action_button(
                         "buffer-search-nav-button",
                         IconName::SelectAll,
                         Default::default(),
                         "Select All Matches",
                         &SelectAllMatches,
                         query_focus.clone(),
+                        cx,
+                        Self::select_all_matches,
                     ))
                 })
                 .child(matches_column)
             })
             .when(find_in_results, |el| {
-                el.child(render_action_button(
+                el.child(render_local_action_button(
                     "buffer-search",
                     IconName::Close,
                     Default::default(),
                     "Close Search Bar",
                     &Dismiss,
                     focus_handle.clone(),
+                    cx,
+                    Self::dismiss,
                 ))
             });
 
@@ -389,21 +399,25 @@ impl Render for BufferSearchBar {
             let replace_actions = h_flex()
                 .min_w_64()
                 .gap_1()
-                .child(render_action_button(
+                .child(render_local_action_button(
                     "buffer-search-replace-button",
                     IconName::ReplaceNext,
                     Default::default(),
                     "Replace Next Match",
                     &ReplaceNext,
                     focus_handle.clone(),
+                    cx,
+                    Self::replace_next,
                 ))
-                .child(render_action_button(
+                .child(render_local_action_button(
                     "buffer-search-replace-button",
                     IconName::ReplaceAll,
                     Default::default(),
                     "Replace All Matches",
                     &ReplaceAll,
                     focus_handle,
+                    cx,
+                    Self::replace_all,
                 ));
 
             h_flex()
@@ -442,13 +456,15 @@ impl Render for BufferSearchBar {
                                     .border_r_1()
                                     .border_color(cx.theme().colors().border_variant)
                             })
-                            .child(render_action_button(
+                            .child(render_local_action_button(
                                 "buffer-search",
                                 IconName::Close,
                                 Default::default(),
                                 "Close Search Bar",
                                 &Dismiss,
                                 focus_handle.clone(),
+                                cx,
+                                Self::dismiss,
                             )),
                     )
                 });

@@ -1980,6 +1980,7 @@ impl ConversationView {
                         if is_latest {
                             active.current_submission = Some(*submission_id);
                         }
+                        active.sync_submission_reveal(*submission_id, cx);
                         cx.notify();
                     });
                 }
@@ -5171,6 +5172,13 @@ pub(crate) mod tests {
         });
         let copy_selector: &'static str =
             Box::leak(format!("copy-submission-{}", submission_id.as_u64()).into_boxed_str());
+        assert!(
+            cx.debug_bounds(copy_selector).is_none(),
+            "a fresh submission should not flash its status row"
+        );
+        cx.executor()
+            .advance_clock(thread_view::UNSETTLED_SUBMISSION_REVEAL_DELAY);
+        cx.run_until_parked();
         assert!(cx.debug_bounds(copy_selector).is_some());
         thread.update(cx, |thread, cx| {
             thread
@@ -5901,6 +5909,9 @@ pub(crate) mod tests {
         accept
             .send(Ok(acp_v2::PromptResponse::new("second-echo")))
             .expect("receipt receiver");
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(thread_view::UNSETTLED_SUBMISSION_REVEAL_DELAY);
         cx.run_until_parked();
         thread.read_with(cx, |thread, _| {
             assert_eq!(

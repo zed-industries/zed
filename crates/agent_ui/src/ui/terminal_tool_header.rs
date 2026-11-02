@@ -29,6 +29,8 @@ pub struct TerminalToolHeader {
     on_toggle_expand: Option<ClickHandler>,
     on_stop: Option<ClickHandler>,
     command_slot: Option<AnyElement>,
+    rounded_top: bool,
+    rounded_bottom: bool,
 }
 
 impl TerminalToolHeader {
@@ -52,7 +54,15 @@ impl TerminalToolHeader {
             on_toggle_expand: None,
             on_stop: None,
             command_slot: None,
+            rounded_top: false,
+            rounded_bottom: false,
         }
+    }
+
+    pub fn rounded_corners(mut self, top: bool, bottom: bool) -> Self {
+        self.rounded_top = top;
+        self.rounded_bottom = bottom;
+        self
     }
 
     pub fn elapsed(mut self, elapsed: Duration) -> Self {
@@ -123,6 +133,8 @@ impl RenderOnce for TerminalToolHeader {
             on_toggle_expand,
             on_stop,
             command_slot,
+            rounded_top,
+            rounded_bottom,
         } = self;
 
         let child_id = |name: &str| format!("terminal-tool-{name}-{id}");
@@ -247,6 +259,8 @@ impl RenderOnce for TerminalToolHeader {
             .group(hover_group)
             .text_xs()
             .bg(header_bg)
+            .when(rounded_top, |header| header.rounded_t_md())
+            .when(rounded_bottom, |header| header.rounded_b_md())
             .child(header_row)
             .children(command_slot)
     }
