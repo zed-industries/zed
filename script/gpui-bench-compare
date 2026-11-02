@@ -27,7 +27,6 @@ logs retain frame metrics. Spread is the full range of independent run medians
 divided by their median, not a confidence interval. Warnings also flag wide
 within-run sample ranges; even slow settings can drift, so inspect raw samples
 before judging small changes. Do not run competing benchmarks on the same machine.
-LayoutChurnHeap diagnostics are excluded, including with --full or --filter.
 Requires Python 3.12+ on Linux or macOS.
 """
 
@@ -281,8 +280,7 @@ def main():
             run([str(revision["binaries"][target]), "--list", pattern],
                 cwd=output, environment=environment, log=log, timeout=args.timeout)
             listings.append([line.removesuffix(": benchmark") for line in log.read_text().splitlines()
-                             if line.endswith(": benchmark")
-                             and not line.startswith("LayoutChurnHeap/")])
+                             if line.endswith(": benchmark")])
         if listings[0] != listings[1]:
             raise RuntimeError(f"benchmark IDs differ for {target}")
         cases[target] = listings[0]

@@ -1270,36 +1270,46 @@ fn churn_workloads() -> Vec<Churn> {
     }
 }
 
-#[gpui::bench(inputs = churn_workloads(), input_name = "workload", group = "LayoutChurnHeap", fps = 120)]
-fn layout_churn_heap(workload: &Churn, cx: &mut BenchAppContext) {
-    require_installed_font(cx);
-    // One iteration is a complete 3,000-frame lifetime, not a frame comparison.
-    let mut last_checkpoints = Vec::new();
-    let mut before_last_window = None;
-    cx.bench_iter(|cx| {
-        let before_window = bench_metrics::allocation_stats();
-        let mut window = cx.add_empty_window();
-        let root = window
-            .update(|window, cx| window.replace_root(cx, |_, cx| ChurnRoot::new(*workload, cx)));
-        cx.run_until_idle();
-        let mut checkpoints = Vec::with_capacity(6);
-        checkpoints.push((0, bench_metrics::allocation_stats()));
-        for frame in 1..=3000 {
-            window.update(|_, cx| root.update(cx, |root, cx| root.advance(cx)));
-            cx.run_until_idle();
-            if [50, 200, 1000, 2000, 3000].contains(&frame) {
-                checkpoints.push((frame, bench_metrics::allocation_stats()));
-            }
+thread_local! {
+    static HEAP_CHECKED_CHURN: RefCell<Vec<Churn>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A leak check, once per workload and process, before timing: runs a 500-frame window
+/// lifetime and prints the live heap at checkpoints. Steady growth across checkpoints
+/// means per-frame state, such as element state, layout nodes or text layouts, is being
+/// kept alive.
+fn report_churn_heap(workload: Churn, cx: &mut BenchAppContext) {
+    let first = HEAP_CHECKED_CHURN.with(|checked| {
+        let mut checked = checked.borrow_mut();
+        let first = !checked.contains(&workload);
+        if first {
+            checked.push(workload);
         }
-        window.update(|window, _| window.remove_window());
-        drop(root);
-        cx.run_until_idle();
-        last_checkpoints = checkpoints;
-        before_last_window = before_window;
+        first
     });
-    // Logging allocates and takes time, so it reports the last iteration after timing.
-    for (frame, stats) in last_checkpoints {
-        match before_last_window.zip(stats) {
+    if !first {
+        return;
+    }
+    let before_window = bench_metrics::allocation_stats();
+    let mut window = cx.add_empty_window();
+    let root =
+        window.update(|window, cx| window.replace_root(cx, |_, cx| ChurnRoot::new(workload, cx)));
+    cx.run_until_idle();
+    let mut checkpoints = Vec::with_capacity(4);
+    checkpoints.push((0, bench_metrics::allocation_stats()));
+    for frame in 1..=500 {
+        window.update(|_, cx| root.update(cx, |root, cx| root.advance(cx)));
+        cx.run_until_idle();
+        if [50, 200, 500].contains(&frame) {
+            checkpoints.push((frame, bench_metrics::allocation_stats()));
+        }
+    }
+    window.update(|window, _| window.remove_window());
+    drop(root);
+    cx.run_until_idle();
+    // Logging allocates, so it waits until every heap reading is taken.
+    for (frame, stats) in checkpoints {
+        match before_window.zip(stats) {
             Some((before, after)) => eprintln!(
                 "layout churn {workload}: frame {frame}, live heap {} B, window delta {} B (process-wide requested bytes)",
                 after.live_bytes(),
@@ -1313,6 +1323,7 @@ fn layout_churn_heap(workload: &Churn, cx: &mut BenchAppContext) {
 #[gpui::bench(inputs = churn_workloads(), input_name = "workload", group = "LayoutChurn", fps = 120)]
 fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
     require_installed_font(cx);
+    report_churn_heap(*workload, cx);
     let mut window = cx.add_empty_window();
     let root =
         window.update(|window, cx| window.replace_root(cx, |_, cx| ChurnRoot::new(*workload, cx)));
@@ -1562,12 +1573,4 @@ gpui::bench_group!(
     scroll,
     family_summary
 );
-gpui::bench_group!(
-    name = heap_diagnostics;
-    config = criterion::Criterion::default()
-        .warm_up_time(Duration::from_millis(1))
-        .measurement_time(Duration::from_millis(1))
-        .sample_size(10);
-    targets = layout_churn_heap
-);
-gpui::bench_main!(benches, heap_diagnostics);
+gpui::bench_main!(benches);
