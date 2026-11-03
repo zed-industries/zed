@@ -2,7 +2,7 @@ use acp_thread::{
     AcpThread, AgentThreadEntry, MessageIdentity, SessionMessage, SessionMessageSide, ToolCall,
     ToolCallContent, ToolCallStatus,
 };
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use gpui::{App, Entity, SharedString};
 use std::{fmt, ops::Range};
 
@@ -162,6 +162,7 @@ impl SubagentStatus {
         match tool_call.status() {
             ToolCallStatus::Pending
             | ToolCallStatus::InProgress
+            | ToolCallStatus::Paused
             | ToolCallStatus::WaitingForConfirmation => Self::Running,
             _ if has_user_canceled_output(tool_call, cx) => Self::Canceled,
             ToolCallStatus::Canceled => Self::Canceled,
