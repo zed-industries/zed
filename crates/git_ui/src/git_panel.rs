@@ -2429,6 +2429,8 @@ impl GitPanel {
             }
             Some(GitListEntry::TreeStatus(status)) => self
                 .section_for_entry_index(selected_index)
+                // Branch mode rows have no section header to find.
+                .or_else(|| self.is_branch_mode().then_some(Section::Branch))
                 .and_then(|section| {
                     self.nearest_expanded_directory_key(section, &status.entry.repo_path)
                 }),
