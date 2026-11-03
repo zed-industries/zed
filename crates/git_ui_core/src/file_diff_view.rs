@@ -528,7 +528,6 @@ mod tests {
             }
             assert!(elapsed_ms < 400, "diff did not finish loading");
         };
-        eprintln!("single-file diff: {elapsed_ms} ms of controlled I/O delay");
         assert_eq!(elapsed_ms, 40, "both file reads must overlap");
         view.read_with(cx, |view, cx| {
             assert_eq!(view.old_buffer.read(cx).text(), "old text");

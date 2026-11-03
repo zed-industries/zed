@@ -1373,7 +1373,6 @@ async fn check_resolve_completions_concurrently(
         }
         assert!(elapsed_ms < 400, "completion resolution did not finish");
     };
-    eprintln!("completion resolution: {elapsed_ms} ms of controlled server delay");
     assert_eq!(
         elapsed_ms,
         40 * count.div_ceil(16),

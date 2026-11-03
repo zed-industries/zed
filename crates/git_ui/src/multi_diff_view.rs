@@ -399,8 +399,17 @@ impl Render for MultiDiffView {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use futures::FutureExt as _;
+    use gpui::BorrowAppContext;
+    use gpui::TestAppContext;
+    use language::{Language, LanguageConfig};
+    use project::{FakeFs, Project};
+    use settings::{DiffViewStyle, SettingsStore};
     use std::time::Duration;
+    use util::path;
+    use workspace::MultiWorkspace;
+
     #[gpui::test(iterations = 10)]
     async fn test_multi_diff_loads_files_concurrently(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -444,7 +453,6 @@ mod tests {
             }
             assert!(elapsed_ms < 400, "multi-file diff did not finish loading");
         };
-        eprintln!("multi-file diff: {elapsed_ms} ms of controlled I/O delay");
         assert_eq!(elapsed_ms, 40, "independent file reads must overlap");
         assert_eq!(common_root, Some(PathBuf::from(path!("/test"))));
         assert_eq!(entries.len(), 3);
@@ -463,15 +471,6 @@ mod tests {
             vec![0, 1, 2]
         );
     }
-
-    use super::*;
-    use gpui::BorrowAppContext;
-    use gpui::TestAppContext;
-    use language::{Language, LanguageConfig};
-    use project::{FakeFs, Project};
-    use settings::{DiffViewStyle, SettingsStore};
-    use util::path;
-    use workspace::MultiWorkspace;
 
     async fn test_init(
         cx: &mut TestAppContext,

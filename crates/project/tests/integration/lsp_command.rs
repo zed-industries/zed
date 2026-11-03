@@ -311,7 +311,6 @@ async fn check_navigation_loads_independent_targets_concurrently(
         }
         assert!(elapsed_ms < 400, "navigation did not finish");
     };
-    eprintln!("navigation references={references}: {elapsed_ms} ms of controlled I/O delay");
     assert_eq!(elapsed_ms, 40, "independent target reads must overlap");
     assert_eq!(locations.len(), names.len());
     for (location, name) in locations.iter().zip(names) {

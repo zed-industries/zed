@@ -1987,6 +1987,8 @@ pub async fn location_links_from_lsp(
 ) -> Result<Vec<LocationLink>> {
     let unresolved_links = definition_locations_from_lsp(message);
     let (_, language_server) = language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
+    // Concurrent opens of the same file outside the project can each create an invisible
+    // worktree, producing duplicate buffers, so share one open per URI.
     let mut buffer_tasks = HashMap::default();
     let links = unresolved_links
         .into_iter()
@@ -2331,6 +2333,7 @@ impl LspCommand for GetReferences {
     ) -> Result<Vec<Location>> {
         let (_, language_server) =
             language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
+        // See `location_links_from_lsp` for why opens are shared per URI.
         let mut buffer_tasks = HashMap::default();
         let references = locations.into_iter().flatten().map(|location| {
             let target_buffer = buffer_tasks
