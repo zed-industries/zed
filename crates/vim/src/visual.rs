@@ -413,13 +413,12 @@ impl Vim {
                 let next_row = map
                     .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
                     .row();
-                row = if going_up {
-                    next_row.max(head_row)
-                } else if next_row >= head_buffer_row {
-                    head_row
+                let reached_head = if going_up {
+                    next_row <= head_buffer_row
                 } else {
-                    next_row
+                    next_row >= head_buffer_row
                 };
+                row = if reached_head { head_row } else { next_row };
             }
 
             s.select(selections);
@@ -946,17 +945,12 @@ impl Vim {
 }
 #[cfg(test)]
 mod test {
-    use gpui::UpdateGlobal;
     use indoc::indoc;
-    use language::language_settings::SoftWrap;
-    use settings::SettingsStore;
     use workspace::item::Item;
 
     use crate::{
-        motion::{Down, EndOfDocument, StartOfDocument, Up},
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
-        visual::ToggleVisualBlock,
     };
 
     #[gpui::test]
@@ -1672,46 +1666,31 @@ mod test {
 
     #[gpui::test]
     async fn test_visual_block_end_of_document_wrapped_eof(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-        cx.update(|_, cx| {
-            SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings(cx, |settings| {
-                    settings.project.all_languages.defaults.soft_wrap = Some(SoftWrap::Bounded);
-                    settings
-                        .project
-                        .all_languages
-                        .defaults
-                        .preferred_line_length = Some(12);
-                });
-            });
-        });
-        cx.set_state("123456789012ˇ34\n12345678901234", Mode::Normal);
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_wrap(12).await;
+
+        cx.set_shared_state("123456789012ˇ34\n12345678901234").await;
         assert_eq!(cx.display_text(), "123456789012\n34\n123456789012\n34");
+        cx.simulate_shared_keystrokes("ctrl-v shift-g").await;
+        cx.shared_state()
+            .await
+            .assert_eq("123456789012«3ˇ»4\n123456789012«3ˇ»4");
 
-        cx.dispatch_action(ToggleVisualBlock);
-        cx.dispatch_action(EndOfDocument);
+        cx.set_shared_state("12345678901ˇ2\n12345678901234").await;
+        cx.simulate_shared_keystrokes("ctrl-v shift-g").await;
+        cx.shared_state()
+            .await
+            .assert_eq("12345678901«2ˇ»\n12345678901«2ˇ»34");
 
-        cx.assert_state("123456789012«3ˇ»4\n123456789012«3ˇ»4", Mode::VisualBlock);
+        cx.set_shared_state("12345678901234\n123456789012ˇ34").await;
+        cx.simulate_shared_keystrokes("ctrl-v g g").await;
+        cx.shared_state()
+            .await
+            .assert_eq("123456789012«3ˇ»4\n123456789012«3ˇ»4");
 
-        cx.set_state("12345678901ˇ2\n12345678901234", Mode::Normal);
-        cx.dispatch_action(ToggleVisualBlock);
-        cx.dispatch_action(EndOfDocument);
-        cx.assert_state("12345678901«2ˇ»\n12345678901«2ˇ»34", Mode::VisualBlock);
-
-        cx.set_state("12345678901234\n123456789012ˇ34", Mode::Normal);
-        cx.dispatch_action(ToggleVisualBlock);
-        cx.dispatch_action(StartOfDocument);
-        cx.assert_state("123456789012«3ˇ»4\n123456789012«3ˇ»4", Mode::VisualBlock);
-
-        cx.set_state("ˇ12345678901234", Mode::Normal);
-        cx.dispatch_action(Down {
-            display_lines: true,
-        });
-        cx.dispatch_action(ToggleVisualBlock);
-        cx.dispatch_action(Up {
-            display_lines: false,
-        });
-        cx.assert_state("123456789012«3ˇ»4", Mode::VisualBlock);
+        cx.set_shared_state("ˇ12345678901234").await;
+        cx.simulate_shared_keystrokes("g j ctrl-v k").await;
+        cx.shared_state().await.assert_eq("123456789012«3ˇ»4");
     }
 
     #[gpui::test]
