@@ -15947,6 +15947,7 @@ pub(crate) mod tests {
                 .upsert_display_terminal(
                     "display".into(),
                     acp_thread::DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         command: agent_client_protocol::schema::MaybeUndefined::Value(
                             "actual command".into(),
                         ),
@@ -15978,6 +15979,7 @@ pub(crate) mod tests {
                 .upsert_display_terminal(
                     "display".into(),
                     acp_thread::DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         output: agent_client_protocol::schema::MaybeUndefined::Value(
                             acp_thread::DisplayTerminalOutput {
                                 data: b"new output".to_vec(),
@@ -16014,6 +16016,7 @@ pub(crate) mod tests {
                 .upsert_display_terminal(
                     "display".into(),
                     acp_thread::DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         output: agent_client_protocol::schema::MaybeUndefined::Null,
                         exit_status: agent_client_protocol::schema::MaybeUndefined::Null,
                         ..Default::default()
