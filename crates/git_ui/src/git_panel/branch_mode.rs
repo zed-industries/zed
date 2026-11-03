@@ -19,6 +19,20 @@ pub(super) struct BranchList {
 }
 
 impl BranchList {
+    /// A failed reload keeps the files from the last base that loaded, so
+    /// they're hidden to show the error instead.
+    fn shown_files(&self, cx: &App) -> Option<Vec<GitStatusEntry>> {
+        let list = self.list.read(cx);
+        if list.tree_diff_error().is_some() {
+            return None;
+        }
+        listed_files(list).or_else(|| {
+            self.previous_files
+                .as_ref()
+                .map(|previous| previous.entries.clone())
+        })
+    }
+
     fn drop_previous_files_once_loaded(&mut self, cx: &App) {
         let list = self.list.read(cx);
         if list.statuses_by_path().is_some() || list.tree_diff_error().is_some() {
@@ -415,12 +429,7 @@ impl GitPanel {
             // Read before the list moves to the new base and drops its files.
             // A switch while the previous base still loads keeps its files.
             let previous_entries = if base_changed && !repo_changed {
-                listed_files(branch_list.list.read(cx)).or_else(|| {
-                    branch_list
-                        .previous_files
-                        .take()
-                        .map(|previous| previous.entries)
-                })
+                branch_list.shown_files(cx)
             } else {
                 None
             };
@@ -463,20 +472,7 @@ impl GitPanel {
         let ChangesMode::Branch(Some(branch_list)) = &self.changes_mode else {
             return Vec::new();
         };
-        let list = branch_list.list.read(cx);
-        // A failed reload keeps the rows from the last base that loaded, so
-        // they're cleared to show the error instead.
-        if list.tree_diff_error().is_some() {
-            return Vec::new();
-        }
-        listed_files(list)
-            .or_else(|| {
-                branch_list
-                    .previous_files
-                    .as_ref()
-                    .map(|previous| previous.entries.clone())
-            })
-            .unwrap_or_default()
+        branch_list.shown_files(cx).unwrap_or_default()
     }
 
     pub(super) fn follow_active_branch_diff(
