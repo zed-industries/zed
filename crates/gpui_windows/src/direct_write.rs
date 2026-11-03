@@ -79,6 +79,7 @@ struct DirectWriteState {
     fonts: Vec<FontInfo>,
     font_to_font_id: HashMap<Font, FontId>,
     font_info_cache: HashMap<usize, FontId>,
+    tab_intervals: HashMap<(FontId, Pixels), Pixels>,
     layout_line_scratch: Vec<u16>,
 }
 
@@ -217,6 +218,7 @@ impl DirectWriteTextSystem {
                 fonts: Vec::new(),
                 font_to_font_id: HashMap::default(),
                 font_info_cache: HashMap::default(),
+                tab_intervals: HashMap::default(),
                 layout_line_scratch: Vec::new(),
             }),
         })
@@ -529,8 +531,33 @@ impl DirectWriteState {
         font_size: Pixels,
         font_runs: &[FontRun],
     ) -> Result<LineLayout> {
+        let tab_interval = if let Some(first_run) = font_runs.first() {
+            let key = (first_run.font_id, font_size);
+            let interval = match self.tab_intervals.get(&key).copied() {
+                Some(interval) => interval,
+                None => {
+                    let space = self
+                        .glyph_for_char(first_run.font_id, ' ')
+                        .context("failed to find the initial font's space glyph")?;
+                    let advance = self.get_advance(first_run.font_id, space)?.width;
+                    let units_per_em = self.font_metrics(first_run.font_id).units_per_em;
+                    let interval = font_size * (4.0 * advance / units_per_em as f32);
+                    self.tab_intervals.insert(key, interval);
+                    interval
+                }
+            };
+            Some(interval)
+        } else {
+            None
+        };
         if !text.contains(is_line_separator) {
-            return self.layout_line_without_separators(components, text, font_size, font_runs);
+            return self.layout_line_without_separators(
+                components,
+                text,
+                font_size,
+                font_runs,
+                tab_interval,
+            );
         }
 
         // DirectWrite honors mandatory breaks even without wrapping. Keep each
@@ -566,8 +593,13 @@ impl DirectWriteState {
                 }
             }
 
-            let segment_layout =
-                self.layout_line_without_separators(components, segment, font_size, &segment_runs)?;
+            let segment_layout = self.layout_line_without_separators(
+                components,
+                segment,
+                font_size,
+                &segment_runs,
+                tab_interval,
+            )?;
             for mut run in segment_layout.runs {
                 for glyph in &mut run.glyphs {
                     glyph.index += text_offset;
@@ -595,6 +627,7 @@ impl DirectWriteState {
         text: &str,
         font_size: Pixels,
         font_runs: &[FontRun],
+        tab_interval: Option<Pixels>,
     ) -> Result<LineLayout> {
         if font_runs.is_empty() {
             return Ok(LineLayout {
@@ -627,6 +660,9 @@ impl DirectWriteState {
                     .cast()?;
                 if let Some(ref fallbacks) = font_info.fallbacks {
                     format.SetFontFallback(fallbacks)?;
+                }
+                if let Some(tab_interval) = tab_interval {
+                    format.SetIncrementalTabStop(tab_interval.as_f32())?;
                 }
 
                 let layout = components.factory.CreateTextLayout(
@@ -2087,8 +2123,8 @@ mod tests {
     use crate::directx_devices::DirectXDevices;
     use anyhow::Result;
     use gpui::{
-        DevicePixels, Font, FontWeight, PlatformTextSystem, RenderGlyphParams, Rgba, TextRun,
-        TextSystem, WindowTextSystem, bounds, point, px, size,
+        DevicePixels, Font, FontRun, FontWeight, PlatformTextSystem, RenderGlyphParams, Rgba,
+        TextRun, TextSystem, WindowTextSystem, bounds, point, px, size,
     };
     use std::{ffi::c_void, sync::Arc};
     use windows::Win32::Graphics::Direct3D11::{
@@ -2098,6 +2134,48 @@ mod tests {
     };
     use windows::Win32::Graphics::DirectWrite::{DWRITE_FONT_STRETCH_NORMAL, DWRITE_TEXT_METRICS};
     use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+
+    #[test]
+    fn tab_intervals_are_cached_by_font_and_size() -> Result<()> {
+        let fonts = DirectWriteTextSystem::new(None)?;
+        let mut entry_count = 0;
+        for family in ["Consolas", "Segoe UI"] {
+            let font_id = fonts.font_id(&Font {
+                family: family.into(),
+                ..Default::default()
+            })?;
+            for font_size in [px(12.0), px(24.0)] {
+                fonts.layout_line("abc", font_size, &[FontRun { font_id, len: 3 }]);
+                entry_count += 1;
+                let interval = {
+                    let state = fonts.state.read();
+                    assert_eq!(state.tab_intervals.len(), entry_count);
+                    state.tab_intervals.get(&(font_id, font_size)).copied()
+                };
+                assert!(interval.is_some());
+                for text in ["def", "\t", "a\tb"] {
+                    let layout = fonts.layout_line(
+                        text,
+                        font_size,
+                        &[FontRun {
+                            font_id,
+                            len: text.len(),
+                        }],
+                    );
+                    let state = fonts.state.read();
+                    assert_eq!(state.tab_intervals.len(), entry_count);
+                    assert_eq!(
+                        state.tab_intervals.get(&(font_id, font_size)).copied(),
+                        interval
+                    );
+                    if text == "\t" {
+                        assert_eq!(Some(layout.width), interval);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn tabs_preserve_native_advances_and_cursor() -> Result<()> {
@@ -2126,7 +2204,21 @@ mod tests {
                         )?
                     }
                 };
-                let tab_interval = px(unsafe { format.GetIncrementalTabStop() });
+                let tab_interval = text_system
+                    .shape_line(
+                        "    ".into(),
+                        font_size,
+                        &[TextRun {
+                            len: 4,
+                            font: font.clone(),
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                    .width;
+                unsafe {
+                    format.SetIncrementalTabStop(tab_interval.as_f32())?;
+                }
                 for text in [
                     "ab",
                     "\t",
@@ -2219,6 +2311,79 @@ mod tests {
                         );
                         assert_eq!(shaped.x_for_index(text.len()), shaped.width);
                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn tab_stops_use_the_initial_font() -> Result<()> {
+        let platform_text_system = Arc::new(DirectWriteTextSystem::new(None)?);
+        let text_system = WindowTextSystem::new(Arc::new(TextSystem::new(platform_text_system)));
+        for (initial_family, other_family) in [("Consolas", "Segoe UI"), ("Segoe UI", "Consolas")] {
+            let initial_font = Font {
+                family: initial_family.into(),
+                ..Default::default()
+            };
+            let other_font = Font {
+                family: other_family.into(),
+                ..Default::default()
+            };
+            for font_size in [px(12.0), px(24.0)] {
+                let tab_interval = text_system
+                    .shape_line(
+                        "    ".into(),
+                        font_size,
+                        &[TextRun {
+                            len: 4,
+                            font: initial_font.clone(),
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                    .width;
+                let letter_width = text_system
+                    .shape_line(
+                        "b".into(),
+                        font_size,
+                        &[TextRun {
+                            len: 1,
+                            font: other_font.clone(),
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                    .width;
+                for text in ["\t\tb\t", "\t\u{2028}\tb\t", "\t\u{2029}\tb\t"] {
+                    let shaped = text_system.shape_line(
+                        text.into(),
+                        font_size,
+                        &[
+                            TextRun {
+                                len: 1,
+                                font: initial_font.clone(),
+                                ..Default::default()
+                            },
+                            TextRun {
+                                len: text.len() - 1,
+                                font: other_font.clone(),
+                                ..Default::default()
+                            },
+                        ],
+                        None,
+                    );
+                    let second_tab = text.len() - 3;
+                    assert!((shaped.x_for_index(second_tab) - tab_interval).abs() < px(0.001));
+                    assert!(
+                        (shaped.x_for_index(second_tab + 1) - tab_interval * 2.0).abs() < px(0.001)
+                    );
+                    assert!(
+                        (shaped.x_for_index(second_tab + 2) - (tab_interval * 2.0 + letter_width))
+                            .abs()
+                            < px(0.001)
+                    );
+                    assert!((shaped.width - tab_interval * 3.0).abs() < px(0.001));
                 }
             }
         }

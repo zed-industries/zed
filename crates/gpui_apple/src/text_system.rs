@@ -3,7 +3,7 @@ use collections::{HashMap, HashSet};
 use core_foundation::{
     array::{CFArray, CFArrayRef},
     attributed_string::CFMutableAttributedString,
-    base::{CFRange, TCFType},
+    base::{CFRange, CFType, TCFType},
     number::CFNumber,
     string::CFString,
 };
@@ -21,7 +21,7 @@ use core_text::{
         kCTFontWidthTrait,
     },
     line::CTLine,
-    string_attributes::kCTFontAttributeName,
+    string_attributes::{kCTFontAttributeName, kCTParagraphStyleAttributeName},
 };
 use font_kit::{
     font::Font as FontKitFont,
@@ -38,6 +38,7 @@ use gpui::{
     Result, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode,
     point, px, size, swap_rgba_pa_to_bgra,
 };
+use objc2_core_text::{CTParagraphStyle, CTParagraphStyleSetting, CTParagraphStyleSpecifier};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::{
     rect::{RectF, RectI},
@@ -45,11 +46,10 @@ use pathfinder_geometry::{
     vector::Vector2F,
 };
 use smallvec::SmallVec;
-use std::{borrow::Cow, char, convert::TryFrom, sync::Arc};
+use std::{borrow::Cow, char, convert::TryFrom, ptr::NonNull, sync::Arc};
 
 #[cfg(target_os = "macos")]
 use {
-    core_foundation::base::CFType,
     gpui::{Hsla, Rgba},
     std::sync::OnceLock,
 };
@@ -69,6 +69,13 @@ struct FontKey {
     font_fallbacks: Option<FontFallbacks>,
 }
 
+struct TabParagraphStyle(CFType);
+
+// This contains only immutable CTParagraphStyle objects, which Core Text permits
+// sharing across threads.
+unsafe impl Send for TabParagraphStyle {}
+unsafe impl Sync for TabParagraphStyle {}
+
 struct AppleTextSystemState {
     memory_source: MemSource,
     system_source: SystemSource,
@@ -77,6 +84,7 @@ struct AppleTextSystemState {
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
+    tab_paragraph_styles: HashMap<(FontId, Pixels), TabParagraphStyle>,
 }
 
 impl AppleTextSystem {
@@ -90,6 +98,7 @@ impl AppleTextSystem {
             font_ids_by_postscript_name: HashMap::default(),
             font_ids_by_font_key: HashMap::default(),
             postscript_names_by_font_id: HashMap::default(),
+            tab_paragraph_styles: HashMap::default(),
         }))
     }
 }
@@ -586,6 +595,53 @@ impl AppleTextSystemState {
                 }
             }
         }
+        if let Some(first_run) = font_runs.first() {
+            let paragraph_style = self
+                .tab_paragraph_styles
+                .entry((first_run.font_id, font_size))
+                .or_insert_with(|| {
+                    let mut space = CFMutableAttributedString::new();
+                    space.replace_str(&CFString::new(" "), CFRange::init(0, 0));
+                    let font = &self.fonts[first_run.font_id.0];
+                    unsafe {
+                        space.set_attribute(
+                            CFRange::init(0, 1),
+                            kCTFontAttributeName,
+                            &font.native_font().clone_with_font_size(font_size.into()),
+                        );
+                    }
+                    let space = CTLine::new_with_attributed_string(space.as_concrete_TypeRef());
+                    let interval = 4.0 * space.get_typographic_bounds().width;
+                    let tab_stops = CFArray::<CFType>::from_CFTypes(&[]);
+                    let tab_stops = tab_stops.as_concrete_TypeRef();
+                    let settings = [
+                        CTParagraphStyleSetting {
+                            spec: CTParagraphStyleSpecifier::TabStops,
+                            valueSize: std::mem::size_of_val(&tab_stops),
+                            value: NonNull::from(&tab_stops).cast(),
+                        },
+                        CTParagraphStyleSetting {
+                            spec: CTParagraphStyleSpecifier::DefaultTabInterval,
+                            valueSize: std::mem::size_of_val(&interval),
+                            value: NonNull::from(&interval).cast(),
+                        },
+                    ];
+                    let paragraph_style =
+                        unsafe { CTParagraphStyle::new(settings.as_ptr(), settings.len()) };
+                    TabParagraphStyle(unsafe {
+                        CFType::wrap_under_get_rule(
+                            (&*paragraph_style as *const CTParagraphStyle).cast(),
+                        )
+                    })
+                });
+            unsafe {
+                string.set_attribute(
+                    CFRange::init(0, string.char_len()),
+                    kCTParagraphStyleAttributeName,
+                    &paragraph_style.0,
+                );
+            }
+        }
         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
         let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
         let glyph_runs = line.glyph_runs();
@@ -782,6 +838,7 @@ mod lenient_font_attributes {
 #[cfg(test)]
 mod tests {
     use crate::AppleTextSystem;
+    use core_foundation::base::TCFType;
     use gpui::{
         FontFallbacks, FontFeatures, FontId, FontRun, GlyphId, PlatformTextSystem, font, px,
     };
@@ -861,6 +918,132 @@ mod tests {
             );
             assert_eq!(f32::from(layout.width), width, "{size} px after a BOM run");
         }
+    }
+
+    #[test]
+    fn test_tab_paragraph_styles_are_cached_by_font_and_size() {
+        let fonts = AppleTextSystem::new();
+        let font_ids = [
+            fonts.font_id(&font("Helvetica")).unwrap(),
+            fonts.font_id(&font("Times")).unwrap(),
+        ];
+        let mut entry_count = 0;
+        for font_id in font_ids {
+            for font_size in [px(12.), px(24.)] {
+                fonts.layout_line("abc", font_size, &[FontRun { font_id, len: 3 }]);
+                entry_count += 1;
+                let style = {
+                    let state = fonts.0.read();
+                    assert_eq!(state.tab_paragraph_styles.len(), entry_count);
+                    state
+                        .tab_paragraph_styles
+                        .get(&(font_id, font_size))
+                        .map(|style| style.0.as_CFTypeRef())
+                };
+                assert!(style.is_some());
+                for text in ["def", "\t", "a\tb"] {
+                    fonts.layout_line(
+                        text,
+                        font_size,
+                        &[FontRun {
+                            font_id,
+                            len: text.len(),
+                        }],
+                    );
+                    let state = fonts.0.read();
+                    assert_eq!(state.tab_paragraph_styles.len(), entry_count);
+                    assert_eq!(
+                        state
+                            .tab_paragraph_styles
+                            .get(&(font_id, font_size))
+                            .map(|style| style.0.as_CFTypeRef()),
+                        style
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_layout_line_tabs_use_four_space_intervals_at_font_size() {
+        let fonts = AppleTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+        for size in [12., 24.] {
+            let space = fonts.layout_line(" ", px(size), &[FontRun { font_id, len: 1 }]);
+            let interval = 4. * f32::from(space.width);
+            let position_after_tabs = |text: &str| {
+                let layout = fonts.layout_line(
+                    text,
+                    px(size),
+                    &[FontRun {
+                        font_id,
+                        len: text.len(),
+                    }],
+                );
+                let marker_index = text.find('X').unwrap();
+                let marker = layout
+                    .runs
+                    .iter()
+                    .flat_map(|run| &run.glyphs)
+                    .find(|glyph| glyph.index == marker_index)
+                    .unwrap();
+                f32::from(marker.position.x)
+            };
+            assert!((position_after_tabs("\tX") - interval).abs() < 0.01);
+            assert!((position_after_tabs("\t\tX") - 2. * interval).abs() < 0.01);
+            assert!((position_after_tabs(" \tX") - interval).abs() < 0.01);
+
+            let trailing = fonts.layout_line("\t\t", px(size), &[FontRun { font_id, len: 2 }]);
+            assert!((f32::from(trailing.width) - 2. * interval).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_layout_line_tabs_use_initial_font_across_runs() {
+        let fonts = AppleTextSystem::new();
+        let first = fonts.font_id(&font("Helvetica")).unwrap();
+        let second = fonts.font_id(&font("Times")).unwrap();
+        let size = px(18.);
+        let first_space = fonts.layout_line(
+            " ",
+            size,
+            &[FontRun {
+                font_id: first,
+                len: 1,
+            }],
+        );
+        let second_space = fonts.layout_line(
+            " ",
+            size,
+            &[FontRun {
+                font_id: second,
+                len: 1,
+            }],
+        );
+        assert!((f32::from(first_space.width) - f32::from(second_space.width)).abs() > 0.01);
+
+        let text = " \t\tX";
+        let layout = fonts.layout_line(
+            text,
+            size,
+            &[
+                FontRun {
+                    font_id: first,
+                    len: 1,
+                },
+                FontRun {
+                    font_id: second,
+                    len: text.len() - 1,
+                },
+            ],
+        );
+        let marker = layout
+            .runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .find(|glyph| glyph.index == text.find('X').unwrap())
+            .unwrap();
+        assert!((f32::from(marker.position.x) - 8. * f32::from(first_space.width)).abs() < 0.01);
     }
 
     #[test]
