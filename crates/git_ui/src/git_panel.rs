@@ -5920,6 +5920,10 @@ impl GitPanel {
             self.reset_branch_state(window, cx);
         }
         self.sync_branch_list(window, cx);
+        if self.keeps_previous_branch_rows() {
+            self.bulk_staging = bulk_staging;
+            return;
+        }
         self.entries.clear();
         self.change_entries.clear();
         self.change_entry_indices.clear();

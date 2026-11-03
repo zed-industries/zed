@@ -9,8 +9,13 @@ pub(super) enum ChangesMode {
     Branch(Option<BranchList>),
 }
 
+/// How long the previous base's rows stay while a new base loads. Most bases
+/// load sooner, so switching doesn't flash a loading state.
+const KEEP_PREVIOUS_ROWS_FOR: Duration = Duration::from_millis(300);
+
 pub(super) struct BranchList {
     list: Entity<DiffBufferList>,
+    keep_previous_rows: Option<Task<()>>,
     _subscription: Subscription,
 }
 
@@ -203,8 +208,8 @@ impl GitPanel {
         let was_branch_mode = self.is_branch_mode();
         self.set_branch_base(base_ref, window, cx);
         if was_branch_mode {
-            // Rebuild now rather than after the update debounce, so the old
-            // base's rows don't stay on screen after picking a new base.
+            // Sync now rather than after the update debounce, so the new base
+            // starts loading right away.
             self.update_visible_entries(window, cx);
         } else {
             self.enter_branch_mode(window, cx);
@@ -340,12 +345,42 @@ impl GitPanel {
         let diff_base = DiffBase::Merge { base_ref };
 
         if let Some(branch_list) = branch_list {
+            let (repo_changed, base_changed) = {
+                let list = branch_list.list.read(cx);
+                let repo_id = repo.read(cx).id;
+                (
+                    list.repo()
+                        .is_none_or(|list_repo| list_repo.read(cx).id != repo_id),
+                    list.diff_base() != &diff_base,
+                )
+            };
             branch_list.list.update(cx, |list, cx| {
                 list.set_repo(Some(repo), cx);
-                if list.diff_base() != &diff_base {
+                if base_changed {
                     list.set_diff_base(diff_base, cx);
                 }
             });
+            if repo_changed {
+                // Another repository's files would be wrong, not just stale.
+                branch_list.keep_previous_rows = None;
+            } else if base_changed {
+                branch_list.keep_previous_rows =
+                    Some(cx.spawn_in(window, async move |this, cx| {
+                        cx.background_executor().timer(KEEP_PREVIOUS_ROWS_FOR).await;
+                        this.update_in(cx, |this, window, cx| {
+                            if let ChangesMode::Branch(Some(branch_list)) = &mut this.changes_mode {
+                                branch_list.keep_previous_rows = None;
+                            }
+                            this.update_visible_entries(window, cx);
+                        })
+                        .ok();
+                    }));
+            } else {
+                let list = branch_list.list.read(cx);
+                if list.statuses_by_path().is_some() || list.tree_diff_error().is_some() {
+                    branch_list.keep_previous_rows = None;
+                }
+            }
             return;
         }
 
@@ -361,8 +396,16 @@ impl GitPanel {
         );
         *branch_list = Some(BranchList {
             list,
+            keep_previous_rows: None,
             _subscription: subscription,
         });
+    }
+
+    pub(super) fn keeps_previous_branch_rows(&self) -> bool {
+        matches!(
+            &self.changes_mode,
+            ChangesMode::Branch(Some(branch_list)) if branch_list.keep_previous_rows.is_some()
+        )
     }
 
     pub(super) fn branch_status_entries(&self, cx: &App) -> Vec<GitStatusEntry> {
