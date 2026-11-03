@@ -946,6 +946,9 @@ async fn attach_labels(calls: &mut [Call], project: &Entity<Project>, cx: &mut A
             continue;
         };
         for (index, label) in indices.into_iter().zip(labels) {
+            calls[index].label_includes_detail = label
+                .as_ref()
+                .is_some_and(|label| detail_from_label_suffix(label).is_some());
             calls[index].label = label.map(Arc::new);
         }
     }
@@ -990,7 +993,8 @@ async fn load_and_apply_calls(
                     settings.buffer_font.clone(),
                     buffer_font_size,
                     window,
-                );
+                )
+                .ceil();
                 let detail_width = match detail_text {
                     Some(detail) => {
                         shaped_width(
@@ -998,7 +1002,9 @@ async fn load_and_apply_calls(
                             settings.buffer_font.clone(),
                             buffer_font_size,
                             window,
-                        ) + gap
+                        )
+                        .ceil()
+                            + gap
                     }
                     None => px(0.),
                 };
@@ -1603,12 +1609,18 @@ mod tests {
         let language = rust_lang();
 
         let cases = [
-            ("helper", "github.com/foo/bar", true), // Go: name-only label
-            ("helper", "fn helper(&self) -> i32", false), // Rust: complete signature
-            ("Widget", "ns::Widget", false),        // C++: prefix-only label
+            // (name, detail, fallback_label, should_append)
+            // Fallback name-only: the detail is separate.
+            ("helper", "github.com/foo/bar", Some(("func helper", 5..11)), true),
+            // Fallback with a suffix: the suffix is the detail, already in the label.
+            ("Foo", "pkg/path", Some(("type Foo struct {}", 5..8)), false),
+            // Primary complete signature: the detail is the label suffix.
+            ("helper", "fn helper(&self) -> i32", None, false),
+            // Primary prefix-only: the detail is the whole label text.
+            ("Widget", "ns::Widget", None, false),
         ];
 
-        for (name, detail, should_append) in cases {
+        for (name, detail, fallback_label, should_append) in cases {
             let mut call = make_call(
                 name,
                 path!("/test/src/main.rs").as_ref(),
@@ -1619,13 +1631,22 @@ mod tests {
             )
             .await;
 
-            // Identical behavior with attach_labels(): use the signature label when it succeeds,
-            // otherwise the adapter's name-only fallback.
-            let primary_label = signature_label(&call.item, &language);
-            call.label_includes_detail = primary_label.is_some();
-            call.label = Some(Arc::new(primary_label.unwrap_or_else(|| {
-                CodeLabel::new(format!("fn {name}"), 3..3 + name.len(), Vec::new())
-            })));
+            // Mirror attach_labels: primary label when signature_label succeeds,
+            // otherwise the adapter's synthetic label.
+            let label = match signature_label(&call.item, &language) {
+                Some(label) => {
+                    call.label_includes_detail = true;
+                    label
+                }
+                None => {
+                    let (text, filter_range) =
+                        fallback_label.expect("fallback case needs a label");
+                    let label = CodeLabel::new(text.to_string(), filter_range, Vec::new());
+                    call.label_includes_detail = detail_from_label_suffix(&label).is_some();
+                    label
+                }
+            };
+            call.label = Some(Arc::new(label));
 
             let display = cx.update(|cx| compute_call_display(&call, cx));
 
