@@ -17724,7 +17724,7 @@ mod tests {
     async fn test_branch_mode_lists_all_changes_since_base(cx: &mut TestAppContext) {
         let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
         let cx = &mut cx;
-        let panel = test.panel.clone();
+        let panel = test.panel;
 
         assert_eq!(listed_paths(&panel, cx), ["d.txt", "b.txt"]);
 
