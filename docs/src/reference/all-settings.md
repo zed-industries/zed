@@ -938,6 +938,16 @@ Non-negative integer values representing milliseconds. Set this to `0` to disabl
 
 See [Configuring the Prediction Debounce](../ai/edit-prediction.md#configuring-the-prediction-debounce) for more information.
 
+### Edit Prediction Button
+
+- Description: Whether to show the edit prediction button in the status bar. Hiding the button does not disable edit predictions.
+- Setting: `edit_predictions.button`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Edit Predictions Disabled in
 
 - Setting: `edit_predictions_disabled_in`
