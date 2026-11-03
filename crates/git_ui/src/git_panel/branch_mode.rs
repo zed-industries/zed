@@ -200,8 +200,15 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         self.set_active_tab(GitPanelTab::Changes, window, cx);
+        let was_branch_mode = self.is_branch_mode();
         self.set_branch_base(base_ref, window, cx);
-        self.enter_branch_mode(window, cx);
+        if was_branch_mode {
+            // Rebuild now rather than after the update debounce, so the old
+            // base's rows don't stay on screen after picking a new base.
+            self.update_visible_entries(window, cx);
+        } else {
+            self.enter_branch_mode(window, cx);
+        }
     }
 
     fn show_branch_changes_since_picked(
