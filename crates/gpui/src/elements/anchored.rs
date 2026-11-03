@@ -355,12 +355,12 @@ mod tests {
 
         window
             .update(cx, |_, window, cx| {
-                let event = gpui::ScrollWheelEvent {
+                let event = gpui::ScrollEvent {
                     position: point(px(400.), px(300.)),
                     delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-1000.))),
                     ..Default::default()
                 };
-                window.dispatch_event(PlatformInput::ScrollWheel(event), cx);
+                window.dispatch_event(PlatformInput::Scroll(event), cx);
             })
             .unwrap();
 
