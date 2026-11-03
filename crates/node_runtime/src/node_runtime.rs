@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
 use http_client::{Host, HttpClient, Url};
 use log::Level;
+use managed_resources::{ManagedResource, ManagedResourceCommand, ResourceId};
 use semver::{Version, VersionReq};
 use serde::Deserialize;
 use smol::io::BufReader;
@@ -41,6 +42,50 @@ pub struct NpmCommand {
     pub env: HashMap<String, String>,
     /// Apply this working directory when spawning the command to avoid project-local npm settings.
     pub current_dir: PathBuf,
+}
+
+pub struct Npm {
+    runtime: NodeRuntime,
+}
+
+impl ManagedResource for Npm {
+    type Key = ();
+    type Context = NodeRuntime;
+    type Command = InstallNpmPackages;
+
+    fn id(_: &()) -> ResourceId {
+        ResourceId {
+            kind: "npm".into(),
+            key: "default".into(),
+        }
+    }
+
+    async fn obtain(_: &(), runtime: &NodeRuntime) -> Result<Self> {
+        runtime.run_npm_subcommand(None, "--version", &[]).await?;
+        Ok(Self {
+            runtime: runtime.clone(),
+        })
+    }
+}
+
+pub struct InstallNpmPackages {
+    pub directory: PathBuf,
+    pub packages: Vec<(String, String)>,
+}
+
+impl ManagedResourceCommand<Npm> for InstallNpmPackages {
+    type Output = Result<()>;
+
+    async fn run(self, npm: Arc<Npm>) -> Self::Output {
+        let packages = self
+            .packages
+            .iter()
+            .map(|(name, version)| (name.as_str(), version.as_str()))
+            .collect::<Vec<_>>();
+        npm.runtime
+            .npm_install_packages(&self.directory, &packages)
+            .await
+    }
 }
 
 pub enum VersionStrategy<'a> {
