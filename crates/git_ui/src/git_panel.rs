@@ -2441,11 +2441,11 @@ impl GitPanel {
                 self.nearest_expanded_directory_key(directory.key.section, &directory.key.path)
             }
             Some(GitListEntry::TreeStatus(status)) => self
-                .section_for_entry_index(selected_index)
-                // Branch mode rows have no section header to find.
-                .or_else(|| self.is_branch_mode().then_some(Section::Branch))
-                .and_then(|section| {
-                    self.nearest_expanded_directory_key(section, &status.entry.repo_path)
+                .projected_entries_by_path
+                .get(&status.entry.repo_path)
+                .and_then(|entries| entries.iter().find(|entry| entry.index == selected_index))
+                .and_then(|entry| {
+                    self.nearest_expanded_directory_key(entry.section, &status.entry.repo_path)
                 }),
             _ => None,
         };
