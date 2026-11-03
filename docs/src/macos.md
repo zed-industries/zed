@@ -35,7 +35,7 @@ To build Zed from source, see the [macOS development documentation](./developmen
 
 ## System Requirements
 
-- macOS 10.15.7 (Catalina) or later
+- macOS 12.0 (Monterey) or later
 - Apple Silicon (M1/M2/M3/M4) or Intel processor
 
 Zed uses Metal for GPU-accelerated rendering, which is available on all supported macOS versions.

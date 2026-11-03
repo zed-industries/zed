@@ -37,6 +37,7 @@ chrono.workspace = true
 client.workspace = true
 collections.workspace = true
 env_logger = { workspace = true, optional = true }
+feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true

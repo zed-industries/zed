@@ -16,15 +16,16 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Display, Element, ElementId, Entity, EntityId, ExternalDragPayload, ExternalDragPayloadSource,
-    FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior, HitboxId,
-    InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton,
-    KeyboardClickEvent, LayoutId, LongPressEvent, ModifiersChangedEvent, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent,
-    MouseUpEvent, OngoingScroll, Overflow, ParentElement, PinchEvent, Pixels, Point, Render,
-    ScrollDelta, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
-    TooltipId, TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
+    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackGestureEvent, Bounds, ClickEvent,
+    DispatchPhase, Display, Element, ElementId, Entity, EntityId, ExternalDragPayload,
+    ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox,
+    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
+    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent,
+    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
+    PinchEvent, Pixels, Point, Render, ScrollDelta, ScrollEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, TooltipId, TouchPhase, Visibility, Window, WindowControlArea,
+    point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -383,15 +384,15 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to scroll wheel events during the bubble phase.
-    /// The imperative API equivalent to [`InteractiveElement::on_scroll_wheel`].
+    /// Bind the given callback to scroll events during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_scroll`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    pub fn on_scroll_wheel(
+    pub fn on_scroll(
         &mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollDelta + 'static,
+        listener: impl Fn(&ScrollEvent, &mut Window, &mut App) -> ScrollDelta + 'static,
     ) {
-        self.scroll_wheel_listeners
+        self.scroll_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     (listener)(event, window, cx)
@@ -399,6 +400,15 @@ impl Interactivity {
                     event.delta
                 }
             }));
+    }
+
+    /// The former name of [`Interactivity::on_scroll`].
+    #[deprecated(note = "renamed to `on_scroll`")]
+    pub fn on_scroll_wheel(
+        &mut self,
+        listener: impl Fn(&ScrollEvent, &mut Window, &mut App) -> ScrollDelta + 'static,
+    ) {
+        self.on_scroll(listener);
     }
 
     /// Bind the given callback to pinch gesture events during the bubble phase.
@@ -409,6 +419,24 @@ impl Interactivity {
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     (listener)(event, window, cx);
+                }
+            }));
+    }
+
+    /// Bind the given callback to back-navigation gestures that start over this element.
+    /// The imperative API equivalent to [`InteractiveElement::on_back_gesture`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_back_gesture(
+        &mut self,
+        listener: impl Fn(&BackGestureEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.back_gesture_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                    (listener)(event, window, cx);
+                    window.prevent_default();
+                    cx.stop_propagation();
                 }
             }));
     }
@@ -1055,16 +1083,25 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to scroll wheel events during the bubble phase.
-    /// The fluent API equivalent to [`Interactivity::on_scroll_wheel`].
+    /// Bind the given callback to scroll events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_scroll`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    fn on_scroll_wheel(
+    fn on_scroll(
         mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollDelta + 'static,
+        listener: impl Fn(&ScrollEvent, &mut Window, &mut App) -> ScrollDelta + 'static,
     ) -> Self {
-        self.interactivity().on_scroll_wheel(listener);
+        self.interactivity().on_scroll(listener);
         self
+    }
+
+    /// The former name of [`InteractiveElement::on_scroll`].
+    #[deprecated(note = "renamed to `on_scroll`")]
+    fn on_scroll_wheel(
+        self,
+        listener: impl Fn(&ScrollEvent, &mut Window, &mut App) -> ScrollDelta + 'static,
+    ) -> Self {
+        self.on_scroll(listener)
     }
 
     /// Bind the given callback to pinch gesture events during the bubble phase.
@@ -1073,6 +1110,20 @@ pub trait InteractiveElement: Sized {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_pinch(mut self, listener: impl Fn(&PinchEvent, &mut Window, &mut App) + 'static) -> Self {
         self.interactivity().on_pinch(listener);
+        self
+    }
+
+    /// Bind the given callback to back-navigation gestures that start over this
+    /// element, such as the iOS swipe from the leading screen edge. The innermost
+    /// element with a back listener claims the gesture and receives every phase.
+    /// The fluent API equivalent to [`Interactivity::on_back_gesture`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn on_back_gesture(
+        mut self,
+        listener: impl Fn(&BackGestureEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_back_gesture(listener);
         self
     }
 
@@ -1730,13 +1781,15 @@ pub(crate) type MouseExitListener =
 pub(crate) type FileDropExitListener =
     Box<dyn Fn(&FileDropEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-pub(crate) type ScrollWheelListener = Box<
-    dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) -> ScrollDelta
-        + 'static,
+pub(crate) type ScrollListener = Box<
+    dyn Fn(&ScrollEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) -> ScrollDelta + 'static,
 >;
 
 pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+
+pub(crate) type BackGestureListener =
+    Box<dyn Fn(&BackGestureEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
 pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
@@ -2175,8 +2228,9 @@ pub struct Interactivity {
     pub(crate) mouse_move_listeners: Vec<MouseMoveListener>,
     pub(crate) mouse_exit_listeners: Vec<MouseExitListener>,
     pub(crate) file_drop_exit_listeners: Vec<FileDropExitListener>,
-    pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
+    pub(crate) scroll_listeners: Vec<ScrollListener>,
     pub(crate) pinch_listeners: Vec<PinchListener>,
+    pub(crate) back_gesture_listeners: Vec<BackGestureListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
     pub(crate) modifiers_changed_listeners: Vec<ModifiersChangedListener>,
@@ -2401,7 +2455,9 @@ impl Interactivity {
 
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
-                            let result = f(&style, scroll_offset, hitbox, window, cx);
+                            let result = window.with_element_opacity(style.opacity, |window| {
+                                f(&style, scroll_offset, hitbox, window, cx)
+                            });
                             (result, element_state)
                         },
                     )
@@ -2428,8 +2484,9 @@ impl Interactivity {
             || !self.file_drop_exit_listeners.is_empty()
             || !self.click_listeners.is_empty()
             || !self.aux_click_listeners.is_empty()
-            || !self.scroll_wheel_listeners.is_empty()
+            || !self.scroll_listeners.is_empty()
             || self.has_pinch_listeners()
+            || !self.back_gesture_listeners.is_empty()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
             || !self.drag_over_styles.is_empty()
@@ -2455,7 +2512,7 @@ impl Interactivity {
                 .tracked_scroll_handle
                 .as_ref()
                 .map(|handle| handle.0.borrow_mut());
-            if let Some(mut scroll_handle_state) = tracked_scroll_handle.as_deref_mut() {
+            if let Some(scroll_handle_state) = tracked_scroll_handle.as_deref_mut() {
                 scroll_handle_state.overflow = style.overflow;
                 scroll_to_bottom = mem::take(&mut scroll_handle_state.scroll_to_bottom);
             }
@@ -2686,12 +2743,12 @@ impl Interactivity {
                     };
                     if let Some(source_location) = self.source_location
                         && text_bounds.contains(&window.mouse_position())
-                        && window.modifiers().secondary()
+                        && window.modifiers().secondary(cx)
                     {
-                        let secondary_held = window.modifiers().secondary();
+                        let secondary_held = window.modifiers().secondary(cx);
                         window.on_key_event({
-                            move |e: &crate::ModifiersChangedEvent, _phase, window, _cx| {
-                                if e.modifiers.secondary() != secondary_held
+                            move |e: &crate::ModifiersChangedEvent, _phase, window, cx| {
+                                if e.modifiers.secondary(cx) != secondary_held
                                     && text_bounds.contains(&window.mouse_position())
                                 {
                                     window.refresh();
@@ -2835,9 +2892,9 @@ impl Interactivity {
             })
         }
 
-        for listener in self.scroll_wheel_listeners.drain(..) {
+        for listener in self.scroll_listeners.drain(..) {
             let hitbox = hitbox.clone();
-            window.on_scroll_wheel_event(move |event, phase, window, cx| {
+            window.on_scroll_event(move |event, phase, window, cx| {
                 listener(event, phase, &hitbox, window, cx)
             })
         }
@@ -2845,6 +2902,13 @@ impl Interactivity {
         for listener in self.pinch_listeners.drain(..) {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &PinchEvent, phase, window, cx| {
+                listener(event, phase, &hitbox, window, cx);
+            })
+        }
+
+        for listener in self.back_gesture_listeners.drain(..) {
+            let hitbox = hitbox.clone();
+            window.on_mouse_event(move |event: &BackGestureEvent, phase, window, cx| {
                 listener(event, phase, &hitbox, window, cx);
             })
         }
@@ -3344,7 +3408,7 @@ impl Interactivity {
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
-            window.on_scroll_wheel_event(move |event, phase, window, cx| {
+            window.on_scroll_event(move |event, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
@@ -3820,9 +3884,9 @@ pub(crate) fn register_tooltip_mouse_handlers(
         }
     });
 
-    window.on_scroll_wheel_event({
+    window.on_scroll_event({
         let active_tooltip = active_tooltip.clone();
-        move |event: &ScrollWheelEvent, _phase, window: &mut Window, _cx| {
+        move |event: &ScrollEvent, _phase, window: &mut Window, _cx| {
             if !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)) {
                 clear_active_tooltip_if_not_hoverable(&active_tooltip, window);
             }
@@ -4428,7 +4492,7 @@ impl ScrollHandle {
     /// Set the offset explicitly. The offset is the distance from the top left of the
     /// parent container to the top left of the first child.
     /// As you scroll further down the offset becomes more negative.
-    pub fn set_offset(&self, mut position: Point<Pixels>) {
+    pub fn set_offset(&self, position: Point<Pixels>) {
         let state = self.0.borrow();
         *state.offset.borrow_mut() = position;
     }
@@ -5114,7 +5178,7 @@ mod tests {
     fn tooltip_respects_custom_show_delay() {
         let extra_delay = Duration::from_secs(1);
         let show_delay_override = DEFAULT_TOOLTIP_SHOW_DELAY + extra_delay;
-        let (mut test_app, _any_window, captured_active_tooltip) =
+        let (test_app, _any_window, captured_active_tooltip) =
             setup_tooltip_owner_test(Some(show_delay_override));
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
@@ -5478,7 +5542,8 @@ mod tests {
     }
 
     fn key_down(cx: &mut TestAppContext, window: AnyWindowHandle, key: &str) {
-        let keystroke = Keystroke::parse(key).unwrap();
+        let os = cx.read(|cx| cx.platform_info().os);
+        let keystroke = Keystroke::parse_with_os(key, os).unwrap();
         cx.update_window(window, |_, window, cx| {
             window.dispatch_event(
                 KeyDownEvent {
@@ -5494,7 +5559,8 @@ mod tests {
     }
 
     fn key_up(cx: &mut TestAppContext, window: AnyWindowHandle, key: &str) {
-        let keystroke = Keystroke::parse(key).unwrap();
+        let os = cx.read(|cx| cx.platform_info().os);
+        let keystroke = Keystroke::parse_with_os(key, os).unwrap();
         cx.update_window(window, |_, window, cx| {
             window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
         })
@@ -5779,8 +5845,8 @@ mod tests {
         );
     }
 
-    fn wheel(dy: f32) -> ScrollWheelEvent {
-        ScrollWheelEvent {
+    fn wheel(dy: f32) -> ScrollEvent {
+        ScrollEvent {
             position: point(px(10.), px(10.)),
             delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
             ..Default::default()
@@ -5813,7 +5879,7 @@ mod tests {
                     .size(px(100.))
                     .overflow_y_scroll()
                     .track_scroll(&outer)
-                    .on_scroll_wheel(move |event, _, _| {
+                    .on_scroll(move |event, _, _| {
                         outer_saw.set(outer_saw.get() + 1);
                         event.delta
                     })

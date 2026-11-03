@@ -1328,7 +1328,8 @@ mod tests {
         "},
         );
 
-        cx.simulate_modifiers_change(Modifiers::secondary_key());
+        let secondary_modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_modifiers_change(secondary_modifiers);
         cx.run_until_parked();
         // Assert no link highlights
         cx.assert_editor_text_highlights(
@@ -1468,9 +1469,10 @@ mod tests {
         cx.run_until_parked();
         let screen_coord = cx.pixel_position(indoc! {"struct fiˇle;"});
         cx.run_until_parked();
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         cx.run_until_parked();
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
         cx.run_until_parked();
         assert_eq!(
             references_count.load(Ordering::SeqCst),
@@ -1525,9 +1527,10 @@ mod tests {
 
         let screen_coord = cx.pixel_position(indoc! {"// see fileˇ2.rs"});
         cx.run_until_parked();
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         cx.run_until_parked();
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
         cx.run_until_parked();
         cx.update_workspace(|workspace, _, cx| {
             let path = workspace
@@ -1598,13 +1601,14 @@ mod tests {
             fn do_work() { teˇst(); }
         "});
 
-        cx.simulate_mouse_move(symbol_start, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(symbol_start, None, modifiers);
         cx.run_until_parked();
 
-        cx.simulate_mouse_move(symbol_end, None, Modifiers::secondary_key());
+        cx.simulate_mouse_move(symbol_end, None, modifiers);
         cx.run_until_parked();
 
-        cx.simulate_mouse_move(other_symbol, None, Modifiers::secondary_key());
+        cx.simulate_mouse_move(other_symbol, None, modifiers);
         cx.run_until_parked();
 
         assert_eq!(
@@ -1655,16 +1659,17 @@ mod tests {
             fn do_work() { test(); }
         "});
 
-        cx.simulate_mouse_move(first_point, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(first_point, None, modifiers);
         cx.run_until_parked();
 
-        cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
+        cx.simulate_mouse_move(second_point, None, modifiers);
         cx.run_until_parked();
 
         // Jiggle within the same character should not produce a new request,
         // even though the previous response was empty and produced no link to
         // highlight.
-        cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
+        cx.simulate_mouse_move(second_point, None, modifiers);
         cx.run_until_parked();
 
         assert_eq!(
@@ -1719,7 +1724,8 @@ mod tests {
                 ])))
             });
 
-        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(hover_point, None, modifiers);
         requests.next().await;
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights(
@@ -1752,7 +1758,7 @@ mod tests {
                 ])))
             });
 
-        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
+        cx.simulate_mouse_move(hover_point, None, modifiers);
         requests.next().await;
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights(
@@ -1774,7 +1780,7 @@ mod tests {
                     // No definitions returned
                     Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
                 });
-        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
+        cx.simulate_mouse_move(hover_point, None, modifiers);
 
         requests.next().await;
         cx.background_executor.run_until_parked();
@@ -1825,7 +1831,7 @@ mod tests {
                 ])))
             });
 
-        cx.simulate_modifiers_change(Modifiers::secondary_key());
+        cx.simulate_modifiers_change(modifiers);
 
         requests.next().await;
         cx.background_executor.run_until_parked();
@@ -1847,7 +1853,7 @@ mod tests {
             "},
         );
 
-        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
+        cx.simulate_mouse_move(hover_point, None, modifiers);
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights(
             HighlightKey::HoveredLinkState,
@@ -1862,7 +1868,7 @@ mod tests {
                 fn test() { do_work(); }
                 fn do_work() { tesˇt(); }
             "});
-        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
+        cx.simulate_mouse_move(hover_point, None, modifiers);
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights(
             HighlightKey::HoveredLinkState,
@@ -1873,7 +1879,7 @@ mod tests {
         );
 
         // Cmd click with existing definition doesn't re-request and dismisses highlight
-        cx.simulate_click(hover_point, Modifiers::secondary_key());
+        cx.simulate_click(hover_point, modifiers);
         cx.lsp
             .set_request_handler::<GotoDefinition, _, _>(move |_, _| async move {
                 // Empty definition response to make sure we aren't hitting the lsp and using
@@ -1916,7 +1922,7 @@ mod tests {
                     },
                 ])))
             });
-        cx.simulate_click(hover_point, Modifiers::secondary_key());
+        cx.simulate_click(hover_point, modifiers);
         requests.next().await;
         cx.background_executor.run_until_parked();
         cx.assert_editor_state(indoc! {"
@@ -1960,7 +1966,7 @@ mod tests {
                 s.set_pending_anchor_range(anchor_range, crate::SelectMode::Character)
             });
         });
-        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
+        cx.simulate_mouse_move(hover_point, None, modifiers);
         cx.background_executor.run_until_parked();
         assert!(requests.try_recv().is_err());
         cx.assert_editor_text_highlights(
@@ -3166,7 +3172,8 @@ mod tests {
         });
         // Press cmd to trigger highlight
         let hover_point = cx.pixel_position_for(midpoint);
-        cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(hover_point, None, modifiers);
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
@@ -3255,9 +3262,9 @@ mod tests {
                 }
             "});
 
-        cx.simulate_modifiers_change(Modifiers::secondary_key());
+        cx.simulate_modifiers_change(modifiers);
         cx.background_executor.run_until_parked();
-        cx.simulate_click(hover_point, Modifiers::secondary_key());
+        cx.simulate_click(hover_point, modifiers);
         cx.background_executor.run_until_parked();
         let destination = indoc! {"
                 struct «TestStructˇ»;
@@ -3293,7 +3300,7 @@ mod tests {
             assert!(!state.task.as_ref().expect("hover task").is_ready());
             let down = MouseDownEvent {
                 position: click_point,
-                modifiers: Modifiers::secondary_key(),
+                modifiers: Modifiers::secondary_key(cx),
                 button: MouseButton::Left,
                 click_count: 1,
                 first_mouse: false,
@@ -3331,7 +3338,8 @@ mod tests {
             Let's test a [complex](https://zed.dev/channel/had-(ˇoops)) case.
             "});
 
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         cx.assert_editor_text_highlights(
             HighlightKey::HoveredLinkState,
             indoc! {"
@@ -3339,7 +3347,7 @@ mod tests {
         "},
         );
 
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
         assert_eq!(
             cx.opened_url(),
             Some("https://zed.dev/channel/had-(oops)".into())
@@ -3459,7 +3467,8 @@ mod tests {
                     Ok(Some(lsp::GotoDefinitionResponse::Array(locations.to_vec())))
                 });
             let position = cx.pixel_position(&source);
-            cx.simulate_mouse_move(position, None, Modifiers::secondary_key());
+            let modifiers = cx.read(Modifiers::secondary_key);
+            cx.simulate_mouse_move(position, None, modifiers);
             assert_eq!(symbols.next().await, Some(()));
             cx.run_until_parked();
             cx.editor(|editor, _, _| {
@@ -3468,7 +3477,7 @@ mod tests {
                 assert!(state.task.as_ref().expect("hover task").is_ready());
                 assert_eq!(state.links.len(), 1, "{marked}");
             });
-            let mut modifiers = Modifiers::secondary_key();
+            let mut modifiers = cx.read(Modifiers::secondary_key);
             modifiers.shift = true;
             cx.simulate_click(position, modifiers);
             assert!(types.try_recv().is_err());
@@ -3543,7 +3552,8 @@ mod tests {
         let screen_coord = cx.pixel_position(indoc! {"
             Let's test a [complex](https://zed.dev/channeˇl/) case.
             "});
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         cx.assert_editor_text_highlights(
             HighlightKey::HoveredLinkState,
             indoc! {"
@@ -3568,13 +3578,14 @@ mod tests {
         let screen_coord =
             cx.pixel_position(indoc! {"https://zed.dev/relˇeases is a cool webpage."});
 
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         cx.assert_editor_text_highlights(
             HighlightKey::HoveredLinkState,
             indoc! {"«https://zed.dev/releasesˇ» is a cool webpage."},
         );
 
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
         assert_eq!(cx.opened_url(), Some("https://zed.dev/releases".into()));
     }
 
@@ -3594,13 +3605,14 @@ mod tests {
         let screen_coord =
             cx.pixel_position(indoc! {"A cool webpage is https://zed.dev/releˇases"});
 
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         cx.assert_editor_text_highlights(
             HighlightKey::HoveredLinkState,
             indoc! {"A cool webpage is «https://zed.dev/releasesˇ»"},
         );
 
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
         assert_eq!(cx.opened_url(), Some("https://zed.dev/releases".into()));
     }
 
@@ -3901,7 +3913,8 @@ Sentence ending file2.rs.
         for (original, cursor_version, highlight_version) in test_cases {
             let position_text = base.replace(original, cursor_version);
             let screen_coord = cx.pixel_position(&position_text);
-            cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+            let modifiers = cx.read(Modifiers::secondary_key);
+            cx.simulate_mouse_move(screen_coord, None, modifiers);
 
             if let Some(highlight) = highlight_version {
                 let expected = base.replace(original, highlight);
@@ -3929,7 +3942,8 @@ Sentence ending file2.rs.
             "Or [link](fiˇle2.rs) markdown",
         );
         let screen_coord = cx.pixel_position(&position_text);
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_click(screen_coord, modifiers);
 
         cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.update_workspace(|workspace, _, cx| {
@@ -3984,7 +3998,8 @@ Sentence ending file2.rs.
             Go to filˇe2.rs:5:3 for the fix.
         "});
 
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         cx.assert_editor_text_highlights(
             HighlightKey::HoveredLinkState,
             indoc! {"
@@ -3992,7 +4007,7 @@ Sentence ending file2.rs.
         "},
         );
 
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
 
         cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.update_workspace(|workspace, window, cx| {
@@ -4061,7 +4076,8 @@ Sentence ending file2.rs.
             Go to filˇe2.rs:3 please.
         "});
 
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         cx.assert_editor_text_highlights(
             HighlightKey::HoveredLinkState,
             indoc! {"
@@ -4069,7 +4085,7 @@ Sentence ending file2.rs.
         "},
         );
 
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
 
         cx.update_workspace(|workspace, window, cx| {
             let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
@@ -4119,7 +4135,8 @@ Sentence ending file2.rs.
             Error at filˇe2.rs:2:in 'method'
         "});
 
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         cx.assert_editor_text_highlights(
             HighlightKey::HoveredLinkState,
             indoc! {"
@@ -4127,7 +4144,7 @@ Sentence ending file2.rs.
         "},
         );
 
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
 
         cx.update_workspace(|workspace, window, cx| {
             let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
@@ -4179,7 +4196,8 @@ Sentence ending file2.rs.
             See [here](filˇe2.rs:3:2) for details.
         "});
 
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         cx.assert_editor_text_highlights(
             HighlightKey::HoveredLinkState,
             indoc! {"
@@ -4187,7 +4205,7 @@ Sentence ending file2.rs.
         "},
         );
 
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
 
         cx.update_workspace(|workspace, window, cx| {
             let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
@@ -4249,7 +4267,8 @@ Sentence ending file2.rs.
         let screen_coord = cx.pixel_position(indoc! {"
             You can't open ../diˇr because it's a directory.
         "});
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
 
         // No highlight
         cx.update_editor(|editor, window, cx| {
@@ -4264,7 +4283,7 @@ Sentence ending file2.rs.
         });
 
         // Does not open the directory
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
         cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
     }
 
@@ -4287,7 +4306,8 @@ Sentence ending file2.rs.
         let screen_coord = cx.pixel_position(indoc! {"
             You can't open ˇ\"🤩\" because it's an emoji.
         "});
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
 
         // No highlight, does not panic...
         cx.update_editor(|editor, window, cx| {
@@ -4302,7 +4322,7 @@ Sentence ending file2.rs.
         });
 
         // Does not open the directory
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
         cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
     }
 
@@ -4437,7 +4457,8 @@ Sentence ending file2.rs.
             }
         "});
 
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         cx.run_until_parked();
 
         cx.assert_editor_text_highlights(
@@ -4451,7 +4472,7 @@ Sentence ending file2.rs.
         );
 
         // Clicking opens the URL
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
         assert_eq!(
             cx.opened_url(),
             Some("https://opensource.org/licenses/MIT".into())
@@ -4507,7 +4528,8 @@ Sentence ending file2.rs.
             // See https://examˇple.com for more info
         "});
 
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         cx.run_until_parked();
 
         // LSP document link range is highlighted, not just the URL portion
@@ -4520,7 +4542,7 @@ Sentence ending file2.rs.
 
         // Clicking navigates to the LSP-provided target, not the detected URL.
         // (Uri::to_string normalizes "https://host" to "https://host/")
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
         assert_eq!(
             cx.opened_url(),
             Some("https://lsp-provided.example.com/".into())
@@ -4597,7 +4619,8 @@ Sentence ending file2.rs.
             // See LICˇENSE for details
             fn definition() {}
         "});
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        let modifiers = cx.read(Modifiers::secondary_key);
+        cx.simulate_mouse_move(screen_coord, None, modifiers);
         definition_requests.next().await;
         cx.run_until_parked();
 
@@ -4628,7 +4651,7 @@ Sentence ending file2.rs.
         // Cmd-click resolves the in-buffer location (definition) since the
         // mixed Url + Text case lets `navigate_to_hover_links` prefer the
         // location target over the external URL.
-        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.simulate_click(screen_coord, modifiers);
         cx.run_until_parked();
         cx.assert_editor_state(indoc! {"
             // See LICENSE for details

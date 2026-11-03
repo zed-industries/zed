@@ -231,7 +231,7 @@ impl MemoryView {
         )
         .track_scroll(&view_state.scroll_handle)
         .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-        .on_scroll_wheel(cx.scroll_listener(|this, evt, window, _| {
+        .on_scroll(cx.scroll_listener(|this, evt, window, _| {
             let mut view_state = this.view_state();
             let delta = evt.delta.pixel_delta(window.line_height());
             let current_offset = view_state.scroll_handle.offset();

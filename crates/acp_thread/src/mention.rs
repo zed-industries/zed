@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use anyhow::{Context as _, Result, bail};
 use file_icons::FileIcons;
 use serde::{Deserialize, Serialize};
@@ -8,6 +8,7 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
+use text::LineEnding;
 use ui::{App, IconName, SharedString};
 use url::Url;
 use urlencoding::decode;
@@ -590,7 +591,10 @@ pub struct MentionLink<'a>(&'a MentionUri);
 
 impl fmt::Display for MentionLink<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[@{}]({})", self.0.name(), self.0.to_uri())
+        // Match the buffer's line ending normalization, so the link's length matches the inserted text.
+        let mut name = self.0.name();
+        LineEnding::normalize(&mut name);
+        write!(f, "[@{name}]({})", self.0.to_uri())
     }
 }
 
@@ -869,7 +873,7 @@ mod tests {
         for value in ["", "session/ \0 雪 😀"] {
             let wire = serde_json::json!({
                 "Thread": {
-                    "id": agent_client_protocol::schema::v1::SessionId::new(value),
+                    "id": agent_client_protocol::v1::schema::SessionId::new(value),
                     "name": "Thread",
                 },
             });
@@ -1788,5 +1792,24 @@ mod tests {
         };
         assert_eq!(root_file.disambiguated_name(1), "README.md");
         assert_eq!(root_file.disambiguated_name(5), "README.md");
+    }
+
+    #[test]
+    fn test_link_normalizes_line_endings_in_name() {
+        for (file_name, expected_link_name) in [
+            ("a\r\nb.txt", "a\nb.txt"),
+            ("a\rb.txt", "a\nb.txt"),
+            ("a\r\rb.txt", "a\n\nb.txt"),
+            ("a\nb.txt", "a\nb.txt"),
+        ] {
+            let uri = MentionUri::File {
+                abs_path: PathBuf::from(path!("/project")).join(file_name),
+            };
+            assert_eq!(uri.name(), file_name);
+            assert_eq!(
+                uri.as_link().to_string(),
+                format!("[@{expected_link_name}]({})", uri.to_uri())
+            );
+        }
     }
 }

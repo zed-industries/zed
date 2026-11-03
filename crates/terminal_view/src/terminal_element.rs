@@ -1060,7 +1060,7 @@ impl TerminalElement {
         }
 
         if content_mode.is_scrollable() {
-            self.interactivity.on_scroll_wheel({
+            self.interactivity.on_scroll({
                 let terminal_view = self.terminal_view.downgrade();
                 move |e, window, cx| {
                     let scrolled = terminal_view
@@ -1340,7 +1340,7 @@ impl Element for TerminalElement {
                     terminal.set_size(dimensions);
                     terminal.sync(window, cx);
 
-                    if window.modifiers().secondary()
+                    if window.modifiers().secondary(cx)
                         && bounds.contains(&window.mouse_position())
                         && let Some(registered_hover) = self.terminal_view.read(cx).hover.as_ref()
                     {
@@ -1616,7 +1616,7 @@ impl Element for TerminalElement {
                 mouse_input_mode,
                 window,
             );
-            if window.modifiers().secondary()
+            if window.modifiers().secondary(cx)
                 && bounds.contains(&window.mouse_position())
                 && self.terminal_view.read(cx).hover.is_some()
             {

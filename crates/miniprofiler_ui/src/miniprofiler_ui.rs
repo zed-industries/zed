@@ -664,7 +664,7 @@ impl Render for ProfilerWindow {
                                 }
                             })
                             .p_4()
-                            .on_scroll_wheel(cx.scroll_listener(|this, event, _, cx| {
+                            .on_scroll(cx.scroll_listener(|this, event, _, cx| {
                                 this.autoscroll = false;
                                 cx.notify();
                                 event.delta
