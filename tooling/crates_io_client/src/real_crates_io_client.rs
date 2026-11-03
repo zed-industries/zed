@@ -17,7 +17,8 @@ const BASE_URL: &str = "https://crates.io/api/v1";
 // User agent and request rate requirements: https://crates.io/data-access
 const USER_AGENT: &str = "Zed GPUI releases (https://github.com/zed-industries/zed)";
 pub(crate) const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(1);
-const MAX_PER_PAGE: u32 = 100;
+const MAX_PER_PAGE: usize = 100;
+const GITHUB_CONFIGS_PATH: &str = "/trusted_publishing/github_configs";
 
 /// Reserving the send time before waiting makes concurrent requests queue up
 /// behind each other instead of all waking at the same instant.
@@ -171,11 +172,11 @@ impl CratesIoClient for RealCratesIoClient {
         let mut crates = Vec::new();
         loop {
             let mut page: CrateListResponse = self.request_json(Method::GET, url, None).await?;
-            let is_last_page = page.crates.is_empty();
+            let is_full_page = page.crates.len() == MAX_PER_PAGE;
             crates.append(&mut page.crates);
 
             match page.meta.next_page {
-                Some(next_page) if !is_last_page => {
+                Some(next_page) if is_full_page => {
                     url = Self::url(&format!("/crates{next_page}"))?;
                 }
                 _ => return Ok(crates),
@@ -220,5 +221,52 @@ impl CratesIoClient for RealCratesIoClient {
             .request_json(Method::PATCH, Self::crate_url(name)?, Some(body))
             .await?;
         Ok(response.krate)
+    }
+
+    async fn list_github_configs(&self, crate_name: &CrateName) -> Result<Vec<GitHubConfig>> {
+        #[derive(Deserialize)]
+        struct GitHubConfigListResponse {
+            github_configs: Vec<GitHubConfig>,
+        }
+
+        let mut url = Self::url(GITHUB_CONFIGS_PATH)?;
+        url.query_pairs_mut()
+            .append_pair("per_page", &MAX_PER_PAGE.to_string())
+            .append_pair("crate", crate_name.as_str());
+        let response: GitHubConfigListResponse = self.request_json(Method::GET, url, None).await?;
+        if response.github_configs.len() >= MAX_PER_PAGE {
+            return Err(anyhow::anyhow!(
+                "crates.io returned more GitHub Trusted Publishing configurations for `{crate_name}` than expected"
+            )
+            .into());
+        }
+        Ok(response.github_configs)
+    }
+
+    async fn create_github_config(&self, config: &NewGitHubConfig) -> Result<GitHubConfig> {
+        #[derive(Serialize)]
+        struct CreateRequest<'a> {
+            github_config: &'a NewGitHubConfig,
+        }
+
+        #[derive(Deserialize)]
+        struct CreateResponse {
+            github_config: GitHubConfig,
+        }
+
+        let body = serde_json::to_vec(&CreateRequest {
+            github_config: config,
+        })
+        .context("Failed to serialize GitHub Trusted Publishing configuration")?;
+        let response: CreateResponse = self
+            .request_json(Method::POST, Self::url(GITHUB_CONFIGS_PATH)?, Some(body))
+            .await?;
+        Ok(response.github_config)
+    }
+
+    async fn delete_github_config(&self, id: GitHubConfigId) -> Result<()> {
+        let url = Self::url(&format!("{GITHUB_CONFIGS_PATH}/{id}"))?;
+        self.request_response(Method::DELETE, url, None).await?;
+        Ok(())
     }
 }
