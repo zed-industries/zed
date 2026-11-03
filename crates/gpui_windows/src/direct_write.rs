@@ -604,7 +604,10 @@ impl DirectWriteState {
         }
         unsafe {
             self.layout_line_scratch.clear();
-            self.layout_line_scratch.extend(text.encode_utf16());
+            // DirectWrite draws no glyph for a tab (zero width); shape it as a space and
+            // widen it below (`expand_tabs`). Same length in UTF-8 and UTF-16.
+            self.layout_line_scratch
+                .extend(text.encode_utf16().map(|u| if u == 9 { 32 } else { u }));
             let text_wide = &*self.layout_line_scratch;
 
             let mut utf8_offset = 0usize;
@@ -699,7 +702,8 @@ impl DirectWriteState {
                 0.0,
                 0.0,
             )?;
-            let width = px(renderer_context.width);
+            let drawn = renderer_context.width;
+            let width = px(drawn + expand_tabs(text, &mut runs, drawn));
 
             Ok(LineLayout {
                 font_size,
@@ -2030,6 +2034,84 @@ const DEFAULT_LOCALE_NAME: PCWSTR = windows::core::w!("en-US");
 
 fn is_line_separator(character: char) -> bool {
     matches!(character, '\u{2028}' | '\u{2029}')
+}
+
+/// widen each tab (shaped as a space) to the next stop of 4 space widths
+/// (columns in a monospace font) and shift the glyphs after it; returns the added width.
+/// Zed's editor expands tabs itself, so this only matters to text that keeps them, like Makefile
+/// recipes in a plain-text surface.
+/// ponytail: glyphs are taken in run order (left to right); a tab in right-to-left text may land
+/// off its stop.
+fn expand_tabs(text: &str, runs: &mut [ShapedRun], width: f32) -> f32 {
+    if !text.contains('\t') {
+        return 0.;
+    }
+    let xs: Vec<f32> = runs
+        .iter()
+        .flat_map(|r| r.glyphs.iter().map(|g| g.position.x.as_f32()))
+        .chain([width])
+        .collect();
+    let mut shift = 0.;
+    let mut i = 0;
+    for glyph in runs.iter_mut().flat_map(|r| r.glyphs.iter_mut()) {
+        let x = glyph.position.x.as_f32() + shift;
+        glyph.position.x = px(x);
+        if text.as_bytes().get(glyph.index) == Some(&b'\t') {
+            // its advance (a space's) is the gap to the next glyph, or to the line end
+            let space = xs[i + 1] - xs[i];
+            if space > 0. {
+                let col = (x / space).round();
+                let end = ((col / 4.).floor() + 1.) * 4. * space;
+                shift += end - (x + space);
+            }
+        }
+        i += 1;
+    }
+    shift
+}
+
+#[cfg(test)]
+mod tab_tests {
+    use super::expand_tabs;
+    use gpui::{FontId, GlyphId, ShapedGlyph, ShapedRun, point, px};
+
+    fn line(text: &str, adv: f32) -> Vec<ShapedRun> {
+        let glyphs = (0..text.len())
+            .map(|i| ShapedGlyph {
+                id: GlyphId(0),
+                position: point(px(i as f32 * adv), px(0.)),
+                index: i,
+                is_emoji: false,
+            })
+            .collect();
+        vec![ShapedRun {
+            font_id: FontId(0),
+            glyphs,
+        }]
+    }
+
+    #[test]
+    fn tabs_stop_every_four_columns() {
+        for (text, want, extra) in [
+            ("ab", vec![0., 1.], 0.),
+            ("\tab", vec![0., 4., 5.], 3.),
+            ("\t\tab", vec![0., 4., 8., 9.], 6.),
+            ("a\tb", vec![0., 1., 4.], 2.),
+            ("abcd\te", vec![0., 1., 2., 3., 4., 8.], 3.),
+            ("a\tb\tc", vec![0., 1., 4., 5., 8.], 4.),
+            ("ab\t", vec![0., 1., 2.], 1.),
+        ] {
+            let mut runs = line(text, 2.5);
+            let added = expand_tabs(text, &mut runs, text.len() as f32 * 2.5);
+            let got: Vec<f32> = runs[0]
+                .glyphs
+                .iter()
+                .map(|g| g.position.x.as_f32() / 2.5)
+                .collect();
+            assert_eq!(got, want, "{text:?}");
+            assert_eq!(added, extra * 2.5, "{text:?}");
+        }
+    }
 }
 
 #[cfg(test)]
