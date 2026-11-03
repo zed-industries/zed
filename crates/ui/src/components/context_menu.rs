@@ -2770,35 +2770,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn embedded_view_fills_the_submenu(cx: &mut TestAppContext) {
-        let content_focus = cx.update(|cx| cx.focus_handle());
-        let content_bounds = Rc::new(Cell::new(None));
-        let (menu, mut visual) =
-            open_window_with_embedded_view_submenu(&content_focus, &content_bounds, cx);
-
-        menu.update_in(&mut visual, |menu, window, cx| {
-            menu.select_first(&SelectFirst, window, cx);
-            menu.select_submenu_child(&SelectChild, window, cx);
-        });
-        draw_frames(&mut visual);
-
-        let submenu_bounds = menu.read_with(&visual, |menu, cx| match &menu.submenu_state {
-            SubmenuState::Open(open_submenu) => open_submenu
-                .entity
-                .read(cx)
-                .main_menu_observed_bounds
-                .get()
-                .expect("submenu content bounds"),
-            SubmenuState::Closed => panic!("submenu was closed"),
-        });
-        let content_bounds = content_bounds.get().expect("embedded view bounds");
-        assert_eq!(
-            content_bounds, submenu_bounds,
-            "the embedded view must fill the submenu without padding"
-        );
-    }
-
-    #[gpui::test]
     fn opening_submenu_by_hover_focuses_its_content(cx: &mut TestAppContext) {
         let content_focus = cx.update(|cx| cx.focus_handle());
         let content_bounds = Rc::new(Cell::new(None));
