@@ -17781,6 +17781,92 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_branch_mode_rows_across_base_switches(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+        let dot_git = Path::new(path!("/project/.git"));
+        let switch_base = |base: &'static str, cx: &mut VisualTestContext| {
+            panel.update_in(cx, |panel, window, cx| {
+                panel.show_branch_changes_since(base.into(), window, cx);
+            });
+        };
+        let tree_diff_failed = |cx: &mut VisualTestContext| {
+            panel.read_with(cx, |panel, cx| {
+                panel
+                    .branch_list()
+                    .is_some_and(|list| list.read(cx).tree_diff_error().is_some())
+            })
+        };
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.enter_branch_mode(window, cx);
+        });
+        settle_branch_mode(cx);
+        assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
+
+        // The fake repository has one merge base for every ref, so change it
+        // without a git event before switching.
+        let origin_main_merge_base = test
+            .fs
+            .with_git_state(dot_git, false, |state| {
+                let merge_base = state.merge_base_contents.clone();
+                state.merge_base_contents.remove(&repo_path("c.txt"));
+                merge_base
+            })
+            .unwrap();
+        switch_base("develop", cx);
+        assert_eq!(
+            listed_paths(&panel, cx),
+            ["a.txt", "b.txt", "d.txt"],
+            "the previous base's rows stay while the new base loads",
+        );
+        settle_branch_mode(cx);
+        assert_eq!(
+            listed_paths(&panel, cx),
+            ["a.txt", "b.txt", "c.txt", "d.txt"]
+        );
+
+        // A merge base blob that can't be read makes the reload fail. Reloads
+        // only run when statuses change, so stage a file to start one.
+        test.fs
+            .with_git_state(dot_git, false, |state| {
+                state
+                    .merge_base_contents
+                    .insert(repo_path("a.txt"), Oid::from_bytes(&[1; 20]).unwrap());
+            })
+            .unwrap();
+        test.fs.set_index_for_repo(
+            dot_git,
+            &[
+                ("a.txt", "A2".into()),
+                ("c.txt", "C".into()),
+                ("d.txt", "D2".into()),
+            ],
+        );
+        settle_branch_mode(cx);
+        assert!(tree_diff_failed(cx));
+        assert!(
+            listed_paths(&panel, cx).is_empty(),
+            "a failed reload hides the rows from the last load",
+        );
+
+        test.fs
+            .with_git_state(dot_git, false, |state| {
+                state.merge_base_contents = origin_main_merge_base;
+            })
+            .unwrap();
+        switch_base("origin/main", cx);
+        assert!(
+            listed_paths(&panel, cx).is_empty(),
+            "switching away from a failed base doesn't bring its rows back",
+        );
+        settle_branch_mode(cx);
+        assert!(!tree_diff_failed(cx));
+        assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
+    }
+
+    #[gpui::test]
     async fn test_branch_mode_ignores_staging_actions(cx: &mut TestAppContext) {
         let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
         let cx = &mut cx;
