@@ -10328,6 +10328,87 @@ mod tests {
     }
 
     #[gpui::test]
+    fn cached_view_rendered_again_reuses_its_clean_cached_children(cx: &mut TestAppContext) {
+        struct Leaf {
+            renders: usize,
+        }
+
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders += 1;
+                div().size_full()
+            }
+        }
+
+        struct Parent {
+            renders: usize,
+            leaves: [crate::Entity<Leaf>; 2],
+        }
+
+        impl Render for Parent {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders += 1;
+                div()
+                    .size_full()
+                    .flex()
+                    .children(self.leaves.iter().map(|leaf| {
+                        leaf.clone()
+                            .cached(crate::StyleRefinement::default().size(px(50.)))
+                    }))
+            }
+        }
+
+        struct Root {
+            parent: crate::Entity<Parent>,
+        }
+
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(
+                    self.parent
+                        .clone()
+                        .cached(crate::StyleRefinement::default().size(px(100.))),
+                )
+            }
+        }
+
+        let leaves = [
+            cx.new(|_| Leaf { renders: 0 }),
+            cx.new(|_| Leaf { renders: 0 }),
+        ];
+        let parent = cx.new(|_| Parent {
+            renders: 0,
+            leaves: leaves.clone(),
+        });
+        let window = cx.add_window(|_, _| Root {
+            parent: parent.clone(),
+        });
+        let renders = |cx: &mut TestAppContext| {
+            cx.update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                (
+                    parent.read(cx).renders,
+                    leaves[0].read(cx).renders,
+                    leaves[1].read(cx).renders,
+                )
+            })
+            .expect("draw window")
+        };
+
+        assert_eq!(renders(cx), (1, 1, 1));
+
+        // Notifying one leaf renders it and its ancestors; its sibling is reused.
+        leaves[0].update(cx, |_, cx| cx.notify());
+        assert_eq!(renders(cx), (2, 2, 1));
+
+        // A refresh of the window still renders every view.
+        window
+            .update(cx, |_, window, _| window.refresh())
+            .expect("refresh window");
+        assert_eq!(renders(cx), (3, 3, 2));
+    }
+
+    #[gpui::test]
     fn cached_view_follows_inherited_opacity(cx: &mut TestAppContext) {
         struct Child {
             renders: usize,
