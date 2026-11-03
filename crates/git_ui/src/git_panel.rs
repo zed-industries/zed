@@ -1726,6 +1726,11 @@ impl GitPanel {
             .map(|entry| entry.index)
     }
 
+    fn change_entry_by_path(&self, path: &RepoPath) -> Option<&GitStatusEntry> {
+        self.change_entries
+            .get(*self.change_entry_indices.get(path)?)
+    }
+
     fn entry_by_path_in_section(&self, path: &RepoPath, section: Section) -> Option<usize> {
         self.projected_entries_by_path
             .get(path)?
@@ -2769,12 +2774,9 @@ impl GitPanel {
         self.selected_entry.and_then(|i| self.entries.get(i))
     }
 
-    fn change_entries_by_path(&self) -> impl Iterator<Item = &GitStatusEntry> {
-        self.change_entries.iter()
-    }
-
     fn has_untracked_files(&self) -> bool {
-        self.change_entries_by_path()
+        self.change_entries
+            .iter()
             .any(|entry| entry.status.is_untracked())
     }
 
@@ -3481,7 +3483,7 @@ impl GitPanel {
         let entries = self
             .directory_context_descendants()
             .map(Self::staged_tracked_entries)
-            .unwrap_or_else(|| Self::staged_tracked_entries(self.change_entries_by_path()));
+            .unwrap_or_else(|| Self::staged_tracked_entries(self.change_entries.iter()));
 
         match entries.len() {
             0 => return,
@@ -3539,7 +3541,8 @@ impl GitPanel {
         // Files added to the index are not untracked; trashing them would also
         // discard their staged contents.
         let to_delete = self
-            .change_entries_by_path()
+            .change_entries
+            .iter()
             .filter(|status_entry| status_entry.status.is_untracked())
             .cloned()
             .collect::<Vec<_>>();
@@ -3766,7 +3769,8 @@ impl GitPanel {
                         StageIntent::Toggle => !self.header_state(section.header).selected(),
                     };
                     let entries = self
-                        .change_entries_by_path()
+                        .change_entries
+                        .iter()
                         .filter(|status_entry| {
                             section.contains(status_entry, &repo)
                                 && GitPanel::stage_status_for_entry(status_entry, &repo).as_bool()
@@ -4287,7 +4291,8 @@ impl GitPanel {
             cx.background_spawn(async move { commit_task.await? })
         } else {
             let changed_files = self
-                .change_entries_by_path()
+                .change_entries
+                .iter()
                 .filter(|status_entry| !status_entry.status.is_created())
                 .map(|status_entry| status_entry.repo_path.clone())
                 .collect::<Vec<_>>();
@@ -6089,11 +6094,7 @@ impl GitPanel {
         }
 
         let is_branch_mode = self.is_branch_mode();
-        let mut branch_entries = if is_branch_mode {
-            self.branch_status_entries(cx)
-        } else {
-            Vec::new()
-        };
+        let mut branch_entries = self.branch_status_entries(cx);
 
         if !is_tree_view {
             let sort_entries = |entries: &mut Vec<GitStatusEntry>| match sort_by {
@@ -6160,7 +6161,7 @@ impl GitPanel {
                 (Section::New, std::mem::take(&mut new_entries)),
             ]
         };
-        // Picks each file's first row in display order, matching which row a
+        // Picks each file's first row in section order, matching which row a
         // grouping that projects one file into several rows lists first.
         self.change_entries = section_entries
             .iter()
@@ -6456,7 +6457,7 @@ impl GitPanel {
         self.entry_count = 0;
         self.diff_stat_total = DiffStat::default();
 
-        let change_entries = self.change_entries_by_path().cloned().collect::<Vec<_>>();
+        let change_entries = self.change_entries.iter().cloned().collect::<Vec<_>>();
         for status_entry in change_entries {
             self.entry_count += 1;
             if let Some(diff_stat) = status_entry.diff_stat {
@@ -6496,7 +6497,8 @@ impl GitPanel {
     }
 
     pub(crate) fn has_unstaged_changes(&self) -> bool {
-        self.change_entries_by_path()
+        self.change_entries
+            .iter()
             .any(|entry| entry.staging.has_unstaged())
     }
 
@@ -6509,11 +6511,12 @@ impl GitPanel {
     }
 
     fn has_staged_tracked_changes(&self) -> bool {
-        Self::contains_staged_tracked_entry(self.change_entries_by_path())
+        Self::contains_staged_tracked_entry(self.change_entries.iter())
     }
 
     pub fn has_unstaged_conflicts(&self) -> bool {
-        self.change_entries_by_path()
+        self.change_entries
+            .iter()
             .any(|entry| entry.status.is_conflicted() && entry.staging.has_unstaged())
     }
 
@@ -8550,11 +8553,7 @@ impl GitPanel {
         let repo = self.active_repository.as_ref()?.read(cx);
         let project_path = (file.worktree_id(cx), file.path().clone()).into();
         let repo_path = repo.project_path_to_repo_path(&project_path, cx)?;
-        let entry = GitListEntry::Status(
-            self.change_entries
-                .get(*self.change_entry_indices.get(&repo_path)?)?
-                .clone(),
-        );
+        let entry = GitListEntry::Status(self.change_entry_by_path(&repo_path)?.clone());
 
         let is_staging_or_staged = repo
             .pending_ops_for_path(&repo_path)
@@ -12111,7 +12110,8 @@ mod tests {
             assert_eq!(panel.entry_count, 6);
             assert_eq!(
                 panel
-                    .change_entries_by_path()
+                    .change_entries
+                    .iter()
                     .filter(|entry| entry.status.is_created())
                     .map(|entry| &*entry.repo_path)
                     .sorted()
@@ -12512,7 +12512,8 @@ mod tests {
                     .expect("active repository should exist")
                     .read(cx);
                 let entry = panel
-                    .change_entries_by_path()
+                    .change_entries
+                    .iter()
                     .find(|entry| entry.repo_path == repo_path(path))
                     .expect("entry should exist")
                     .clone();
@@ -12633,7 +12634,8 @@ mod tests {
         // A shift-click range sweep anchored at the conflict must skip it too.
         let staged_entry = panel.read_with(&cx, |panel, _| {
             panel
-                .change_entries_by_path()
+                .change_entries
+                .iter()
                 .find(|entry| entry.repo_path == repo_path("staged.rs"))
                 .cloned()
                 .expect("staged entry should exist")
@@ -17674,7 +17676,8 @@ mod tests {
     fn uncommitted_paths(panel: &Entity<GitPanel>, cx: &mut VisualTestContext) -> Vec<String> {
         panel.read_with(cx, |panel, _| {
             panel
-                .change_entries_by_path()
+                .change_entries
+                .iter()
                 .map(|entry| entry.repo_path.as_unix_str().to_owned())
                 .sorted()
                 .collect()

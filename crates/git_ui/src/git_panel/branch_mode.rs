@@ -18,6 +18,15 @@ pub(super) struct BranchList {
     _subscription: Subscription,
 }
 
+impl BranchList {
+    fn drop_previous_files_once_loaded(&mut self, cx: &App) {
+        let list = self.list.read(cx);
+        if list.statuses_by_path().is_some() || list.tree_diff_error().is_some() {
+            self.previous_files = None;
+        }
+    }
+}
+
 /// Rebuilds keep using these until the new base loads, so view changes and
 /// folder toggles still apply while it does.
 struct PreviousFiles {
@@ -25,20 +34,25 @@ struct PreviousFiles {
     _expire: Task<()>,
 }
 
-fn listed_files(list: &DiffBufferList) -> Option<Vec<GitStatusEntry>> {
-    let statuses = list.statuses_by_path()?;
-    Some(
-        statuses
-            .iter()
-            .map(|status_entry| GitStatusEntry {
-                repo_path: status_entry.repo_path.clone(),
-                status: status_entry.status,
-                staging: status_entry.status.staging(),
-                // Per-file stats against the merge base aren't computed yet.
-                diff_stat: None,
+impl PreviousFiles {
+    fn new(entries: Vec<GitStatusEntry>, window: &mut Window, cx: &mut Context<GitPanel>) -> Self {
+        let expire = cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(KEEP_PREVIOUS_FILES_FOR)
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                if let ChangesMode::Branch(Some(branch_list)) = &mut this.changes_mode {
+                    branch_list.previous_files = None;
+                }
+                this.update_visible_entries(window, cx);
             })
-            .collect(),
-    )
+            .ok();
+        });
+        Self {
+            entries,
+            _expire: expire,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -62,9 +76,18 @@ pub(super) struct BranchBase {
     followed: Option<FollowedBranchDiff>,
 }
 
+/// The active branch diff tab. Branch mode adopts its base and follows base
+/// changes made in the tab's own picker.
+struct FollowedBranchDiff {
+    list: WeakEntity<DiffBufferList>,
+    _subscription: Subscription,
+}
+
 #[derive(Clone, Copy)]
 struct ShowBranchChangesRequest {
-    open_diff: bool,
+    /// The empty state's button, which also opens the diff and always uses
+    /// the default branch.
+    from_empty_state: bool,
 }
 
 impl BranchBase {
@@ -109,6 +132,8 @@ impl BranchBase {
             }
     }
 
+    /// Whether the default branch has to be looked up, for the first time or
+    /// again because the branch list changed since.
     fn needs_lookup(&self) -> bool {
         self.picked.is_none()
             && match self.default {
@@ -117,13 +142,6 @@ impl BranchBase {
                 DefaultBranch::Found(_) | DefaultBranch::Missing => self.default_is_stale,
             }
     }
-}
-
-/// The branch diff tab the panel last adopted a base from, watched so that
-/// base changes made in the tab's own picker carry over to the panel.
-struct FollowedBranchDiff {
-    list: WeakEntity<DiffBufferList>,
-    _subscription: Subscription,
 }
 
 impl GitPanel {
@@ -188,7 +206,13 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.show_branch_changes_for(ShowBranchChangesRequest { open_diff: false }, window, cx);
+        self.show_branch_changes_for(
+            ShowBranchChangesRequest {
+                from_empty_state: false,
+            },
+            window,
+            cx,
+        );
     }
 
     pub(super) fn show_branch_changes_and_open_diff(
@@ -196,7 +220,13 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.show_branch_changes_for(ShowBranchChangesRequest { open_diff: true }, window, cx);
+        self.show_branch_changes_for(
+            ShowBranchChangesRequest {
+                from_empty_state: true,
+            },
+            window,
+            cx,
+        );
     }
 
     fn show_branch_changes_for(
@@ -211,7 +241,7 @@ impl GitPanel {
         }
         // The empty state's button opens the default branch's diff, as it
         // did before branch mode existed.
-        if !request.open_diff {
+        if !request.from_empty_state {
             self.adopt_followed_branch_diff_base(window, cx);
         }
         if self.branch_base.needs_lookup_to_decide() {
@@ -224,7 +254,7 @@ impl GitPanel {
             return;
         }
         self.enter_branch_mode(window, cx);
-        if request.open_diff {
+        if request.from_empty_state {
             self.open_branch_diff(None, window, cx);
         }
     }
@@ -247,7 +277,7 @@ impl GitPanel {
         }
     }
 
-    fn show_branch_changes_since_picked(
+    fn on_base_picked(
         panel: WeakEntity<GitPanel>,
     ) -> impl Fn(Branch, &mut Window, &mut App) + 'static {
         move |branch, window, cx| {
@@ -266,7 +296,7 @@ impl GitPanel {
         };
         let selected_branch = self.branch_base.effective();
         let on_select: branch_picker::SelectBranchCallback =
-            Arc::new(Self::show_branch_changes_since_picked(cx.weak_entity()));
+            Arc::new(Self::on_base_picked(cx.weak_entity()));
         let workspace = self.workspace.clone();
         // Workspace actions call this while the workspace is being updated, so
         // the modal opens once that update has finished.
@@ -387,16 +417,16 @@ impl GitPanel {
             };
             // Read before the list moves to the new base and drops its files.
             // A switch while the previous base still loads keeps its files.
-            let previous_entries = (base_changed && !repo_changed)
-                .then(|| {
-                    listed_files(branch_list.list.read(cx)).or_else(|| {
-                        branch_list
-                            .previous_files
-                            .take()
-                            .map(|previous| previous.entries)
-                    })
+            let previous_entries = if base_changed && !repo_changed {
+                listed_files(branch_list.list.read(cx)).or_else(|| {
+                    branch_list
+                        .previous_files
+                        .take()
+                        .map(|previous| previous.entries)
                 })
-                .flatten();
+            } else {
+                None
+            };
             branch_list.list.update(cx, |list, cx| {
                 list.set_repo(Some(repo), cx);
                 if base_changed {
@@ -407,26 +437,10 @@ impl GitPanel {
                 // Another repository's files would be wrong, not just stale.
                 branch_list.previous_files = None;
             } else if base_changed {
-                branch_list.previous_files = previous_entries.map(|entries| PreviousFiles {
-                    entries,
-                    _expire: cx.spawn_in(window, async move |this, cx| {
-                        cx.background_executor()
-                            .timer(KEEP_PREVIOUS_FILES_FOR)
-                            .await;
-                        this.update_in(cx, |this, window, cx| {
-                            if let ChangesMode::Branch(Some(branch_list)) = &mut this.changes_mode {
-                                branch_list.previous_files = None;
-                            }
-                            this.update_visible_entries(window, cx);
-                        })
-                        .ok();
-                    }),
-                });
+                branch_list.previous_files =
+                    previous_entries.map(|entries| PreviousFiles::new(entries, window, cx));
             } else {
-                let list = branch_list.list.read(cx);
-                if list.statuses_by_path().is_some() || list.tree_diff_error().is_some() {
-                    branch_list.previous_files = None;
-                }
+                branch_list.drop_previous_files_once_loaded(cx);
             }
             return;
         }
@@ -707,7 +721,7 @@ impl GitPanel {
         let picked = Arc::new(AtomicBool::new(false));
         let on_select: branch_picker::SelectBranchCallback = Arc::new({
             let picked = picked.clone();
-            let show_branch_changes_since = Self::show_branch_changes_since_picked(panel);
+            let show_branch_changes_since = Self::on_base_picked(panel);
             move |branch: Branch, window: &mut Window, cx: &mut App| {
                 picked.store(true, Ordering::Relaxed);
                 show_branch_changes_since(branch, window, cx);
@@ -795,4 +809,20 @@ impl GitPanel {
                 })
         })
     }
+}
+
+fn listed_files(list: &DiffBufferList) -> Option<Vec<GitStatusEntry>> {
+    let statuses = list.statuses_by_path()?;
+    Some(
+        statuses
+            .iter()
+            .map(|status_entry| GitStatusEntry {
+                repo_path: status_entry.repo_path.clone(),
+                status: status_entry.status,
+                staging: status_entry.status.staging(),
+                // Per-file stats against the merge base aren't computed yet.
+                diff_stat: None,
+            })
+            .collect(),
+    )
 }
