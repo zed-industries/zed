@@ -9110,6 +9110,8 @@ impl GitPanel {
             GitPanelViewMode::Flat => (false, self.visible_flat_entry_indices().len()),
         };
         let repo = repo.downgrade();
+        // Branch rows are read-only.
+        let show_checkbox = !self.is_branch_mode();
 
         v_flex()
             .flex_1()
@@ -9153,6 +9155,7 @@ impl GitPanel {
                                                 entry,
                                                 0,
                                                 has_write_access,
+                                                show_checkbox,
                                                 repo,
                                                 window,
                                                 cx,
@@ -9164,6 +9167,7 @@ impl GitPanel {
                                                 &entry.entry,
                                                 entry.depth,
                                                 has_write_access,
+                                                show_checkbox,
                                                 repo,
                                                 window,
                                                 cx,
@@ -9174,6 +9178,7 @@ impl GitPanel {
                                                 ix,
                                                 entry,
                                                 has_write_access,
+                                                show_checkbox,
                                                 window,
                                                 cx,
                                             ));
@@ -9689,6 +9694,7 @@ impl GitPanel {
         entry: &GitStatusEntry,
         depth: usize,
         has_write_access: bool,
+        show_checkbox: bool,
         repo: &Repository,
         window: &Window,
         cx: &Context<Self>,
@@ -9701,7 +9707,6 @@ impl GitPanel {
 
         let selected = self.selected_entry == Some(ix);
         let marked = self.row_is_marked(ix);
-        let is_branch_mode = self.is_branch_mode();
         let status_style = settings.status_style;
         let status = entry.status;
         let file_icon = if settings.file_icons {
@@ -9871,35 +9876,36 @@ impl GitPanel {
                     ))
                 })
             })
-            .child(
-                div()
-                    .id(checkbox_wrapper_id)
-                    .when(is_branch_mode, |this| this.hidden())
-                    .flex_none()
-                    .occlude()
-                    .cursor_pointer()
-                    .child(
-                        Checkbox::new(checkbox_id, toggle_state)
-                            .fill()
-                            .elevation(ElevationIndex::Surface)
-                            .disabled(!has_write_access || resolved_conflict)
-                            .on_click_ext({
-                                let entry = entry.clone();
-                                let this = cx.weak_entity();
-                                move |_, click, window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        if !has_write_access || resolved_conflict {
-                                            return;
-                                        }
-                                        if click.modifiers().shift {
-                                            this.stage_bulk(
-                                                ix,
-                                                stage_intent != StageIntent::Unstage,
-                                                cx,
-                                            );
-                                        } else {
-                                            let list_entry =
-                                                if GitPanelSettings::get_global(cx).tree_view {
+            .when(show_checkbox, |this| {
+                this.child(
+                    div()
+                        .id(checkbox_wrapper_id)
+                        .flex_none()
+                        .occlude()
+                        .cursor_pointer()
+                        .child(
+                            Checkbox::new(checkbox_id, toggle_state)
+                                .fill()
+                                .elevation(ElevationIndex::Surface)
+                                .disabled(!has_write_access || resolved_conflict)
+                                .on_click_ext({
+                                    let entry = entry.clone();
+                                    let this = cx.weak_entity();
+                                    move |_, click, window, cx| {
+                                        this.update(cx, |this, cx| {
+                                            if !has_write_access || resolved_conflict {
+                                                return;
+                                            }
+                                            if click.modifiers().shift {
+                                                this.stage_bulk(
+                                                    ix,
+                                                    stage_intent != StageIntent::Unstage,
+                                                    cx,
+                                                );
+                                            } else {
+                                                let list_entry = if GitPanelSettings::get_global(cx)
+                                                    .tree_view
+                                                {
                                                     GitListEntry::TreeStatus(GitTreeStatusEntry {
                                                         entry: entry.clone(),
                                                         depth,
@@ -9907,28 +9913,29 @@ impl GitPanel {
                                                 } else {
                                                     GitListEntry::Status(entry.clone())
                                                 };
-                                            this.toggle_staged_for_entry(
-                                                &list_entry,
-                                                stage_intent,
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                        cx.stop_propagation();
-                                    })
-                                    .ok();
-                                }
-                            })
-                            .tooltip(move |_window, cx| {
-                                if resolved_conflict {
-                                    Tooltip::simple("Conflict marked as resolved", cx)
-                                } else {
-                                    let action = stage_intent.label(|| stage_status);
-                                    Tooltip::for_action(action, &ToggleStaged, cx)
-                                }
-                            }),
-                    ),
-            )
+                                                this.toggle_staged_for_entry(
+                                                    &list_entry,
+                                                    stage_intent,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                            cx.stop_propagation();
+                                        })
+                                        .ok();
+                                    }
+                                })
+                                .tooltip(move |_window, cx| {
+                                    if resolved_conflict {
+                                        Tooltip::simple("Conflict marked as resolved", cx)
+                                    } else {
+                                        let action = stage_intent.label(|| stage_status);
+                                        Tooltip::for_action(action, &ToggleStaged, cx)
+                                    }
+                                }),
+                        ),
+                )
+            })
             .when_some(dragged_selection, |this, dragged_selection| {
                 this.on_drag(dragged_selection, move |selection, click_offset, _, cx| {
                     cx.new(|_| DraggedGitEntryView {
@@ -9979,12 +9986,12 @@ impl GitPanel {
         ix: usize,
         entry: &GitTreeDirEntry,
         has_write_access: bool,
+        show_checkbox: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let selected = self.selected_entry == Some(ix);
         let marked = self.marked_directories.contains(&entry.key);
-        let is_branch_mode = self.is_branch_mode();
         let label_color = Color::Muted;
         let id: ElementId = ElementId::Name(format!("dir_{}_{}", entry.name, ix).into());
         let checkbox_id: ElementId =
@@ -10098,47 +10105,48 @@ impl GitPanel {
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
             .child(name_row)
-            .child(
-                div()
-                    .id(checkbox_wrapper_id)
-                    .when(is_branch_mode, |this| this.hidden())
-                    .flex_none()
-                    .occlude()
-                    .cursor_pointer()
-                    .child(
-                        Checkbox::new(checkbox_id, toggle_state)
-                            .disabled(!has_write_access || resolved_conflict)
-                            .fill()
-                            .elevation(ElevationIndex::Surface)
-                            .on_click({
-                                let entry = entry.clone();
-                                let this = cx.weak_entity();
-                                move |_, window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        if !has_write_access || resolved_conflict {
-                                            return;
-                                        }
-                                        this.toggle_staged_for_entry(
-                                            &GitListEntry::Directory(entry.clone()),
-                                            stage_intent,
-                                            window,
-                                            cx,
-                                        );
-                                        cx.stop_propagation();
-                                    })
-                                    .ok();
-                                }
-                            })
-                            .tooltip(move |_window, cx| {
-                                if resolved_conflict {
-                                    Tooltip::simple("Conflicts marked as resolved", cx)
-                                } else {
-                                    let action = stage_intent.label(|| stage_status);
-                                    Tooltip::simple(format!("{action} Folder"), cx)
-                                }
-                            }),
-                    ),
-            )
+            .when(show_checkbox, |this| {
+                this.child(
+                    div()
+                        .id(checkbox_wrapper_id)
+                        .flex_none()
+                        .occlude()
+                        .cursor_pointer()
+                        .child(
+                            Checkbox::new(checkbox_id, toggle_state)
+                                .disabled(!has_write_access || resolved_conflict)
+                                .fill()
+                                .elevation(ElevationIndex::Surface)
+                                .on_click({
+                                    let entry = entry.clone();
+                                    let this = cx.weak_entity();
+                                    move |_, window, cx| {
+                                        this.update(cx, |this, cx| {
+                                            if !has_write_access || resolved_conflict {
+                                                return;
+                                            }
+                                            this.toggle_staged_for_entry(
+                                                &GitListEntry::Directory(entry.clone()),
+                                                stage_intent,
+                                                window,
+                                                cx,
+                                            );
+                                            cx.stop_propagation();
+                                        })
+                                        .ok();
+                                    }
+                                })
+                                .tooltip(move |_window, cx| {
+                                    if resolved_conflict {
+                                        Tooltip::simple("Conflicts marked as resolved", cx)
+                                    } else {
+                                        let action = stage_intent.label(|| stage_status);
+                                        Tooltip::simple(format!("{action} Folder"), cx)
+                                    }
+                                }),
+                        ),
+                )
+            })
             .on_click({
                 let key = entry.key.clone();
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
@@ -10451,6 +10459,10 @@ impl Render for GitPanel {
         let project = self.project.read(cx);
         let has_entries = !self.entries.is_empty();
         let has_write_access = self.has_write_access(cx);
+        // Branch rows are read-only, so actions on the selected rows only
+        // apply to the uncommitted list.
+        let can_stage_rows =
+            has_write_access && !project.is_read_only(cx) && !self.is_branch_mode();
 
         #[cfg(feature = "call")]
         let has_co_authors = self
@@ -10488,22 +10500,17 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::stash_staged))
                     .on_action(cx.listener(Self::stash_pop))
             })
-            // Branch rows are read-only, so actions on the selected rows only
-            // apply to the uncommitted list.
-            .when(
-                has_write_access && !project.is_read_only(cx) && !self.is_branch_mode(),
-                |this| {
-                    this.on_action(cx.listener(Self::toggle_staged_for_selected))
-                        .on_action(cx.listener(Self::stage_range))
-                        .on_action(cx.listener(Self::stage_selected))
-                        .on_action(cx.listener(Self::unstage_selected))
-                        .on_action(cx.listener(Self::stage_section))
-                        .on_action(cx.listener(Self::unstage_section))
-                        .on_action(cx.listener(Self::revert_selected))
-                        .on_action(cx.listener(Self::add_to_gitignore))
-                        .on_action(cx.listener(Self::add_to_git_info_exclude))
-                },
-            )
+            .when(can_stage_rows, |this| {
+                this.on_action(cx.listener(Self::toggle_staged_for_selected))
+                    .on_action(cx.listener(Self::stage_range))
+                    .on_action(cx.listener(Self::stage_selected))
+                    .on_action(cx.listener(Self::unstage_selected))
+                    .on_action(cx.listener(Self::stage_section))
+                    .on_action(cx.listener(Self::unstage_section))
+                    .on_action(cx.listener(Self::revert_selected))
+                    .on_action(cx.listener(Self::add_to_gitignore))
+                    .on_action(cx.listener(Self::add_to_git_info_exclude))
+            })
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::collapse_selected_entry))
             .on_action(cx.listener(Self::expand_selected_entry))
