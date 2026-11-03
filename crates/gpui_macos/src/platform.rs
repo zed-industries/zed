@@ -185,7 +185,8 @@ pub(crate) struct MacPlatformState {
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
-    menu_actions: Vec<Box<dyn Action>>,
+    menu_actions: MenuActions,
+    dock_menu_actions: MenuActions,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<Retained<NSMenu>>,
@@ -248,7 +249,8 @@ impl MacPlatform {
             menu_command: None,
             validate_menu_command: None,
             will_open_menu: None,
-            menu_actions: Default::default(),
+            menu_actions: MenuActions::menu_bar(),
+            dock_menu_actions: MenuActions::dock(),
             open_urls: None,
             finish_launching: None,
             dock_menu: None,
@@ -271,7 +273,7 @@ impl MacPlatform {
         &self,
         menus: &Vec<Menu>,
         delegate: *mut AnyObject,
-        actions: &mut Vec<Box<dyn Action>>,
+        actions: &mut MenuActions,
         keymap: &Keymap,
     ) -> Retained<NSMenu> {
         unsafe {
@@ -307,7 +309,7 @@ impl MacPlatform {
         &self,
         menu_items: Vec<MenuItem>,
         delegate: *mut AnyObject,
-        actions: &mut Vec<Box<dyn Action>>,
+        actions: &mut MenuActions,
         keymap: &Keymap,
     ) -> Retained<NSMenu> {
         unsafe {
@@ -325,7 +327,7 @@ impl MacPlatform {
         &self,
         item: &MenuItem,
         delegate: *mut AnyObject,
-        actions: &mut Vec<Box<dyn Action>>,
+        actions: &mut MenuActions,
         keymap: &Keymap,
     ) -> Retained<NSMenuItem> {
         static DEFAULT_CONTEXT: OnceLock<Vec<KeyContext>> = OnceLock::new();
@@ -429,9 +431,7 @@ impl MacPlatform {
                     }
                     item.setEnabled(!disabled);
 
-                    let tag = actions.len() as NSInteger;
-                    item.setTag(tag);
-                    actions.push(action.boxed_clone());
+                    item.setTag(actions.push(action.boxed_clone()));
                     item
                 }
                 MenuItem::Submenu(Menu {
@@ -1135,6 +1135,7 @@ impl Platform for MacPlatform {
         unsafe {
             let app: *mut AnyObject = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
+            state.menu_actions = MenuActions::menu_bar();
             let actions = &mut state.menu_actions;
             let delegate: *mut AnyObject = msg_send![app, delegate];
             let menu = self.create_menu_bar(&menus, delegate, actions, keymap);
@@ -1152,7 +1153,8 @@ impl Platform for MacPlatform {
         unsafe {
             let app: *mut AnyObject = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
-            let actions = &mut state.menu_actions;
+            state.dock_menu_actions = MenuActions::dock();
+            let actions = &mut state.dock_menu_actions;
             let delegate: *mut AnyObject = msg_send![app, delegate];
             state.dock_menu = Some(self.create_dock_menu(menu, delegate, actions, keymap));
         }
@@ -1508,6 +1510,55 @@ extern "C-unwind" fn open_urls(this: &AnyObject, _: Sel, _: *mut AnyObject, urls
     }
 }
 
+/// The actions a menu's items run, found by each item's tag. The menu bar's
+/// tags count up from zero and the Dock menu's down from -1, so setting either
+/// menu replaces its own actions without leaving the previous ones behind.
+struct MenuActions {
+    actions: Vec<Box<dyn Action>>,
+    dock: bool,
+}
+
+impl MenuActions {
+    fn menu_bar() -> Self {
+        Self {
+            actions: Vec::new(),
+            dock: false,
+        }
+    }
+
+    fn dock() -> Self {
+        Self {
+            actions: Vec::new(),
+            dock: true,
+        }
+    }
+
+    /// Keeps `action` and returns the tag of the item that runs it.
+    fn push(&mut self, action: Box<dyn Action>) -> NSInteger {
+        let index = self.actions.len() as NSInteger;
+        self.actions.push(action);
+        if self.dock { -index - 1 } else { index }
+    }
+
+    fn get(&self, tag: NSInteger) -> Option<&dyn Action> {
+        let index = if self.dock { -tag - 1 } else { tag };
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| self.actions.get(index))
+            .map(|action| action.as_ref())
+    }
+}
+
+impl MacPlatformState {
+    fn action_for_tag(&self, tag: NSInteger) -> Option<&dyn Action> {
+        if tag < 0 {
+            self.dock_menu_actions.get(tag)
+        } else {
+            self.menu_actions.get(tag)
+        }
+    }
+}
+
 extern "C-unwind" fn handle_menu_item(this: &AnyObject, _: Sel, item: *mut AnyObject) {
     unsafe {
         let platform = get_mac_platform(this);
@@ -1518,8 +1569,7 @@ extern "C-unwind" fn handle_menu_item(this: &AnyObject, _: Sel, item: *mut AnyOb
             } else {
                 msg_send![item, tag]
             };
-            let index = tag as usize;
-            if let Some(action) = lock.menu_actions.get(index) {
+            if let Some(action) = lock.action_for_tag(tag) {
                 let action = action.boxed_clone();
                 drop(lock);
                 callback(&*action);
@@ -1540,8 +1590,7 @@ extern "C-unwind" fn validate_menu_item(this: &AnyObject, _: Sel, item: *mut Any
             } else {
                 msg_send![item, tag]
             };
-            let index = tag as usize;
-            if let Some(action) = lock.menu_actions.get(index) {
+            if let Some(action) = lock.action_for_tag(tag) {
                 let action = action.boxed_clone();
                 drop(lock);
                 result = callback(action.as_ref());
@@ -1627,4 +1676,26 @@ unsafe extern "C" {
     pub(super) static kTISPropertyInputSourceIsASCIICapable: CFStringRef;
     pub(super) static kTISPropertyInputSourceType: CFStringRef;
     pub(super) static kTISTypeKeyboardInputMode: CFStringRef;
+}
+
+#[cfg(test)]
+mod menu_actions_tests {
+    use super::MenuActions;
+    use gpui::{Action, NoAction};
+
+    #[test]
+    fn each_menu_finds_its_own_actions_by_tag() {
+        let mut menu_bar = MenuActions::menu_bar();
+        let mut dock = MenuActions::dock();
+        assert_eq!(menu_bar.push(NoAction.boxed_clone()), 0);
+        assert_eq!(menu_bar.push(NoAction.boxed_clone()), 1);
+        assert_eq!(dock.push(NoAction.boxed_clone()), -1);
+
+        assert!(menu_bar.get(1).is_some());
+        assert!(menu_bar.get(2).is_none());
+        assert!(menu_bar.get(-1).is_none());
+        assert!(dock.get(-1).is_some());
+        assert!(dock.get(-2).is_none());
+        assert!(dock.get(0).is_none());
+    }
 }
