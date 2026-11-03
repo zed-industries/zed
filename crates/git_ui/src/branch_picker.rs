@@ -123,6 +123,7 @@ pub fn select_popover(
             repository,
             BranchListStyle::Popover,
             rems(20.),
+            false,
             selected_branch,
             on_select,
             window,
@@ -146,6 +147,7 @@ pub fn select_modal(
         repository,
         BranchListStyle::Modal,
         rems(34.),
+        false,
         selected_branch,
         on_select,
         window,
@@ -153,6 +155,29 @@ pub fn select_modal(
     );
     list.focus_handle(cx).focus(window, cx);
     list
+}
+
+/// A branch selector for hosts that draw their own surface and handle
+/// dismissal, such as a context menu's submenu.
+pub fn select_embedded(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    selected_branch: Option<SharedString>,
+    on_select: SelectBranchCallback,
+    window: &mut Window,
+    cx: &mut Context<BranchList>,
+) -> BranchList {
+    BranchList::new_select(
+        workspace,
+        repository,
+        BranchListStyle::Popover,
+        rems(20.),
+        true,
+        selected_branch,
+        on_select,
+        window,
+        cx,
+    )
 }
 
 pub type SelectBranchCallback = Arc<dyn Fn(Branch, &mut Window, &mut App)>;
@@ -226,6 +251,7 @@ impl BranchList {
         repository: Option<Entity<Repository>>,
         style: BranchListStyle,
         width: Rems,
+        embedded: bool,
         selected_branch: Option<SharedString>,
         on_select: SelectBranchCallback,
         window: &mut Window,
@@ -236,7 +262,7 @@ impl BranchList {
             repository,
             style,
             width,
-            false,
+            embedded,
             BranchSelectionBehavior::Select {
                 selected_branch,
                 on_select,
@@ -3135,6 +3161,7 @@ mod tests {
                         Some(repository.clone()),
                         BranchListStyle::Modal,
                         rems(34.),
+                        false,
                         Some("main".into()),
                         Arc::new(|_: Branch, _: &mut Window, _: &mut App| {}),
                         window,

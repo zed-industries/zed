@@ -87,6 +87,7 @@ use std::future::Future;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{sync::Arc, time::Duration};
 use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
@@ -171,6 +172,8 @@ actions!(
         ShowBranchChanges,
         /// Shows the uncommitted changes.
         ShowUncommittedChanges,
+        /// Picks a base branch and shows the files changed since it.
+        CompareAgainstBase,
     ]
 );
 
@@ -586,6 +589,11 @@ pub fn register(workspace: &mut Workspace) {
             panel.update(cx, |panel, cx| {
                 panel.show_uncommitted_changes(action, window, cx)
             });
+        }
+    });
+    workspace.register_action(|workspace, _: &CompareAgainstBase, window, cx| {
+        if let Some(panel) = workspace.focus_panel::<GitPanel>(window, cx) {
+            panel.update(cx, |panel, cx| panel.choose_branch_base(window, cx));
         }
     });
     workspace.register_action(|workspace, _: &git::Init, window, cx| {
@@ -1236,6 +1244,18 @@ impl TruncatedPatch {
     }
 }
 
+/// What the changes mode menu needs from the panel, captured when the menu
+/// button renders.
+#[derive(Clone)]
+struct ChangesModeMenuState {
+    panel: WeakEntity<GitPanel>,
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    base_ref: Option<SharedString>,
+    is_branch_mode: bool,
+    menu_handle: PopoverMenuHandle<ContextMenu>,
+}
+
 /// The branch diff tab the panel last adopted a base from, watched so that
 /// base changes made in the tab's own picker carry over to the panel.
 struct FollowedBranchDiff {
@@ -1323,6 +1343,7 @@ pub struct GitPanel {
     changes_actions_menu_handle: PopoverMenuHandle<ContextMenu>,
     remote_action_menu_handle: PopoverMenuHandle<ContextMenu>,
     changes_mode: ChangesMode,
+    changes_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
     /// The base picked in the panel or adopted from the last active branch
     /// diff tab. `None` falls back to the default branch.
     branch_base: Option<SharedString>,
@@ -1691,6 +1712,7 @@ impl GitPanel {
                 changes_actions_menu_handle: PopoverMenuHandle::default(),
                 remote_action_menu_handle: PopoverMenuHandle::default(),
                 changes_mode: ChangesMode::Uncommitted,
+                changes_mode_menu_handle: PopoverMenuHandle::default(),
                 branch_base: None,
                 default_branch: DefaultBranch::Loading,
                 default_branch_task: None,
@@ -5861,11 +5883,60 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.can_show_branch_changes() {
-            return;
-        }
         self.set_active_tab(GitPanelTab::Changes, window, cx);
+        if self.can_show_branch_changes() {
+            self.set_changes_mode(ChangesMode::Branch, window, cx);
+        } else {
+            self.choose_branch_base(window, cx);
+        }
+    }
+
+    fn compare_against_base(
+        &mut self,
+        base_ref: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_active_tab(GitPanelTab::Changes, window, cx);
+        self.set_branch_base(base_ref, window, cx);
         self.set_changes_mode(ChangesMode::Branch, window, cx);
+    }
+
+    fn choose_branch_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repository) = self.active_repository.clone() else {
+            return;
+        };
+        let selected_branch = self.branch_base();
+        let panel = cx.weak_entity();
+        let on_select: branch_picker::SelectBranchCallback =
+            Arc::new(move |branch: Branch, window: &mut Window, cx: &mut App| {
+                let base_ref: SharedString = branch.name().to_owned().into();
+                panel
+                    .update(cx, |panel, cx| {
+                        panel.compare_against_base(base_ref, window, cx);
+                    })
+                    .ok();
+            });
+        let workspace = self.workspace.clone();
+        // Workspace actions call this while the workspace is being updated, so
+        // the modal opens once that update has finished.
+        window.defer(cx, move |window, cx| {
+            let workspace_handle = workspace.clone();
+            workspace
+                .update(cx, |workspace, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        branch_picker::select_modal(
+                            workspace_handle,
+                            Some(repository),
+                            selected_branch,
+                            on_select,
+                            window,
+                            cx,
+                        )
+                    });
+                })
+                .ok();
+        });
     }
 
     fn show_uncommitted_changes(
@@ -7425,7 +7496,7 @@ impl GitPanel {
                 .child(
                     h_flex()
                         .gap_1()
-                        .child(self.render_changes_mode_toggle(cx))
+                        .child(self.render_changes_mode_menu(cx))
                         .child(
                             ButtonLike::new("diff-button")
                                 .child(
@@ -7475,9 +7546,6 @@ impl GitPanel {
                 .child(
                     h_flex()
                         .gap_1()
-                        .when(is_branch_mode, |this| {
-                            this.children(self.render_branch_base_picker(cx))
-                        })
                         .child(self.render_view_options_menu("view_options_menu"))
                         .when(!is_branch_mode, |this| {
                             this.child(self.render_git_changes_actions_button(cx))
@@ -7486,100 +7554,123 @@ impl GitPanel {
         )
     }
 
-    fn render_changes_mode_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_branch_mode = self.is_branch_mode();
-        let can_show_branch_changes = self.can_show_branch_changes();
-        let focus_handle = self.focus_handle.clone();
+    fn render_changes_mode_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let label: SharedString = match (self.is_branch_mode(), self.branch_base()) {
+            (true, Some(base_ref)) => format!("Since {base_ref}").into(),
+            (true, None) => "Branch Changes".into(),
+            (false, _) => "Uncommitted".into(),
+        };
+        let menu_state = self.changes_mode_menu_state(cx);
 
-        h_flex()
-            .gap_0p5()
-            .child(
-                Button::new("uncommitted-changes-mode", "Uncommitted")
+        PopoverMenu::new("git-panel-changes-mode")
+            .with_handle(self.changes_mode_menu_handle.clone())
+            .trigger_with_tooltip(
+                Button::new("git-panel-changes-mode-trigger", label)
                     .label_size(LabelSize::Small)
-                    .toggle_state(!is_branch_mode)
-                    .tooltip({
-                        let focus_handle = focus_handle.clone();
-                        move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Show Uncommitted Changes",
-                                &ShowUncommittedChanges,
-                                &focus_handle,
-                                cx,
-                            )
-                        }
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.set_changes_mode(ChangesMode::Uncommitted, window, cx);
-                    })),
+                    .end_icon(
+                        Icon::new(IconName::ChevronDown)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    ),
+                Tooltip::text("Choose Which Changes to Show"),
             )
-            .child(
-                Button::new("branch-changes-mode", "Branch")
-                    .label_size(LabelSize::Small)
-                    .toggle_state(is_branch_mode)
-                    .disabled(!can_show_branch_changes)
-                    .tooltip(move |_window, cx| {
-                        if can_show_branch_changes {
-                            Tooltip::for_action_in(
-                                "Show Branch Changes",
-                                &ShowBranchChanges,
-                                &focus_handle,
-                                cx,
-                            )
-                        } else {
-                            Tooltip::simple("No default branch found", cx)
-                        }
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.set_changes_mode(ChangesMode::Branch, window, cx);
-                    })),
-            )
+            .menu(move |window, cx| Some(Self::changes_mode_menu(menu_state.clone(), window, cx)))
+            .anchor(Anchor::TopLeft)
     }
 
-    fn render_branch_base_picker(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let repository = self.active_repository.clone()?;
-        let base_ref = self.branch_base();
-        let label: SharedString = match &base_ref {
-            Some(base_ref) => format!("since {base_ref}").into(),
-            None => "Pick Base".into(),
-        };
-        let workspace = self.workspace.clone();
-        let panel = cx.weak_entity();
+    fn changes_mode_menu_state(&self, cx: &Context<Self>) -> ChangesModeMenuState {
+        ChangesModeMenuState {
+            panel: cx.weak_entity(),
+            workspace: self.workspace.clone(),
+            repository: self.active_repository.clone(),
+            base_ref: self.branch_base(),
+            is_branch_mode: self.is_branch_mode(),
+            menu_handle: self.changes_mode_menu_handle.clone(),
+        }
+    }
 
-        Some(
-            PopoverMenu::new("git-panel-branch-base-picker")
-                .menu(move |window, cx| {
-                    let on_select: branch_picker::SelectBranchCallback = Arc::new({
-                        let panel = panel.clone();
-                        move |branch: Branch, window: &mut Window, cx: &mut App| {
-                            let base_ref: SharedString = branch.name().to_owned().into();
-                            panel
-                                .update(cx, |panel, cx| {
-                                    panel.set_branch_base(base_ref, window, cx);
-                                })
-                                .ok();
-                        }
-                    });
-                    Some(branch_picker::select_popover(
-                        workspace.clone(),
-                        Some(repository.clone()),
-                        base_ref.clone(),
-                        on_select,
-                        window,
-                        cx,
-                    ))
-                })
-                .trigger_with_tooltip(
-                    Button::new("git-panel-branch-base", label)
-                        .label_size(LabelSize::Small)
-                        .end_icon(
-                            Icon::new(IconName::ChevronDown)
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted),
-                        ),
-                    Tooltip::text("Pick Base Branch"),
-                )
-                .anchor(Anchor::TopRight),
+    fn changes_mode_menu(
+        state: ChangesModeMenuState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, move |menu, _, _| {
+            let panel = state.panel.clone();
+            menu.toggleable_entry(
+                "Uncommitted",
+                !state.is_branch_mode,
+                IconPosition::Start,
+                Some(ShowUncommittedChanges.boxed_clone()),
+                move |window, cx| {
+                    panel
+                        .update(cx, |panel, cx| {
+                            panel.set_changes_mode(ChangesMode::Uncommitted, window, cx);
+                        })
+                        .ok();
+                },
+            )
+            .submenu("Compare Against Base", move |menu, window, cx| {
+                Self::compare_against_base_submenu(menu, state.clone(), window, cx)
+            })
+        })
+    }
+
+    /// Hosts the searchable branch picker inside the "Compare Against Base"
+    /// submenu.
+    fn compare_against_base_submenu(
+        menu: ContextMenu,
+        state: ChangesModeMenuState,
+        window: &mut Window,
+        cx: &mut Context<ContextMenu>,
+    ) -> ContextMenu {
+        let ChangesModeMenuState {
+            panel,
+            workspace,
+            repository,
+            base_ref: selected_branch,
+            menu_handle,
+            ..
+        } = state;
+        let picked = Arc::new(AtomicBool::new(false));
+        let on_select: branch_picker::SelectBranchCallback = Arc::new({
+            let picked = picked.clone();
+            move |branch: Branch, window: &mut Window, cx: &mut App| {
+                picked.store(true, Ordering::Relaxed);
+                let base_ref: SharedString = branch.name().to_owned().into();
+                panel
+                    .update(cx, |panel, cx| {
+                        panel.compare_against_base(base_ref, window, cx);
+                    })
+                    .ok();
+            }
+        });
+        let branch_list = cx.new(|cx| {
+            branch_picker::select_embedded(
+                workspace,
+                repository,
+                selected_branch,
+                on_select,
+                window,
+                cx,
+            )
+        });
+
+        cx.subscribe_in(
+            &branch_list,
+            window,
+            move |menu, _, _: &DismissEvent, window, cx| {
+                if picked.load(Ordering::Relaxed) {
+                    menu_handle.hide(cx);
+                } else {
+                    menu.select_submenu_parent(&menu::SelectParent, window, cx);
+                }
+            },
         )
+        .detach();
+
+        let picker_focus_handle = branch_list.focus_handle(cx);
+        menu.embedded_view(branch_list)
+            .focus_content(picker_focus_handle)
     }
 
     pub(crate) fn render_remote_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -18175,6 +18266,18 @@ mod tests {
         settle_branch_mode(cx);
         assert_eq!(listed_paths(&panel, cx), ["d.txt", "b.txt"]);
         panel.read_with(cx, |panel, _| assert!(panel.branch_list.is_none()));
+
+        // Picking a base from the menu while showing uncommitted changes
+        // switches to branch mode at that base.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.compare_against_base("develop".into(), window, cx);
+        });
+        settle_branch_mode(cx);
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.changes_mode, ChangesMode::Branch);
+            assert_eq!(panel.branch_base().as_deref(), Some("develop"));
+        });
+        assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
     }
 
     #[gpui::test]
@@ -18326,6 +18429,96 @@ mod tests {
         );
     }
 
+    struct MenuHost(Entity<ContextMenu>);
+
+    impl Render for MenuHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(self.0.clone())
+        }
+    }
+
+    #[gpui::test]
+    async fn test_compare_against_base_submenu_picks_base(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+        test.fs.insert_branches(
+            Path::new(path!("/project/.git")),
+            &["feature", "develop", "release"],
+        );
+        settle_branch_mode(cx);
+
+        // The submenu is placed using its trigger's bounds from the previous
+        // frame, so it takes a couple of frames to appear.
+        let draw = |cx: &mut VisualTestContext| {
+            for _ in 0..3 {
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+                cx.run_until_parked();
+            }
+        };
+        // Hosts the menu in its own window so the test can focus it directly;
+        // a popover only takes focus on a later platform frame.
+        let open_menu = |cx: &mut VisualTestContext| {
+            let menu_state = panel.update(cx, |panel, cx| panel.changes_mode_menu_state(cx));
+            let mut menu = None;
+            let window = cx.cx.add_window(|window, cx| {
+                let context_menu = GitPanel::changes_mode_menu(menu_state, window, cx);
+                menu = Some(context_menu.clone());
+                MenuHost(context_menu)
+            });
+            let menu = menu.unwrap();
+            let mut menu_cx = VisualTestContext::from_window(window.into(), &cx.cx);
+            menu_cx.update(|window, cx| window.focus(&menu.focus_handle(cx), cx));
+            draw(&mut menu_cx);
+            // "Compare Against Base" is the last item; opening it from the
+            // keyboard must hand focus to the picker's search field.
+            menu_cx.dispatch_action(menu::SelectLast);
+            menu_cx.dispatch_action(menu::SelectChild);
+            draw(&mut menu_cx);
+            (menu, menu_cx)
+        };
+
+        // Escape in the picker returns focus to the parent menu.
+        let (menu, mut menu_cx) = open_menu(cx);
+        menu_cx.dispatch_action(menu::Cancel);
+        draw(&mut menu_cx);
+        let parent_focused = menu_cx.update(|window, cx| menu.focus_handle(cx).is_focused(window));
+        assert!(parent_focused, "escape returns to the parent menu");
+
+        let (_menu, mut menu_cx) = open_menu(cx);
+        menu_cx.simulate_input("develop");
+        draw(&mut menu_cx);
+        menu_cx.dispatch_action(menu::Confirm);
+        settle_branch_mode(cx);
+
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.changes_mode, ChangesMode::Branch);
+            assert_eq!(panel.branch_base().as_deref(), Some("develop"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compare_against_base_action_opens_picker(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+        test.workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+        });
+
+        // Workspace actions run while the workspace is being updated, so
+        // opening the picker must not update the workspace again.
+        cx.dispatch_action(CompareAgainstBase);
+        cx.run_until_parked();
+
+        let picker_opened = test.workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_modal::<branch_picker::BranchList>(cx)
+                .is_some()
+        });
+        assert!(picker_opened);
+    }
+
     #[gpui::test]
     async fn test_branch_mode_needs_a_base(cx: &mut TestAppContext) {
         let (test, mut cx) = setup_branch_mode_test(cx, None).await;
@@ -18342,6 +18535,16 @@ mod tests {
         panel.read_with(cx, |panel, _| {
             assert_eq!(panel.changes_mode, ChangesMode::Uncommitted);
         });
+        let picker_opened = test.workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_modal::<branch_picker::BranchList>(cx)
+                .is_some()
+        });
+        assert!(
+            picker_opened,
+            "without a base, the base picker opens instead"
+        );
+        cx.dispatch_action(menu::Cancel);
 
         // A base adopted from a branch diff tab makes branch changes available.
         open_branch_diff_tab(&test, "release", cx);
