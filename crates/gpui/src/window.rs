@@ -10388,16 +10388,18 @@ mod tests {
         let window = cx.add_window(|_, _| Root {
             parent: parent.clone(),
         });
+        // Frames come as an app's do: the test platform draws a dirty window
+        // as an update finishes, and nothing draws a frame with nothing
+        // changed.
         let renders = |cx: &mut TestAppContext| {
-            cx.update_window(window.into(), |_, window, cx| {
-                window.draw(cx).clear(cx);
+            cx.run_until_parked();
+            cx.read(|cx| {
                 (
                     parent.read(cx).renders,
                     leaves[0].read(cx).renders,
                     leaves[1].read(cx).renders,
                 )
             })
-            .expect("draw window")
         };
 
         assert_eq!(renders(cx), (1, 1, 1));
@@ -10452,11 +10454,16 @@ mod tests {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
                 div()
                     .size_full()
+                    .relative()
                     .children((0..self.lines).map(|i| div().h(px(20.)).child(format!("line {i}"))))
+                    // Placed where it stays whatever the lines above it do, so
+                    // it can be reused whole while the frame shifts around it.
                     .child(
-                        self.parent
-                            .clone()
-                            .cached(crate::StyleRefinement::default().w(px(200.)).h(px(20.))),
+                        div().absolute().top(px(400.)).left_0().child(
+                            self.parent
+                                .clone()
+                                .cached(crate::StyleRefinement::default().w(px(200.)).h(px(20.))),
+                        ),
                     )
             }
         }
@@ -10478,15 +10485,15 @@ mod tests {
             lines: 4,
             parent: parent.clone(),
         });
-        let draw = |cx: &mut TestAppContext| {
-            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-                .expect("draw window");
-        };
+        // Frames come as an app's do: the test platform draws a dirty window
+        // as an update finishes, and nothing draws a frame with nothing
+        // changed.
         let renders = |cx: &mut TestAppContext| {
+            cx.run_until_parked();
             cx.read(|cx| (leaves[0].read(cx).renders, leaves[1].read(cx).renders))
         };
 
-        draw(cx);
+        assert_eq!(renders(cx), (1, 1));
 
         // The root renders again with fewer lines of its own; the parent is reused
         // whole, carrying both leaves' state forward with the ranges of the first
@@ -10497,17 +10504,15 @@ mod tests {
                 cx.notify();
             })
             .expect("update root");
-        draw(cx);
+        assert_eq!(renders(cx), (1, 1), "the parent is reused whole");
 
         // One leaf changes, so the parent renders again. The other leaf's ranges
         // index the first frame, so it renders again rather than reusing them.
         leaves[0].update(cx, |_, cx| cx.notify());
-        draw(cx);
         assert_eq!(renders(cx), (2, 2));
 
         // In the next frame the untouched leaf is reused.
         leaves[0].update(cx, |_, cx| cx.notify());
-        draw(cx);
         assert_eq!(renders(cx), (3, 2));
     }
 
