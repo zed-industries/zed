@@ -1606,53 +1606,70 @@ mod tests {
         fs.insert_tree(path!("/test"), json!({"src": {"main.rs": source()}}))
             .await;
         let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-        let language = rust_lang();
+        let _fake_servers = project.read_with(cx, |project, _| {
+            project.languages().add(rust_lang());
+            project.languages().register_fake_lsp(
+                "Rust",
+                FakeLspAdapter {
+                    label_for_symbol: Some(Box::new(|symbol, _| {
+                        let (text, filter_range) = match symbol.name.as_str() {
+                            "helper" => ("func helper", 5..11),
+                            "Foo" => ("type Foo struct {}", 5..8),
+                            _ => return None,
+                        };
+                        Some(CodeLabel::new(text.to_string(), filter_range, Vec::new()))
+                    })),
+                    ..FakeLspAdapter::default()
+                },
+            )
+        });
+        let mut window_cx = cx
+            .add_empty_window()
+            .update(|window, cx| window.to_async(cx));
 
         let cases = [
-            // (name, detail, fallback_label, should_append)
-            // Fallback name-only: the detail is separate.
-            ("helper", "github.com/foo/bar", Some(("func helper", 5..11)), true),
-            // Fallback with a suffix: the suffix is the detail, already in the label.
-            ("Foo", "pkg/path", Some(("type Foo struct {}", 5..8)), false),
-            // Primary complete signature: the detail is the label suffix.
-            ("helper", "fn helper(&self) -> i32", None, false),
-            // Primary prefix-only: the detail is the whole label text.
-            ("Widget", "ns::Widget", None, false),
+            (
+                "helper",
+                "github.com/foo/bar",
+                "func helper",
+                Some("github.com/foo/bar"),
+            ),
+            ("Foo", "pkg/path", "type Foo struct {}", None),
+            (
+                "helper",
+                "fn helper(&self) -> i32",
+                "fn helper(&self) -> i32",
+                None,
+            ),
+            ("Widget", "ns::Widget", "ns::Widget", None),
         ];
+        let mut calls = Vec::new();
+        for (name, detail, _, _) in cases {
+            calls.push(
+                make_call(
+                    name,
+                    path!("/test/src/main.rs").as_ref(),
+                    5,
+                    Some(detail.to_string()),
+                    &project,
+                    cx,
+                )
+                .await,
+            );
+        }
 
-        for (name, detail, fallback_label, should_append) in cases {
-            let mut call = make_call(
-                name,
-                path!("/test/src/main.rs").as_ref(),
-                5,
-                Some(detail.to_string()),
-                &project,
-                cx,
-            )
-            .await;
+        attach_labels(&mut calls, &project, &mut window_cx).await;
 
-            // Mirror attach_labels: primary label when signature_label succeeds,
-            // otherwise the adapter's synthetic label.
-            let label = match signature_label(&call.item, &language) {
-                Some(label) => {
-                    call.label_includes_detail = true;
-                    label
-                }
-                None => {
-                    let (text, filter_range) =
-                        fallback_label.expect("fallback case needs a label");
-                    let label = CodeLabel::new(text.to_string(), filter_range, Vec::new());
-                    call.label_includes_detail = detail_from_label_suffix(&label).is_some();
-                    label
-                }
-            };
-            call.label = Some(Arc::new(label));
-
-            let display = cx.update(|cx| compute_call_display(&call, cx));
-
+        for (call, (name, detail, expected_label, expected_detail)) in calls.iter().zip(cases) {
+            let display = cx.update(|cx| compute_call_display(call, cx));
             assert_eq!(
-                display.separate_detail.is_some(),
-                should_append,
+                display.label_text.as_deref(),
+                Some(expected_label),
+                "case: name={name}, detail={detail}"
+            );
+            assert_eq!(
+                display.separate_detail.as_deref(),
+                expected_detail,
                 "case: name={name}, detail={detail}"
             );
         }
