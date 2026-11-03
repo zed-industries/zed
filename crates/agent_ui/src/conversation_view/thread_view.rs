@@ -5,7 +5,7 @@ use crate::{
     open_abs_path_at_point, project_path_for_file_link,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use std::{cell::RefCell, path::Path};
 
 use acp_thread::{
@@ -2721,6 +2721,32 @@ impl ThreadView {
         self._cancel_task = Some(self.cancel_thread(&self.thread, cx));
         self.sync_generating_indicator(cx);
         cx.notify();
+    }
+
+    fn cancel_tool_call(&self, tool_call_id: acp_v2::ToolCallId, cx: &mut Context<Self>) {
+        let cancellation = self
+            .thread
+            .update(cx, |thread, cx| thread.cancel_tool_call(&tool_call_id, cx));
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = cancellation.await {
+                this.update(cx, |this, cx| this.handle_thread_error(error, cx))
+                    .log_err();
+            }
+        })
+        .detach();
+    }
+
+    fn cancel_terminal(&self, terminal_id: acp_v2::TerminalId, cx: &mut Context<Self>) {
+        let cancellation = self
+            .thread
+            .update(cx, |thread, cx| thread.cancel_terminal(&terminal_id, cx));
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = cancellation.await {
+                this.update(cx, |this, cx| this.handle_thread_error(error, cx))
+                    .log_err();
+            }
+        })
+        .detach();
     }
 
     fn cancel_thread(&self, thread: &Entity<AcpThread>, cx: &mut Context<Self>) -> Task<()> {
@@ -5580,20 +5606,34 @@ impl ThreadView {
     }
 
     fn render_activity_status_label(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
-        let (id, label, tooltip) = match self.thread.read(cx).foreground_activity() {
+        let thread = self.thread.read(cx);
+        let (id, label, tooltip): (_, SharedString, _) = match thread.foreground_activity() {
             ForegroundActivity::Unconfirmed => (
                 "activity-unconfirmed",
-                "Activity unconfirmed",
+                "Activity unconfirmed".into(),
                 "The session is attached, but the agent has not reported its activity. You can send manually; automatic sends wait for confirmed Idle.",
             ),
             ForegroundActivity::Unknown => (
                 "activity-unknown",
-                "Activity unknown",
+                "Activity unknown".into(),
                 "The agent can't currently tell whether it is working. You can send manually; automatic sends wait for confirmed Idle.",
             ),
-            ForegroundActivity::Idle
-            | ForegroundActivity::Running
-            | ForegroundActivity::RequiresAction => return None,
+            ForegroundActivity::Idle => {
+                let background_count = thread.background_work().map_or(0, <[_]>::len);
+                if background_count == 0 {
+                    return None;
+                }
+                (
+                    "activity-background",
+                    if background_count == 1 {
+                        "1 task in background".into()
+                    } else {
+                        format!("{background_count} tasks in background").into()
+                    },
+                    "The agent finished responding, but work it started keeps running in the background, such as a dev server or a scheduled task.",
+                )
+            }
+            ForegroundActivity::Running | ForegroundActivity::RequiresAction => return None,
         };
         Some(
             div()
@@ -9159,7 +9199,6 @@ impl ThreadView {
         // line (wrapped or not) is padded consistently.
         style.code_block_overflow_x_scroll = false;
 
-        let header_bg = self.tool_card_header_bg(cx);
         let run_command_label = if is_preview {
             Some(
                 h_flex().h_6().child(
@@ -9191,7 +9230,6 @@ impl ThreadView {
             .group(group)
             .relative()
             .p_1p5()
-            .bg(header_bg)
             .when(is_preview, |this| this.pt_1().children(run_command_label))
             .child(markdown_element)
             .child(div().absolute().top_1().right_1().child(copy_button))
@@ -9228,7 +9266,7 @@ impl ThreadView {
         let command_finished = output.is_some()
             && !matches!(
                 tool_call.status(),
-                ToolCallStatus::InProgress | ToolCallStatus::Pending
+                ToolCallStatus::InProgress | ToolCallStatus::Pending | ToolCallStatus::Paused
             );
         let truncated_output =
             output.is_some_and(|output| output.original_content_len > output.content.len());
@@ -9294,12 +9332,22 @@ impl ThreadView {
             }
         });
 
+        let terminal_view = self
+            .entry_view_state
+            .read(cx)
+            .entry(entry_ix)
+            .and_then(|entry| entry.terminal(terminal));
+
+        let is_standalone = layout == ToolCallLayout::Standalone;
+        let has_content_below = (is_expanded && terminal_view.is_some()) || needs_confirmation;
+
         let header = TerminalToolHeader::new(
             terminal.entity_id().to_string(),
             header_group,
             working_dir,
             is_expanded,
         )
+        .rounded_corners(is_standalone, is_standalone && !has_content_below)
         .elapsed(time_elapsed)
         .running(!command_finished && !needs_confirmation)
         .on_toggle_expand(cx.listener({
@@ -9326,6 +9374,14 @@ impl ThreadView {
                 })
             })
         })
+        .when(terminal_data.can_cancel(), |header| {
+            let terminal_id = terminal_data.id().clone();
+            header
+                .on_stop(cx.listener(move |this, _event, _window, cx| {
+                    this.cancel_terminal(terminal_id.clone(), cx);
+                }))
+                .stop_description("Asks the agent to stop this process. Its output stays here.")
+        })
         .when_some(truncated_tooltip, |header, tooltip| {
             header.truncated(tooltip)
         })
@@ -9336,12 +9392,6 @@ impl ThreadView {
             header.sandbox_warning(self.sandbox_not_applied_warning(reason, cx))
         })
         .command_slot(command_element);
-
-        let terminal_view = self
-            .entry_view_state
-            .read(cx)
-            .entry(entry_ix)
-            .and_then(|entry| entry.terminal(terminal));
 
         v_flex()
             .when(layout == ToolCallLayout::Standalone, |this| {
@@ -9751,6 +9801,7 @@ impl ThreadView {
                 }
                 ToolCallStatus::Pending
                 | ToolCallStatus::InProgress
+                | ToolCallStatus::Paused
                 | ToolCallStatus::Completed
                 | ToolCallStatus::Failed
                 | ToolCallStatus::Canceled => v_flex()
@@ -9858,13 +9909,16 @@ impl ThreadView {
         let body = v_flex()
             .map(|this| {
                 if is_terminal_tool {
-                    this.child(self.render_collapsible_command(
-                        card_header_id.clone(),
-                        true,
-                        tool_call.label.clone(),
-                        window,
-                        cx,
-                    ))
+                    this.child(
+                        self.render_collapsible_command(
+                            card_header_id.clone(),
+                            true,
+                            tool_call.label.clone(),
+                            window,
+                            cx,
+                        )
+                        .bg(self.tool_card_header_bg(cx)),
+                    )
                 } else {
                     this.child(
                         h_flex()
@@ -9995,6 +10049,42 @@ impl ThreadView {
                                                         )
                                                     })
                                                 }),
+                                        )
+                                    })
+                                    .when(
+                                        tool_call.status() == ToolCallStatus::Paused,
+                                        |this| {
+                                            this.child(
+                                                div()
+                                                    .id(("paused-tool-call", entry_ix))
+                                                    .pr_0p5()
+                                                    .tooltip(Tooltip::text("Paused"))
+                                                    .child(
+                                                        Icon::new(IconName::DebugPause)
+                                                            .color(Color::Muted)
+                                                            .size(IconSize::Small),
+                                                    ),
+                                            )
+                                        },
+                                    )
+                                    .when(tool_call.can_cancel(), |this| {
+                                        let tool_call_id = tool_call.id.clone();
+                                        this.child(
+                                            IconButton::new(
+                                                ("stop-tool-call", entry_ix),
+                                                IconName::Stop,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Error)
+                                            .tooltip(Tooltip::text("Stop Tool Call"))
+                                            .on_click(cx.listener(
+                                                move |this, _, _window, cx| {
+                                                    this.cancel_tool_call(
+                                                        tool_call_id.clone(),
+                                                        cx,
+                                                    );
+                                                },
+                                            )),
                                         )
                                     })
                                     .when(tool_call_output_focus, |this| {

@@ -518,12 +518,25 @@ impl MetalRenderer {
         // We are uncertain when this happens, but sometimes size can be 0 here. Most likely before
         // the layout pass on window creation. Zero-sized texture creation causes SIGABRT.
         // https://github.com/zed-industries/zed/issues/36229
-        self.path_intermediate_texture = None;
-        self.path_intermediate_msaa_texture = None;
         if size.width.0 <= 0 || size.height.0 <= 0 {
+            self.path_intermediate_texture = None;
+            self.path_intermediate_msaa_texture = None;
             return Ok(());
         }
 
+        if self
+            .path_intermediate_texture
+            .as_ref()
+            .is_some_and(|texture| {
+                texture.width() == size.width.0 as usize
+                    && texture.height() == size.height.0 as usize
+            })
+        {
+            return Ok(());
+        }
+
+        self.path_intermediate_texture = None;
+        self.path_intermediate_msaa_texture = None;
         let texture_descriptor = MTLTextureDescriptor::new();
         // SAFETY: The dimensions are positive and this descriptor creates a 2D texture.
         unsafe {
@@ -704,17 +717,8 @@ impl MetalRenderer {
             (viewport_size.width.ceil() as i32).into(),
             (viewport_size.height.ceil() as i32).into(),
         );
-        let drawable = layer
-            .nextDrawable()
-            .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
-
-        let command_buffer = self.render_frame(scene, &drawable.texture(), viewport_size)?;
-
-        // Commit and wait for completion without presenting
-        command_buffer.commit();
-        command_buffer.waitUntilCompleted();
-
-        read_texture_to_image(&drawable.texture())
+        // CAMetalDisplayLink owns the drawable, so render into a texture we own.
+        self.render_offscreen(scene, viewport_size)
     }
 
     /// Renders a scene to an image without requiring a window or CAMetalLayer.
@@ -734,50 +738,57 @@ impl MetalRenderer {
         // Headless callers do not have a Cocoa event-loop pool to release
         // autoreleased command buffers and render-pass descriptors.
         objc2::rc::autoreleasepool(|_| {
-            // Update path intermediate textures for this size
             self.update_path_intermediate_textures(size)?;
-
-            // Create an offscreen texture as render target
-            let texture_descriptor = MTLTextureDescriptor::new();
-            unsafe {
-                texture_descriptor.setWidth(size.width.0 as usize);
-                texture_descriptor.setHeight(size.height.0 as usize);
-            }
-            texture_descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
-            texture_descriptor
-                .setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
-            // Like the atlas, only Apple GPUs can create shared textures on macOS;
-            // Intel Macs cannot, even with unified memory. iOS has no managed storage.
-            let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
-            texture_descriptor.setStorageMode(if uses_shared_storage {
-                MTLStorageMode::Shared
-            } else {
-                MTLStorageMode::Managed
-            });
-            let target_texture = self
-                .device
-                .newTextureWithDescriptor(&texture_descriptor)
-                .context("allocating headless render target")?;
-
-            let command_buffer = self.render_frame(scene, &target_texture, size)?;
-
-            // Managed textures require an explicit blit synchronize before the CPU
-            // can read back the rendered data. Without this, get_bytes returns
-            // stale zeros.
-            if !uses_shared_storage {
-                let blit = command_buffer
-                    .blitCommandEncoder()
-                    .context("creating blit command encoder")?;
-                blit.synchronizeResource(ProtocolObject::from_ref(&*target_texture));
-                blit.endEncoding();
-            }
-
-            // Commit and wait for completion
-            command_buffer.commit();
-            command_buffer.waitUntilCompleted();
-
-            read_texture_to_image(&target_texture)
+            self.render_offscreen(scene, size)
         })
+    }
+
+    /// Renders a scene into a new offscreen texture of `size` and reads it
+    /// back, without presenting anything.
+    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    fn render_offscreen(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<RgbaImage> {
+        if size.width.0 <= 0 || size.height.0 <= 0 {
+            anyhow::bail!("Invalid size for render_offscreen: {:?}", size);
+        }
+
+        let texture_descriptor = MTLTextureDescriptor::new();
+        // SAFETY: The dimensions are positive and this descriptor creates a 2D texture.
+        unsafe {
+            texture_descriptor.setWidth(size.width.0 as usize);
+            texture_descriptor.setHeight(size.height.0 as usize);
+        }
+        texture_descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+        texture_descriptor.setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
+        // Like the atlas, only Apple GPUs can create shared textures on macOS;
+        // Intel Macs cannot, even with unified memory. iOS has no managed storage.
+        let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
+        texture_descriptor.setStorageMode(if uses_shared_storage {
+            MTLStorageMode::Shared
+        } else {
+            MTLStorageMode::Managed
+        });
+        let target_texture = self
+            .device
+            .newTextureWithDescriptor(&texture_descriptor)
+            .context("allocating offscreen render target")?;
+
+        let command_buffer = self.render_frame(scene, &target_texture, size)?;
+
+        // Managed textures require an explicit blit synchronize before the CPU
+        // can read back the rendered data. Without this, get_bytes returns
+        // stale zeros.
+        if !uses_shared_storage {
+            let blit = command_buffer
+                .blitCommandEncoder()
+                .context("creating blit command encoder")?;
+            blit.synchronizeResource(ProtocolObject::from_ref(&*target_texture));
+            blit.endEncoding();
+        }
+
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+
+        read_texture_to_image(&target_texture)
     }
 
     /// Renders a scene to a reused offscreen texture without reading pixels
@@ -1917,6 +1928,70 @@ mod tests {
         CVPixelBufferUnlockBaseAddress, kCVPixelBufferIOSurfacePropertiesKey,
     };
     use objc2_metal::MTLCommandBufferStatus;
+
+    #[test]
+    fn path_intermediate_textures_are_reused_until_resize() -> Result<()> {
+        let mut renderer = MetalRenderer::new_headless(Default::default())?;
+        let initial_size = size(DevicePixels(64), DevicePixels(64));
+        renderer.update_path_intermediate_textures(initial_size)?;
+        let initial_texture = renderer
+            .path_intermediate_texture
+            .clone()
+            .context("missing path intermediate texture")?;
+        let initial_msaa_texture = renderer.path_intermediate_msaa_texture.clone();
+
+        renderer.update_path_intermediate_textures(initial_size)?;
+        assert!(ptr::eq(
+            &*initial_texture,
+            renderer
+                .path_intermediate_texture
+                .as_deref()
+                .context("missing reused texture")?,
+        ));
+        assert_eq!(
+            initial_msaa_texture.as_ref().map(Retained::as_ptr),
+            renderer
+                .path_intermediate_msaa_texture
+                .as_ref()
+                .map(Retained::as_ptr),
+        );
+
+        renderer.update_path_intermediate_textures(size(DevicePixels(128), DevicePixels(64)))?;
+        let resized_texture = renderer
+            .path_intermediate_texture
+            .as_deref()
+            .context("missing resized texture")?;
+        assert_eq!(
+            (resized_texture.width(), resized_texture.height()),
+            (128, 64)
+        );
+        assert!(!ptr::eq(&*initial_texture, resized_texture));
+        if let Some(texture) = &renderer.path_intermediate_msaa_texture {
+            assert_eq!((texture.width(), texture.height()), (128, 64));
+        }
+
+        for (width, height) in [(0, 64), (64, 0), (-1, 64), (64, -1)] {
+            renderer.update_path_intermediate_textures(size(
+                DevicePixels(width),
+                DevicePixels(height),
+            ))?;
+            assert!(renderer.path_intermediate_texture.is_none());
+            assert!(renderer.path_intermediate_msaa_texture.is_none());
+            renderer.update_path_intermediate_textures(initial_size)?;
+            assert!(renderer.path_intermediate_texture.is_some());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn render_to_image_rejects_zero_sized_layer() -> Result<()> {
+        let mut renderer = MetalRenderer::new(Default::default(), false, false)?;
+        for (width, height) in [(0, 0), (0, 64), (64, 0)] {
+            renderer.update_drawable_size(size(DevicePixels(width), DevicePixels(height)));
+            assert!(renderer.render_to_image(&Scene::default()).is_err());
+        }
+        Ok(())
+    }
 
     #[test]
     fn display_link_mode_consumes_and_clears_drawables() -> Result<()> {

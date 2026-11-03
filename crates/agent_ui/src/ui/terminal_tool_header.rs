@@ -28,7 +28,10 @@ pub struct TerminalToolHeader {
     sandbox_warning: Option<TerminalSandboxWarning>,
     on_toggle_expand: Option<ClickHandler>,
     on_stop: Option<ClickHandler>,
+    stop_description: SharedString,
     command_slot: Option<AnyElement>,
+    rounded_top: bool,
+    rounded_bottom: bool,
 }
 
 impl TerminalToolHeader {
@@ -51,8 +54,17 @@ impl TerminalToolHeader {
             sandbox_warning: None,
             on_toggle_expand: None,
             on_stop: None,
+            stop_description: "Also possible by placing your cursor inside the terminal and using regular terminal bindings.".into(),
             command_slot: None,
+            rounded_top: false,
+            rounded_bottom: false,
         }
+    }
+
+    pub fn rounded_corners(mut self, top: bool, bottom: bool) -> Self {
+        self.rounded_top = top;
+        self.rounded_bottom = bottom;
+        self
     }
 
     pub fn elapsed(mut self, elapsed: Duration) -> Self {
@@ -97,6 +109,11 @@ impl TerminalToolHeader {
         self
     }
 
+    pub fn stop_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.stop_description = description.into();
+        self
+    }
+
     pub fn command_slot(mut self, element: impl IntoElement) -> Self {
         self.command_slot = Some(element.into_any_element());
         self
@@ -122,7 +139,10 @@ impl RenderOnce for TerminalToolHeader {
             sandbox_warning,
             on_toggle_expand,
             on_stop,
+            stop_description,
             command_slot,
+            rounded_top,
+            rounded_bottom,
         } = self;
 
         let child_id = |name: &str| format!("terminal-tool-{name}-{id}");
@@ -189,8 +209,7 @@ impl RenderOnce for TerminalToolHeader {
                                         Tooltip::with_meta(
                                             "Stop This Command",
                                             None,
-                                            "Also possible by placing your cursor inside the \
-                                             terminal and using regular terminal bindings.",
+                                            stop_description.clone(),
                                             cx,
                                         )
                                     })
@@ -247,6 +266,8 @@ impl RenderOnce for TerminalToolHeader {
             .group(hover_group)
             .text_xs()
             .bg(header_bg)
+            .when(rounded_top, |header| header.rounded_t_md())
+            .when(rounded_bottom, |header| header.rounded_b_md())
             .child(header_row)
             .children(command_slot)
     }

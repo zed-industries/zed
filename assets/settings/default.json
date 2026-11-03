@@ -1932,6 +1932,8 @@
   //      "load_direnv": "disabled"
   "load_direnv": "direct",
   "edit_predictions": {
+    // Whether to show the edit prediction button in the status bar.
+    "button": true,
     // Which edit prediction provider to use.
     "provider": "zed",
     // Disable edit predictions for files matching these glob patterns.
@@ -3002,6 +3004,8 @@
     "save_breakpoints": true,
     "timeout": 2000,
     "dock": "bottom",
+    "default_width": 300,
+    "default_height": 300,
     "log_dap_communications": true,
     "format_dap_log_messages": true,
     "button": true,
