@@ -685,8 +685,6 @@ enum Section {
     New,
     Staged,
     Unstaged,
-    /// Every file changed since the merge base with the branch mode's base,
-    /// shown read-only.
     Branch,
 }
 
@@ -1233,6 +1231,41 @@ impl TruncatedPatch {
     }
 }
 
+struct EntryMenuTitles {
+    copy_path: &'static str,
+    copy_relative_path: &'static str,
+    open_diff: &'static str,
+    open_file_diff: &'static str,
+    view_file: &'static str,
+    view_file_history: &'static str,
+}
+
+impl EntryMenuTitles {
+    fn new(file_count: usize) -> Self {
+        let plural = file_count > 1;
+        Self {
+            copy_path: if plural { "Copy Paths" } else { "Copy Path" },
+            copy_relative_path: if plural {
+                "Copy Relative Paths"
+            } else {
+                "Copy Relative Path"
+            },
+            open_diff: if plural { "Open Diffs" } else { "Open Diff" },
+            open_file_diff: if plural {
+                "Open File Diffs"
+            } else {
+                "Open File Diff"
+            },
+            view_file: if plural { "View Files" } else { "View File" },
+            view_file_history: if plural {
+                "View File Histories"
+            } else {
+                "View File History"
+            },
+        }
+    }
+}
+
 struct GitPanelContextMenu {
     menu: Entity<ContextMenu>,
     position: Point<Pixels>,
@@ -1320,7 +1353,6 @@ pub struct GitPanel {
     change_entries: Vec<GitStatusEntry>,
     /// Diff editors look up a file's entry for every header they draw.
     change_entry_indices: HashMap<RepoPath, usize>,
-    branch_file_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1680,7 +1712,6 @@ impl GitPanel {
                 branch_base: BranchBase::new(),
                 change_entries: Vec::new(),
                 change_entry_indices: HashMap::default(),
-                branch_file_count: 0,
             };
 
             this.schedule_update(window, cx);
@@ -5892,7 +5923,6 @@ impl GitPanel {
         self.entries.clear();
         self.change_entries.clear();
         self.change_entry_indices.clear();
-        self.branch_file_count = 0;
         self.projected_entries_by_path.clear();
         self.single_staged_entry.take();
         self.single_tracked_entry.take();
@@ -6062,7 +6092,6 @@ impl GitPanel {
         } else {
             Vec::new()
         };
-        self.branch_file_count = branch_entries.len();
 
         if !is_tree_view {
             let sort_entries = |entries: &mut Vec<GitStatusEntry>| match sort_by {
@@ -7645,7 +7674,10 @@ impl GitPanel {
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = self.active_tab;
         let changes_count = if self.is_branch_mode() {
-            self.branch_file_count
+            self.section_file_counts
+                .get(&Section::Branch)
+                .copied()
+                .unwrap_or_default()
         } else {
             self.changes_count
         };
@@ -8908,24 +8940,7 @@ impl GitPanel {
         let is_file_or_bulk = !matches!(target_kind, SelectionTargetKind::Directory);
         let has_tracked = !all_created;
         let plural = file_count > 1;
-        let copy_path_title = if plural { "Copy Paths" } else { "Copy Path" };
-        let copy_relative_path_title = if plural {
-            "Copy Relative Paths"
-        } else {
-            "Copy Relative Path"
-        };
-        let open_file_diff_title = if plural {
-            "Open File Diffs"
-        } else {
-            "Open File Diff"
-        };
-        let view_file_title = if plural { "View Files" } else { "View File" };
-        let open_diff_title = if plural { "Open Diffs" } else { "Open Diff" };
-        let view_file_history_title = if plural {
-            "View File Histories"
-        } else {
-            "View File History"
-        };
+        let titles = EntryMenuTitles::new(file_count);
         ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
                 .context(self.focus_handle.clone())
@@ -8935,8 +8950,8 @@ impl GitPanel {
                 .action("Unstaged Changes", ViewUnstagedChanges.boxed_clone())
                 .action("Staged Changes", ViewStagedChanges.boxed_clone())
                 .separator()
-                .action(copy_path_title, CopyPath.boxed_clone())
-                .action(copy_relative_path_title, CopyRelativePath.boxed_clone())
+                .action(titles.copy_path, CopyPath.boxed_clone())
+                .action(titles.copy_relative_path, CopyRelativePath.boxed_clone())
                 .separator()
                 .action_disabled_when(
                     !all_created,
@@ -8959,14 +8974,14 @@ impl GitPanel {
                 .when(is_file_or_bulk, |context_menu| {
                     context_menu
                         .separator()
-                        .action(open_diff_title, menu::Confirm.boxed_clone())
-                        .action(open_file_diff_title, menu::SecondaryConfirm.boxed_clone())
-                        .action(view_file_title, ViewFile.boxed_clone())
+                        .action(titles.open_diff, menu::Confirm.boxed_clone())
+                        .action(titles.open_file_diff, menu::SecondaryConfirm.boxed_clone())
+                        .action(titles.view_file, ViewFile.boxed_clone())
                 })
                 .when(is_file_or_bulk && has_tracked, |context_menu| {
                     context_menu
                         .separator()
-                        .action(view_file_history_title, Box::new(git::FileHistory))
+                        .action(titles.view_file_history, Box::new(git::FileHistory))
                 })
         })
     }
@@ -17710,7 +17725,7 @@ mod tests {
                 panel.branch_base.effective().as_deref(),
                 Some("origin/main")
             );
-            assert_eq!(panel.branch_file_count, 3);
+            assert_eq!(panel.section_file_counts.get(&Section::Branch), Some(&3));
             assert_eq!(panel.changes_count, 2);
             assert!(
                 !panel
@@ -17736,7 +17751,7 @@ mod tests {
         // Picking a base from the menu while showing uncommitted changes
         // switches to branch mode at that base.
         panel.update_in(cx, |panel, window, cx| {
-            panel.compare_against_base("develop".into(), window, cx);
+            panel.show_branch_changes_since("develop".into(), window, cx);
         });
         settle_branch_mode(cx);
         // The fake repository lists the same files for every base, so check
@@ -17938,10 +17953,10 @@ mod tests {
         // Hosts the menu in its own window so the test can focus it directly;
         // a popover only takes focus on a later platform frame.
         let open_menu = |cx: &mut VisualTestContext| {
-            let menu_state = panel.update(cx, |panel, cx| panel.changes_mode_menu_state(cx));
+            let panel = panel.downgrade();
             let mut menu = None;
             let window = cx.cx.add_window(|window, cx| {
-                let context_menu = GitPanel::changes_mode_menu(menu_state, window, cx);
+                let context_menu = GitPanel::changes_mode_menu(panel, window, cx);
                 menu = Some(context_menu.clone());
                 MenuHost(context_menu)
             });

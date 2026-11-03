@@ -1,4 +1,5 @@
 use super::*;
+use gpui::EntityId;
 use settings::GitDiffBaseSetting;
 
 pub(super) enum ChangesMode {
@@ -90,22 +91,10 @@ impl BranchBase {
     }
 }
 
-/// What the changes mode menu needs from the panel, captured when the menu
-/// button renders.
-#[derive(Clone)]
-pub(super) struct ChangesModeMenuState {
-    panel: WeakEntity<GitPanel>,
-    workspace: WeakEntity<Workspace>,
-    repository: Option<Entity<Repository>>,
-    base_ref: Option<SharedString>,
-    is_branch_mode: bool,
-    menu_handle: PopoverMenuHandle<ContextMenu>,
-}
-
 /// The branch diff tab the panel last adopted a base from, watched so that
 /// base changes made in the tab's own picker carry over to the panel.
 struct FollowedBranchDiff {
-    branch_diff: WeakEntity<BranchDiff>,
+    list_id: EntityId,
     _subscription: Subscription,
 }
 
@@ -204,7 +193,7 @@ impl GitPanel {
         }
     }
 
-    pub(super) fn compare_against_base(
+    pub(super) fn show_branch_changes_since(
         &mut self,
         base_ref: SharedString,
         window: &mut Window,
@@ -215,21 +204,26 @@ impl GitPanel {
         self.enter_branch_mode(window, cx);
     }
 
+    fn show_branch_changes_since_picked(
+        panel: WeakEntity<GitPanel>,
+    ) -> impl Fn(Branch, &mut Window, &mut App) + 'static {
+        move |branch, window, cx| {
+            let base_ref: SharedString = branch.name().to_owned().into();
+            panel
+                .update(cx, |panel, cx| {
+                    panel.show_branch_changes_since(base_ref, window, cx);
+                })
+                .ok();
+        }
+    }
+
     pub(super) fn choose_branch_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repository) = self.active_repository.clone() else {
             return;
         };
         let selected_branch = self.branch_base.effective();
-        let panel = cx.weak_entity();
         let on_select: branch_picker::SelectBranchCallback =
-            Arc::new(move |branch: Branch, window: &mut Window, cx: &mut App| {
-                let base_ref: SharedString = branch.name().to_owned().into();
-                panel
-                    .update(cx, |panel, cx| {
-                        panel.compare_against_base(base_ref, window, cx);
-                    })
-                    .ok();
-            });
+            Arc::new(Self::show_branch_changes_since_picked(cx.weak_entity()));
         let workspace = self.workspace.clone();
         // Workspace actions call this while the workspace is being updated, so
         // the modal opens once that update has finished.
@@ -388,8 +382,6 @@ impl GitPanel {
             .collect()
     }
 
-    /// Adopts the base of the active branch diff tab when one becomes active,
-    /// and keeps following base changes made in that tab's own picker.
     pub(super) fn follow_active_branch_diff(
         &mut self,
         window: &mut Window,
@@ -402,45 +394,44 @@ impl GitPanel {
             self.branch_base.followed = None;
             return;
         };
+        let list = branch_diff.read(cx).branch_diff_list(cx);
         if self
             .branch_base
             .followed
             .as_ref()
-            .is_some_and(|followed| followed.branch_diff.entity_id() == branch_diff.entity_id())
+            .is_some_and(|followed| followed.list_id == list.entity_id())
         {
             return;
         }
 
-        let branch_list = branch_diff.read(cx).branch_diff_list(cx);
-        let subscription = cx.subscribe_in(&branch_list, window, {
-            let branch_diff = branch_diff.downgrade();
-            move |this, _, event: &BranchDiffEvent, window, cx| {
-                if matches!(event, BranchDiffEvent::DiffBaseChanged)
-                    && let Some(branch_diff) = branch_diff.upgrade()
-                {
-                    this.adopt_branch_diff_base(&branch_diff, window, cx);
+        let subscription = cx.subscribe_in(
+            &list,
+            window,
+            |this, list, event: &BranchDiffEvent, window, cx| {
+                if matches!(event, BranchDiffEvent::DiffBaseChanged) {
+                    this.adopt_branch_diff_base(list, window, cx);
                 }
-            }
-        });
+            },
+        );
         self.branch_base.followed = Some(FollowedBranchDiff {
-            branch_diff: branch_diff.downgrade(),
+            list_id: list.entity_id(),
             _subscription: subscription,
         });
-        self.adopt_branch_diff_base(&branch_diff, window, cx);
+        self.adopt_branch_diff_base(&list, window, cx);
     }
 
     fn adopt_branch_diff_base(
         &mut self,
-        branch_diff: &Entity<BranchDiff>,
+        list: &Entity<DiffBufferList>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let branch_diff = branch_diff.read(cx);
-        let DiffBase::Merge { base_ref } = branch_diff.diff_base(cx) else {
+        let list = list.read(cx);
+        let DiffBase::Merge { base_ref } = list.diff_base() else {
             return;
         };
-        let is_active_repository = branch_diff
-            .repo(cx)
+        let is_active_repository = list
+            .repo()
             .zip(self.active_repository.as_ref())
             .is_some_and(|(repo, active_repo)| repo.read(cx).id == active_repo.read(cx).id);
         if !is_active_repository {
@@ -450,8 +441,6 @@ impl GitPanel {
         self.set_branch_base(base_ref, window, cx);
     }
 
-    /// Opens the branch diff at the panel's base, focusing an existing tab
-    /// with that base, and scrolls to `entry` when given.
     pub(super) fn open_branch_diff(
         &mut self,
         entry: Option<GitStatusEntry>,
@@ -543,7 +532,7 @@ impl GitPanel {
             (true, None) => "Branch Changes".into(),
             (false, _) => "Uncommitted".into(),
         };
-        let menu_state = self.changes_mode_menu_state(cx);
+        let panel = cx.weak_entity();
 
         PopoverMenu::new("git-panel-changes-mode")
             .with_handle(self.changes_mode_menu_handle.clone())
@@ -557,76 +546,68 @@ impl GitPanel {
                     ),
                 Tooltip::text("Choose Which Changes to Show"),
             )
-            .menu(move |window, cx| Some(Self::changes_mode_menu(menu_state.clone(), window, cx)))
+            .menu(move |window, cx| Some(Self::changes_mode_menu(panel.clone(), window, cx)))
             .anchor(Anchor::TopLeft)
     }
 
-    pub(super) fn changes_mode_menu_state(&self, cx: &Context<Self>) -> ChangesModeMenuState {
-        ChangesModeMenuState {
-            panel: cx.weak_entity(),
-            workspace: self.workspace.clone(),
-            repository: self.active_repository.clone(),
-            base_ref: self.branch_base.effective(),
-            is_branch_mode: self.is_branch_mode(),
-            menu_handle: self.changes_mode_menu_handle.clone(),
-        }
-    }
-
     pub(super) fn changes_mode_menu(
-        state: ChangesModeMenuState,
+        panel: WeakEntity<GitPanel>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
+        let is_branch_mode = panel
+            .read_with(cx, |panel, _| panel.is_branch_mode())
+            .unwrap_or(false);
         ContextMenu::build(window, cx, move |menu, _, _| {
-            let panel = state.panel.clone();
             // The check goes at the end so "Uncommitted" lines up with the
             // submenu trigger, which has no check slot.
             menu.toggleable_entry(
                 "Uncommitted",
-                !state.is_branch_mode,
+                !is_branch_mode,
                 IconPosition::End,
                 Some(ShowUncommittedChanges.boxed_clone()),
-                move |window, cx| {
-                    panel
-                        .update(cx, |panel, cx| {
-                            panel.enter_uncommitted_mode(window, cx);
-                        })
-                        .ok();
+                {
+                    let panel = panel.clone();
+                    move |window, cx| {
+                        panel
+                            .update(cx, |panel, cx| {
+                                panel.enter_uncommitted_mode(window, cx);
+                            })
+                            .ok();
+                    }
                 },
             )
             .submenu("Compare Against Base", move |menu, window, cx| {
-                Self::compare_against_base_submenu(menu, state.clone(), window, cx)
+                Self::compare_against_base_submenu(menu, panel.clone(), window, cx)
             })
         })
     }
 
-    /// Hosts the searchable branch picker inside the "Compare Against Base"
-    /// submenu.
     fn compare_against_base_submenu(
         menu: ContextMenu,
-        state: ChangesModeMenuState,
+        panel: WeakEntity<GitPanel>,
         window: &mut Window,
         cx: &mut Context<ContextMenu>,
     ) -> ContextMenu {
-        let ChangesModeMenuState {
-            panel,
-            workspace,
-            repository,
-            base_ref: selected_branch,
-            menu_handle,
-            ..
-        } = state;
+        let Ok((workspace, repository, selected_branch, menu_handle)) =
+            panel.read_with(cx, |panel, _| {
+                (
+                    panel.workspace.clone(),
+                    panel.active_repository.clone(),
+                    panel.branch_base.effective(),
+                    panel.changes_mode_menu_handle.clone(),
+                )
+            })
+        else {
+            return menu;
+        };
         let picked = Arc::new(AtomicBool::new(false));
         let on_select: branch_picker::SelectBranchCallback = Arc::new({
             let picked = picked.clone();
+            let show_branch_changes_since = Self::show_branch_changes_since_picked(panel);
             move |branch: Branch, window: &mut Window, cx: &mut App| {
                 picked.store(true, Ordering::Relaxed);
-                let base_ref: SharedString = branch.name().to_owned().into();
-                panel
-                    .update(cx, |panel, cx| {
-                        panel.compare_against_base(base_ref, window, cx);
-                    })
-                    .ok();
+                show_branch_changes_since(branch, window, cx);
             }
         });
         let branch_list = cx.new(|cx| {
@@ -691,35 +672,23 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        let plural = file_count > 1;
         let is_file_or_bulk = !matches!(target_kind, SelectionTargetKind::Directory);
-        let view_file_title = if plural { "View Files" } else { "View File" };
-        let copy_path_title = if plural { "Copy Paths" } else { "Copy Path" };
-        let copy_relative_path_title = if plural {
-            "Copy Relative Paths"
-        } else {
-            "Copy Relative Path"
-        };
-        let view_file_history_title = if plural {
-            "View File Histories"
-        } else {
-            "View File History"
-        };
+        let titles = EntryMenuTitles::new(file_count);
         ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
                 .context(self.focus_handle.clone())
                 .when(is_file_or_bulk, |context_menu| {
                     context_menu
                         .action("Open Diff", menu::Confirm.boxed_clone())
-                        .action(view_file_title, ViewFile.boxed_clone())
+                        .action(titles.view_file, ViewFile.boxed_clone())
                         .separator()
                 })
-                .action(copy_path_title, CopyPath.boxed_clone())
-                .action(copy_relative_path_title, CopyRelativePath.boxed_clone())
+                .action(titles.copy_path, CopyPath.boxed_clone())
+                .action(titles.copy_relative_path, CopyRelativePath.boxed_clone())
                 .when(is_file_or_bulk && has_history, |context_menu| {
                     context_menu
                         .separator()
-                        .action(view_file_history_title, Box::new(git::FileHistory))
+                        .action(titles.view_file_history, Box::new(git::FileHistory))
                 })
         })
     }
