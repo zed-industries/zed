@@ -1686,6 +1686,7 @@ impl Window {
                 is_minimizable,
                 focus,
                 show,
+                window_background,
                 display_id,
                 window_min_size,
                 app_id: app_id.clone(),
