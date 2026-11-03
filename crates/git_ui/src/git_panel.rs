@@ -1731,6 +1731,14 @@ impl GitPanel {
             .get(*self.change_entry_indices.get(path)?)
     }
 
+    /// Branch mode lists files added since the base as created, but once
+    /// committed they have history. Only uncommitted new files don't.
+    fn has_file_history(&self, entry: &GitStatusEntry) -> bool {
+        !self
+            .change_entry_by_path(&entry.repo_path)
+            .is_some_and(|change| change.status.is_created())
+    }
+
     fn entry_by_path_in_section(&self, path: &RepoPath, section: Section) -> Option<usize> {
         self.projected_entries_by_path
             .get(path)?
@@ -2949,6 +2957,10 @@ impl GitPanel {
             cx.propagate();
             return;
         }
+        let entries = entries
+            .into_iter()
+            .filter(|entry| self.has_file_history(entry))
+            .collect::<Vec<_>>();
         let Some(repository) = self.active_repository.as_ref() else {
             return;
         };
@@ -2957,17 +2969,15 @@ impl GitPanel {
         self.workspace
             .update(cx, |workspace, cx| {
                 for entry in entries {
-                    if !entry.status.is_created() {
-                        crate::git_graph::open_or_reuse_graph(
-                            workspace,
-                            repository_id,
-                            git_store.clone(),
-                            LogSource::Path(entry.repo_path),
-                            None,
-                            window,
-                            cx,
-                        );
-                    }
+                    crate::git_graph::open_or_reuse_graph(
+                        workspace,
+                        repository_id,
+                        git_store.clone(),
+                        LogSource::Path(entry.repo_path),
+                        None,
+                        window,
+                        cx,
+                    );
                 }
             })
             .log_err();
@@ -9010,7 +9020,7 @@ impl GitPanel {
         }
 
         if self.is_branch_mode() {
-            let has_history = entries.iter().any(|entry| !entry.status.is_untracked());
+            let has_history = entries.iter().any(|entry| self.has_file_history(entry));
             self.set_context_menu(
                 self.build_branch_context_menu(entries.len(), target_kind, has_history, window, cx),
                 position,
@@ -9871,7 +9881,7 @@ impl GitPanel {
     pub fn selected_file_history_target(&self) -> Option<(Entity<Repository>, RepoPath)> {
         let entry = self.get_selected_entry()?.status_entry()?;
         let repository = self.active_repository.clone()?;
-        if entry.status.is_created() {
+        if !self.has_file_history(entry) {
             return None;
         }
         Some((repository, entry.repo_path.clone()))
