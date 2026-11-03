@@ -66,6 +66,7 @@ impl Anchored {
     ///
     /// On each axis where the element sits outside `target`, it moves to the other side of
     /// `target` when that overflows the window less, mirroring both corners and the offset.
+    /// This takes the place of [`AnchoredFitMode::SwitchAnchor`].
     pub fn attach(mut self, target: Bounds<Pixels>, corner: Anchor) -> Self {
         self.placement = Placement::Attached { target, corner };
         self
