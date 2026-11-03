@@ -99,8 +99,8 @@ struct FollowedBranchDiff {
 
 #[derive(Clone, Copy)]
 struct ShowBranchChangesRequest {
-    /// The empty state's button, which also opens the diff and always uses
-    /// the default branch.
+    /// The empty state's button, which also opens the diff. It uses the
+    /// default branch, or the picked base when there is none.
     from_empty_state: bool,
 }
 
@@ -262,7 +262,7 @@ impl GitPanel {
             return;
         }
         if self.branch_base.is_unavailable() {
-            self.choose_branch_base(window, cx);
+            self.choose_branch_base_for(request, window, cx);
             return;
         }
         self.enter_branch_mode(window, cx);
@@ -291,24 +291,43 @@ impl GitPanel {
 
     fn on_base_picked(
         panel: WeakEntity<GitPanel>,
+        request: ShowBranchChangesRequest,
     ) -> impl Fn(Branch, &mut Window, &mut App) + 'static {
         move |branch, window, cx| {
             let base_ref: SharedString = branch.name().to_owned().into();
             panel
                 .update(cx, |panel, cx| {
                     panel.show_branch_changes_since(base_ref, window, cx);
+                    if request.from_empty_state {
+                        panel.open_branch_diff(None, window, cx);
+                    }
                 })
                 .ok();
         }
     }
 
     pub(super) fn choose_branch_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.choose_branch_base_for(
+            ShowBranchChangesRequest {
+                from_empty_state: false,
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn choose_branch_base_for(
+        &mut self,
+        request: ShowBranchChangesRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(repository) = self.active_repository.clone() else {
             return;
         };
         let selected_branch = self.branch_base.effective();
         let on_select: branch_picker::SelectBranchCallback =
-            Arc::new(Self::on_base_picked(cx.weak_entity()));
+            Arc::new(Self::on_base_picked(cx.weak_entity(), request));
         let workspace = self.workspace.clone();
         // Workspace actions call this while the workspace is being updated, so
         // the modal opens once that update has finished.
@@ -714,7 +733,12 @@ impl GitPanel {
         let picked = Arc::new(AtomicBool::new(false));
         let on_select: branch_picker::SelectBranchCallback = Arc::new({
             let picked = picked.clone();
-            let show_branch_changes_since = Self::on_base_picked(panel);
+            let show_branch_changes_since = Self::on_base_picked(
+                panel,
+                ShowBranchChangesRequest {
+                    from_empty_state: false,
+                },
+            );
             move |branch: Branch, window: &mut Window, cx: &mut App| {
                 picked.store(true, Ordering::Relaxed);
                 show_branch_changes_since(branch, window, cx);
