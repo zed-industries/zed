@@ -706,6 +706,40 @@ enum DefaultBranch {
     Missing,
 }
 
+struct BranchBase {
+    /// Picked in the panel or adopted from the last active branch diff tab.
+    picked: Option<SharedString>,
+    default: DefaultBranch,
+    followed: Option<FollowedBranchDiff>,
+    default_lookup: Task<()>,
+}
+
+impl BranchBase {
+    fn new() -> Self {
+        Self {
+            picked: None,
+            default: DefaultBranch::Loading,
+            followed: None,
+            default_lookup: Task::ready(()),
+        }
+    }
+
+    fn effective(&self) -> Option<SharedString> {
+        self.picked.clone().or_else(|| match &self.default {
+            DefaultBranch::Found(default_branch) => Some(default_branch.clone()),
+            DefaultBranch::Loading | DefaultBranch::Missing => None,
+        })
+    }
+
+    fn is_resolving(&self) -> bool {
+        self.picked.is_none() && self.default == DefaultBranch::Loading
+    }
+
+    fn is_unavailable(&self) -> bool {
+        self.picked.is_none() && self.default == DefaultBranch::Missing
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct GitHeaderEntry {
     header: Section,
@@ -1349,12 +1383,7 @@ pub struct GitPanel {
     remote_action_menu_handle: PopoverMenuHandle<ContextMenu>,
     changes_mode: ChangesMode,
     changes_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
-    /// The base picked in the panel or adopted from the last active branch
-    /// diff tab. `None` falls back to the default branch.
-    branch_base: Option<SharedString>,
-    default_branch: DefaultBranch,
-    default_branch_task: Option<Task<()>>,
-    followed_branch_diff: Option<FollowedBranchDiff>,
+    branch_base: BranchBase,
     /// Uncommitted files, one per path. Staging, discarding and committing
     /// act on these regardless of which mode `entries` shows.
     change_entries: Vec<GitStatusEntry>,
@@ -1715,15 +1744,13 @@ impl GitPanel {
                 remote_action_menu_handle: PopoverMenuHandle::default(),
                 changes_mode: ChangesMode::Uncommitted,
                 changes_mode_menu_handle: PopoverMenuHandle::default(),
-                branch_base: None,
-                default_branch: DefaultBranch::Loading,
-                default_branch_task: None,
-                followed_branch_diff: None,
+                branch_base: BranchBase::new(),
                 change_entries: Vec::new(),
                 branch_file_count: 0,
             };
 
             this.schedule_update(window, cx);
+            this.resolve_default_branch(window, cx);
             this
         })
     }
@@ -2719,7 +2746,7 @@ impl GitPanel {
                 .get(self.selected_entry?)?
                 .status_entry()?
                 .clone();
-            let base_ref = self.branch_base()?;
+            let base_ref = self.branch_base.effective()?;
             let repo_id = self.active_repository.as_ref()?.read(cx).id;
             let branch_diff = self
                 .workspace
@@ -5803,8 +5830,6 @@ impl GitPanel {
         if active_repository_changed {
             self.update_active_history_sha(cx);
             self.reset_branch_state(window, cx);
-        } else if self.default_branch_task.is_none() {
-            self.resolve_default_branch(window, cx);
         }
         self.reopen_commit_buffer(window, cx);
         self.preload_commit_history(cx);
@@ -5839,19 +5864,8 @@ impl GitPanel {
         }
     }
 
-    /// The base branch mode compares against, if one is known yet.
-    fn branch_base(&self) -> Option<SharedString> {
-        self.branch_base
-            .clone()
-            .or_else(|| match &self.default_branch {
-                DefaultBranch::Found(default_branch) => Some(default_branch.clone()),
-                DefaultBranch::Loading | DefaultBranch::Missing => None,
-            })
-    }
-
     fn can_show_branch_changes(&self) -> bool {
-        self.active_repository.is_some()
-            && (self.branch_base.is_some() || self.default_branch != DefaultBranch::Missing)
+        self.active_repository.is_some() && !self.branch_base.is_unavailable()
     }
 
     fn enter_branch_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5884,10 +5898,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.branch_base.as_ref() == Some(&base_ref) {
+        if self.branch_base.picked.as_ref() == Some(&base_ref) {
             return;
         }
-        self.branch_base = Some(base_ref);
+        self.branch_base.picked = Some(base_ref);
         if self.is_branch_mode() {
             self.schedule_visible_entries_update(window, cx);
         }
@@ -5923,7 +5937,7 @@ impl GitPanel {
         let Some(repository) = self.active_repository.clone() else {
             return;
         };
-        let selected_branch = self.branch_base();
+        let selected_branch = self.branch_base.effective();
         let panel = cx.weak_entity();
         let on_select: branch_picker::SelectBranchCallback =
             Arc::new(move |branch: Branch, window: &mut Window, cx: &mut App| {
@@ -5969,40 +5983,40 @@ impl GitPanel {
     /// Branch names don't carry over between repositories, so switching
     /// repositories starts again from the new one's default branch.
     fn reset_branch_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.branch_base = None;
-        self.followed_branch_diff = None;
-        self.default_branch = DefaultBranch::Loading;
+        self.branch_base = BranchBase::new();
         self.resolve_default_branch(window, cx);
     }
 
     fn resolve_default_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.active_repository.clone() else {
-            self.default_branch = DefaultBranch::Missing;
-            self.default_branch_task = Some(Task::ready(()));
+            self.branch_base.default = DefaultBranch::Missing;
             return;
         };
         let default_branch = repo.update(cx, |repo, _| repo.default_branch(true));
-        self.default_branch_task = Some(cx.spawn_in(window, async move |this, cx| {
+        self.branch_base.default_lookup = cx.spawn_in(window, async move |this, cx| {
             let default_branch = match default_branch.await.ok().and_then(ResultExt::log_err) {
                 Some(Some(default_branch)) => DefaultBranch::Found(default_branch),
                 Some(None) | None => DefaultBranch::Missing,
             };
             this.update_in(cx, |this, window, cx| {
-                if this.default_branch == default_branch {
+                if this.branch_base.default == default_branch {
                     return;
                 }
-                this.default_branch = default_branch;
+                this.branch_base.default = default_branch;
                 this.schedule_visible_entries_update(window, cx);
                 cx.notify();
             })
             .ok();
-        }));
+        });
     }
 
     /// Runs at the start of every entries update, so changes to the mode,
     /// repository or base only need to schedule one.
     fn sync_branch_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let target = self.active_repository.clone().zip(self.branch_base());
+        let target = self
+            .active_repository
+            .clone()
+            .zip(self.branch_base.effective());
         let git_store = self.project.read(cx).git_store().clone();
         let ChangesMode::Branch(branch_list) = &mut self.changes_mode else {
             return;
@@ -6065,11 +6079,12 @@ impl GitPanel {
             return;
         };
         let Some(branch_diff) = workspace.read(cx).active_item_as::<BranchDiff>(cx) else {
-            self.followed_branch_diff = None;
+            self.branch_base.followed = None;
             return;
         };
         if self
-            .followed_branch_diff
+            .branch_base
+            .followed
             .as_ref()
             .is_some_and(|followed| followed.branch_diff.entity_id() == branch_diff.entity_id())
         {
@@ -6087,7 +6102,7 @@ impl GitPanel {
                 }
             }
         });
-        self.followed_branch_diff = Some(FollowedBranchDiff {
+        self.branch_base.followed = Some(FollowedBranchDiff {
             branch_diff: branch_diff.downgrade(),
             _subscription: subscription,
         });
@@ -6123,7 +6138,8 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (Some(repo), Some(base_ref)) = (self.active_repository.clone(), self.branch_base())
+        let (Some(repo), Some(base_ref)) =
+            (self.active_repository.clone(), self.branch_base.effective())
         else {
             return;
         };
@@ -7572,7 +7588,7 @@ impl GitPanel {
     }
 
     fn render_changes_mode_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let label: SharedString = match (self.is_branch_mode(), self.branch_base()) {
+        let label: SharedString = match (self.is_branch_mode(), self.branch_base.effective()) {
             (true, Some(base_ref)) => format!("Since {base_ref}").into(),
             (true, None) => "Branch Changes".into(),
             (false, _) => "Uncommitted".into(),
@@ -7600,7 +7616,7 @@ impl GitPanel {
             panel: cx.weak_entity(),
             workspace: self.workspace.clone(),
             repository: self.active_repository.clone(),
-            base_ref: self.branch_base(),
+            base_ref: self.branch_base.effective(),
             is_branch_mode: self.is_branch_mode(),
             menu_handle: self.changes_mode_menu_handle.clone(),
         }
@@ -8893,12 +8909,12 @@ impl GitPanel {
         {
             format!("Couldn't load branch changes: {error}").into()
         } else if branch_list.is_some_and(|branch_list| branch_list.statuses_by_path().is_none())
-            || (self.branch_base.is_none() && self.default_branch == DefaultBranch::Loading)
+            || self.branch_base.is_resolving()
         {
             // Only the first load for a base shows this, so refreshes after
             // every status change don't flicker.
             "Loading branch changes…".into()
-        } else if let Some(base_ref) = self.branch_base() {
+        } else if let Some(base_ref) = self.branch_base.effective() {
             format!("No changes since {base_ref}").into()
         } else {
             "No default branch found. Pick a base branch.".into()
@@ -18259,7 +18275,10 @@ mod tests {
 
         assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
         panel.read_with(cx, |panel, _| {
-            assert_eq!(panel.branch_base().as_deref(), Some("origin/main"));
+            assert_eq!(
+                panel.branch_base.effective().as_deref(),
+                Some("origin/main")
+            );
             assert_eq!(panel.branch_file_count, 3);
             assert_eq!(panel.changes_count, 2);
             assert!(
@@ -18291,7 +18310,7 @@ mod tests {
         settle_branch_mode(cx);
         panel.read_with(cx, |panel, _| {
             assert!(panel.is_branch_mode());
-            assert_eq!(panel.branch_base().as_deref(), Some("develop"));
+            assert_eq!(panel.branch_base.effective().as_deref(), Some("develop"));
         });
         assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
     }
@@ -18344,7 +18363,7 @@ mod tests {
         let panel = test.panel.clone();
         let base = |cx: &mut VisualTestContext| {
             panel.read_with(cx, |panel, _| {
-                panel.branch_base().map(|base| base.to_string())
+                panel.branch_base.effective().map(|base| base.to_string())
             })
         };
 
@@ -18509,7 +18528,7 @@ mod tests {
 
         panel.read_with(cx, |panel, _| {
             assert!(panel.is_branch_mode());
-            assert_eq!(panel.branch_base().as_deref(), Some("develop"));
+            assert_eq!(panel.branch_base.effective().as_deref(), Some("develop"));
         });
     }
 
@@ -18542,7 +18561,7 @@ mod tests {
         let panel = test.panel.clone();
 
         panel.read_with(cx, |panel, _| {
-            assert_eq!(panel.default_branch, DefaultBranch::Missing);
+            assert_eq!(panel.branch_base.default, DefaultBranch::Missing);
             assert!(!panel.can_show_branch_changes());
         });
         panel.update_in(cx, |panel, window, cx| {
