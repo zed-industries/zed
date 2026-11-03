@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::{v1::schema as acp_v1, v2::schema as acp_v2};
 use anyhow::{Result, bail};
 
 pub fn from_v1(commands: Vec<acp_v1::AvailableCommand>) -> Result<Vec<acp_v2::AvailableCommand>> {
@@ -18,11 +18,11 @@ pub fn from_v1(commands: Vec<acp_v1::AvailableCommand>) -> Result<Vec<acp_v2::Av
                     })
                 })
                 .transpose()?;
-            Ok(
-                acp_v2::AvailableCommand::new(command.name, command.description)
+            Ok(acp_v2::AvailableCommand::Command(
+                acp_v2::Command::new(command.name, command.description)
                     .input(input)
                     .meta(command.meta),
-            )
+            ))
         })
         .collect()
 }
@@ -52,10 +52,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(from_v1(commands)?)?,
             json!([
-                {"name": "/opaque.name", "description": ""},
-                {"name": "empty", "description": "", "_meta": {}},
+                {"type": "command", "name": "/opaque.name", "description": ""},
+                {"type": "command", "name": "empty", "description": "", "_meta": {}},
                 {
-                    "name": "deploy", "description": "Deploy code",
+                    "type": "command", "name": "deploy", "description": "Deploy code",
                     "input": {"type": "text", "hint": "", "_meta": {"input": [null, true]}},
                     "_meta": {"command_category": "mcp", "command": {"nested": [1, "value"]}}
                 }

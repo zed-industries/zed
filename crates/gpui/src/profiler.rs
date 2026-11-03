@@ -1,3 +1,5 @@
+//! Profiling utilities for task, frame, and thread performance tracking.
+
 #[cfg(feature = "profiler")]
 use hdrhistogram::Histogram;
 use itertools::Itertools;
@@ -368,7 +370,7 @@ impl ProfilingCollector {
             let buffer_len = thread.timings.len() as u64;
             let buffer_start = thread.total_pushed.saturating_sub(buffer_len);
 
-            let mut slice = if prev_cursor < buffer_start {
+            let slice = if prev_cursor < buffer_start {
                 // Cursor fell behind the buffer — some entries were evicted.
                 // Return everything still in the buffer.
                 thread.timings.as_slice()

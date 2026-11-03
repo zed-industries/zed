@@ -796,15 +796,9 @@ impl Item for Editor {
         };
 
         let description = params.detail.and_then(|detail| {
-            let path = path_for_buffer(&self.buffer, detail, false, cx)?;
-            let description = path.trim();
-
-            if description.is_empty() {
-                return None;
-            }
-
+            let description = self.tab_description(detail, cx)?;
             Some(util::truncate_and_trailoff(
-                description,
+                &description,
                 params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
             ))
         });
@@ -1653,6 +1647,17 @@ fn clip_ranges<'a>(
 impl EventEmitter<SearchEvent> for Editor {}
 
 impl Editor {
+    /// Panes keep increasing `detail` until tabs for files with the same name look different.
+    pub fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString> {
+        let path = path_for_buffer(&self.buffer, detail, false, cx)?;
+        let description = path.trim();
+        if description.is_empty() {
+            None
+        } else {
+            Some(description.to_string().into())
+        }
+    }
+
     pub fn update_restoration_data(
         &self,
         cx: &mut Context<Self>,
