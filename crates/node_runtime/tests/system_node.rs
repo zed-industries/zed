@@ -7,7 +7,10 @@
 #![cfg(unix)]
 
 use anyhow::Result;
-use node_runtime::{NodeBinaryOptions, NodeDiscoveryError, NodeRuntime, SystemNode};
+use managed_resources::{ManagedResource, ManagedResourceCommand};
+use node_runtime::{
+    InstallNpmPackages, NodeBinaryOptions, NodeDiscoveryError, NodeRuntime, Npm, SystemNode,
+};
 use semver::Version;
 use std::{
     env, fs,
@@ -61,6 +64,87 @@ fn configured_runtime_keeps_node_available_when_npm_is_missing() -> Result<()> {
     fake_node(directory.path(), "printf 'v22.0.0\\n'")?;
     run_child_test(
         "configured_runtime_keeps_node_available_when_npm_is_missing",
+        directory.path(),
+        directory.path(),
+    )
+}
+
+#[test]
+fn managed_npm_obtains_and_installs_packages() -> Result<()> {
+    if env::var_os(CHILD).is_some() {
+        let directory = env::current_dir()?;
+        paths::set_custom_data_dir(&directory.join("data").to_string_lossy());
+        return smol::block_on(async {
+            let npm_path = directory.join("npm");
+            let runtime = NodeRuntime::new(
+                Arc::new(http_client::BlockedHttpClient),
+                None,
+                watch::channel(Some(NodeBinaryOptions {
+                    use_paths: Some((directory.join("node"), npm_path.clone())),
+                    ..Default::default()
+                }))
+                .1,
+            );
+            assert!(Npm::obtain(&(), &runtime).await.is_err());
+
+            fs::write(
+                &npm_path,
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\npwd -P > \"$0.cwd\"\n",
+            )?;
+            fs::set_permissions(&npm_path, fs::Permissions::from_mode(0o755))?;
+            let npm = Arc::new(Npm::obtain(&(), &runtime).await?);
+            let arguments = fs::read_to_string(directory.join("npm.args"))?;
+            assert!(arguments.lines().any(|argument| argument == "--version"));
+
+            let installation_directory = directory.join("language server");
+            fs::create_dir(&installation_directory)?;
+            let install = || InstallNpmPackages {
+                directory: installation_directory.clone(),
+                packages: vec![
+                    ("@example/server".into(), "1.2.3".into()),
+                    ("another-package".into(), "4.5.6".into()),
+                ],
+            };
+            install().run(npm.clone()).await?;
+            let arguments = fs::read_to_string(directory.join("npm.args"))?;
+            let arguments = arguments.lines().collect::<Vec<_>>();
+            assert!(
+                arguments.starts_with(&[
+                    "--prefix",
+                    installation_directory.to_str().expect("UTF-8 test path"),
+                    "install",
+                ]),
+                "{arguments:?}"
+            );
+            assert!(
+                arguments.windows(2).any(
+                    |arguments| arguments == ["@example/server@1.2.3", "another-package@4.5.6"]
+                ),
+                "{arguments:?}"
+            );
+            assert_eq!(
+                fs::read_to_string(directory.join("npm.cwd"))?.trim(),
+                fs::canonicalize(&installation_directory)?.to_string_lossy()
+            );
+
+            fs::write(
+                &npm_path,
+                "#!/bin/sh\necho 'installation failed' >&2\nexit 7\n",
+            )?;
+            let error = install()
+                .run(npm)
+                .await
+                .expect_err("npm failure propagates");
+            assert!(error.to_string().contains("installation failed"));
+            assert!(Npm::obtain(&(), &runtime).await.is_err());
+            Ok(())
+        });
+    }
+
+    let directory = tempfile::tempdir()?;
+    fake_node(directory.path(), "printf 'v22.0.0\\n'")?;
+    run_child_test(
+        "managed_npm_obtains_and_installs_packages",
         directory.path(),
         directory.path(),
     )

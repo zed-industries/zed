@@ -141,6 +141,7 @@ members = [
     "crates/lsp",
     "crates/lsp_command_selector",
     "crates/lsp_locations",
+    "crates/managed_resources",
     "crates/markdown",
     "crates/markdown_preview",
     "crates/menu",
@@ -415,6 +416,7 @@ lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 lsp_command_selector = { path = "crates/lsp_command_selector" }
 lsp_locations = { path = "crates/lsp_locations" }
+managed_resources = { path = "crates/managed_resources" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 menu = { path = "crates/menu" }
