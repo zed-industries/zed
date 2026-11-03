@@ -50,7 +50,8 @@ enum DefaultBranch {
 }
 
 pub(super) struct BranchBase {
-    /// Picked in the panel or adopted from the last active branch diff tab.
+    /// Picked in the panel, or adopted from the active branch diff tab while
+    /// in branch mode. Cleared on leaving branch mode.
     picked: Option<SharedString>,
     /// Looked up only when needed, because the branch list changes on every
     /// commit, fetch and push.
