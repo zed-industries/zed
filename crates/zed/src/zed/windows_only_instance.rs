@@ -4,7 +4,7 @@ use anyhow::Context;
 use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use release_channel::app_identifier;
-use util::ResultExt;
+use util::{ResultExt, paths::PathWithPosition};
 use windows::{
     Win32::{
         Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GENERIC_WRITE, GetLastError, HANDLE},
@@ -123,8 +123,8 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
         let mut urls = vec![];
         let mut diff_paths = vec![];
         for path in args.paths_or_urls.iter() {
-            match std::fs::canonicalize(&path) {
-                Ok(path) => paths.push(path.to_string_lossy().into_owned()),
+            match canonicalize_path_arg(path) {
+                Ok(path) => paths.push(path),
                 Err(error) => {
                     if path.starts_with("zed://")
                         || path.starts_with("http://")
@@ -206,6 +206,15 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Canonicalizes a path argument, keeping a trailing `:row:column` suffix, as `crates/cli` does.
+fn canonicalize_path_arg(arg: &str) -> std::io::Result<String> {
+    let path_with_position = match std::fs::canonicalize(arg) {
+        Ok(path) => PathWithPosition::from_path(path),
+        Err(_) => PathWithPosition::parse_str(arg).map_path(std::fs::canonicalize)?,
+    };
+    Ok(path_with_position.to_string(&|path| path.to_string_lossy().into_owned()))
+}
+
 fn write_message_to_instance_pipe(message: &[u8]) -> anyhow::Result<()> {
     unsafe {
         let pipe = CreateFileW(
@@ -221,4 +230,25 @@ fn write_message_to_instance_pipe(message: &[u8]) -> anyhow::Result<()> {
         CloseHandle(pipe)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonicalize_path_arg;
+
+    #[test]
+    fn test_canonicalize_path_arg_keeps_position() {
+        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+        let canonical = canonicalize_path_arg(file).unwrap();
+
+        assert_eq!(
+            canonicalize_path_arg(&format!("{file}:2")).unwrap(),
+            format!("{canonical}:2")
+        );
+        assert_eq!(
+            canonicalize_path_arg(&format!("{file}:2:5")).unwrap(),
+            format!("{canonical}:2:5")
+        );
+        assert!(canonicalize_path_arg(&format!("{file}.missing:2")).is_err());
+    }
 }
