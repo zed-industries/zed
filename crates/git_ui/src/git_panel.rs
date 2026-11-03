@@ -11,7 +11,7 @@ use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::{CommitAvatar, CommitTooltip};
 use crate::commit_view::CommitView;
 use crate::git_panel_settings::GitPanelScrollbarAccessor;
-use crate::project_diff::{DeployBranchDiff, Diff, ProjectDiff};
+use crate::project_diff::{Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::solo_diff_view::SoloDiffView;
 use crate::staged_diff::StagedDiff;
@@ -1597,7 +1597,7 @@ impl GitPanel {
                         RepositoryEvent::BranchListChanged,
                         true,
                     ) => {
-                        this.resolve_default_branch(window, cx);
+                        this.default_branch_may_have_changed(window, cx);
                     }
                     GitStoreEvent::RepositoryUpdated(_, _, _) => {}
                     GitStoreEvent::JobsUpdated
@@ -1681,7 +1681,6 @@ impl GitPanel {
             };
 
             this.schedule_update(window, cx);
-            this.resolve_default_branch(window, cx);
             this
         })
     }
@@ -8377,13 +8376,7 @@ impl GitPanel {
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Outlined)
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.show_branch_changes(&ShowBranchChanges, window, cx);
-                            // Without a base this opens the base picker instead.
-                            if this.is_branch_mode() {
-                                cx.defer(move |cx| {
-                                    cx.dispatch_action(&DeployBranchDiff);
-                                })
-                            }
+                            this.show_branch_changes_and_open_diff(window, cx);
                         })),
                 )
             })
@@ -17989,12 +17982,11 @@ mod tests {
         let cx = &mut cx;
         let panel = test.panel.clone();
 
-        panel.read_with(cx, |panel, _| {
-            assert!(!panel.can_show_branch_changes());
-        });
+        // The default branch is only looked up once it's needed.
         panel.update_in(cx, |panel, window, cx| {
             panel.show_branch_changes(&ShowBranchChanges, window, cx);
         });
+        cx.run_until_parked();
         panel.read_with(cx, |panel, _| {
             assert!(!panel.is_branch_mode());
         });

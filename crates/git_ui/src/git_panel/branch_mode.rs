@@ -14,6 +14,7 @@ pub(super) struct BranchList {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum DefaultBranch {
+    NotLoaded,
     Loading,
     Found(SharedString),
     Missing,
@@ -22,34 +23,69 @@ enum DefaultBranch {
 pub(super) struct BranchBase {
     /// Picked in the panel or adopted from the last active branch diff tab.
     picked: Option<SharedString>,
+    /// Looked up only when needed, because the branch list changes on every
+    /// commit, fetch and push.
     default: DefaultBranch,
-    followed: Option<FollowedBranchDiff>,
+    default_is_stale: bool,
     default_lookup: Task<()>,
+    show_after_lookup: Option<ShowBranchChangesRequest>,
+    followed: Option<FollowedBranchDiff>,
+}
+
+#[derive(Clone, Copy)]
+struct ShowBranchChangesRequest {
+    open_diff: bool,
 }
 
 impl BranchBase {
     pub(super) fn new() -> Self {
         Self {
             picked: None,
-            default: DefaultBranch::Loading,
-            followed: None,
+            default: DefaultBranch::NotLoaded,
+            default_is_stale: false,
             default_lookup: Task::ready(()),
+            show_after_lookup: None,
+            followed: None,
         }
     }
 
     pub(super) fn effective(&self) -> Option<SharedString> {
         self.picked.clone().or_else(|| match &self.default {
             DefaultBranch::Found(default_branch) => Some(default_branch.clone()),
-            DefaultBranch::Loading | DefaultBranch::Missing => None,
+            DefaultBranch::NotLoaded | DefaultBranch::Loading | DefaultBranch::Missing => None,
         })
     }
 
     fn is_resolving(&self) -> bool {
-        self.picked.is_none() && self.default == DefaultBranch::Loading
+        self.picked.is_none()
+            && matches!(
+                self.default,
+                DefaultBranch::NotLoaded | DefaultBranch::Loading
+            )
     }
 
     fn is_unavailable(&self) -> bool {
         self.picked.is_none() && self.default == DefaultBranch::Missing
+    }
+
+    /// Whether showing branch changes has to wait for a lookup to know
+    /// between switching modes and opening the base picker.
+    fn needs_lookup_to_decide(&self) -> bool {
+        self.picked.is_none()
+            && match self.default {
+                DefaultBranch::NotLoaded | DefaultBranch::Loading => true,
+                DefaultBranch::Missing => self.default_is_stale,
+                DefaultBranch::Found(_) => false,
+            }
+    }
+
+    fn needs_lookup(&self) -> bool {
+        self.picked.is_none()
+            && match self.default {
+                DefaultBranch::NotLoaded => true,
+                DefaultBranch::Loading => false,
+                DefaultBranch::Found(_) | DefaultBranch::Missing => self.default_is_stale,
+            }
     }
 }
 
@@ -84,14 +120,11 @@ impl GitPanel {
         }
     }
 
-    pub(super) fn can_show_branch_changes(&self) -> bool {
-        self.active_repository.is_some() && !self.branch_base.is_unavailable()
-    }
-
     pub(super) fn enter_branch_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_branch_mode() {
             return;
         }
+        self.ensure_default_branch(window, cx);
         self.changes_mode = ChangesMode::Branch(None);
         self.changes_mode_changed(window, cx);
     }
@@ -134,11 +167,39 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_branch_changes_for(ShowBranchChangesRequest { open_diff: false }, window, cx);
+    }
+
+    pub(super) fn show_branch_changes_and_open_diff(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_branch_changes_for(ShowBranchChangesRequest { open_diff: true }, window, cx);
+    }
+
+    fn show_branch_changes_for(
+        &mut self,
+        request: ShowBranchChangesRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.set_active_tab(GitPanelTab::Changes, window, cx);
-        if self.can_show_branch_changes() {
-            self.enter_branch_mode(window, cx);
-        } else {
+        if self.active_repository.is_none() {
+            return;
+        }
+        if self.branch_base.needs_lookup_to_decide() {
+            self.branch_base.show_after_lookup = Some(request);
+            self.ensure_default_branch(window, cx);
+            return;
+        }
+        if self.branch_base.is_unavailable() {
             self.choose_branch_base(window, cx);
+            return;
+        }
+        self.enter_branch_mode(window, cx);
+        if request.open_diff {
+            self.open_branch_diff(None, window, cx);
         }
     }
 
@@ -204,14 +265,38 @@ impl GitPanel {
     /// repositories starts again from the new one's default branch.
     pub(super) fn reset_branch_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.branch_base = BranchBase::new();
-        self.resolve_default_branch(window, cx);
+        if self.is_branch_mode() {
+            self.ensure_default_branch(window, cx);
+        }
     }
 
-    pub(super) fn resolve_default_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn default_branch_may_have_changed(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.branch_base.default_is_stale = true;
+        // Branch mode shows the default branch's changes, so it refreshes now.
+        if self.is_branch_mode() {
+            self.ensure_default_branch(window, cx);
+        }
+    }
+
+    fn ensure_default_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.branch_base.needs_lookup() {
+            self.resolve_default_branch(window, cx);
+        }
+    }
+
+    fn resolve_default_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.branch_base.default_is_stale = false;
         let Some(repo) = self.active_repository.clone() else {
             self.branch_base.default = DefaultBranch::Missing;
             return;
         };
+        if self.branch_base.default == DefaultBranch::NotLoaded {
+            self.branch_base.default = DefaultBranch::Loading;
+        }
         let default_branch = repo.update(cx, |repo, _| repo.default_branch(true));
         self.branch_base.default_lookup = cx.spawn_in(window, async move |this, cx| {
             let default_branch = match default_branch.await.ok().and_then(ResultExt::log_err) {
@@ -219,12 +304,14 @@ impl GitPanel {
                 Some(None) | None => DefaultBranch::Missing,
             };
             this.update_in(cx, |this, window, cx| {
-                if this.branch_base.default == default_branch {
-                    return;
+                if this.branch_base.default != default_branch {
+                    this.branch_base.default = default_branch;
+                    this.schedule_visible_entries_update(window, cx);
+                    cx.notify();
                 }
-                this.branch_base.default = default_branch;
-                this.schedule_visible_entries_update(window, cx);
-                cx.notify();
+                if let Some(request) = this.branch_base.show_after_lookup.take() {
+                    this.show_branch_changes_for(request, window, cx);
+                }
             })
             .ok();
         });
