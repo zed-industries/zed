@@ -167,7 +167,7 @@ pub fn select_embedded(
     window: &mut Window,
     cx: &mut Context<BranchList>,
 ) -> BranchList {
-    BranchList::new_select(
+    let list = BranchList::new_select(
         workspace,
         repository,
         BranchListStyle::Popover,
@@ -177,7 +177,15 @@ pub fn select_embedded(
         on_select,
         window,
         cx,
-    )
+    );
+    // A popover opened from a submenu draws beneath it, so the filter gets no
+    // menu here. Without one, a saved filter couldn't be seen or changed.
+    list.picker.update(cx, |picker, cx| {
+        picker.delegate.has_filter_menu = false;
+        picker.delegate.branch_filter = BranchFilter::All;
+        picker.refresh(window, cx);
+    });
+    list
 }
 
 pub type SelectBranchCallback = Arc<dyn Fn(Branch, &mut Window, &mut App)>;
@@ -544,12 +552,11 @@ impl Render for BranchList {
             )
             .on_action(
                 cx.listener(|this, _: &branch_picker::ToggleFilterMenu, window, cx| {
-                    let menu_handle = this
-                        .picker
-                        .read(cx)
-                        .delegate
-                        .branch_filter_menu_handle
-                        .clone();
+                    let delegate = &this.picker.read(cx).delegate;
+                    if !delegate.has_filter_menu {
+                        return;
+                    }
+                    let menu_handle = delegate.branch_filter_menu_handle.clone();
                     menu_handle.toggle(window, cx);
                 }),
             )
@@ -695,6 +702,7 @@ pub struct BranchListDelegate {
     modifiers: Modifiers,
     branch_filter: BranchFilter,
     branch_filter_menu_handle: PopoverMenuHandle<ContextMenu>,
+    has_filter_menu: bool,
     state: PickerState,
     branch_selection_behavior: BranchSelectionBehavior,
     focus_handle: FocusHandle,
@@ -1049,6 +1057,7 @@ impl BranchListDelegate {
             modifiers: Default::default(),
             branch_filter,
             branch_filter_menu_handle: PopoverMenuHandle::default(),
+            has_filter_menu: true,
             state: PickerState::List,
             branch_selection_behavior,
             focus_handle: cx.focus_handle(),
@@ -1337,7 +1346,7 @@ impl PickerDelegate for BranchListDelegate {
                         .flex_none()
                         .overflow_hidden()
                         .child(editor.clone())
-                        .map(|this| {
+                        .when(self.has_filter_menu, |this| {
                             let branch_filter = self.branch_filter;
                             let focus_handle = self.focus_handle.clone();
 
