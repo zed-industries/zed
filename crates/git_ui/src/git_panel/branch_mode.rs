@@ -1,4 +1,5 @@
 use super::*;
+use settings::GitDiffBaseSetting;
 
 pub(super) enum ChangesMode {
     Uncommitted,
@@ -459,14 +460,58 @@ impl GitPanel {
         else {
             return;
         };
+        let list = self
+            .branch_diff_tab(&base_ref, cx)
+            .map(|branch_diff| branch_diff.read(cx).branch_diff_list(cx))
+            .or_else(|| self.display_diff_at(&repo, &base_ref, cx));
         let project = self.project.clone();
         self.workspace
             .update(cx, |workspace, cx| {
                 BranchDiff::deploy_branch_diff_with_base_ref(
-                    workspace, project, repo, base_ref, None, entry, window, cx,
+                    workspace, project, repo, base_ref, list, entry, window, cx,
                 );
             })
             .ok();
+    }
+
+    fn branch_diff_tab(&self, base_ref: &SharedString, cx: &App) -> Option<Entity<BranchDiff>> {
+        let repo_id = self.active_repository.as_ref()?.read(cx).id;
+        self.workspace
+            .upgrade()?
+            .read(cx)
+            .items_of_type::<BranchDiff>(cx)
+            .find(|branch_diff| {
+                let branch_diff = branch_diff.read(cx);
+                matches!(
+                    branch_diff.diff_base(cx),
+                    DiffBase::Merge { base_ref: existing } if existing == base_ref
+                ) && branch_diff
+                    .repo(cx)
+                    .is_some_and(|repo| repo.read(cx).id == repo_id)
+            })
+    }
+
+    /// `DeployBranchDiff` only reuses a tab that holds the display diff's
+    /// list, so a new tab at the same base shares it. It's only read here:
+    /// `ensure_display_diff` would move the gutter to the panel's base.
+    fn display_diff_at(
+        &self,
+        repo: &Entity<Repository>,
+        base_ref: &SharedString,
+        cx: &App,
+    ) -> Option<Entity<DiffBufferList>> {
+        let git_store = self.project.read(cx).git_store().read(cx);
+        if git_store.diff_base() != GitDiffBaseSetting::DefaultBranch {
+            return None;
+        }
+        git_store
+            .display_diff_for_repo(repo.read(cx).id)
+            .filter(|list| {
+                matches!(
+                    list.read(cx).diff_base(),
+                    DiffBase::Merge { base_ref: display_base } if display_base == base_ref
+                )
+            })
     }
 
     pub(super) fn move_branch_diff_to_entry(
@@ -481,21 +526,7 @@ impl GitPanel {
                 .status_entry()?
                 .clone();
             let base_ref = self.branch_base.effective()?;
-            let repo_id = self.active_repository.as_ref()?.read(cx).id;
-            let branch_diff = self
-                .workspace
-                .upgrade()?
-                .read(cx)
-                .items_of_type::<BranchDiff>(cx)
-                .find(|branch_diff| {
-                    let branch_diff = branch_diff.read(cx);
-                    matches!(
-                        branch_diff.diff_base(cx),
-                        DiffBase::Merge { base_ref: existing } if *existing == base_ref
-                    ) && branch_diff
-                        .repo(cx)
-                        .is_some_and(|repo| repo.read(cx).id == repo_id)
-                })?;
+            let branch_diff = self.branch_diff_tab(&base_ref, cx)?;
             branch_diff.update(cx, |branch_diff, cx| {
                 branch_diff.move_to_entry(entry, window, cx);
             });
