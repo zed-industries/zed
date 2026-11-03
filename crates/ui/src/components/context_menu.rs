@@ -59,7 +59,6 @@ pub enum ContextMenuItem {
         selectable: bool,
         documentation_aside: Option<DocumentationAside>,
     },
-    /// A view that draws its own layout, so the menu adds no padding around it.
     EmbeddedView(AnyView),
     Submenu {
         label: SharedString,
@@ -878,18 +877,13 @@ impl ContextMenu {
         handler(None, window, cx);
     }
 
-    /// Adds a view that draws its own layout, such as a picker, without the
-    /// padding the menu puts around its own rows. Pair it with
-    /// [`ContextMenu::focus_content`] when the view takes keyboard input.
     pub fn embedded_view(mut self, view: impl Into<AnyView>) -> Self {
         self.items.push(ContextMenuItem::EmbeddedView(view.into()));
         self
     }
 
-    /// Focuses this handle instead of the menu whenever the menu is focused as
-    /// a submenu, so that embedded content such as a picker takes keyboard input.
-    /// The handle must be tracked by an element inside this menu, usually by the
-    /// view passed to [`ContextMenu::embedded_view`].
+    /// Focuses this handle instead of the menu when it opens as a submenu.
+    /// The handle must be tracked by an element inside the menu.
     pub fn focus_content(mut self, focus_handle: FocusHandle) -> Self {
         self.content_focus_handle = Some(focus_handle);
         self
@@ -2413,10 +2407,7 @@ impl Render for ContextMenu {
                 )
         };
 
-        // Content inside the submenu, such as an embedded picker, can hold
-        // focus, so only move focus when it's outside the submenu or on the
-        // submenu itself, which is where a click on a part of the content that
-        // can't take focus leaves it.
+        // Clicking content that can't take focus leaves focus on the submenu itself.
         if let Some((submenu_focus_handle, focus_target)) = focus_submenu.as_ref()
             && (!submenu_focus_handle.contains_focused(window, cx)
                 || submenu_focus_handle.is_focused(window))
@@ -2502,7 +2493,6 @@ mod tests {
     impl Render for EmbeddedTestView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let bounds = self.bounds.clone();
-            // Like a picker, only the search field takes focus, not the results.
             v_flex()
                 .relative()
                 .child(div().track_focus(&self.focus_handle).child("search field"))
