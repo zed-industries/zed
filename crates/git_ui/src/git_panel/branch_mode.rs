@@ -132,8 +132,6 @@ impl BranchBase {
             }
     }
 
-    /// Whether the default branch has to be looked up, for the first time or
-    /// again because the branch list changed since.
     fn needs_lookup(&self) -> bool {
         self.picked.is_none()
             && match self.default {
@@ -347,7 +345,6 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         self.branch_base.default_is_stale = true;
-        // Branch mode shows the default branch's changes, so it refreshes now.
         if self.is_branch_mode() {
             self.ensure_default_branch(window, cx);
         }
@@ -780,7 +777,6 @@ impl GitPanel {
             .into_any_element()
     }
 
-    /// Branch rows are read-only, so their menu only navigates.
     pub(super) fn build_branch_context_menu(
         &self,
         file_count: usize,

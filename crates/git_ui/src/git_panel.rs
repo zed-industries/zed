@@ -8609,7 +8609,6 @@ impl GitPanel {
             GitPanelViewMode::Flat => (false, self.visible_flat_entry_indices().len()),
         };
         let repo = repo.downgrade();
-        // Branch rows are read-only.
         let show_checkbox = !self.is_branch_mode();
 
         v_flex()
@@ -17753,8 +17752,6 @@ mod tests {
         assert_eq!(listed_paths(&panel, cx), ["d.txt", "b.txt"]);
         panel.read_with(cx, |panel, _| assert!(panel.branch_list().is_none()));
 
-        // Picking a base from the menu while showing uncommitted changes
-        // switches to branch mode at that base.
         panel.update_in(cx, |panel, window, cx| {
             panel.show_branch_changes_since("develop".into(), window, cx);
         });
@@ -17831,8 +17828,6 @@ mod tests {
             })
         };
 
-        // Uncommitted mode only watches the active tab. Showing branch changes
-        // then starts from that tab's base.
         open_branch_diff_tab(&test, "release", cx);
         assert_eq!(base(cx), None);
 
@@ -17853,7 +17848,6 @@ mod tests {
         open_branch_diff_tab(&test, "develop", cx);
         assert_eq!(base(cx).as_deref(), Some("develop"));
 
-        // Picking a base in the panel changes neither tab and opens none.
         panel.update_in(cx, |panel, window, cx| {
             panel.set_branch_base("feature".into(), window, cx);
         });
@@ -17864,7 +17858,6 @@ mod tests {
             ["release", "develop"]
         );
 
-        // A tab that becomes active again wins over the panel's pick.
         let release_tab = test.workspace.read_with(cx, |workspace, cx| {
             workspace.items_of_type::<BranchDiff>(cx).next().unwrap()
         });
@@ -17874,7 +17867,6 @@ mod tests {
         settle_branch_mode(cx);
         assert_eq!(base(cx).as_deref(), Some("release"));
 
-        // Changing the active tab's base in place carries over to the panel.
         let release_list =
             release_tab.read_with(cx, |branch_diff, cx| branch_diff.branch_diff_list(cx));
         release_list.update(cx, |branch_list, cx| {
@@ -17978,7 +17970,6 @@ mod tests {
             (menu, menu_cx)
         };
 
-        // Escape in the picker returns focus to the parent menu.
         let (menu, mut menu_cx) = open_menu(cx);
         menu_cx.dispatch_action(menu::Cancel);
         draw(&mut menu_cx);
@@ -18025,7 +18016,6 @@ mod tests {
         let cx = &mut cx;
         let panel = test.panel.clone();
 
-        // The default branch is only looked up once it's needed.
         panel.update_in(cx, |panel, window, cx| {
             panel.show_branch_changes(&ShowBranchChanges, window, cx);
         });
@@ -18044,7 +18034,6 @@ mod tests {
         );
         cx.dispatch_action(menu::Cancel);
 
-        // A base adopted from a branch diff tab makes branch changes available.
         open_branch_diff_tab(&test, "release", cx);
         panel.update_in(cx, |panel, window, cx| {
             panel.show_branch_changes(&ShowBranchChanges, window, cx);
