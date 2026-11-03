@@ -6,17 +6,24 @@
 
 #![cfg(unix)]
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
+use async_compression::futures::bufread::GzipEncoder;
+use futures::AsyncReadExt as _;
+use http_client::{FakeHttpClient, Response};
 use managed_resources::{ManagedResource, ManagedResourceCommand};
 use node_runtime::{
-    InstallNpmPackages, NodeBinaryOptions, NodeDiscoveryError, NodeRuntime, Npm, SystemNode,
+    InstallNpmPackages, NodeBinaryOptions, NodeDiscoveryError, NodeRuntime, Npm, NpmContext,
+    SystemNode,
 };
 use semver::Version;
 use std::{
     env, fs,
     os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
+    },
 };
 
 #[test]
@@ -76,26 +83,29 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
         paths::set_custom_data_dir(&directory.join("data").to_string_lossy());
         return smol::block_on(async {
             let npm_path = directory.join("npm");
-            let runtime = NodeRuntime::new(
-                Arc::new(http_client::BlockedHttpClient),
-                None,
-                watch::channel(Some(NodeBinaryOptions {
+            let key = "example-language-server".to_owned();
+            assert_eq!(Npm::id(&key).key, key);
+            assert_ne!(Npm::id(&key), Npm::id(&"another-language-server".into()));
+            let mut context = NpmContext {
+                http: Arc::new(http_client::BlockedHttpClient),
+                options: NodeBinaryOptions {
                     use_paths: Some((directory.join("node"), npm_path.clone())),
                     ..Default::default()
-                }))
-                .1,
-            );
-            assert!(Npm::obtain(&(), &runtime).await.is_err());
+                },
+            };
+            assert!(Npm::obtain(&key, &context).await.is_err());
 
             fs::write(
                 &npm_path,
                 "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\npwd -P > \"$0.cwd\"\n",
             )?;
             fs::set_permissions(&npm_path, fs::Permissions::from_mode(0o755))?;
-            let npm = Arc::new(Npm::obtain(&(), &runtime).await?);
+            let npm = Arc::new(Npm::obtain(&key, &context).await?);
             let arguments = fs::read_to_string(directory.join("npm.args"))?;
             assert!(arguments.lines().any(|argument| argument == "--version"));
 
+            let options = std::mem::take(&mut context.options);
+            assert!(Npm::obtain(&key, &context).await.is_err());
             let installation_directory = directory.join("language server");
             fs::create_dir(&installation_directory)?;
             let install = || InstallNpmPackages {
@@ -136,7 +146,8 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
                 .await
                 .expect_err("npm failure propagates");
             assert!(error.to_string().contains("installation failed"));
-            assert!(Npm::obtain(&(), &runtime).await.is_err());
+            context.options = options;
+            assert!(Npm::obtain(&key, &context).await.is_err());
             Ok(())
         });
     }
@@ -145,6 +156,112 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
     fake_node(directory.path(), "printf 'v22.0.0\\n'")?;
     run_child_test(
         "managed_npm_obtains_and_installs_packages",
+        directory.path(),
+        directory.path(),
+    )
+}
+
+#[test]
+fn managed_npm_downloads_only_when_allowed() -> Result<()> {
+    if env::var_os(CHILD).is_some() {
+        let directory = env::current_dir()?;
+        let data_directory = directory.join("data");
+        fs::create_dir(&data_directory)?;
+        paths::set_custom_data_dir(&data_directory.to_string_lossy());
+        return smol::block_on(async {
+            let downloads = Arc::new(AtomicUsize::new(0));
+            let http = FakeHttpClient::create({
+                let downloads = downloads.clone();
+                move |request| {
+                    downloads.fetch_add(1, SeqCst);
+                    async move {
+                        assert_eq!(request.uri().host(), Some("nodejs.org"));
+                        let folder = request
+                            .uri()
+                            .path()
+                            .rsplit('/')
+                            .next()
+                            .and_then(|name| name.strip_suffix(".tar.gz"))
+                            .context("expected a Node tarball request")?;
+                        let mut archive = async_tar::Builder::new(Vec::new());
+                        for (path, contents) in [
+                            ("bin/node", "#!/bin/sh\nexec /bin/sh \"$@\"\n"),
+                            (
+                                "bin/npm",
+                                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\n",
+                            ),
+                        ] {
+                            let mut header = async_tar::Header::new_gnu();
+                            header.set_size(contents.len() as u64);
+                            header.set_mode(0o755);
+                            archive
+                                .append_data(
+                                    &mut header,
+                                    format!("{folder}/{path}"),
+                                    contents.as_bytes(),
+                                )
+                                .await?;
+                        }
+                        let archive = archive.into_inner().await?;
+                        let mut compressed = Vec::new();
+                        GzipEncoder::new(archive.as_slice())
+                            .read_to_end(&mut compressed)
+                            .await?;
+                        Ok(Response::new(compressed.into()))
+                    }
+                }
+            });
+            let key = "example-language-server".to_owned();
+            let mut context = NpmContext {
+                http,
+                options: NodeBinaryOptions::default(),
+            };
+            assert!(Npm::obtain(&key, &context).await.is_err());
+            context.options.allow_path_lookup = true;
+            assert!(Npm::obtain(&key, &context).await.is_err());
+            assert_eq!(downloads.load(SeqCst), 0);
+            assert!(!data_directory.join("node").exists());
+
+            context.options = NodeBinaryOptions {
+                allow_binary_download: true,
+                ..Default::default()
+            };
+            let npm = Arc::new(Npm::obtain(&key, &context).await?);
+            let installation = fs::read_dir(data_directory.join("node"))?
+                .next()
+                .transpose()?
+                .context("expected an installed Node runtime")?
+                .path();
+            let arguments = fs::read_to_string(installation.join("bin/npm.args"))?;
+            assert!(arguments.lines().any(|argument| argument == "--version"));
+            let package_directory = directory.join("language server");
+            fs::create_dir(&package_directory)?;
+            InstallNpmPackages {
+                directory: package_directory,
+                packages: vec![("@example/server".into(), "1.2.3".into())],
+            }
+            .run(npm)
+            .await?;
+            let arguments = fs::read_to_string(installation.join("bin/npm.args"))?;
+            assert!(arguments.lines().any(|argument| argument == "install"));
+            assert!(
+                arguments
+                    .lines()
+                    .any(|argument| argument == "@example/server@1.2.3")
+            );
+
+            Npm::obtain(&key, &context).await?;
+            assert_eq!(downloads.load(SeqCst), 1);
+            context.options = NodeBinaryOptions::default();
+            assert!(Npm::obtain(&key, &context).await.is_err());
+            assert_eq!(downloads.load(SeqCst), 1);
+            Ok(())
+        });
+    }
+
+    let directory = tempfile::tempdir()?;
+    run_child_test(
+        "managed_npm_downloads_only_when_allowed",
         directory.path(),
         directory.path(),
     )
