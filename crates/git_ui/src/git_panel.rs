@@ -18007,4 +18007,348 @@ mod tests {
             );
         });
     }
+
+    struct BranchModeTest {
+        fs: Arc<FakeFs>,
+        project: Entity<Project>,
+        workspace: Entity<Workspace>,
+        panel: Entity<GitPanel>,
+    }
+
+    /// A branch whose merge base has `a.txt`, `c.txt` and `d.txt`: `a.txt`
+    /// changed in a commit, `d.txt` has an uncommitted change, `b.txt` is
+    /// untracked, and `c.txt` is unchanged.
+    async fn setup_branch_mode_test(
+        cx: &mut TestAppContext,
+        default_branch_ref: Option<&str>,
+    ) -> (BranchModeTest, VisualTestContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "A2",
+                "b.txt": "B",
+                "c.txt": "C",
+                "d.txt": "D2",
+            }),
+        )
+        .await;
+        let dot_git = Path::new(path!("/project/.git"));
+        fs.with_git_state(dot_git, true, |state| {
+            state.default_branch_ref = default_branch_ref.map(str::to_owned);
+        })
+        .unwrap();
+        fs.set_head_and_index_for_repo(
+            dot_git,
+            &[
+                ("a.txt", "A2".into()),
+                ("c.txt", "C".into()),
+                ("d.txt", "D".into()),
+            ],
+        );
+        fs.set_merge_base_content_for_repo(
+            dot_git,
+            &[
+                ("a.txt", "A1".into()),
+                ("c.txt", "C".into()),
+                ("d.txt", "D".into()),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        settle_branch_mode(&mut cx);
+
+        (
+            BranchModeTest {
+                fs,
+                project,
+                workspace,
+                panel,
+            },
+            cx,
+        )
+    }
+
+    fn settle_branch_mode(cx: &mut VisualTestContext) {
+        for _ in 0..3 {
+            cx.run_until_parked();
+            cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        }
+        cx.run_until_parked();
+    }
+
+    fn listed_paths(panel: &Entity<GitPanel>, cx: &mut VisualTestContext) -> Vec<String> {
+        panel.read_with(cx, |panel, _| {
+            panel
+                .entries
+                .iter()
+                .filter_map(|entry| entry.status_entry())
+                .map(|entry| entry.repo_path.as_unix_str().to_owned())
+                .collect()
+        })
+    }
+
+    fn uncommitted_paths(panel: &Entity<GitPanel>, cx: &mut VisualTestContext) -> Vec<String> {
+        panel.read_with(cx, |panel, _| {
+            panel
+                .change_entries_by_path()
+                .map(|entry| entry.repo_path.as_unix_str().to_owned())
+                .sorted()
+                .collect()
+        })
+    }
+
+    fn branch_diff_bases(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Vec<String> {
+        workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .items_of_type::<BranchDiff>(cx)
+                .filter_map(|branch_diff| match branch_diff.read(cx).diff_base(cx) {
+                    DiffBase::Merge { base_ref } => Some(base_ref.to_string()),
+                    DiffBase::Head | DiffBase::Index | DiffBase::Staged => None,
+                })
+                .collect()
+        })
+    }
+
+    fn open_branch_diff_tab(test: &BranchModeTest, base_ref: &str, cx: &mut VisualTestContext) {
+        let repo = test
+            .project
+            .read_with(cx, |project, cx| project.active_repository(cx))
+            .unwrap();
+        let project = test.project.clone();
+        let base_ref = SharedString::from(base_ref.to_owned());
+        test.workspace.update_in(cx, |workspace, window, cx| {
+            BranchDiff::deploy_branch_diff_with_base_ref(
+                workspace, project, repo, base_ref, None, None, window, cx,
+            );
+        });
+        settle_branch_mode(cx);
+    }
+
+    #[gpui::test]
+    async fn test_branch_mode_lists_all_changes_since_base(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+
+        assert_eq!(listed_paths(&panel, cx), ["d.txt", "b.txt"]);
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_changes_mode(ChangesMode::Branch, window, cx);
+        });
+        settle_branch_mode(cx);
+
+        assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.branch_base().as_deref(), Some("origin/main"));
+            assert_eq!(panel.branch_file_count, 3);
+            assert_eq!(panel.changes_count, 2);
+            assert!(
+                !panel
+                    .entries
+                    .iter()
+                    .any(|entry| matches!(entry, GitListEntry::Header(_))),
+                "the branch list has no section headers",
+            );
+        });
+        assert_eq!(
+            uncommitted_paths(&panel, cx),
+            ["b.txt", "d.txt"],
+            "committing still acts on the uncommitted files",
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_changes_mode(ChangesMode::Uncommitted, window, cx);
+        });
+        settle_branch_mode(cx);
+        assert_eq!(listed_paths(&panel, cx), ["d.txt", "b.txt"]);
+        panel.read_with(cx, |panel, _| assert!(panel.branch_list.is_none()));
+    }
+
+    #[gpui::test]
+    async fn test_branch_mode_ignores_staging_actions(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_changes_mode(ChangesMode::Branch, window, cx);
+        });
+        settle_branch_mode(cx);
+
+        let d_index = panel.read_with(cx, |panel, _| {
+            panel.entry_by_path(&repo_path("d.txt")).unwrap()
+        });
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(d_index);
+            panel.focus_handle.focus(window, cx);
+        });
+        cx.dispatch_action(ToggleStaged);
+        settle_branch_mode(cx);
+
+        let staging = test.project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .unwrap()
+                .read(cx)
+                .status_for_path(&repo_path("d.txt"))
+                .unwrap()
+                .status
+                .staging()
+        });
+        assert_eq!(staging, StageStatus::Unstaged);
+        let index = test
+            .fs
+            .with_git_state(Path::new(path!("/project/.git")), false, |state| {
+                state.index_contents.get(&repo_path("d.txt")).cloned()
+            })
+            .unwrap();
+        assert_eq!(index, Some(b"D".to_vec()));
+    }
+
+    #[gpui::test]
+    async fn test_branch_mode_follows_active_branch_diff(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+        let base = |cx: &mut VisualTestContext| {
+            panel.read_with(cx, |panel, _| {
+                panel.branch_base().map(|base| base.to_string())
+            })
+        };
+
+        // The panel follows tabs even before it shows branch changes.
+        open_branch_diff_tab(&test, "release", cx);
+        assert_eq!(base(cx).as_deref(), Some("release"));
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_changes_mode(ChangesMode::Branch, window, cx);
+        });
+        settle_branch_mode(cx);
+        panel.read_with(cx, |panel, cx| {
+            let branch_list = panel.branch_list.as_ref().unwrap().read(cx);
+            assert_eq!(
+                branch_list.diff_base(),
+                &DiffBase::Merge {
+                    base_ref: "release".into()
+                }
+            );
+        });
+
+        open_branch_diff_tab(&test, "develop", cx);
+        assert_eq!(base(cx).as_deref(), Some("develop"));
+
+        // Picking a base in the panel changes neither tab and opens none.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_branch_base("feature".into(), window, cx);
+        });
+        settle_branch_mode(cx);
+        assert_eq!(base(cx).as_deref(), Some("feature"));
+        assert_eq!(
+            branch_diff_bases(&test.workspace, cx),
+            ["release", "develop"]
+        );
+
+        // A tab that becomes active again wins over the panel's pick.
+        let release_tab = test.workspace.read_with(cx, |workspace, cx| {
+            workspace.items_of_type::<BranchDiff>(cx).next().unwrap()
+        });
+        test.workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&release_tab, true, true, window, cx);
+        });
+        settle_branch_mode(cx);
+        assert_eq!(base(cx).as_deref(), Some("release"));
+
+        // Changing the active tab's base in place carries over to the panel.
+        let release_list =
+            release_tab.read_with(cx, |branch_diff, cx| branch_diff.branch_diff_list(cx));
+        release_list.update(cx, |branch_list, cx| {
+            branch_list.set_diff_base(
+                DiffBase::Merge {
+                    base_ref: "hotfix".into(),
+                },
+                cx,
+            );
+        });
+        settle_branch_mode(cx);
+        assert_eq!(base(cx).as_deref(), Some("hotfix"));
+    }
+
+    #[gpui::test]
+    async fn test_branch_mode_opens_branch_diff_at_panel_base(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_changes_mode(ChangesMode::Branch, window, cx);
+        });
+        settle_branch_mode(cx);
+
+        let d_index = panel.read_with(cx, |panel, _| {
+            panel.entry_by_path(&repo_path("d.txt")).unwrap()
+        });
+        for _ in 0..2 {
+            panel.update_in(cx, |panel, window, cx| {
+                panel.selected_entry = Some(d_index);
+                panel.open_diff(&menu::Confirm, window, cx);
+            });
+            settle_branch_mode(cx);
+        }
+
+        assert_eq!(
+            branch_diff_bases(&test.workspace, cx),
+            ["origin/main"],
+            "opening a row reuses the tab at the panel's base",
+        );
+        let active_base = test.workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<BranchDiff>(cx)
+                .map(|branch_diff| branch_diff.read(cx).diff_base(cx).clone())
+        });
+        assert_eq!(
+            active_base,
+            Some(DiffBase::Merge {
+                base_ref: "origin/main".into()
+            })
+        );
+    }
+
+    #[gpui::test]
+    async fn test_branch_mode_needs_a_base(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, None).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.default_branch, DefaultBranch::Missing);
+            assert!(!panel.can_show_branch_changes());
+        });
+        panel.update_in(cx, |panel, window, cx| {
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+        });
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.changes_mode, ChangesMode::Uncommitted);
+        });
+
+        // A base adopted from a branch diff tab makes branch changes available.
+        open_branch_diff_tab(&test, "release", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+        });
+        settle_branch_mode(cx);
+        assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
+    }
 }
