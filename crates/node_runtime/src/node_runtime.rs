@@ -48,23 +48,32 @@ pub struct Npm {
     runtime: NodeRuntime,
 }
 
+pub struct NpmContext {
+    pub http: Arc<dyn HttpClient>,
+    pub options: NodeBinaryOptions,
+}
+
 impl ManagedResource for Npm {
-    type Key = ();
-    type Context = NodeRuntime;
+    type Key = String;
+    type Context = NpmContext;
     type Command = InstallNpmPackages;
 
-    fn id(_: &()) -> ResourceId {
+    fn id(key: &Self::Key) -> ResourceId {
         ResourceId {
             kind: "npm".into(),
-            key: "default".into(),
+            key: key.clone(),
         }
     }
 
-    async fn obtain(_: &(), runtime: &NodeRuntime) -> Result<Self> {
+    async fn obtain(_: &Self::Key, context: &NpmContext) -> Result<Self> {
+        // Keep the acquisition options fixed so commands cannot switch to an unapproved source.
+        let runtime = NodeRuntime::new(
+            context.http.clone(),
+            None,
+            watch::channel(Some(context.options.clone())).1,
+        );
         runtime.run_npm_subcommand(None, "--version", &[]).await?;
-        Ok(Self {
-            runtime: runtime.clone(),
-        })
+        Ok(Self { runtime })
     }
 }
 
