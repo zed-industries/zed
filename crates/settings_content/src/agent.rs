@@ -736,6 +736,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "anthropic",
                         "copilot_chat",
                         "deepseek",
+                        "gmi_cloud",
                         "google",
                         "lmstudio",
                         "mistral",

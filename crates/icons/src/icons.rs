@@ -16,6 +16,7 @@ pub enum IconName {
     AiDeepSeek,
     AiEdit,
     AiGemini,
+    AiGmiCloud,
     AiGoogle,
     AiLlamaCpp,
     AiLmStudio,

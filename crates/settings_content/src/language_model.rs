@@ -14,6 +14,7 @@ pub struct AllLanguageModelSettingsContent {
     pub anthropic_compatible: Option<HashMap<Arc<str>, AnthropicCompatibleSettingsContent>>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
+    pub gmi_cloud: Option<GmiCloudSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     #[serde(rename = "llama.cpp")]
     pub llama_cpp: Option<LlamaCppSettingsContent>,
@@ -485,6 +486,25 @@ impl Default for OpenAiCompatibleModelCapabilities {
             max_tokens_parameter: false,
         }
     }
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct GmiCloudSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<GmiCloudAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct GmiCloudAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    #[serde(default)]
+    pub capabilities: OpenAiCompatibleModelCapabilities,
 }
 
 #[with_fallible_options]

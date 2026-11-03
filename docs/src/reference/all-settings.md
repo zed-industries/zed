@@ -4081,6 +4081,9 @@ See [Choosing Language Servers](../configuring-languages.md#choosing-language-se
     "deepseek": {
       "api_url": "https://api.deepseek.com/v1"
     },
+    "gmi_cloud": {
+      "api_url": "https://api.gmi-serving.com/v1"
+    },
     "mistral": {
       "api_url": "https://api.mistral.ai/v1"
     },

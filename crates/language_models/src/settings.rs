@@ -6,10 +6,10 @@ use settings::RegisterSetting;
 use crate::provider::{
     anthropic, anthropic::AnthropicSettings, anthropic_compatible::AnthropicCompatibleSettings,
     bedrock, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings, deepseek::DeepSeekSettings,
-    google::GoogleSettings, llama_cpp::LlamaCppSettings, lmstudio::LmStudioSettings, mistral,
-    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
-    open_ai_compatible::OpenAiCompatibleSettings, open_router, open_router::OpenRouterSettings,
-    opencode, opencode::OpenCodeSettings, resolve_custom_headers,
+    gmi_cloud::GmiCloudSettings, google::GoogleSettings, llama_cpp::LlamaCppSettings,
+    lmstudio::LmStudioSettings, mistral, mistral::MistralSettings, ollama::OllamaSettings,
+    open_ai::OpenAiSettings, open_ai_compatible::OpenAiCompatibleSettings, open_router,
+    open_router::OpenRouterSettings, opencode, opencode::OpenCodeSettings, resolve_custom_headers,
     vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
 };
 
@@ -19,6 +19,7 @@ pub struct AllLanguageModelSettings {
     pub anthropic_compatible: HashMap<Arc<str>, AnthropicCompatibleSettings>,
     pub bedrock: AmazonBedrockSettings,
     pub deepseek: DeepSeekSettings,
+    pub gmi_cloud: GmiCloudSettings,
     pub google: GoogleSettings,
     pub llama_cpp: LlamaCppSettings,
     pub lmstudio: LmStudioSettings,
@@ -53,6 +54,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let anthropic_compatible = language_models.anthropic_compatible.unwrap();
         let bedrock = language_models.bedrock.unwrap();
         let deepseek = language_models.deepseek.unwrap();
+        let gmi_cloud = language_models.gmi_cloud.unwrap();
         let google = language_models.google.unwrap();
         let llama_cpp = language_models.llama_cpp.unwrap();
         let lmstudio = language_models.lmstudio.unwrap();
@@ -114,6 +116,11 @@ impl settings::Settings for AllLanguageModelSettings {
                 api_url: deepseek.api_url.unwrap(),
                 available_models: deepseek.available_models.unwrap_or_default(),
                 custom_headers: custom_headers_from("DeepSeek", deepseek.custom_headers, &[]),
+            },
+            gmi_cloud: GmiCloudSettings {
+                api_url: gmi_cloud.api_url.unwrap(),
+                available_models: gmi_cloud.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from("GMI Cloud", gmi_cloud.custom_headers, &[]),
             },
             google: GoogleSettings {
                 api_url: google.api_url.unwrap(),

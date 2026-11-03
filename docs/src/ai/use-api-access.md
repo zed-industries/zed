@@ -23,6 +23,8 @@ Zed supports these first-class API providers for model-backed Zed AI features:
   - [Custom Mistral Models](#mistral-custom-models)
 - [DeepSeek](#deepseek)
   - [Custom DeepSeek Models](#deepseek-custom-models)
+- [GMI Cloud](#gmi-cloud)
+  - [Custom GMI Cloud Models](#gmi-cloud-custom-models)
 - [xAI](#xai)
   - [Custom xAI Models](#xai-custom-models)
 - [OpenCode API](#opencode)
@@ -52,6 +54,7 @@ Zed also reads provider-specific environment variables. Non-empty [environment v
 | Google AI         | `GEMINI_API_KEY`, falling back to `GOOGLE_AI_API_KEY` |
 | Mistral           | `MISTRAL_API_KEY`                                     |
 | DeepSeek          | `DEEPSEEK_API_KEY`                                    |
+| GMI Cloud         | `GMI_API_KEY`                                         |
 | xAI               | `XAI_API_KEY`                                         |
 | OpenCode          | `OPENCODE_API_KEY`                                    |
 | OpenRouter        | `OPENROUTER_API_KEY`                                  |
@@ -295,6 +298,46 @@ limits, or a custom endpoint.
           "display_name": "DeepSeek V4 Pro",
           "max_tokens": 1000000,
           "max_output_tokens": 384000
+        }
+      ]
+    }
+  }
+}
+```
+
+### GMI Cloud {#gmi-cloud}
+
+Use GMI Cloud API access when you have a GMI Cloud API key.
+
+1. Sign in to the [GMI Cloud Console](https://console.gmicloud.ai) and create an API key under **Settings → API Keys**.
+2. Open Agent Settings with {#action agent::OpenSettings} and go to the GMI Cloud section.
+3. Enter your GMI Cloud API key.
+
+Zed also reads `GMI_API_KEY` from the local Zed process environment.
+
+Zed fetches the available models from GMI Cloud once your API key is set.
+
+#### Custom GMI Cloud Models {#gmi-cloud-custom-models}
+
+Add custom GMI Cloud models to set a display name, token limits, or capabilities, or to use a custom endpoint. A custom entry overrides a fetched model with the same `name`. The `capabilities` object accepts the same fields as [OpenAI-compatible endpoints](#openai-compatible).
+
+```json [settings]
+{
+  "language_models": {
+    "gmi_cloud": {
+      "api_url": "https://api.gmi-serving.com/v1",
+      "available_models": [
+        {
+          "name": "deepseek-ai/DeepSeek-V4-Pro",
+          "display_name": "DeepSeek V4 Pro",
+          "max_tokens": 1048576,
+          "capabilities": {
+            "tools": true,
+            "images": false,
+            "parallel_tool_calls": true,
+            "prompt_cache_key": false,
+            "interleaved_reasoning": true
+          }
         }
       ]
     }
