@@ -2074,26 +2074,34 @@ impl GitPanel {
                 return;
             };
 
-            let section = repo
-                .status_for_path(&repo_path)
-                .map(|status| status.status)
-                .map(|status| {
-                    if GitPanelSettings::get_global(cx).group_by == GitPanelGroupBy::Staging {
-                        if repo.had_conflict_on_last_merge_head_change(&repo_path) {
+            // Rows know their section even inside collapsed directories, and
+            // branch mode rows have no uncommitted status to derive it from.
+            let listed_section = self
+                .projected_entries_by_path
+                .get(&repo_path)
+                .and_then(|entries| entries.first())
+                .map(|entry| entry.section);
+            let section = listed_section.or_else(|| {
+                repo.status_for_path(&repo_path)
+                    .map(|status| status.status)
+                    .map(|status| {
+                        if GitPanelSettings::get_global(cx).group_by == GitPanelGroupBy::Staging {
+                            if repo.had_conflict_on_last_merge_head_change(&repo_path) {
+                                Section::Conflict
+                            } else if status.staging().has_staged() {
+                                Section::Staged
+                            } else {
+                                Section::Unstaged
+                            }
+                        } else if repo.had_conflict_on_last_merge_head_change(&repo_path) {
                             Section::Conflict
-                        } else if status.staging().has_staged() {
-                            Section::Staged
+                        } else if status.is_created() {
+                            Section::New
                         } else {
-                            Section::Unstaged
+                            Section::Tracked
                         }
-                    } else if repo.had_conflict_on_last_merge_head_change(&repo_path) {
-                        Section::Conflict
-                    } else if status.is_created() {
-                        Section::New
-                    } else {
-                        Section::Tracked
-                    }
-                });
+                    })
+            });
 
             (repo_path, section)
         };
