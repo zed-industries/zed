@@ -687,11 +687,16 @@ enum Section {
     Branch,
 }
 
-/// Which changes the Changes tab lists.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum ChangesMode {
     Uncommitted,
-    Branch,
+    /// `None` until a base is known. The list only exists in branch mode, so
+    /// the panel runs no tree diffs otherwise.
+    Branch(Option<BranchList>),
+}
+
+struct BranchList {
+    list: Entity<DiffBufferList>,
+    _subscription: Subscription,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -1349,9 +1354,6 @@ pub struct GitPanel {
     branch_base: Option<SharedString>,
     default_branch: DefaultBranch,
     default_branch_task: Option<Task<()>>,
-    /// Only exists in branch mode, so the panel runs no tree diffs otherwise.
-    branch_list: Option<Entity<DiffBufferList>>,
-    _branch_list_subscription: Option<Subscription>,
     followed_branch_diff: Option<FollowedBranchDiff>,
     /// Uncommitted files, one per path. Staging, discarding and committing
     /// act on these regardless of which mode `entries` shows.
@@ -1716,8 +1718,6 @@ impl GitPanel {
                 branch_base: None,
                 default_branch: DefaultBranch::Loading,
                 default_branch_task: None,
-                branch_list: None,
-                _branch_list_subscription: None,
                 followed_branch_diff: None,
                 change_entries: Vec::new(),
                 branch_file_count: 0,
@@ -5829,7 +5829,14 @@ impl GitPanel {
     }
 
     fn is_branch_mode(&self) -> bool {
-        self.changes_mode == ChangesMode::Branch
+        matches!(self.changes_mode, ChangesMode::Branch(_))
+    }
+
+    fn branch_list(&self) -> Option<&Entity<DiffBufferList>> {
+        match &self.changes_mode {
+            ChangesMode::Branch(Some(branch_list)) => Some(&branch_list.list),
+            ChangesMode::Uncommitted | ChangesMode::Branch(None) => None,
+        }
     }
 
     /// The base branch mode compares against, if one is known yet.
@@ -5847,16 +5854,27 @@ impl GitPanel {
             && (self.branch_base.is_some() || self.default_branch != DefaultBranch::Missing)
     }
 
-    fn set_changes_mode(&mut self, mode: ChangesMode, window: &mut Window, cx: &mut Context<Self>) {
-        if self.changes_mode == mode {
+    fn enter_branch_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_branch_mode() {
             return;
         }
-        self.changes_mode = mode;
+        self.changes_mode = ChangesMode::Branch(None);
+        self.changes_mode_changed(window, cx);
+    }
+
+    fn enter_uncommitted_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_branch_mode() {
+            return;
+        }
+        self.changes_mode = ChangesMode::Uncommitted;
+        self.changes_mode_changed(window, cx);
+    }
+
+    fn changes_mode_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_marks();
         self.bulk_staging.take();
         self.context_menu.take();
         self.selected_entry = None;
-        self.sync_branch_list(window, cx);
         self.update_visible_entries(window, cx);
     }
 
@@ -5871,7 +5889,6 @@ impl GitPanel {
         }
         self.branch_base = Some(base_ref);
         if self.is_branch_mode() {
-            self.sync_branch_list(window, cx);
             self.schedule_visible_entries_update(window, cx);
         }
         cx.notify();
@@ -5885,7 +5902,7 @@ impl GitPanel {
     ) {
         self.set_active_tab(GitPanelTab::Changes, window, cx);
         if self.can_show_branch_changes() {
-            self.set_changes_mode(ChangesMode::Branch, window, cx);
+            self.enter_branch_mode(window, cx);
         } else {
             self.choose_branch_base(window, cx);
         }
@@ -5899,7 +5916,7 @@ impl GitPanel {
     ) {
         self.set_active_tab(GitPanelTab::Changes, window, cx);
         self.set_branch_base(base_ref, window, cx);
-        self.set_changes_mode(ChangesMode::Branch, window, cx);
+        self.enter_branch_mode(window, cx);
     }
 
     fn choose_branch_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5946,7 +5963,7 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         self.set_active_tab(GitPanelTab::Changes, window, cx);
-        self.set_changes_mode(ChangesMode::Uncommitted, window, cx);
+        self.enter_uncommitted_mode(window, cx);
     }
 
     /// Branch names don't carry over between repositories, so switching
@@ -5956,7 +5973,6 @@ impl GitPanel {
         self.followed_branch_diff = None;
         self.default_branch = DefaultBranch::Loading;
         self.resolve_default_branch(window, cx);
-        self.sync_branch_list(window, cx);
     }
 
     fn resolve_default_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5976,7 +5992,6 @@ impl GitPanel {
                     return;
                 }
                 this.default_branch = default_branch;
-                this.sync_branch_list(window, cx);
                 this.schedule_visible_entries_update(window, cx);
                 cx.notify();
             })
@@ -5984,48 +5999,49 @@ impl GitPanel {
         }));
     }
 
-    /// Creates, updates or drops the branch file list to match the mode,
-    /// repository and base.
+    /// Runs at the start of every entries update, so changes to the mode,
+    /// repository or base only need to schedule one.
     fn sync_branch_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (true, Some(repo), Some(base_ref)) = (
-            self.is_branch_mode(),
-            self.active_repository.clone(),
-            self.branch_base(),
-        ) else {
-            self.branch_list = None;
-            self._branch_list_subscription = None;
+        let target = self.active_repository.clone().zip(self.branch_base());
+        let git_store = self.project.read(cx).git_store().clone();
+        let ChangesMode::Branch(branch_list) = &mut self.changes_mode else {
+            return;
+        };
+        let Some((repo, base_ref)) = target else {
+            *branch_list = None;
             return;
         };
         let diff_base = DiffBase::Merge { base_ref };
 
-        if let Some(branch_list) = &self.branch_list {
-            branch_list.update(cx, |branch_list, cx| {
-                branch_list.set_repo(Some(repo), cx);
-                if branch_list.diff_base() != &diff_base {
-                    branch_list.set_diff_base(diff_base, cx);
+        if let Some(branch_list) = branch_list {
+            branch_list.list.update(cx, |list, cx| {
+                list.set_repo(Some(repo), cx);
+                if list.diff_base() != &diff_base {
+                    list.set_diff_base(diff_base, cx);
                 }
             });
             return;
         }
 
-        let git_store = self.project.read(cx).git_store().clone();
-        let branch_list = cx.new(|cx| DiffBufferList::new(diff_base, git_store, Some(repo), cx));
-        self._branch_list_subscription = Some(cx.subscribe_in(
-            &branch_list,
+        let list = cx.new(|cx| DiffBufferList::new(diff_base, git_store, Some(repo), cx));
+        let subscription = cx.subscribe_in(
+            &list,
             window,
             |this, _, event: &BranchDiffEvent, window, cx| match event {
                 BranchDiffEvent::FileListChanged | BranchDiffEvent::DiffBaseChanged => {
                     this.schedule_visible_entries_update(window, cx);
                 }
             },
-        ));
-        self.branch_list = Some(branch_list);
+        );
+        *branch_list = Some(BranchList {
+            list,
+            _subscription: subscription,
+        });
     }
 
     fn branch_status_entries(&self, cx: &App) -> Vec<GitStatusEntry> {
         let Some(statuses) = self
-            .branch_list
-            .as_ref()
+            .branch_list()
             .and_then(|branch_list| branch_list.read(cx).statuses_by_path())
         else {
             return Vec::new();
@@ -6248,6 +6264,7 @@ impl GitPanel {
             self.clear_marks();
             self.reset_branch_state(window, cx);
         }
+        self.sync_branch_list(window, cx);
         self.entries.clear();
         self.change_entries.clear();
         self.branch_file_count = 0;
@@ -7606,7 +7623,7 @@ impl GitPanel {
                 move |window, cx| {
                     panel
                         .update(cx, |panel, cx| {
-                            panel.set_changes_mode(ChangesMode::Uncommitted, window, cx);
+                            panel.enter_uncommitted_mode(window, cx);
                         })
                         .ok();
                 },
@@ -8859,7 +8876,7 @@ impl GitPanel {
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Outlined)
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.set_changes_mode(ChangesMode::Branch, window, cx);
+                            this.enter_branch_mode(window, cx);
                             cx.defer(move |cx| {
                                 cx.dispatch_action(&DeployBranchDiff);
                             })
@@ -8870,10 +8887,7 @@ impl GitPanel {
     }
 
     fn render_no_branch_changes_ui(&self, cx: &Context<Self>) -> AnyElement {
-        let branch_list = self
-            .branch_list
-            .as_ref()
-            .map(|branch_list| branch_list.read(cx));
+        let branch_list = self.branch_list().map(|branch_list| branch_list.read(cx));
         let message: SharedString = if let Some(error) =
             branch_list.and_then(|branch_list| branch_list.tree_diff_error())
         {
@@ -18239,7 +18253,7 @@ mod tests {
         assert_eq!(listed_paths(&panel, cx), ["d.txt", "b.txt"]);
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.set_changes_mode(ChangesMode::Branch, window, cx);
+            panel.enter_branch_mode(window, cx);
         });
         settle_branch_mode(cx);
 
@@ -18263,11 +18277,11 @@ mod tests {
         );
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.set_changes_mode(ChangesMode::Uncommitted, window, cx);
+            panel.enter_uncommitted_mode(window, cx);
         });
         settle_branch_mode(cx);
         assert_eq!(listed_paths(&panel, cx), ["d.txt", "b.txt"]);
-        panel.read_with(cx, |panel, _| assert!(panel.branch_list.is_none()));
+        panel.read_with(cx, |panel, _| assert!(panel.branch_list().is_none()));
 
         // Picking a base from the menu while showing uncommitted changes
         // switches to branch mode at that base.
@@ -18276,7 +18290,7 @@ mod tests {
         });
         settle_branch_mode(cx);
         panel.read_with(cx, |panel, _| {
-            assert_eq!(panel.changes_mode, ChangesMode::Branch);
+            assert!(panel.is_branch_mode());
             assert_eq!(panel.branch_base().as_deref(), Some("develop"));
         });
         assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
@@ -18289,7 +18303,7 @@ mod tests {
         let panel = test.panel.clone();
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.set_changes_mode(ChangesMode::Branch, window, cx);
+            panel.enter_branch_mode(window, cx);
         });
         settle_branch_mode(cx);
 
@@ -18339,11 +18353,11 @@ mod tests {
         assert_eq!(base(cx).as_deref(), Some("release"));
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.set_changes_mode(ChangesMode::Branch, window, cx);
+            panel.enter_branch_mode(window, cx);
         });
         settle_branch_mode(cx);
         panel.read_with(cx, |panel, cx| {
-            let branch_list = panel.branch_list.as_ref().unwrap().read(cx);
+            let branch_list = panel.branch_list().unwrap().read(cx);
             assert_eq!(
                 branch_list.diff_base(),
                 &DiffBase::Merge {
@@ -18398,7 +18412,7 @@ mod tests {
         let panel = test.panel.clone();
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.set_changes_mode(ChangesMode::Branch, window, cx);
+            panel.enter_branch_mode(window, cx);
         });
         settle_branch_mode(cx);
 
@@ -18494,7 +18508,7 @@ mod tests {
         settle_branch_mode(cx);
 
         panel.read_with(cx, |panel, _| {
-            assert_eq!(panel.changes_mode, ChangesMode::Branch);
+            assert!(panel.is_branch_mode());
             assert_eq!(panel.branch_base().as_deref(), Some("develop"));
         });
     }
@@ -18535,7 +18549,7 @@ mod tests {
             panel.show_branch_changes(&ShowBranchChanges, window, cx);
         });
         panel.read_with(cx, |panel, _| {
-            assert_eq!(panel.changes_mode, ChangesMode::Uncommitted);
+            assert!(!panel.is_branch_mode());
         });
         let picker_opened = test.workspace.read_with(cx, |workspace, cx| {
             workspace
