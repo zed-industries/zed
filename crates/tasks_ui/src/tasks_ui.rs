@@ -476,20 +476,35 @@ pub fn task_contexts(
 
 /// Items outside of visible directory worktrees (e.g. the global `tasks.json` opened via
 /// `zed: open tasks`) keep their file variables, but use the visible project's root and cwd.
-/// Everything else derived from their own worktree is dropped: relative paths would point into
-/// an unrelated directory, and its environment would override the one the terminal loads for
-/// the project's cwd.
+/// Everything else is dropped, as it is derived from their own worktree: relative paths, its git
+/// repository and language-specific variables built from them (e.g. Python test targets) would
+/// point into an unrelated directory when run from the project's cwd, and its environment would
+/// override the one the terminal loads for that cwd.
 fn use_project_root_for_external_item(editor_context: &mut TaskContext, project_root: &Path) {
+    editor_context.task_variables = std::mem::take(&mut editor_context.task_variables)
+        .into_iter()
+        .filter(|(variable, _)| {
+            matches!(
+                variable,
+                VariableName::File
+                    | VariableName::Filename
+                    | VariableName::Stem
+                    | VariableName::Dirname
+                    | VariableName::Row
+                    | VariableName::Column
+                    | VariableName::SelectedText
+                    | VariableName::Symbol
+                    | VariableName::RunnableSymbol
+                    | VariableName::Language
+            )
+        })
+        .collect();
+
     editor_context.task_variables.insert(
         VariableName::WorktreeRoot,
         project_root.to_string_lossy().into_owned(),
     );
-    editor_context
-        .task_variables
-        .remove(&VariableName::RelativeFile);
-    editor_context
-        .task_variables
-        .remove(&VariableName::RelativeDir);
+
     editor_context.cwd = Some(project_root.to_path_buf());
     editor_context.project_env.clear();
 }
@@ -521,13 +536,15 @@ mod tests {
     };
 
     use editor::{Editor, MultiBufferOffset, SelectionEffects};
-    use gpui::{Entity, TestAppContext, VisualTestContext};
+    use gpui::{Entity, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Language, LanguageConfig};
+    use node_runtime::NodeRuntime;
     use project::{
         BasicContextProvider, FakeFs, Inventory, Project, TaskContexts, TaskSourceKind, WorktreeId,
         task_store::{TaskSettingsLocation, TaskStore},
     };
     use serde_json::json;
+    use settings::SettingsStore;
     use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables, VariableName};
     use ui::VisualContext;
     use util::{path, rel_path::rel_path};
@@ -764,6 +781,88 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_spawn_by_name_does_not_use_language_targets_derived_from_external_relative_path(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace, cx) = init_project_with_worktree_task(cx).await;
+        cx.update(|_, cx| {
+            // Built-in languages come with language server adapters, which must not be started here.
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .enable_language_server = Some(false);
+                });
+            });
+            let languages = project.read(cx).languages().clone();
+            let fs = project.read(cx).fs().clone();
+            languages::init(languages, fs, NodeRuntime::unavailable(), cx);
+        });
+
+        task_inventory(&workspace, cx)
+            .update(cx, |inventory, _| {
+                inventory.update_file_based_tasks(
+                    TaskSettingsLocation::Global(Path::new(path!("/zed-config/tasks.json"))),
+                    Some(
+                        r#"[
+                            {
+                                "label": "pytest from global tasks",
+                                "command": "python3",
+                                "args": ["-m", "pytest", "${ZED_CUSTOM_PYTHON_TEST_TARGET:.}"],
+                                "cwd": "$ZED_WORKTREE_ROOT"
+                            }
+                        ]"#,
+                    ),
+                )
+            })
+            .unwrap();
+
+        open_file_in_invisible_worktree(
+            &project,
+            &workspace,
+            path!("/external"),
+            "test_external.py",
+            cx,
+        )
+        .await;
+
+        cx.run_until_parked();
+
+        let editor = workspace
+            .read_with(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
+            .expect("active item should be an editor");
+        let item_context = editor
+            .update_in(cx, |editor, window, cx| editor.task_context(window, cx))
+            .await
+            .expect("editor should provide a task context");
+        assert_eq!(
+            item_context
+                .task_variables
+                .get(&VariableName::Custom("PYTHON_TEST_TARGET".into())),
+            Some("test_external.py"),
+            "the Python context provider should derive the test target from the file's relative path"
+        );
+
+        cx.dispatch_action(Spawn::ByName {
+            task_name: "pytest from global tasks".to_string(),
+            reveal_target: None,
+        });
+        cx.run_until_parked();
+
+        let scheduled_task = last_scheduled_task(&workspace, cx);
+        assert_eq!(
+            scheduled_task.resolved.args,
+            vec!["-m".to_string(), "pytest".to_string(), ".".to_string()]
+        );
+        assert_eq!(
+            scheduled_task.resolved.cwd.as_deref(),
+            Some(Path::new(path!("/project")))
+        );
+    }
+
     #[test]
     fn test_external_item_context_does_not_carry_its_worktree_environment() {
         let project_root = Path::new(path!("/project"));
@@ -780,6 +879,14 @@ mod tests {
                 (VariableName::WorktreeRoot, path!("/zed-config").to_string()),
                 (VariableName::RelativeFile, "tasks.json".to_string()),
                 (VariableName::RelativeDir, ".".to_string()),
+                (
+                    VariableName::MainGitWorktree,
+                    path!("/zed-config").to_string(),
+                ),
+                (
+                    VariableName::Custom("PYTHON_TEST_TARGET".into()),
+                    "tasks.json".to_string(),
+                ),
             ]),
             project_env: HashMap::from_iter([
                 ("SOURCE_DIRECTORY".to_string(), "zed-config".to_string()),
@@ -812,6 +919,8 @@ mod tests {
                         "$ZED_WORKTREE_ROOT".to_string(),
                         "$ZED_FILENAME".to_string(),
                         "${ZED_RELATIVE_FILE:no file}".to_string(),
+                        "${ZED_MAIN_GIT_WORKTREE:no repository}".to_string(),
+                        "${ZED_CUSTOM_PYTHON_TEST_TARGET:.}".to_string(),
                     ],
                     ..TaskTemplate::default()
                 },
@@ -823,7 +932,9 @@ mod tests {
             vec![
                 path!("/project").to_string(),
                 "tasks.json".to_string(),
-                "no file".to_string()
+                "no file".to_string(),
+                "no repository".to_string(),
+                ".".to_string()
             ]
         );
         assert_eq!(global_task.resolved.cwd.as_deref(), Some(project_root));
@@ -925,7 +1036,11 @@ mod tests {
 
         assert_eq!(
             last_scheduled_task(workspace, cx).resolved.args,
-            vec![path!("/project").to_string(), "main.rs".to_string()]
+            vec![
+                path!("/project").to_string(),
+                "main.rs".to_string(),
+                "main.rs".to_string()
+            ]
         );
     }
 
@@ -942,12 +1057,12 @@ mod tests {
                         {
                             "label": "print worktree root",
                             "command": "echo",
-                            "args": ["$ZED_WORKTREE_ROOT"]
+                            "args": ["$ZED_WORKTREE_ROOT", "${ZED_FILENAME:no file}"]
                         },
                         {
                             "label": "print worktree root and file",
                             "command": "echo",
-                            "args": ["$ZED_WORKTREE_ROOT", "${ZED_RELATIVE_FILE:no file}"]
+                            "args": ["$ZED_WORKTREE_ROOT", "${ZED_RELATIVE_FILE:no file}", "${ZED_FILENAME:no file}"]
                         }
                     ]"#,
                 },
@@ -955,8 +1070,11 @@ mod tests {
             }),
         )
         .await;
-        fs.insert_tree(path!("/external"), json!({"notes.txt": ""}))
-            .await;
+        fs.insert_tree(
+            path!("/external"),
+            json!({"notes.txt": "", "test_external.py": "x = 1\n"}),
+        )
+        .await;
 
         fs.insert_tree(
             path!("/zed-config"),
@@ -986,7 +1104,7 @@ mod tests {
         let scheduled_task = last_scheduled_task(workspace, cx);
         assert_eq!(
             scheduled_task.resolved.args,
-            vec![path!("/project").to_string()]
+            vec![path!("/project").to_string(), "no file".to_string()]
         );
         assert_eq!(
             scheduled_task.resolved.cwd.as_deref(),
@@ -1007,7 +1125,11 @@ mod tests {
         let scheduled_task = last_scheduled_task(workspace, cx);
         assert_eq!(
             scheduled_task.resolved.args,
-            vec![path!("/project").to_string(), "no file".to_string()]
+            vec![
+                path!("/project").to_string(),
+                "no file".to_string(),
+                "no file".to_string()
+            ]
         );
         assert_eq!(
             scheduled_task.resolved.cwd.as_deref(),

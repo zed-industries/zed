@@ -278,44 +278,9 @@ impl TaskContexts {
     /// Re-resolves a previously resolved task against the current contexts, so that
     /// any context-dependent variables (e.g. the active file or selection) reflect the
     /// editor's current state rather than the state from when the task was first run.
-    ///
-    /// For worktree tasks the search is scoped to the task's own worktree; other tasks
-    /// fall back through the active item, active worktree, and finally an empty context.
     /// If none of the contexts resolve, the original `resolved_task` is returned unchanged.
     fn reresolve_task(&self, kind: &TaskSourceKind, resolved_task: &ResolvedTask) -> ResolvedTask {
-        let id_base = kind.to_id_base();
-        let task = resolved_task.original_task();
-
-        let candidate_contexts: Vec<Option<&TaskContext>> = match kind {
-            TaskSourceKind::Worktree { id, .. } => vec![
-                self.active_item_context
-                    .as_ref()
-                    .filter(|(worktree_id, _, _)| worktree_id.as_ref() == Some(id))
-                    .map(|(_, _, context)| context),
-                self.active_worktree_context
-                    .as_ref()
-                    .filter(|(worktree_id, _)| worktree_id == id)
-                    .map(|(_, context)| context),
-                self.other_worktree_contexts
-                    .iter()
-                    .find(|(worktree_id, _)| worktree_id == id)
-                    .map(|(_, context)| context),
-            ],
-            _ => vec![
-                self.active_item_context
-                    .as_ref()
-                    .map(|(_, _, context)| context),
-                self.active_worktree_context
-                    .as_ref()
-                    .map(|(_, context)| context),
-            ],
-        };
-
-        candidate_contexts
-            .into_iter()
-            .flatten()
-            .find_map(|context| task.resolve_task(&id_base, context))
-            .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
+        self.resolve_task(kind, resolved_task.original_task())
             .unwrap_or_else(|| resolved_task.clone())
     }
 }
