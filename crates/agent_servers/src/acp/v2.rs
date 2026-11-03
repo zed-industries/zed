@@ -2698,6 +2698,85 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_subagent_directories_inherit_through_nested_subagents(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::MaybeUndefined;
+
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let parent = harness.thread(cx).await;
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(
+                acp::SubagentUpdate::new("child")
+                    .cwd(acp::AbsolutePath::new(session_path("worktree"))),
+            ),
+        );
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("grandchild")),
+        );
+        harness.drain_updates(cx).await;
+        let child = parent
+            .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
+            .expect("child");
+        let grandchild = child
+            .read_with(cx, |child, _| child.subagent(&"grandchild".into()).cloned())
+            .expect("grandchild");
+        let work_dirs = |thread: &Entity<AcpThread>, cx: &mut TestAppContext| {
+            thread.read_with(cx, |thread, _| {
+                thread
+                    .work_dirs()
+                    .expect("working directories")
+                    .ordered_paths()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+        };
+        let parent_dirs = work_dirs(&parent, cx);
+        let mut expected = parent_dirs.clone();
+        expected[0] = session_path("worktree");
+        assert_eq!(
+            work_dirs(&child, cx),
+            expected,
+            "the child keeps the parent's other dirs"
+        );
+        assert_eq!(
+            work_dirs(&grandchild, cx),
+            expected,
+            "the grandchild inherits the child's"
+        );
+
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(
+                acp::SubagentUpdate::new("child").additional_directories(Vec::new()),
+            ),
+        );
+        harness.drain_updates(cx).await;
+        assert_eq!(work_dirs(&child, cx), [session_path("worktree")]);
+        assert_eq!(
+            work_dirs(&grandchild, cx),
+            [session_path("worktree")],
+            "a change to the child's directories reaches the grandchild"
+        );
+
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(
+                acp::SubagentUpdate::new("child")
+                    .cwd(MaybeUndefined::Null)
+                    .additional_directories(MaybeUndefined::Null),
+            ),
+        );
+        harness.drain_updates(cx).await;
+        assert_eq!(
+            work_dirs(&child, cx),
+            parent_dirs,
+            "cleared fields inherit again"
+        );
+        assert_eq!(work_dirs(&grandchild, cx), parent_dirs);
+    }
+
+    #[gpui::test]
     async fn v2_subagent_updates_route_and_patch_child_sessions(cx: &mut TestAppContext) {
         use acp_thread::{ThreadStatus, subagents::SubagentAssociation};
         use agent_client_protocol::schema::MaybeUndefined;
@@ -2736,6 +2815,8 @@ mod tests {
                     title: Some("Investigator".into()),
                     description: None,
                     can_cancel: true,
+                    cwd: None,
+                    additional_directories: None,
                 })
             );
             assert_eq!(child.entries().len(), 1, "child traffic reaches the child");
@@ -2788,6 +2869,8 @@ mod tests {
                     title: None,
                     description: None,
                     can_cancel: true,
+                    cwd: None,
+                    additional_directories: None,
                 })
             );
             assert_eq!(child.subagents().count(), 0);

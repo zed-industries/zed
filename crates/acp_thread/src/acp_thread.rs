@@ -4269,8 +4269,43 @@ impl AcpThread {
     }
 
     pub fn set_work_dirs(&mut self, work_dirs: PathList, cx: &mut Context<Self>) {
-        self.session_info.work_dirs = Some(work_dirs);
-        cx.emit(AcpThreadEvent::WorkingDirectoriesUpdated)
+        self.session_info.work_dirs = Some(work_dirs.clone());
+        cx.emit(AcpThreadEvent::WorkingDirectoriesUpdated);
+        for subagent in self.subagents.values() {
+            subagent.update(cx, |subagent, cx| {
+                subagent.inherit_subagent_work_dirs(Some(&work_dirs), cx)
+            });
+        }
+    }
+
+    /// Updates an ACP subagent's working directories from what its parent reported,
+    /// inheriting each unreported field from the parent's working directories.
+    pub fn inherit_subagent_work_dirs(
+        &mut self,
+        parent_work_dirs: Option<&PathList>,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(
+            self.submissions.transport(),
+            SubmissionTransport::AgentOwned
+        ) {
+            return;
+        }
+        let Some(work_dirs) = self
+            .subagent_association
+            .as_ref()
+            .and_then(|association| association.effective_work_dirs(parent_work_dirs))
+        else {
+            return;
+        };
+        // `PathList` equality ignores order, but the first path is the cwd.
+        if self
+            .work_dirs()
+            .is_some_and(|current| current.ordered_paths().eq(work_dirs.ordered_paths()))
+        {
+            return;
+        }
+        self.set_work_dirs(work_dirs, cx);
     }
 
     pub fn status(&self) -> ThreadStatus {

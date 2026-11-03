@@ -926,6 +926,8 @@ impl NativeAgent {
                     title: subagent_title,
                     description: None,
                     can_cancel: true,
+                    cwd: None,
+                    additional_directories: None,
                 });
             }
             acp_thread.set_draft_prompt(draft_prompt, cx);
