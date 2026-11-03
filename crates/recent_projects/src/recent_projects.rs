@@ -10,8 +10,6 @@ use std::{
     sync::Arc,
 };
 
-use chrono::{DateTime, Utc};
-
 use fs::Fs;
 
 #[cfg(target_os = "windows")]
@@ -58,15 +56,6 @@ actions!(
     recent_projects,
     [ToggleActionsMenu, RemoveSelected, AddToWorkspace,]
 );
-
-#[derive(Clone, Debug)]
-pub struct RecentProjectEntry {
-    pub name: SharedString,
-    pub full_path: SharedString,
-    pub paths: Vec<PathBuf>,
-    pub workspace_id: WorkspaceId,
-    pub timestamp: DateTime<Utc>,
-}
 
 #[derive(Clone, Debug)]
 struct OpenFolderEntry {
@@ -2467,6 +2456,7 @@ impl RecentProjectsDelegate {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
 
     use serde_json::json;
