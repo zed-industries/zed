@@ -8377,10 +8377,13 @@ impl GitPanel {
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Outlined)
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.enter_branch_mode(window, cx);
-                            cx.defer(move |cx| {
-                                cx.dispatch_action(&DeployBranchDiff);
-                            })
+                            this.show_branch_changes(&ShowBranchChanges, window, cx);
+                            // Without a base this opens the base picker instead.
+                            if this.is_branch_mode() {
+                                cx.defer(move |cx| {
+                                    cx.dispatch_action(&DeployBranchDiff);
+                                })
+                            }
                         })),
                 )
             })
