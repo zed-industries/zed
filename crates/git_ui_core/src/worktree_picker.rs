@@ -1631,7 +1631,12 @@ pub async fn open_remote_worktree(
 
     let workspace_position = cx
         .update(|_, cx| {
-            workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
+            workspace::remote_workspace_position_from_db(
+                connection_options.clone(),
+                &paths,
+                None,
+                cx,
+            )
         })?
         .await
         .context("fetching workspace position from db")?;
@@ -1654,6 +1659,7 @@ pub async fn open_remote_worktree(
         connection_options,
         new_project,
         paths,
+        None,
         app_state,
         new_window,
         None,

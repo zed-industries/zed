@@ -14,7 +14,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use askpass::EncryptedPassword;
 use async_trait::async_trait;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{
     Future, FutureExt as _, StreamExt as _,
     channel::{
@@ -332,7 +332,7 @@ impl From<&State> for ConnectionState {
 
 pub struct RemoteClient {
     client: Arc<ChannelClient>,
-    unique_identifier: String,
+    unique_identifier: ConnectionIdentifierLease,
     connection_options: RemoteConnectionOptions,
     path_style: PathStyle,
     platform: RemotePlatform,
@@ -382,6 +382,42 @@ impl ConnectionIdentifier {
     }
 }
 
+#[derive(Default)]
+struct ConnectionIdentifierLeases(Arc<Mutex<HashSet<String>>>);
+
+impl Global for ConnectionIdentifierLeases {}
+
+struct ConnectionIdentifierLease {
+    identifier: String,
+    leases: Option<Arc<Mutex<HashSet<String>>>>,
+}
+
+impl ConnectionIdentifierLease {
+    fn acquire(identifier: ConnectionIdentifier, cx: &mut App) -> Self {
+        let leases = cx.default_global::<ConnectionIdentifierLeases>().0.clone();
+        let mut identifier = identifier.to_string(cx);
+        while !leases.lock().insert(identifier.clone()) {
+            identifier = ConnectionIdentifier::setup().to_string(cx);
+        }
+        Self {
+            identifier,
+            leases: Some(leases),
+        }
+    }
+
+    fn release(&mut self) {
+        if let Some(leases) = self.leases.take() {
+            leases.lock().remove(&self.identifier);
+        }
+    }
+}
+
+impl Drop for ConnectionIdentifierLease {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 pub async fn connect(
     connection_options: RemoteConnectionOptions,
     delegate: Arc<dyn RemoteClientDelegate>,
@@ -418,7 +454,7 @@ impl RemoteClient {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
     ) -> Task<Result<Option<Entity<Self>>>> {
-        let unique_identifier = unique_identifier.to_string(cx);
+        let unique_identifier = ConnectionIdentifierLease::acquire(unique_identifier, cx);
         cx.spawn(async move |cx| {
             let success = Box::pin(async move {
                 let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
@@ -440,9 +476,10 @@ impl RemoteClient {
                 let os_version = remote_connection.remote_os_version();
                 let connection_options = remote_connection.connection_options();
                 let connection_type = connection_options.connection_type();
+                let proxy_identifier = unique_identifier.identifier.clone();
                 let this = cx.new(|_| Self {
                     client: client.clone(),
-                    unique_identifier: unique_identifier.clone(),
+                    unique_identifier,
                     connection_options,
                     path_style,
                     platform,
@@ -451,7 +488,7 @@ impl RemoteClient {
                 });
 
                 let io_task = remote_connection.start_proxy(
-                    unique_identifier,
+                    proxy_identifier,
                     false,
                     incoming_tx,
                     outgoing_rx,
@@ -656,7 +693,7 @@ impl RemoteClient {
             attempts
         );
 
-        let unique_identifier = self.unique_identifier.clone();
+        let unique_identifier = self.unique_identifier.identifier.clone();
         let client = self.client.clone();
         let reconnect_task = cx.spawn(async move |this, cx| {
             macro_rules! failed {
@@ -1144,6 +1181,11 @@ impl RemoteClient {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn force_reconnecting(&mut self, cx: &mut Context<Self>) {
+        self.set_state(State::Reconnecting, cx);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_disconnect(&self, client_cx: &mut App) -> Task<()> {
         let opts = self.connection_options().clone();
         client_cx.spawn(async move |cx| {
@@ -1236,6 +1278,17 @@ impl RemoteClient {
             .await
             .unwrap()
             .unwrap()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn connection_identifier(&self) -> &str {
+        &self.unique_identifier.identifier
+    }
+
+    pub fn release_connection_identifier(&mut self) {
+        if self.remote_connection().is_none() {
+            self.unique_identifier.release();
+        }
     }
 
     pub fn remote_connection(&self) -> Option<Arc<dyn RemoteConnection>> {
@@ -2082,6 +2135,29 @@ mod tests {
             .connection_type(),
             "podman"
         );
+    }
+
+    #[gpui::test]
+    fn test_connection_identifier_leases_are_unique(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init_test(Version::new(0, 0, 0), ReleaseChannel::Dev, cx);
+            let workspace_identifier = ConnectionIdentifier::Workspace(1).to_string(cx);
+            let first = ConnectionIdentifierLease::acquire(ConnectionIdentifier::Workspace(1), cx);
+            let second = ConnectionIdentifierLease::acquire(ConnectionIdentifier::Workspace(1), cx);
+            assert_eq!(first.identifier, workspace_identifier);
+            assert_ne!(second.identifier, workspace_identifier);
+            drop(first);
+            let third = ConnectionIdentifierLease::acquire(ConnectionIdentifier::Workspace(1), cx);
+            assert_eq!(third.identifier, workspace_identifier);
+            let mut released = third;
+            released.release();
+            let fourth = ConnectionIdentifierLease::acquire(ConnectionIdentifier::Workspace(1), cx);
+            assert_eq!(fourth.identifier, workspace_identifier);
+            drop(released);
+            let fifth = ConnectionIdentifierLease::acquire(ConnectionIdentifier::Workspace(1), cx);
+            assert_ne!(fifth.identifier, workspace_identifier);
+            drop(second);
+        });
     }
 
     #[gpui::test]

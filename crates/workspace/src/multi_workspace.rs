@@ -25,11 +25,14 @@ use ui::{ContextMenu, right_click_menu};
 
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
-use crate::open_remote_project_with_existing_connection;
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
     Panel, Workspace, WorkspaceId, client_side_decorations,
-    persistence::model::MultiWorkspaceState,
+    persistence::model::{MultiWorkspaceState, SessionWorkspace},
+};
+use crate::{
+    WorkspaceIdReservation, WorkspaceRoots, is_workspace_id_reserved,
+    open_remote_project_with_existing_connection, reserve_workspace_id,
 };
 
 actions!(
@@ -284,6 +287,7 @@ pub struct SerializedProjectGroupState {
 pub struct ProjectGroupState {
     pub key: ProjectGroupKey,
     pub expanded: bool,
+    saved_workspaces: Vec<SessionWorkspace>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -676,6 +680,7 @@ impl MultiWorkspace {
             ProjectGroupState {
                 key,
                 expanded: true,
+                saved_workspaces: Vec::new(),
             },
         );
     }
@@ -713,13 +718,21 @@ impl MultiWorkspace {
 
         if new_key_exists {
             let active_key = self.workspace().read(cx).project_group_key(cx);
-            if active_key == *new_key {
-                self.project_groups.retain(|g| g.key != *old_key);
+            let (removed_key, kept_key) = if active_key == *new_key {
+                (old_key, new_key)
             } else {
-                self.project_groups.retain(|g| g.key != *new_key);
-                if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == *old_key) {
-                    group.key = new_key.clone();
-                }
+                (new_key, old_key)
+            };
+            let removed_saved_workspaces = self
+                .project_groups
+                .iter_mut()
+                .find(|g| g.key == *removed_key)
+                .map(|group| std::mem::take(&mut group.saved_workspaces))
+                .unwrap_or_default();
+            self.project_groups.retain(|g| g.key != *removed_key);
+            if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == *kept_key) {
+                group.key = new_key.clone();
+                group.saved_workspaces.extend(removed_saved_workspaces);
             }
         } else {
             if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == *old_key) {
@@ -792,6 +805,13 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) {
         Self::subscribe_to_workspace(workspace, window, cx);
+        if let Some(workspace_id) = workspace.read(cx).database_id() {
+            for group in &mut self.project_groups {
+                group
+                    .saved_workspaces
+                    .retain(|saved| saved.workspace_id != workspace_id);
+            }
+        }
         let weak_self = cx.weak_entity();
         let active_workspace_id = self.active_workspace_id.clone();
         workspace.update(cx, |workspace, cx| {
@@ -830,7 +850,11 @@ impl MultiWorkspace {
             if restored.iter().any(|group| group.key == key) {
                 continue;
             }
-            restored.push(ProjectGroupState { key, expanded });
+            restored.push(ProjectGroupState {
+                key,
+                expanded,
+                saved_workspaces: Vec::new(),
+            });
         }
         for existing in std::mem::take(&mut self.project_groups) {
             if !restored.iter().any(|group| group.key == existing.key) {
@@ -1040,6 +1064,13 @@ impl MultiWorkspace {
         }
 
         let app_state = self.workspace().read(cx).app_state().clone();
+        let saved_workspace = match self.workspace_for_paths(key.path_list(), None, cx) {
+            Some(workspace) => workspace
+                .read(cx)
+                .database_id()
+                .map(|workspace_id| reserve_workspace_id(workspace_id, cx)),
+            None => self.take_saved_workspace(key.path_list(), None, cx),
+        };
 
         let workspaces: Vec<_> = self
             .workspaces_for_project_group(key, cx)
@@ -1063,7 +1094,16 @@ impl MultiWorkspace {
             }
 
             cx.update(|cx| {
-                Workspace::new_local(paths, app_state, None, None, None, OpenMode::NewWindow, cx)
+                Workspace::new_local_with_workspace_id(
+                    paths,
+                    app_state,
+                    None,
+                    None,
+                    None,
+                    OpenMode::NewWindow,
+                    saved_workspace,
+                    cx,
+                )
             })
             .await?;
 
@@ -1136,6 +1176,7 @@ impl MultiWorkspace {
 
         let app_state = self.workspace().read(cx).app_state().clone();
         let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+        let saved_workspace = self.take_saved_workspace(&paths, Some(&connection_options), cx);
         let connect_task = connect_remote(connection_options.clone(), window, cx);
         let paths_vec = paths.paths().to_vec();
 
@@ -1191,6 +1232,7 @@ impl MultiWorkspace {
                 connection_options,
                 new_project,
                 effective_paths_vec,
+                saved_workspace,
                 app_state,
                 window_handle,
                 provisional_project_group_key,
@@ -1303,6 +1345,64 @@ impl MultiWorkspace {
 
     pub fn workspace(&self) -> &Entity<Workspace> {
         &self.held[self.displayed_index()].workspace
+    }
+
+    pub fn remove_replaced_workspace(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(index) = self.held_index(workspace)
+            && index != self.displayed_index()
+        {
+            self.held.remove(index);
+            cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(workspace.entity_id()));
+            self.serialize(cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_saved_workspaces(
+        &mut self,
+        saved_workspaces: Vec<(ProjectGroupKey, SessionWorkspace)>,
+    ) {
+        for group in &mut self.project_groups {
+            group.saved_workspaces.clear();
+        }
+        for (key, saved) in saved_workspaces {
+            if let Some(group) = self
+                .project_groups
+                .iter_mut()
+                .find(|group| same_project_group(&group.key, &key))
+            {
+                group.saved_workspaces.push(saved);
+            }
+        }
+    }
+
+    pub(crate) fn saved_workspace_ids(&self) -> impl Iterator<Item = WorkspaceId> + '_ {
+        self.project_groups
+            .iter()
+            .flat_map(|group| &group.saved_workspaces)
+            .map(|saved| saved.workspace_id)
+    }
+
+    pub(crate) fn take_saved_workspace(
+        &mut self,
+        paths: &PathList,
+        host: Option<&RemoteConnectionOptions>,
+        cx: &mut App,
+    ) -> Option<WorkspaceIdReservation> {
+        let workspace_id = self
+            .project_groups
+            .iter()
+            .flat_map(|group| &group.saved_workspaces)
+            .find(|saved| {
+                saved_workspace_matches(saved, paths, host)
+                    && !is_workspace_id_reserved(saved.workspace_id, cx)
+            })?
+            .workspace_id;
+        Some(reserve_workspace_id(workspace_id, cx))
     }
 
     pub fn workspaces(&self) -> impl Iterator<Item = &Entity<Workspace>> {
@@ -1434,13 +1534,12 @@ impl MultiWorkspace {
             self.held.remove(index);
         }
         cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(workspace.entity_id()));
-        workspace.update(cx, |workspace, _cx| {
+        let database_id = workspace.update(cx, |workspace, _cx| {
             workspace.session_id.take();
-            workspace._schedule_serialize_workspace.take();
-            workspace._serialize_workspace_task.take();
+            workspace.release_database_id()
         });
 
-        if let Some(workspace_id) = workspace.read(cx).database_id() {
+        if let Some(workspace_id) = database_id {
             let db = crate::persistence::WorkspaceDb::global(cx);
             self.pending_removal_tasks.retain(|task| !task.is_ready());
             self.pending_removal_tasks
@@ -1485,6 +1584,7 @@ impl MultiWorkspace {
                 .collect::<Vec<_>>(),
             sidebar_open: self.sidebar_open,
             sidebar_state: self.sidebar.as_ref().and_then(|s| s.serialized_state(cx)),
+            inactive_workspace_ids: self.saved_workspace_ids().collect(),
         };
         let window_id = self.window_id;
         let kvp = db::kvp::KeyValueStore::global(cx);
@@ -1661,6 +1761,7 @@ impl MultiWorkspace {
         self.project_groups.push(ProjectGroupState {
             key: group.key,
             expanded: group.expanded,
+            saved_workspaces: Vec::new(),
         });
     }
 
@@ -1823,16 +1924,30 @@ impl MultiWorkspace {
         cx.spawn_in(window, async move |this, cx| {
             // Consent phase: run the standard close lifecycle for every
             // workspace being removed. Prompts only; no state changes.
+            let mut leaving_session = Vec::new();
             for workspace in &workspaces {
-                let should_continue = workspace
+                let prepared = workspace
                     .update_in(cx, |workspace, window, cx| {
-                        workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+                        workspace.prepare_to_close_keeping_session(
+                            CloseIntent::ReplaceWindow,
+                            window,
+                            cx,
+                        )
                     })?
                     .await?;
 
-                if !should_continue {
-                    return Ok(false);
+                match prepared {
+                    Some(true) => leaving_session.push(workspace),
+                    Some(false) => {}
+                    None => return Ok(false),
                 }
+            }
+            for workspace in leaving_session {
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.remove_from_session(window, cx)
+                    })?
+                    .await;
             }
 
             // Edit phase: one synchronous update. Delete the rows, then pick
@@ -2230,4 +2345,17 @@ impl Render for MultiWorkspace {
             cx,
         )
     }
+}
+
+fn saved_workspace_matches(
+    saved: &SessionWorkspace,
+    paths: &PathList,
+    host: Option<&RemoteConnectionOptions>,
+) -> bool {
+    WorkspaceRoots::of_saved(&saved.paths, &saved.location)
+        == WorkspaceRoots::new(paths.clone(), host)
+}
+
+fn same_project_group(left: &ProjectGroupKey, right: &ProjectGroupKey) -> bool {
+    WorkspaceRoots::of_group(left) == WorkspaceRoots::of_group(right)
 }

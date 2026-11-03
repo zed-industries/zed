@@ -31,7 +31,8 @@ use futures::{FutureExt, StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{
-    App, AppContext, Application, AsyncApp, QuitMode, Task, TaskExt, UpdateGlobal as _, block_on,
+    App, AppContext, Application, AsyncApp, Global, QuitMode, Task, TaskExt, UpdateGlobal as _,
+    block_on,
 };
 use gpui_platform;
 
@@ -47,13 +48,13 @@ use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::{project_settings::ProjectSettings, trusted_worktrees};
-use recent_projects::{RemoteSettings, open_remote_project};
+use recent_projects::{RemoteSettings, open_remote_project, restore_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
 use smol::future::poll_once;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     env,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
@@ -925,49 +926,18 @@ fn main() {
             )
         };
 
-        let restore_task = match open_rx
+        let initial_request = open_rx
             .try_recv()
             .ok()
-            .and_then(|request| OpenRequest::parse(request, cx).log_err())
-        {
-            Some(request) if request.is_focus_app_only() => cx.spawn({
-                let app_state = app_state.clone();
-                async move |cx| {
-                    if let Err(e) = restore_or_create_workspace(app_state, cx).await {
-                        fail_to_open_window_async(e, cx)
-                    }
-                }
-            }),
-            Some(request) => {
-                handle_open_request(request, app_state.clone(), cx);
-                Task::ready(())
-            }
-            None => cx.spawn({
-                let app_state = app_state.clone();
-                async move |cx| {
-                    if let Err(e) = restore_or_create_workspace(app_state, cx).await {
-                        fail_to_open_window_async(e, cx)
-                    }
-                }
-            }),
-        };
+            .and_then(|request| OpenRequest::parse(request, cx).log_err());
+        let restore_task =
+            restore_and_open_workspaces(app_state.clone(), initial_request, open_rx, cx);
 
-        let (first_window_tx, first_window_rx) = oneshot::channel::<()>();
-        let first_window_tx = Rc::new(RefCell::new(Some(first_window_tx)));
-        let _first_window_subscription = cx.observe_new::<MultiWorkspace>(move |_, _, _| {
-            if let Some(tx) = first_window_tx.borrow_mut().take() {
-                tx.send(()).ok();
-            }
-        });
-
-        let restore_finished = cx.background_spawn(restore_task).shared();
-
-        cx.spawn({
+        cx.background_spawn({
             let db = workspace::WorkspaceDb::global(cx);
             let fs = app_state.fs.clone();
-            let restore_finished = restore_finished.clone();
-            async move |_cx| {
-                restore_finished.await;
+            async move {
+                restore_task.await;
                 db.garbage_collect_workspaces(
                     fs.as_ref(),
                     &current_session_id,
@@ -978,31 +948,175 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
-        let app_state = app_state.clone();
-
         component_preview::init(app_state.clone(), cx);
-
-        cx.spawn(async move |cx| {
-            let _first_window_subscription = _first_window_subscription;
-            let first_window_placed = first_window_rx.shared();
-            while let Some(urls) = open_rx.next().await {
-                // On a macOS cold launch, `zed <path>` arrives here after startup already
-                // began restoring the session, so wait for a restored window to exist before
-                // matching. Otherwise this open sees no windows and spawns a redundant one (#61346).
-                futures::select_biased! {
-                    _ = restore_finished.clone() => {}
-                    _ = first_window_placed.clone() => {}
-                }
-                cx.update(|cx| {
-                    if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
-                        handle_open_request(request, app_state.clone(), cx);
-                    }
-                });
-            }
-        })
-        .detach();
     });
 }
+
+pub(crate) fn restore_and_open_workspaces(
+    app_state: Arc<AppState>,
+    initial_request: Option<OpenRequest>,
+    open_rx: futures::channel::mpsc::UnboundedReceiver<RawOpenRequest>,
+    cx: &mut App,
+) -> Task<()> {
+    cx.spawn(async move |cx| {
+        let workspaces = restorable_workspaces(cx, &app_state).await;
+        open_workspaces_on_startup(workspaces, app_state, initial_request, open_rx, cx).await;
+    })
+}
+
+async fn open_workspaces_on_startup(
+    workspaces: Option<Vec<workspace::SerializedMultiWorkspace>>,
+    app_state: Arc<AppState>,
+    initial_request: Option<OpenRequest>,
+    mut open_rx: futures::channel::mpsc::UnboundedReceiver<RawOpenRequest>,
+    cx: &mut AsyncApp,
+) {
+    let had_saved_workspaces = workspaces.is_some();
+    let frontmost_workspace_id = workspaces
+        .as_ref()
+        .and_then(|workspaces| workspaces.last())
+        .map(|workspace| workspace.active_workspace.workspace_id);
+    let (local_workspaces, remote_workspaces) = workspaces
+        .unwrap_or_default()
+        .into_iter()
+        .partition::<Vec<_>, _>(|workspace| {
+            workspace.active_workspace.location == SerializedWorkspaceLocation::Local
+        });
+    let local_workspaces = local_workspaces
+        .into_iter()
+        .map(|workspace| (workspace, Vec::new()))
+        .collect();
+    if let Err(error) =
+        restore_workspaces(local_workspaces, app_state.clone(), true, None, cx).await
+    {
+        fail_to_open_window_async(error, cx);
+    }
+    let active_window_after_local_restore = cx.update(|cx| cx.active_window());
+    let frontmost_is_remote = remote_workspaces
+        .iter()
+        .any(|workspace| Some(workspace.active_workspace.workspace_id) == frontmost_workspace_id);
+
+    let mut requests = initial_request.into_iter().collect::<Vec<_>>();
+    while let Ok(request) = open_rx.try_recv() {
+        if let Some(request) = cx.update(|cx| OpenRequest::parse(request, cx).log_err()) {
+            requests.push(request);
+        }
+    }
+    requests.retain(|request| !request.is_focus_app_only());
+    let remote_workspaces = cx.update(|cx| {
+        remote_workspaces
+            .into_iter()
+            .map(|workspace| {
+                let reservations = std::iter::once(workspace.active_workspace.workspace_id)
+                    .chain(
+                        workspace
+                            .inactive_workspaces
+                            .iter()
+                            .map(|inactive| inactive.workspace_id),
+                    )
+                    .map(|workspace_id| workspace::reserve_workspace_id(workspace_id, cx))
+                    .collect::<Vec<_>>();
+                (workspace, reservations)
+            })
+            .collect::<Vec<_>>()
+    });
+    let destination_requested = requests
+        .iter()
+        .any(|request| !matches!(request.kind, Some(OpenRequestKind::CliConnection(_))));
+    let request_received = Rc::new(Cell::new(destination_requested));
+    let focused_remote_workspace_id =
+        frontmost_workspace_id.filter(|_| frontmost_is_remote && !destination_requested);
+    let remote_restore_task = if remote_workspaces.is_empty() {
+        None
+    } else {
+        let task = cx
+            .spawn({
+                let app_state = app_state.clone();
+                let request_received = request_received.clone();
+                async move |cx| {
+                    if let Err(error) = restore_workspaces(
+                        remote_workspaces,
+                        app_state.clone(),
+                        false,
+                        focused_remote_workspace_id,
+                        cx,
+                    )
+                    .await
+                    {
+                        fail_to_open_window_async(error, cx);
+                    }
+                    if cx.update(|cx| cx.windows().is_empty()) {
+                        if let Err(error) = create_startup_workspace(app_state, false, cx).await {
+                            fail_to_open_window_async(error, cx);
+                        }
+                    } else if !request_received.get()
+                        && !frontmost_is_remote
+                        && cx.update(|cx| cx.active_window()) == active_window_after_local_restore
+                    {
+                        cx.update(|cx| {
+                            for window in cx.windows() {
+                                if let Some(window) = window.downcast::<MultiWorkspace>()
+                                    && window.read(cx).is_ok_and(|multi_workspace| {
+                                        multi_workspace.workspace().read(cx).database_id()
+                                            == frontmost_workspace_id
+                                    })
+                                {
+                                    window
+                                        .update(cx, |_, window, _| window.activate_window())
+                                        .ok();
+                                    break;
+                                }
+                            }
+                        });
+                    }
+                }
+            })
+            .shared();
+        cx.update(|cx| cx.set_global(PendingRemoteRestoration(task.clone())));
+        Some(task)
+    };
+    if requests.is_empty() && remote_restore_task.is_none() {
+        if workspace::activate_any_workspace_window(cx).is_none()
+            && let Err(error) =
+                create_startup_workspace(app_state.clone(), !had_saved_workspaces, cx).await
+        {
+            fail_to_open_window_async(error, cx);
+        }
+    } else {
+        cx.update(|cx| {
+            for request in requests {
+                handle_open_request(request, app_state.clone(), cx);
+            }
+        });
+    }
+
+    cx.spawn(async move |cx| {
+        while let Some(request) = open_rx.next().await {
+            cx.update(|cx| {
+                if let Some(request) = OpenRequest::parse(request, cx).log_err() {
+                    if !request.is_focus_app_only() {
+                        request_received.set(true);
+                    }
+                    handle_open_request(request, app_state.clone(), cx);
+                }
+            });
+        }
+    })
+    .detach();
+    if let Some(task) = remote_restore_task {
+        task.await;
+        cx.update(|cx| cx.remove_global::<PendingRemoteRestoration>());
+    }
+}
+
+pub(crate) fn pending_remote_restoration(cx: &App) -> Option<futures::future::Shared<Task<()>>> {
+    cx.try_global::<PendingRemoteRestoration>()
+        .map(|pending| pending.0.clone())
+}
+
+struct PendingRemoteRestoration(futures::future::Shared<Task<()>>);
+
+impl Global for PendingRemoteRestoration {}
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
     if let Some(kind) = request.kind {
@@ -1424,142 +1538,176 @@ pub(crate) async fn restore_or_create_workspace(
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let kvp = cx.update(|cx| KeyValueStore::global(cx));
-    if let Some(multi_workspaces) = restorable_workspaces(cx, &app_state).await {
-        let mut error_count = 0;
-        for multi_workspace in multi_workspaces {
-            let result = match &multi_workspace.active_workspace.location {
-                SerializedWorkspaceLocation::Local => {
-                    restore_multiworkspace(multi_workspace, app_state.clone(), cx)
-                        .await
-                        .map(|_| ())
-                }
-                SerializedWorkspaceLocation::Remote(connection_options) => {
-                    let mut connection_options = connection_options.clone();
-                    if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
-                        cx.update(|cx| {
-                            RemoteSettings::get_global(cx)
-                                .fill_connection_options_from_settings(options)
-                        });
-                    }
+    if let Some(task) = cx.update(|cx| pending_remote_restoration(cx)) {
+        task.await;
+        if workspace::activate_any_workspace_window(cx).is_none() {
+            create_startup_workspace(app_state, false, cx).await?;
+        }
+        return Ok(());
+    }
+    let workspaces = restorable_workspaces(cx, &app_state).await;
+    let had_saved_workspaces = workspaces.is_some();
+    if let Some(workspaces) = workspaces {
+        let workspaces = workspaces
+            .into_iter()
+            .map(|workspace| (workspace, Vec::new()))
+            .collect();
+        restore_workspaces(workspaces, app_state.clone(), true, None, cx).await?;
+    }
+    if workspace::activate_any_workspace_window(cx).is_none() {
+        create_startup_workspace(app_state, !had_saved_workspaces, cx).await?;
+    }
+    Ok(())
+}
 
-                    let paths = multi_workspace
-                        .active_workspace
-                        .paths
-                        .paths()
-                        .iter()
-                        .map(PathBuf::from)
-                        .collect::<Vec<_>>();
-                    let state = multi_workspace.state.clone();
-                    async {
-                        let window = open_remote_project(
-                            connection_options,
-                            paths,
-                            app_state.clone(),
-                            workspace::OpenOptions {
-                                // Each saved window must retain its own project roots,
-                                // even when some roots also appear in another window.
-                                workspace_matching: workspace::WorkspaceMatching::None,
-                                ..Default::default()
-                            },
-                            cx,
-                        )
-                        .await?;
-                        workspace::apply_restored_multiworkspace_state(
-                            window,
-                            &state,
-                            app_state.fs.clone(),
-                            cx,
-                        )
-                        .await;
-                        Ok::<(), anyhow::Error>(())
-                    }
+async fn restore_remote_multiworkspace(
+    connection_options: RemoteConnectionOptions,
+    multi_workspace: workspace::SerializedMultiWorkspace,
+    reservations: Vec<workspace::WorkspaceIdReservation>,
+    app_state: Arc<AppState>,
+    focus: bool,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let saved_workspace = cx.update(|cx| {
+        workspace::reserve_workspace_id(multi_workspace.active_workspace.workspace_id, cx)
+    });
+    let paths = multi_workspace
+        .active_workspace
+        .paths
+        .paths()
+        .iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    let window = restore_remote_project(
+        connection_options,
+        paths,
+        saved_workspace,
+        app_state.clone(),
+        workspace::OpenOptions {
+            focus: Some(focus),
+            // Each saved window must retain its own project roots,
+            // even when some roots also appear in another window.
+            workspace_matching: workspace::WorkspaceMatching::None,
+            ..workspace::OpenOptions::default()
+        },
+        cx,
+    )
+    .await?;
+    workspace::apply_restored_multiworkspace_state(
+        window,
+        &multi_workspace.state,
+        multi_workspace.inactive_workspaces,
+        reservations,
+        app_state.fs.clone(),
+        cx,
+    )
+    .await;
+    Ok(())
+}
+
+async fn restore_workspaces(
+    multi_workspaces: Vec<(
+        workspace::SerializedMultiWorkspace,
+        Vec<workspace::WorkspaceIdReservation>,
+    )>,
+    app_state: Arc<AppState>,
+    focus: bool,
+    focused_workspace_id: Option<workspace::WorkspaceId>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let mut error_count = 0;
+    for (multi_workspace, reservations) in multi_workspaces {
+        let result = match multi_workspace.active_workspace.location.clone() {
+            SerializedWorkspaceLocation::Local => {
+                restore_multiworkspace(multi_workspace, app_state.clone(), cx)
                     .await
-                }
-            };
-
-            if let Err(error) = result {
-                log::error!("Failed to restore workspace: {error:#}");
-                error_count += 1;
+                    .map(|_| ())
             }
-        }
-
-        if error_count > 0 {
-            let message = if error_count == 1 {
-                "Failed to restore 1 workspace. Check logs for details.".to_string()
-            } else {
-                format!(
-                    "Failed to restore {} workspaces. Check logs for details.",
-                    error_count
+            SerializedWorkspaceLocation::Remote(mut connection_options) => {
+                if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
+                    cx.update(|cx| {
+                        RemoteSettings::get_global(cx)
+                            .fill_connection_options_from_settings(options)
+                    });
+                }
+                let focus = focus
+                    || focused_workspace_id == Some(multi_workspace.active_workspace.workspace_id);
+                restore_remote_multiworkspace(
+                    connection_options,
+                    multi_workspace,
+                    reservations,
+                    app_state.clone(),
+                    focus,
+                    cx,
                 )
-            };
-
-            // Try to find an active workspace to show the toast
-            let toast_shown = cx.update(|cx| {
-                if let Some(window) = cx.active_window()
-                    && let Some(multi_workspace) = window.downcast::<MultiWorkspace>()
-                {
-                    multi_workspace
-                        .update(cx, |multi_workspace, _, cx| {
-                            multi_workspace.workspace().update(cx, |workspace, cx| {
-                                workspace.show_toast(
-                                    Toast::new(NotificationId::unique::<()>(), message.clone()),
-                                    cx,
-                                )
-                            });
-                        })
-                        .ok();
-                    return true;
-                }
-                false
-            });
-
-            // If we couldn't show a toast (no windows opened successfully),
-            // open a fallback empty workspace and show the error there
-            if !toast_shown {
-                log::error!("All workspace restorations failed. Opening fallback empty workspace.");
-                cx.update(|cx| {
-                    workspace::open_new(
-                        Default::default(),
-                        app_state.clone(),
-                        cx,
-                        |workspace, _window, cx| {
-                            workspace.show_toast(
-                                Toast::new(NotificationId::unique::<()>(), message),
-                                cx,
-                            );
-                        },
-                    )
-                })
-                .await?;
+                .await
             }
+        };
+        if let Err(error) = result {
+            log::error!("Failed to restore workspace: {error:#}");
+            error_count += 1;
         }
+    }
 
-        // If the user cancelled a failed remote connection at startup,
-        // open_remote_project returns Ok but removes the window, so error_count
-        // stays 0 and the toast fallback above does not trigger. Without this
-        // check, Zed would exit silently.
-        if cx.update(|cx| cx.windows().is_empty()) {
+    if error_count > 0 {
+        let message = if error_count == 1 {
+            "Failed to restore 1 workspace. Check logs for details.".to_string()
+        } else {
+            format!(
+                "Failed to restore {} workspaces. Check logs for details.",
+                error_count
+            )
+        };
+
+        // Try to find an active workspace to show the toast
+        let toast_shown = cx.update(|cx| {
+            if let Some(window) = cx.active_window()
+                && let Some(multi_workspace) = window.downcast::<MultiWorkspace>()
+            {
+                multi_workspace
+                    .update(cx, |multi_workspace, _, cx| {
+                        multi_workspace.workspace().update(cx, |workspace, cx| {
+                            workspace.show_toast(
+                                Toast::new(NotificationId::unique::<()>(), message.clone()),
+                                cx,
+                            )
+                        });
+                    })
+                    .ok();
+                return true;
+            }
+            false
+        });
+
+        // If we couldn't show a toast (no windows opened successfully),
+        // open a fallback empty workspace and show the error there
+        if !toast_shown {
+            log::error!("All workspace restorations failed. Opening fallback empty workspace.");
             cx.update(|cx| {
                 workspace::open_new(
                     Default::default(),
                     app_state.clone(),
                     cx,
-                    |workspace, window, cx| {
-                        let restore_on_startup =
-                            WorkspaceSettings::get_global(cx).restore_on_startup;
-                        match restore_on_startup {
-                            workspace::RestoreOnStartupBehavior::Launchpad => {}
-                            _ => {
-                                Editor::new_file(workspace, &Default::default(), window, cx);
-                            }
-                        }
+                    |workspace, _window, cx| {
+                        workspace
+                            .show_toast(Toast::new(NotificationId::unique::<()>(), message), cx);
                     },
                 )
             })
             .await?;
         }
-    } else if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
+    }
+
+    Ok(())
+}
+
+async fn create_startup_workspace(
+    app_state: Arc<AppState>,
+    allow_onboarding: bool,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let kvp = cx.update(|cx| KeyValueStore::global(cx));
+    if allow_onboarding && matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_onboarding_view(app_state, cx)).await?;
     } else {
         cx.update(|cx| {
