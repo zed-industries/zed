@@ -888,6 +888,8 @@ impl ContextMenu {
 
     /// Focuses this handle instead of the menu whenever the menu is focused as
     /// a submenu, so that embedded content such as a picker takes keyboard input.
+    /// The handle must be tracked by an element inside this menu, usually by the
+    /// view passed to [`ContextMenu::embedded_view`].
     pub fn focus_content(mut self, focus_handle: FocusHandle) -> Self {
         self.content_focus_handle = Some(focus_handle);
         self
@@ -938,8 +940,8 @@ impl ContextMenu {
             );
 
             if let SubmenuState::Open(open_submenu) = &self.submenu_state {
-                let focus_handle = open_submenu.entity.read(cx).focus_handle.clone();
-                window.focus(&focus_handle, cx);
+                let focus_target = open_submenu.entity.read(cx).submenu_focus_target();
+                window.focus(&focus_target, cx);
                 open_submenu.entity.update(cx, |submenu, cx| {
                     submenu.select_first(&SelectFirst, window, cx);
                 });
@@ -994,8 +996,8 @@ impl ContextMenu {
             );
 
             if let SubmenuState::Open(open_submenu) = &self.submenu_state {
-                let focus_handle = open_submenu.entity.read(cx).focus_handle.clone();
-                window.focus(&focus_handle, cx);
+                let focus_target = open_submenu.entity.read(cx).submenu_focus_target();
+                window.focus(&focus_target, cx);
                 open_submenu.entity.update(cx, |submenu, cx| {
                     submenu.select_first(&SelectFirst, window, cx);
                 });
@@ -2412,9 +2414,12 @@ impl Render for ContextMenu {
         };
 
         // Content inside the submenu, such as an embedded picker, can hold
-        // focus, so only move focus into the submenu when it's outside it.
+        // focus, so only move focus when it's outside the submenu or on the
+        // submenu itself, which is where a click on a part of the content that
+        // can't take focus leaves it.
         if let Some((submenu_focus_handle, focus_target)) = focus_submenu.as_ref()
-            && !submenu_focus_handle.contains_focused(window, cx)
+            && (!submenu_focus_handle.contains_focused(window, cx)
+                || submenu_focus_handle.is_focused(window))
         {
             window.focus(focus_target, cx);
         }
@@ -2497,10 +2502,11 @@ mod tests {
     impl Render for EmbeddedTestView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let bounds = self.bounds.clone();
-            div()
+            // Like a picker, only the search field takes focus, not the results.
+            v_flex()
                 .relative()
-                .track_focus(&self.focus_handle)
-                .child("search field")
+                .child(div().track_focus(&self.focus_handle).child("search field"))
+                .child(div().h(px(40.)).child("results"))
                 .child(
                     canvas(
                         move |element_bounds, _, _| bounds.set(Some(element_bounds)),
@@ -2734,6 +2740,60 @@ mod tests {
         assert!(
             content_is_focused,
             "opening the submenu must focus its content"
+        );
+    }
+
+    #[gpui::test]
+    fn confirming_submenu_trigger_focuses_its_content(cx: &mut TestAppContext) {
+        let content_focus = cx.update(|cx| cx.focus_handle());
+        let content_bounds = Rc::new(Cell::new(None));
+        let (menu, mut visual) =
+            open_window_with_embedded_view_submenu(&content_focus, &content_bounds, cx);
+
+        menu.update_in(&mut visual, |menu, window, cx| {
+            menu.select_first(&SelectFirst, window, cx);
+            menu.confirm(&menu::Confirm, window, cx);
+        });
+        draw_frames(&mut visual);
+
+        let content_is_focused = visual.update(|window, _| content_focus.is_focused(window));
+        assert!(
+            content_is_focused,
+            "confirming the submenu trigger must focus its content"
+        );
+    }
+
+    #[gpui::test]
+    fn clicking_embedded_view_outside_its_focus_keeps_content_focused(cx: &mut TestAppContext) {
+        let content_focus = cx.update(|cx| cx.focus_handle());
+        let content_bounds = Rc::new(Cell::new(None));
+        let (menu, mut visual) =
+            open_window_with_embedded_view_submenu(&content_focus, &content_bounds, cx);
+
+        menu.update_in(&mut visual, |menu, window, cx| {
+            menu.select_first(&SelectFirst, window, cx);
+            menu.select_submenu_child(&SelectChild, window, cx);
+        });
+        draw_frames(&mut visual);
+        let content_is_focused = visual.update(|window, _| content_focus.is_focused(window));
+        assert!(
+            content_is_focused,
+            "opening the submenu focuses its content"
+        );
+
+        let view_bounds = content_bounds.get().expect("embedded view bounds");
+        let results_area = point(view_bounds.left() + px(10.), view_bounds.bottom() - px(10.));
+        visual.simulate_click(results_area, Modifiers::default());
+        draw_frames(&mut visual);
+
+        let submenu_is_open = menu.read_with(&visual, |menu, _| {
+            matches!(menu.submenu_state, SubmenuState::Open(_))
+        });
+        let content_is_focused = visual.update(|window, _| content_focus.is_focused(window));
+        assert!(submenu_is_open, "clicking inside the submenu keeps it open");
+        assert!(
+            content_is_focused,
+            "clicking a part of the content that can't take focus must leave focus on the content"
         );
     }
 
