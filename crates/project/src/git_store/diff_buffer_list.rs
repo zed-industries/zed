@@ -234,19 +234,17 @@ impl DiffBufferList {
         }
 
         let task = cx.spawn(async move |this, cx| {
-            let result = Self::reload_tree_diff(this.clone(), cx).await;
-            let error = result.err().map(|error| {
-                log::error!("failed to load tree diff: {error:#}");
-                SharedString::from(format!("{error:#}"))
-            });
+            let Err(error) = Self::reload_tree_diff(this.clone(), cx).await else {
+                return;
+            };
+            log::error!("failed to load tree diff: {error:#}");
+            let error = SharedString::from(format!("{error:#}"));
             this.update(cx, |this, cx| {
-                let had_error = this.tree_diff_error.is_some();
-                let has_error = error.is_some();
-                this.tree_diff_error = error;
-                // A successful reload announces its file list before the stale
-                // error is cleared here, so recovering from an error announces
-                // again.
-                if has_error || had_error {
+                // Reloads retry on every status change. Announcing the same
+                // failure each time would refresh every consumer, including
+                // editor gutters when this is the display diff.
+                if this.tree_diff_error.as_ref() != Some(&error) {
+                    this.tree_diff_error = Some(error);
                     cx.emit(BranchDiffEvent::FileListChanged);
                 }
             })
@@ -307,6 +305,7 @@ impl DiffBufferList {
             this.committed_tree_diff = Some(committed_tree_diff);
             this.tree_diff = Some(tree_diff);
             this.statuses_by_path = statuses_by_path;
+            this.tree_diff_error = None;
             cx.emit(BranchDiffEvent::FileListChanged);
             cx.notify();
         })
