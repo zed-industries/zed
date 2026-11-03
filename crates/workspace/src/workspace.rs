@@ -2329,30 +2329,32 @@ impl Workspace {
                         .as_ref()
                         .map(|w| w.centered_layout)
                         .unwrap_or(false);
-                    let window = cx.open_window(options, {
-                        let app_state = app_state.clone();
-                        let project_handle = project_handle.clone();
-                        move |window, cx| {
-                            let workspace = cx.new(|cx| {
-                                let mut workspace = Workspace::new(
-                                    Some(workspace_id),
-                                    project_handle,
-                                    app_state,
-                                    window,
-                                    cx,
-                                );
-                                workspace.centered_layout = centered_layout;
+                    let window = cx
+                        .open_window(options, {
+                            let app_state = app_state.clone();
+                            let project_handle = project_handle.clone();
+                            move |window, cx| {
+                                let workspace = cx.new(|cx| {
+                                    let mut workspace = Workspace::new(
+                                        Some(workspace_id),
+                                        project_handle,
+                                        app_state,
+                                        window,
+                                        cx,
+                                    );
+                                    workspace.centered_layout = centered_layout;
 
-                                // Call init callback to add items before window renders
-                                if let Some(init) = init {
-                                    init(&mut workspace, window, cx);
-                                }
+                                    // Call init callback to add items before window renders
+                                    if let Some(init) = init {
+                                        init(&mut workspace, window, cx);
+                                    }
 
-                                workspace
-                            });
-                            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
-                        }
-                    })?;
+                                    workspace
+                                });
+                                cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+                            }
+                        })
+                        .await?;
                     let workspace =
                         window.update(cx, |multi_workspace: &mut MultiWorkspace, _, _cx| {
                             multi_workspace.workspace().clone()
@@ -11385,24 +11387,26 @@ pub fn open_workspace_by_id(
                 options
             });
 
-            let window = cx.open_window(options, {
-                let app_state = app_state.clone();
-                let project_handle = project_handle.clone();
-                move |window, cx| {
-                    let workspace = cx.new(|cx| {
-                        let mut workspace = Workspace::new(
-                            Some(workspace_id),
-                            project_handle,
-                            app_state,
-                            window,
-                            cx,
-                        );
-                        workspace.centered_layout = centered_layout;
-                        workspace
-                    });
-                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
-                }
-            })?;
+            let window = cx
+                .open_window(options, {
+                    let app_state = app_state.clone();
+                    let project_handle = project_handle.clone();
+                    move |window, cx| {
+                        let workspace = cx.new(|cx| {
+                            let mut workspace = Workspace::new(
+                                Some(workspace_id),
+                                project_handle,
+                                app_state,
+                                window,
+                                cx,
+                            );
+                            workspace.centered_layout = centered_layout;
+                            workspace
+                        });
+                        cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+                    }
+                })
+                .await?;
 
             let workspace = window.update(cx, |multi_workspace: &mut MultiWorkspace, _, _cx| {
                 multi_workspace.workspace().clone()
@@ -11963,40 +11967,47 @@ pub fn join_in_room_project(
                 })
         });
 
-        let multi_workspace_window = if let Some((existing_window, target_workspace)) =
-            existing_window_and_workspace
-        {
-            existing_window
-                .update(cx, |multi_workspace, window, cx| {
-                    multi_workspace.activate(target_workspace, None, window, cx);
-                })
-                .ok();
-            existing_window
-        } else {
-            let active_call = cx.update(|cx| GlobalAnyActiveCall::global(cx).clone());
-            let project = cx
-                .update(|cx| {
-                    active_call.0.join_project(
-                        project_id,
-                        app_state.languages.clone(),
-                        app_state.fs.clone(),
-                        cx,
-                    )
-                })
-                .await?;
+        let multi_workspace_window =
+            if let Some((existing_window, target_workspace)) = existing_window_and_workspace {
+                existing_window
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.activate(target_workspace, None, window, cx);
+                    })
+                    .ok();
+                existing_window
+            } else {
+                let active_call = cx.update(|cx| GlobalAnyActiveCall::global(cx).clone());
+                let project = cx
+                    .update(|cx| {
+                        active_call.0.join_project(
+                            project_id,
+                            app_state.languages.clone(),
+                            app_state.fs.clone(),
+                            cx,
+                        )
+                    })
+                    .await?;
 
-            let window_bounds_override = window_bounds_env_override();
-            cx.update(|cx| {
-                let mut options = (app_state.build_window_options)(None, cx);
-                options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
-                cx.open_window(options, |window, cx| {
-                    let workspace = cx.new(|cx| {
-                        Workspace::new(Default::default(), project, app_state.clone(), window, cx)
-                    });
-                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+                let window_bounds_override = window_bounds_env_override();
+                let app_state_for_window = app_state.clone();
+                cx.update(|cx| {
+                    let mut options = (app_state.build_window_options)(None, cx);
+                    options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
+                    cx.open_window(options, move |window, cx| {
+                        let workspace = cx.new(|cx| {
+                            Workspace::new(
+                                Default::default(),
+                                project,
+                                app_state_for_window,
+                                window,
+                                cx,
+                            )
+                        });
+                        cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+                    })
                 })
-            })?
-        };
+                .await?
+            };
 
         multi_workspace_window.update(cx, |multi_workspace, window, cx| {
             cx.activate(true);

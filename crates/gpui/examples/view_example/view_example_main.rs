@@ -159,7 +159,7 @@ fn run_example() {
             },
             |_, cx| cx.new(|_| ViewExample::new()),
         )
-        .unwrap();
+        .detach_and_log_err(cx);
 
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.activate(true);

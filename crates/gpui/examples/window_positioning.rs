@@ -86,19 +86,20 @@ fn run_example() {
         let margin_offset = px(150.);
 
         for screen in cx.displays() {
+            let screen_id = screen.id();
             let bounds = Bounds {
                 origin: screen.bounds().origin + point(margin_offset, margin_offset),
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
+            cx.open_window(build_window_options(screen.id(), bounds), move |_, cx| {
                 cx.new(|_| WindowContent {
-                    text: format!("Top Left {:?}", screen.id()).into(),
+                    text: format!("Top Left {:?}", screen_id).into(),
                     bg: gpui::red(),
                     bounds,
                 })
             })
-            .unwrap();
+            .detach_and_log_err(cx);
 
             let bounds = Bounds {
                 origin: screen.bounds().top_right()
@@ -106,14 +107,14 @@ fn run_example() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
+            cx.open_window(build_window_options(screen.id(), bounds), move |_, cx| {
                 cx.new(|_| WindowContent {
-                    text: format!("Top Right {:?}", screen.id()).into(),
+                    text: format!("Top Right {:?}", screen_id).into(),
                     bg: gpui::red(),
                     bounds,
                 })
             })
-            .unwrap();
+            .detach_and_log_err(cx);
 
             let bounds = Bounds {
                 origin: screen.bounds().bottom_left()
@@ -121,14 +122,14 @@ fn run_example() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
+            cx.open_window(build_window_options(screen.id(), bounds), move |_, cx| {
                 cx.new(|_| WindowContent {
-                    text: format!("Bottom Left {:?}", screen.id()).into(),
+                    text: format!("Bottom Left {:?}", screen_id).into(),
                     bg: gpui::blue(),
                     bounds,
                 })
             })
-            .unwrap();
+            .detach_and_log_err(cx);
 
             let bounds = Bounds {
                 origin: screen.bounds().bottom_right()
@@ -136,14 +137,14 @@ fn run_example() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
+            cx.open_window(build_window_options(screen.id(), bounds), move |_, cx| {
                 cx.new(|_| WindowContent {
-                    text: format!("Bottom Right {:?}", screen.id()).into(),
+                    text: format!("Bottom Right {:?}", screen_id).into(),
                     bg: gpui::blue(),
                     bounds,
                 })
             })
-            .unwrap();
+            .detach_and_log_err(cx);
 
             let bounds = Bounds {
                 origin: point(
@@ -153,14 +154,14 @@ fn run_example() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
+            cx.open_window(build_window_options(screen.id(), bounds), move |_, cx| {
                 cx.new(|_| WindowContent {
-                    text: format!("Top Center {:?}", screen.id()).into(),
+                    text: format!("Top Center {:?}", screen_id).into(),
                     bg: gpui::black(),
                     bounds,
                 })
             })
-            .unwrap();
+            .detach_and_log_err(cx);
 
             let bounds = Bounds {
                 origin: point(
@@ -170,14 +171,14 @@ fn run_example() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
+            cx.open_window(build_window_options(screen.id(), bounds), move |_, cx| {
                 cx.new(|_| WindowContent {
-                    text: format!("Left Center {:?}", screen.id()).into(),
+                    text: format!("Left Center {:?}", screen_id).into(),
                     bg: gpui::black(),
                     bounds,
                 })
             })
-            .unwrap();
+            .detach_and_log_err(cx);
 
             let bounds = Bounds {
                 origin: point(
@@ -187,14 +188,14 @@ fn run_example() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
+            cx.open_window(build_window_options(screen.id(), bounds), move |_, cx| {
                 cx.new(|_| WindowContent {
-                    text: format!("Center {:?}", screen.id()).into(),
+                    text: format!("Center {:?}", screen_id).into(),
                     bg: gpui::black(),
                     bounds,
                 })
             })
-            .unwrap();
+            .detach_and_log_err(cx);
 
             let bounds = Bounds {
                 origin: point(
@@ -204,14 +205,14 @@ fn run_example() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
+            cx.open_window(build_window_options(screen.id(), bounds), move |_, cx| {
                 cx.new(|_| WindowContent {
-                    text: format!("Right Center {:?}", screen.id()).into(),
+                    text: format!("Right Center {:?}", screen_id).into(),
                     bg: gpui::black(),
                     bounds,
                 })
             })
-            .unwrap();
+            .detach_and_log_err(cx);
 
             let bounds = Bounds {
                 origin: point(
@@ -221,14 +222,14 @@ fn run_example() {
                 size,
             };
 
-            cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
+            cx.open_window(build_window_options(screen.id(), bounds), move |_, cx| {
                 cx.new(|_| WindowContent {
-                    text: format!("Bottom Center {:?}", screen.id()).into(),
+                    text: format!("Bottom Center {:?}", screen_id).into(),
                     bg: gpui::black(),
                     bounds,
                 })
             })
-            .unwrap();
+            .detach_and_log_err(cx);
         }
     });
 }

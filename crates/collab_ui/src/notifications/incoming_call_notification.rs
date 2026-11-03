@@ -32,11 +32,15 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
                 for screen in unique_screens {
                     let options =
                         cx.update(|cx| notification_window_options(screen, window_size, cx));
-                    if let Ok(window) = cx.open_window(options, |_, cx| {
-                        cx.new(|_| {
-                            IncomingCallNotification::new(incoming_call.clone(), app_state.clone())
+                    let incoming_call = incoming_call.clone();
+                    let app_state = app_state.clone();
+                    if let Some(window) = cx
+                        .open_window(options, move |_, cx| {
+                            cx.new(|_| IncomingCallNotification::new(incoming_call, app_state))
                         })
-                    }) {
+                        .await
+                        .log_err()
+                    {
                         notification_windows.push(window);
                     }
                 }

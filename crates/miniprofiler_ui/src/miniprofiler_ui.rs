@@ -7,12 +7,12 @@ use std::{
 
 use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
-    App, AppContext, ClipboardItem, Context, Div, Entity, Hsla, InteractiveElement,
+    App, AppContext, ClipboardItem, Context, Div, Entity, Global, Hsla, InteractiveElement,
     ParentElement as _, ProfilingCollector, Render, SerializedLocation, SerializedTaskTiming,
     SerializedThreadTaskTimings, SharedString, StatefulInteractiveElement, Styled, Task,
-    TasksIncluded, ThreadTimingsDelta, TitlebarOptions, UniformListScrollHandle, WeakEntity,
-    WindowBounds, WindowOptions, div, prelude::FluentBuilder, profiler, px, relative, size,
-    uniform_list,
+    TaskExt as _, TasksIncluded, ThreadTimingsDelta, TitlebarOptions, UniformListScrollHandle,
+    WeakEntity, WindowBounds, WindowOptions, div, prelude::FluentBuilder, profiler, px, relative,
+    size, uniform_list,
 };
 use rpc::{AnyProtoClient, proto};
 use settings::{RegisterSetting, Settings, SettingsContent, SettingsStore};
@@ -128,12 +128,23 @@ fn update_command_palette_filter(enabled: bool, cx: &mut App) {
     });
 }
 
+struct PendingProfilerWindow {
+    workspace: WeakEntity<Workspace>,
+}
+
+impl Global for PendingProfilerWindow {}
+
 fn open_performance_profiler(
     startup_time: Instant,
     workspace_handle: WeakEntity<Workspace>,
     _window: &mut gpui::Window,
     cx: &mut App,
 ) {
+    if cx.has_global::<PendingProfilerWindow>() {
+        cx.global_mut::<PendingProfilerWindow>().workspace = workspace_handle;
+        return;
+    }
+
     let existing_window = cx
         .windows()
         .into_iter()
@@ -148,12 +159,15 @@ fn open_performance_profiler(
             .log_err();
         return;
     }
+    cx.set_global(PendingProfilerWindow {
+        workspace: workspace_handle.clone(),
+    });
 
     let window_background = cx.theme().window_background_appearance();
     let default_bounds = size(px(1280.), px(720.));
 
     cx.defer(move |cx| {
-        cx.open_window(
+        let open_window = cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
                     title: Some("Profiler Window".into()),
@@ -170,9 +184,19 @@ fn open_performance_profiler(
                 window_bounds: Some(WindowBounds::centered(default_bounds, cx)),
                 ..Default::default()
             },
-            |_window, cx| ProfilerWindow::new(startup_time, Some(workspace_handle), cx),
-        )
-        .log_err();
+            move |_window, cx| ProfilerWindow::new(startup_time, Some(workspace_handle), cx),
+        );
+        cx.spawn(async move |cx| {
+            let result = open_window.await;
+            let workspace = cx.update(|cx| cx.remove_global::<PendingProfilerWindow>().workspace);
+            result.and_then(|window| {
+                window.update(cx, |profiler, window, _| {
+                    profiler.workspace = Some(workspace);
+                    window.activate_window();
+                })
+            })
+        })
+        .detach_and_log_err(cx);
     });
 }
 

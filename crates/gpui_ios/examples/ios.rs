@@ -53,7 +53,7 @@ fn main() {
         cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|_| IosExample { tap_count: 0 })
         })
-        .unwrap();
+        .detach_and_log_err(cx);
         cx.activate(true);
     });
 }

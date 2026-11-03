@@ -124,7 +124,7 @@ fn main() {
             },
             |_, cx| cx.new(DynamicFonts::new),
         )
-        .log_err();
+        .detach_and_log_err(cx);
         cx.activate(true);
     });
 }

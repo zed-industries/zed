@@ -139,7 +139,7 @@ fn run_example() {
             },
             |_, cx| cx.new(|_| DragDrop::new()),
         )
-        .unwrap();
+        .detach_and_log_err(cx);
 
         cx.activate(true);
     });

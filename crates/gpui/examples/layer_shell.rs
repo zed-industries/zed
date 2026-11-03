@@ -95,7 +95,7 @@ mod example {
                 },
                 |_, cx| cx.new(LayerShellExample::new),
             )
-            .unwrap();
+            .detach_and_log_err(cx);
         });
     }
 }

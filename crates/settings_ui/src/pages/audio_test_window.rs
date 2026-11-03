@@ -260,6 +260,10 @@ impl Drop for AudioTestWindow {
     }
 }
 
+struct PendingAudioTestWindow;
+
+impl gpui::Global for PendingAudioTestWindow {}
+
 pub fn open_audio_test_window(_window: &mut Window, cx: &mut App) {
     let existing = cx
         .windows()
@@ -272,6 +276,10 @@ pub fn open_audio_test_window(_window: &mut Window, cx: &mut App) {
             .log_err();
         return;
     }
+    if cx.has_global::<PendingAudioTestWindow>() {
+        return;
+    }
+    cx.set_global(PendingAudioTestWindow);
 
     let app_id = ReleaseChannel::global(cx).app_id();
     let window_size = Size {
@@ -283,7 +291,7 @@ pub fn open_audio_test_window(_window: &mut Window, cx: &mut App) {
         height: px(240.0),
     };
 
-    cx.open_window(
+    let open_window = cx.open_window(
         WindowOptions {
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some("Audio Test".into()),
@@ -302,6 +310,13 @@ pub fn open_audio_test_window(_window: &mut Window, cx: &mut App) {
             ..Default::default()
         },
         |_, cx| cx.new(AudioTestWindow::new),
-    )
-    .log_err();
+    );
+    cx.spawn(async move |cx| {
+        let result = open_window.await;
+        cx.update(|cx| {
+            cx.remove_global::<PendingAudioTestWindow>();
+        });
+        result.map(|_| ())
+    })
+    .detach_and_log_err(cx);
 }

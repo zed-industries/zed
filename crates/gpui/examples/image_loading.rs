@@ -214,7 +214,7 @@ fn run_example() {
             cx.activate(false);
             cx.new(|_| ImageLoadingExample {})
         })
-        .unwrap();
+        .detach_and_log_err(cx);
     });
 }
 

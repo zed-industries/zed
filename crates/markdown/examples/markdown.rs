@@ -51,10 +51,10 @@ pub fn main() {
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
-        cx.open_window(WindowOptions::default(), |_, cx| {
+        cx.open_window(WindowOptions::default(), move |_, cx| {
             cx.new(|cx| MarkdownExample::new(MARKDOWN_EXAMPLE.into(), language_registry, cx))
         })
-        .unwrap();
+        .detach_and_log_err(cx);
     });
 }
 

@@ -1526,6 +1526,10 @@ fn initialize_pane(
     });
 }
 
+struct PendingAboutWindow;
+
+impl gpui::Global for PendingAboutWindow {}
+
 fn open_about_window(cx: &mut App) {
     fn about_window_icon(release_channel: ReleaseChannel) -> Arc<Image> {
         let bytes = match release_channel {
@@ -1709,13 +1713,17 @@ fn open_about_window(cx: &mut App) {
             .log_err();
         return;
     }
+    if cx.has_global::<PendingAboutWindow>() {
+        return;
+    }
+    cx.set_global(PendingAboutWindow);
 
     let window_size = Size {
         width: px(440.),
         height: px(300.),
     };
 
-    cx.open_window(
+    let open_window = cx.open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
                 title: Some("About Zed".into()),
@@ -1736,8 +1744,15 @@ fn open_about_window(cx: &mut App) {
             focus_handle.focus(window, cx);
             about_window
         },
-    )
-    .log_err();
+    );
+    cx.spawn(async move |cx| {
+        let result = open_window.await;
+        cx.update(|cx| {
+            cx.remove_global::<PendingAboutWindow>();
+        });
+        result.map(|_| ())
+    })
+    .detach_and_log_err(cx);
 }
 
 #[cfg(not(target_os = "windows"))]

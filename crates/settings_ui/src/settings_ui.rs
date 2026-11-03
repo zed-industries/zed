@@ -846,12 +846,31 @@ pub fn open_skill_creator(
     });
 }
 
+type SettingsOpenRequest = (
+    Option<WindowHandle<MultiWorkspace>>,
+    Box<dyn FnOnce(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>)>,
+);
+
+#[derive(Default)]
+struct PendingSettingsOpen {
+    requests: Vec<SettingsOpenRequest>,
+}
+
+impl Global for PendingSettingsOpen {}
+
 fn open_settings_editor_with(
     workspace_handle: Option<WindowHandle<MultiWorkspace>>,
     cx: &mut App,
     callback: impl FnOnce(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>) + 'static,
 ) {
     telemetry::event!("Settings Viewed");
+
+    if cx.has_global::<PendingSettingsOpen>() {
+        cx.global_mut::<PendingSettingsOpen>()
+            .requests
+            .push((workspace_handle, Box::new(callback)));
+        return;
+    }
 
     let existing_window = cx
         .windows()
@@ -869,6 +888,8 @@ fn open_settings_editor_with(
             .ok();
         return;
     }
+
+    cx.set_global(PendingSettingsOpen::default());
 
     // We have to defer this to get the workspace off the stack.
     cx.defer(move |cx| {
@@ -891,7 +912,7 @@ fn open_settings_editor_with(
             },
         };
 
-        cx.open_window(
+        let open_window = cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
                     title: Some("Zed — Settings".into()),
@@ -916,7 +937,7 @@ fn open_settings_editor_with(
                 window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
                 ..Default::default()
             },
-            |window, cx| {
+            move |window, cx| {
                 let settings_window =
                     cx.new(|cx| SettingsWindow::new(workspace_handle, window, cx));
                 settings_window.update(cx, |settings_window, cx| {
@@ -925,8 +946,34 @@ fn open_settings_editor_with(
 
                 settings_window
             },
-        )
-        .log_err();
+        );
+        cx.spawn(async move |cx| {
+            let result = async {
+                let settings_window = open_window.await?;
+                loop {
+                    let requests = cx.update(|cx| {
+                        std::mem::take(&mut cx.global_mut::<PendingSettingsOpen>().requests)
+                    });
+                    if requests.is_empty() {
+                        break;
+                    }
+                    for (workspace_handle, callback) in requests {
+                        settings_window.update(cx, |settings_window, window, cx| {
+                            settings_window.original_window = workspace_handle;
+                            window.activate_window();
+                            callback(settings_window, window, cx);
+                        })?;
+                    }
+                }
+                anyhow::Ok(())
+            }
+            .await;
+            cx.update(|cx| {
+                cx.remove_global::<PendingSettingsOpen>();
+            });
+            result
+        })
+        .detach_and_log_err(cx);
     });
 }
 

@@ -69,17 +69,21 @@ impl HelloWorld {
                 let old_window = window.window_handle();
                 cx.defer(move |cx| {
                     let bounds = Bounds::centered(None, size(px(500.0), px(500.0)), cx);
-                    cx.open_window(
+                    let opening = cx.open_window(
                         WindowOptions {
                             window_bounds: Some(WindowBounds::Windowed(bounds)),
                             ..Default::default()
                         },
                         move |_, _| entity,
-                    )
-                    .expect("failed to open new window");
-                    old_window
-                        .update(cx, |_, window, _| window.remove_window())
-                        .ok();
+                    );
+                    cx.spawn(async move |cx| {
+                        opening.await?;
+                        cx.update(|cx| {
+                            old_window.update(cx, |_, window, _| window.remove_window())
+                        })?;
+                        Ok::<_, anyhow::Error>(())
+                    })
+                    .detach_and_log_err(cx);
                 });
             },
         );
@@ -142,7 +146,7 @@ fn run_example() {
             },
             |window, cx| cx.new(|cx| HelloWorld::new(window, cx)),
         )
-        .unwrap();
+        .detach_and_log_err(cx);
         cx.activate(true);
     });
 }

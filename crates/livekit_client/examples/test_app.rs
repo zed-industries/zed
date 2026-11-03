@@ -109,7 +109,7 @@ impl LivekitWindow {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| {
+                move |window, cx| {
                     cx.new(|cx| {
                         let _events_task = cx.spawn_in(window, async move |this, cx| {
                             while let Some(event) = events.next().await {
@@ -134,8 +134,9 @@ impl LivekitWindow {
                     })
                 },
             )
-            .unwrap()
         })
+        .await
+        .expect("failed to open livekit window")
     }
 
     fn handle_room_event(&mut self, event: RoomEvent, window: &mut Window, cx: &mut Context<Self>) {

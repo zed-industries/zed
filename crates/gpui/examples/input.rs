@@ -778,53 +778,58 @@ fn run_example() {
             KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
         ]);
 
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    ..Default::default()
-                },
-                |_, cx| {
-                    let text_input = cx.new(|cx| TextInput {
-                        focus_handle: cx.focus_handle(),
-                        content: "".into(),
-                        placeholder: "Type here...".into(),
-                        selected_range: 0..0,
-                        selection_reversed: false,
-                        marked_range: None,
-                        last_layout: None,
-                        last_bounds: None,
-                        is_selecting: false,
-                    });
-                    cx.new(|cx| InputExample {
-                        text_input,
-                        recent_keystrokes: vec![],
-                        focus_handle: cx.focus_handle(),
+        let opening = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            |_, cx| {
+                let text_input = cx.new(|cx| TextInput {
+                    focus_handle: cx.focus_handle(),
+                    content: "".into(),
+                    placeholder: "Type here...".into(),
+                    selected_range: 0..0,
+                    selection_reversed: false,
+                    marked_range: None,
+                    last_layout: None,
+                    last_bounds: None,
+                    is_selecting: false,
+                });
+                cx.new(|cx| InputExample {
+                    text_input,
+                    recent_keystrokes: vec![],
+                    focus_handle: cx.focus_handle(),
+                })
+            },
+        );
+        cx.spawn(async move |cx| {
+            let window = opening.await?;
+            cx.update(|cx| {
+                let view = window.update(cx, |_, _, cx| cx.entity())?;
+                cx.observe_keystrokes(move |ev, _, cx| {
+                    view.update(cx, |view, cx| {
+                        view.recent_keystrokes.push(ev.keystroke.clone());
+                        cx.notify();
                     })
-                },
-            )
-            .unwrap();
-        let view = window.update(cx, |_, _, cx| cx.entity()).unwrap();
-        cx.observe_keystrokes(move |ev, _, cx| {
-            view.update(cx, |view, cx| {
-                view.recent_keystrokes.push(ev.keystroke.clone());
-                cx.notify();
-            })
-        })
-        .detach();
-        cx.on_keyboard_layout_change({
-            move |cx| {
-                window.update(cx, |_, _, cx| cx.notify()).ok();
-            }
-        })
-        .detach();
+                })
+                .detach();
+                cx.on_keyboard_layout_change(move |cx| {
+                    if let Err(error) = window.update(cx, |_, _, cx| cx.notify()) {
+                        log::error!(
+                            "Failed to notify window after keyboard layout change: {error:#}"
+                        );
+                    }
+                })
+                .detach();
 
-        window
-            .update(cx, |view, window, cx| {
-                window.focus(&view.text_input.focus_handle(cx), cx);
-                cx.activate(true);
+                window.update(cx, |view, window, cx| {
+                    window.focus(&view.text_input.focus_handle(cx), cx);
+                    cx.activate(true);
+                })?;
+                anyhow::Ok(())
             })
-            .unwrap();
+        })
+        .detach_and_log_err(cx);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
     });

@@ -490,13 +490,22 @@ impl ProjectPicker {
                         let options = cx
                             .update(|_, cx| (app_state.build_window_options)(None, cx))
                             .log_err()?;
-                        cx.open_window(options, |window, cx| {
+                        let app_state_for_window = app_state.clone();
+                        let project_for_window = project.clone();
+                        cx.open_window(options, move |window, cx| {
                             let workspace = cx.new(|cx| {
                                 telemetry::event!("SSH Project Created");
-                                Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                                Workspace::new(
+                                    None,
+                                    project_for_window,
+                                    app_state_for_window,
+                                    window,
+                                    cx,
+                                )
                             });
                             cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                         })
+                        .await
                         .log_err()
                     } else {
                         cx.window_handle().downcast::<MultiWorkspace>()

@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use editor::Editor;
-use gpui::{AppContext as _, AsyncWindowContext, WeakEntity, WindowBounds, WindowOptions};
+use gpui::{
+    AppContext as _, AsyncWindowContext, TaskExt as _, WeakEntity, WindowBounds, WindowOptions,
+};
 use language::Buffer;
 use multi_buffer::Anchor;
 use project::search::SearchQuery;
@@ -122,23 +124,22 @@ fn main() {
 
         let buffer = cx.new(|cx| Buffer::local(file_contents, cx));
 
-        let window_handle = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(gpui::Bounds {
-                        origin: Default::default(),
-                        size: gpui::size(gpui::px(800.0), gpui::px(600.0)),
-                    })),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| cx.new(|cx| Editor::for_buffer(buffer, None, window, cx)),
-            )
-            .expect("failed to open window");
+        let open_window = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(gpui::Bounds {
+                    origin: Default::default(),
+                    size: gpui::size(gpui::px(800.0), gpui::px(600.0)),
+                })),
+                focus: false,
+                show: false,
+                ..Default::default()
+            },
+            move |window, cx| cx.new(|cx| Editor::for_buffer(buffer, None, window, cx)),
+        );
 
-        window_handle
-            .update(cx, move |_, window, cx| {
+        cx.spawn(async move |cx| {
+            let window_handle = open_window.await?;
+            window_handle.update(cx, move |_, window, cx| {
                 cx.spawn_in(
                     window,
                     async move |weak: WeakEntity<Editor>,
@@ -176,7 +177,9 @@ fn main() {
                     },
                 )
                 .detach();
-            })
-            .unwrap();
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     });
 }

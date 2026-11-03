@@ -936,7 +936,7 @@ mod test {
     #[gpui::test]
     fn test_on_events(cx: &mut TestAppContext) {
         let window = cx.update(|cx| {
-            cx.open_window(Default::default(), |_, cx| {
+            cx.open_window_sync(Default::default(), |_, cx| {
                 cx.new(|cx| TestView {
                     saw_key_down: false,
                     saw_action: false,

@@ -65,7 +65,7 @@ fn open_test_window(
             }),
             ..Default::default()
         },
-        |window, cx| {
+        move |window, cx| {
             cx.new(|cx| {
                 let focus_handle = cx.focus_handle();
                 focus_handle.focus(window, cx);
@@ -76,7 +76,7 @@ fn open_test_window(
             })
         },
     )
-    .unwrap();
+    .detach_and_log_err(cx);
 }
 
 fn run_example() {

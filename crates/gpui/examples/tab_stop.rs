@@ -201,7 +201,7 @@ fn run_example() {
             },
             |window, cx| cx.new(|cx| Example::new(window, cx)),
         )
-        .unwrap();
+        .detach_and_log_err(cx);
 
         cx.activate(true);
     });

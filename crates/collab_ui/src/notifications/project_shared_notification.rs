@@ -3,16 +3,20 @@ use call::{ActiveCall, room};
 use client::User;
 use collections::HashMap;
 use gpui::{App, Size, TaskExt};
-use std::sync::{Arc, Weak};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Weak},
+};
 
 use ui::{CollabNotification, prelude::*};
-use util::ResultExt;
 use workspace::AppState;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
     let app_state = Arc::downgrade(app_state);
     let active_call = ActiveCall::global(cx);
-    let mut notification_windows = HashMap::default();
+    let notification_windows = Rc::new(RefCell::new(HashMap::default()));
+    let generations = Rc::new(RefCell::new(HashMap::<u64, u64>::default()));
     cx.subscribe(&active_call, move |_, event, cx| match event {
         room::Event::RemoteProjectShared {
             owner,
@@ -24,34 +28,48 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
                 height: px(72.),
             };
 
+            let project_id = *project_id;
+            let generation = *generations.borrow_mut().entry(project_id).or_default();
             for screen in cx.displays() {
                 let options = notification_window_options(screen, window_size, cx);
-                let Some(window) = cx
-                    .open_window(options, |_, cx| {
-                        cx.new(|_| {
-                            ProjectSharedNotification::new(
-                                owner.clone(),
-                                *project_id,
-                                worktree_root_names.clone(),
-                                app_state.clone(),
-                            )
-                        })
+                let owner = owner.clone();
+                let worktree_root_names = worktree_root_names.clone();
+                let app_state = app_state.clone();
+                let open_window = cx.open_window(options, move |_, cx| {
+                    cx.new(|_| {
+                        ProjectSharedNotification::new(
+                            owner,
+                            project_id,
+                            worktree_root_names,
+                            app_state,
+                        )
                     })
-                    .log_err()
-                else {
-                    continue;
-                };
-                notification_windows
-                    .entry(*project_id)
-                    .or_insert(Vec::new())
-                    .push(window);
+                });
+                let notification_windows = notification_windows.clone();
+                let generations = generations.clone();
+                cx.spawn(async move |cx| {
+                    let window = open_window.await?;
+                    if generations.borrow().get(&project_id).copied().unwrap_or(0) == generation {
+                        notification_windows
+                            .borrow_mut()
+                            .entry(project_id)
+                            .or_insert_with(Vec::new)
+                            .push(window);
+                    } else {
+                        window.update(cx, |_, window, _| window.remove_window())?;
+                    }
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
             }
         }
 
         room::Event::RemoteProjectUnshared { project_id }
         | room::Event::RemoteProjectJoined { project_id }
         | room::Event::RemoteProjectInvitationDiscarded { project_id } => {
-            if let Some(windows) = notification_windows.remove(project_id) {
+            *generations.borrow_mut().entry(*project_id).or_default() += 1;
+            let windows = notification_windows.borrow_mut().remove(project_id);
+            if let Some(windows) = windows {
                 for window in windows {
                     window
                         .update(cx, |_, window, _| {
@@ -63,7 +81,14 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
         }
 
         room::Event::RoomLeft { .. } => {
-            for (_, windows) in notification_windows.drain() {
+            for generation in generations.borrow_mut().values_mut() {
+                *generation += 1;
+            }
+            let windows = notification_windows
+                .borrow_mut()
+                .drain()
+                .collect::<Vec<_>>();
+            for (_, windows) in windows {
                 for window in windows {
                     window
                         .update(cx, |_, window, _| {

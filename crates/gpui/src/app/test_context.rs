@@ -290,7 +290,7 @@ impl TestAppContext {
 
         // Some tests rely on the window size matching the bounds of the test display
         let bounds = Bounds::maximized(None, &cx);
-        cx.open_window(
+        cx.open_window_sync(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
@@ -314,7 +314,7 @@ impl TestAppContext {
         V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
-        cx.open_window(
+        cx.open_window_sync(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
                     origin: Point::default(),
@@ -332,7 +332,7 @@ impl TestAppContext {
         let mut cx = self.app.borrow_mut();
         let bounds = Bounds::maximized(None, &cx);
         let window = cx
-            .open_window(
+            .open_window_sync(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
@@ -360,7 +360,7 @@ impl TestAppContext {
         let mut cx = self.app.borrow_mut();
         let bounds = Bounds::maximized(None, &cx);
         let window = cx
-            .open_window(
+            .open_window_sync(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()

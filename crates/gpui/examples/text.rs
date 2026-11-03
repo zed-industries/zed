@@ -389,33 +389,35 @@ fn run_example() {
         cx.init_colors();
         cx.set_global(GlobalTextContext(Arc::new(TextContext::default())));
 
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("GPUI Typography".into()),
-                        ..Default::default()
-                    }),
-                    window_bounds: Some(WindowBounds::Windowed(bounds(
-                        point(px(0.0), px(0.0)),
-                        size(px(920.), px(720.)),
-                    ))),
+        let opening = cx.open_window(
+            WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    title: Some("GPUI Typography".into()),
                     ..Default::default()
-                },
-                |_window, cx| {
-                    cx.new(|_cx| TextExample {
-                        next_id: 0,
-                        font_family: ".ZedMono".into(),
-                    })
-                },
-            )
-            .unwrap();
+                }),
+                window_bounds: Some(WindowBounds::Windowed(bounds(
+                    point(px(0.0), px(0.0)),
+                    size(px(920.), px(720.)),
+                ))),
+                ..Default::default()
+            },
+            |_window, cx| {
+                cx.new(|_cx| TextExample {
+                    next_id: 0,
+                    font_family: ".ZedMono".into(),
+                })
+            },
+        );
 
-        window
-            .update(cx, |_view, _window, cx| {
-                cx.activate(true);
+        cx.spawn(async move |cx| {
+            let window = opening.await?;
+            cx.update(|cx| {
+                window.update(cx, |_view, _window, cx| {
+                    cx.activate(true);
+                })
             })
-            .unwrap();
+        })
+        .detach_and_log_err(cx);
     });
 }
 

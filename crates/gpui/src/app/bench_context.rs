@@ -1012,7 +1012,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let window = {
             let mut app = self.app.borrow_mut();
             let window: AnyWindowHandle = app
-                .open_window(
+                .open_window_sync(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
                         ..Default::default()

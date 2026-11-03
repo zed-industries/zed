@@ -47,7 +47,7 @@ fn run_example() {
             },
             |_, cx| cx.new(|_| Tree {}),
         )
-        .unwrap();
+        .detach_and_log_err(cx);
     });
 }
 

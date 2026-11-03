@@ -92,8 +92,8 @@ fn print_todos(todos: &Entity<Todos>, cx: &App) {
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn open_window(todos: &Entity<Todos>, cx: &mut App) -> anyhow::Result<()> {
-    if todos.read(cx).window.is_some() {
+async fn open_window(todos: &Entity<Todos>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    if cx.update(|cx| todos.read(cx).window.is_some()) {
         return Ok(());
     }
 
@@ -104,16 +104,22 @@ fn open_window(todos: &Entity<Todos>, cx: &mut App) -> anyhow::Result<()> {
         }),
         ..Default::default()
     };
-    let handle = cx.open_window(options, |_, cx| {
-        cx.new(|cx| TodoWindow {
-            todos: todos.clone(),
-            _todos_subscription: cx.observe(todos, |_, _, cx| cx.notify()),
+    let todos_for_window = todos.clone();
+    let handle = cx
+        .open_window(options, move |_, cx| {
+            cx.new(|cx| TodoWindow {
+                todos: todos_for_window.clone(),
+                _todos_subscription: cx.observe(&todos_for_window, |_, _, cx| cx.notify()),
+            })
         })
-    })?;
+        .await?;
     // On macOS, making the window key does not activate the app over the terminal.
-    cx.activate(true);
-    handle.update(cx, |_, window, _| window.activate_window())?;
-    todos.update(cx, |todos, _| todos.window = Some(handle.into()));
+    cx.update(|cx| {
+        cx.activate(true);
+        handle.update(cx, |_, window, _| window.activate_window())?;
+        todos.update(cx, |todos, _| todos.window = Some(handle.into()));
+        anyhow::Ok(())
+    })?;
     Ok(())
 }
 
@@ -231,7 +237,7 @@ async fn run_command(
             if cx.update(|cx| cx.graphical_environment()).is_none() {
                 cx.update(|cx| cx.request_windowing(request)).await?;
             }
-            cx.update(|cx| open_window(todos, cx))?;
+            open_window(todos, cx).await?;
         }
     }
     let mode = cx.update(|cx| match cx.graphical_environment() {

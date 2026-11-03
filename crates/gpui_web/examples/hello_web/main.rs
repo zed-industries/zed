@@ -3,8 +3,8 @@ use std::cell::RefCell;
 
 use gpui::prelude::*;
 use gpui::{
-    App, ApplicationHandle, Bounds, Context, ElementId, SharedString, Task, Window, WindowBounds,
-    WindowOptions, div, px, rgb, size,
+    App, ApplicationHandle, Bounds, Context, ElementId, SharedString, Task, TaskExt as _, Window,
+    WindowBounds, WindowOptions, div, px, rgb, size,
 };
 
 // ---------------------------------------------------------------------------
@@ -456,7 +456,7 @@ fn main() {
                 },
                 |_, cx| cx.new(HelloWeb::new),
             )
-            .expect("failed to open window");
+            .detach_and_log_err(cx);
             cx.activate(true);
         },
     );

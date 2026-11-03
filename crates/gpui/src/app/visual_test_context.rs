@@ -107,7 +107,7 @@ impl VisualTestAppContext {
         };
 
         let mut cx = self.app.borrow_mut();
-        cx.open_window(
+        cx.open_window_sync(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 focus: false,
