@@ -533,6 +533,25 @@ impl sqlez::bindable::Bind for SerializedPixels {
     }
 }
 
+struct PathListColumns(SerializedPathList);
+
+impl StaticColumnCount for PathListColumns {
+    fn column_count() -> usize {
+        2
+    }
+}
+
+impl Column for PathListColumns {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        let (paths, next_index) = String::column(statement, start_index)?;
+        let (order, next_index) = String::column(statement, next_index)?;
+        Ok((
+            PathListColumns(SerializedPathList { paths, order }),
+            next_index,
+        ))
+    }
+}
+
 pub struct WorkspaceDb(ThreadSafeConnection);
 
 impl Domain for WorkspaceDb {
@@ -1128,8 +1147,8 @@ impl WorkspaceDb {
             path_style,
         ): (
             WorkspaceId,
-            SerializedPathList,
-            Option<SerializedPathList>,
+            PathListColumns,
+            Option<PathListColumns>,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
@@ -1178,8 +1197,8 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        let paths = PathList::deserialize(&paths_list);
-        let identity_paths = identity_paths_list.map(|paths| PathList::deserialize(&paths));
+        let paths = PathList::deserialize(&paths_list.0);
+        let identity_paths = identity_paths_list.map(|paths| PathList::deserialize(&paths.0));
 
         let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
             self.remote_connection(remote_connection_id)
@@ -1235,8 +1254,8 @@ impl WorkspaceDb {
             remote_connection_id,
             path_style,
         ): (
-            SerializedPathList,
-            Option<SerializedPathList>,
+            PathListColumns,
+            Option<PathListColumns>,
             Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
@@ -1278,8 +1297,8 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        let paths = PathList::deserialize(&paths_list);
-        let identity_paths = identity_paths_list.map(|paths| PathList::deserialize(&paths));
+        let paths = PathList::deserialize(&paths_list.0);
+        let identity_paths = identity_paths_list.map(|paths| PathList::deserialize(&paths.0));
 
         let remote_connection_id = remote_connection_id.map(|id| RemoteConnectionId(id as u64));
         let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
@@ -1850,8 +1869,8 @@ impl WorkspaceDb {
                 )| {
                     (
                         id,
-                        PathList::deserialize(&paths_list),
-                        identity_paths_list.map(|paths| PathList::deserialize(&paths)),
+                        PathList::deserialize(&paths_list.0),
+                        identity_paths_list.map(|paths| PathList::deserialize(&paths.0)),
                         remote_connection_id.map(RemoteConnectionId),
                         session_id,
                         path_style.and_then(deserialize_path_style),
@@ -1863,7 +1882,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, SerializedPathList, Option<SerializedPathList>, Option<u64>, Option<String>, Option<String>, String)>> {
+        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, PathListColumns, Option<PathListColumns>, Option<u64>, Option<String>, Option<String>, String)>> {
             SELECT workspace_id, paths, paths_order, identity_paths, identity_paths_order, remote_connection_id, session_id, path_style, timestamp
             FROM workspaces
             WHERE
@@ -1891,7 +1910,7 @@ impl WorkspaceDb {
                 |(workspace_id, paths_list, window_id, remote_connection_id)| {
                     (
                         WorkspaceId(workspace_id),
-                        PathList::deserialize(&paths_list),
+                        PathList::deserialize(&paths_list.0),
                         window_id,
                         remote_connection_id.map(RemoteConnectionId),
                     )
@@ -1901,7 +1920,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn session_workspaces_query(session_id: String) -> Result<Vec<(i64, SerializedPathList, Option<u64>, Option<u64>)>> {
+        fn session_workspaces_query(session_id: String) -> Result<Vec<(i64, PathListColumns, Option<u64>, Option<u64>)>> {
             SELECT workspace_id, paths, paths_order, window_id, remote_connection_id
             FROM workspaces
             WHERE session_id = ?1

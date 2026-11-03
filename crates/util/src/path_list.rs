@@ -7,10 +7,6 @@ use std::{
 use crate::paths::SanitizedPath;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use sqlez::{
-    bindable::{Column, StaticColumnCount},
-    statement::Statement,
-};
 
 /// A list of absolute paths, with an associated display order.
 ///
@@ -46,20 +42,6 @@ impl Hash for PathList {
 pub struct SerializedPathList {
     pub paths: String,
     pub order: String,
-}
-
-impl StaticColumnCount for SerializedPathList {
-    fn column_count() -> usize {
-        2
-    }
-}
-
-impl Column for SerializedPathList {
-    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        let (paths, next_index) = String::column(statement, start_index)?;
-        let (order, next_index) = String::column(statement, next_index)?;
-        Ok((SerializedPathList { paths, order }, next_index))
-    }
 }
 
 impl PathList {

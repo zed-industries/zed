@@ -19454,7 +19454,6 @@ dependencies = [
  "serde_json_lenient",
  "shlex 2.0.1",
  "smol",
- "sqlez",
  "tempfile",
  "unicase",
  "url",
