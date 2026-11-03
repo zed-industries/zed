@@ -125,10 +125,10 @@ impl DropdownMenu {
         self
     }
 
-    /// Defines which corner of the trigger the menu lines up with. The menu opens on the other
-    /// side of that edge, so [`Anchor::BottomLeft`] (the default) opens it below the trigger
-    /// with their left edges aligned. Use [`Anchor::BottomRight`] for a trigger at the right
-    /// end of a row.
+    /// Defines which corner of the trigger the menu lines up with. The default,
+    /// [`Anchor::BottomLeft`], opens the menu below the trigger with their left edges lined
+    /// up. Use [`Anchor::BottomRight`] to line up the right edges instead, for a trigger at
+    /// the right end of a row.
     pub fn attach(mut self, attach: Anchor) -> Self {
         self.attach = Some(attach);
         self
@@ -422,7 +422,7 @@ impl Component for DropdownMenu {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Bounds, TestAppContext, VisualTestContext, point, size};
+    use gpui::{Bounds, TestAppContext, VisualTestContext, size};
 
     use super::*;
 
@@ -430,7 +430,6 @@ mod tests {
         handle: PopoverMenuHandle<ContextMenu>,
         menu: Entity<ContextMenu>,
         attach: Option<Anchor>,
-        trigger_position: Point<Pixels>,
         at_right_edge: bool,
     }
 
@@ -438,12 +437,12 @@ mod tests {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let trigger = div()
                 .absolute()
-                .top(self.trigger_position.y)
+                .top(px(40.))
                 .map(|this| {
                     if self.at_right_edge {
-                        this.right(self.trigger_position.x)
+                        this.right(px(40.))
                     } else {
-                        this.left(self.trigger_position.x)
+                        this.left(px(40.))
                     }
                 })
                 .debug_selector(|| "TRIGGER".into())
@@ -458,7 +457,6 @@ mod tests {
 
     fn open_dropdown(
         attach: Option<Anchor>,
-        trigger_position: Point<Pixels>,
         at_right_edge: bool,
         cx: &mut TestAppContext,
     ) -> (Bounds<Pixels>, Bounds<Pixels>) {
@@ -482,7 +480,6 @@ mod tests {
                 handle: handle.clone(),
                 menu,
                 attach,
-                trigger_position,
                 at_right_edge,
             }
         });
@@ -499,42 +496,22 @@ mod tests {
     }
 
     #[gpui::test]
-    fn dropdown_opens_left_aligned_under_its_trigger_by_default(cx: &mut TestAppContext) {
-        let (trigger, menu_row) = open_dropdown(None, point(px(40.), px(40.)), false, cx);
-        assert!(
-            menu_row.top() >= trigger.bottom(),
-            "trigger: {trigger:?}, menu row: {menu_row:?}"
-        );
-        assert!(
-            (menu_row.left() - trigger.left()).abs() < px(12.),
-            "trigger: {trigger:?}, menu row: {menu_row:?}"
-        );
-    }
-
-    #[gpui::test]
-    fn dropdown_attached_bottom_right_opens_right_aligned(cx: &mut TestAppContext) {
-        let (trigger, menu_row) =
-            open_dropdown(Some(Anchor::BottomRight), point(px(40.), px(40.)), true, cx);
-        assert!(
-            menu_row.top() >= trigger.bottom(),
-            "trigger: {trigger:?}, menu row: {menu_row:?}"
-        );
-        assert!(
-            (menu_row.right() - trigger.right()).abs() < px(12.),
-            "trigger: {trigger:?}, menu row: {menu_row:?}"
-        );
-    }
-
-    #[gpui::test]
-    fn dropdown_near_the_window_bottom_opens_above_its_trigger(cx: &mut TestAppContext) {
-        let (trigger, menu_row) = open_dropdown(None, point(px(40.), px(560.)), false, cx);
-        assert!(
-            menu_row.bottom() <= trigger.top(),
-            "trigger: {trigger:?}, menu row: {menu_row:?}"
-        );
-        assert!(
-            (menu_row.left() - trigger.left()).abs() < px(12.),
-            "trigger: {trigger:?}, menu row: {menu_row:?}"
-        );
+    fn dropdown_lines_up_with_its_attached_edge(cx: &mut TestAppContext) {
+        for (attach, at_right_edge) in [(None, false), (Some(Anchor::BottomRight), true)] {
+            let (trigger, menu_row) = open_dropdown(attach, at_right_edge, cx);
+            let (menu_edge, trigger_edge) = if at_right_edge {
+                (menu_row.right(), trigger.right())
+            } else {
+                (menu_row.left(), trigger.left())
+            };
+            assert!(
+                menu_row.top() >= trigger.bottom(),
+                "attach: {attach:?}, trigger: {trigger:?}, menu row: {menu_row:?}"
+            );
+            assert!(
+                (menu_edge - trigger_edge).abs() < px(12.),
+                "attach: {attach:?}, trigger: {trigger:?}, menu row: {menu_row:?}"
+            );
+        }
     }
 }

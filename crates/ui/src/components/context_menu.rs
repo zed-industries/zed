@@ -3096,8 +3096,6 @@ mod tests {
             theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
 
-        // Wider than the room on the trigger's right but narrower than the
-        // room on its left, so it only avoids covering the menu by flipping.
         let window = cx.open_window(size(px(900.), px(400.)), |window, cx| {
             let menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.submenu("Wide", |menu, _, _| {

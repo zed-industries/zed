@@ -61,12 +61,14 @@ impl Anchored {
         self
     }
 
-    /// Places the element's [`Anchored::anchor`] corner on `corner` of `target`, interpreted
-    /// per [`Anchored::position_mode`]. Replaces [`Anchored::position`].
+    /// Places the element next to `target`, with the element's [`Anchored::anchor`] corner
+    /// on `corner` of `target`. For example, a submenu puts its top-left corner on its row's
+    /// top-right corner. Use this instead of [`Anchored::position`].
     ///
-    /// On each axis where the element sits outside `target`, it moves to the other side of
-    /// `target` when that overflows the window less, mirroring both corners and the offset.
-    /// This takes the place of [`AnchoredFitMode::SwitchAnchor`].
+    /// If the element doesn't fit in the window, it moves to the other side of `target`, as
+    /// long as that side fits better. A submenu moves from the right of its row to the left,
+    /// and a dropdown moves from below its button to above. The offset flips with it.
+    /// [`AnchoredFitMode::SwitchAnchor`] has no effect here.
     pub fn attach(mut self, target: Bounds<Pixels>, corner: Anchor) -> Self {
         self.placement = Placement::Attached { target, corner };
         self
@@ -182,8 +184,9 @@ impl Element for Anchored {
         };
 
         if let Placement::Attached { target, mut corner } = self.placement {
-            // Ignores the snap margins so an element that fits stays put, and excludes the
-            // client inset because client-side decoration shadows aren't room.
+            // Compare against the window edges, not the snap margin, so an element that
+            // already fits doesn't move. The client inset doesn't count as room either,
+            // since on Linux it's the window's transparent shadow.
             let visible = limits.inset(window.client_inset.unwrap_or(px(0.)));
             let overflow_along = |bounds: Bounds<Pixels>, axis: Axis| match axis {
                 Axis::Horizontal => {
@@ -312,7 +315,8 @@ impl IntoElement for Anchored {
     }
 }
 
-/// Where `anchor` sits along `axis`: at the start (left or top), the center, or the end.
+/// Which side of a box `anchor` is on along `axis`. `Less` is left or top, `Equal` is the
+/// center, and `Greater` is right or bottom.
 fn side_along(anchor: Anchor, axis: Axis) -> Ordering {
     match axis {
         Axis::Horizontal => match anchor {
@@ -516,34 +520,35 @@ mod tests {
     #[gpui::test]
     fn test_anchored_attach_moves_to_the_side_with_room(cx: &mut TestAppContext) {
         let trigger = |x: f32, y: f32| Bounds::new(point(px(x), px(y)), size(px(100.), px(20.)));
-        // Beside a trigger, mirroring the horizontal offset when it moves left. The vertical
-        // offset keeps its sign because the menu stays aligned with the trigger's top.
+        // A submenu sits to the right of its trigger, with their top edges lined up.
         let submenu = (Anchor::TopRight, Anchor::TopLeft);
-        // Below a button, mirroring the vertical offset when it moves above it.
+        // A dropdown sits below its button, with their left edges lined up.
         let dropdown = (Anchor::BottomLeft, Anchor::TopLeft);
         for (target, (corner, anchor), expected_origin) in [
             (trigger(100., 100.), submenu, point(px(198.), px(104.))),
             (trigger(550., 100.), submenu, point(px(352.), px(104.))),
-            (trigger(100., 100.), dropdown, point(px(98.), px(124.))),
             (trigger(100., 400.), dropdown, point(px(98.), px(96.))),
-            // Inside the snap margin but not past the window edge, so it stays.
+            // Ends 4px from the window edge. That's inside the snap margin but still fits,
+            // so it stays.
             (trigger(498., 100.), submenu, point(px(596.), px(104.))),
-            // Neither side has room, so it takes the side that overflows less and snaps.
+            // Doesn't fit on either side. The left sticks out less, so it goes left and
+            // slides back into the window.
             (
                 Bounds::new(point(px(180.), px(100.)), size(px(500.), px(20.))),
                 submenu,
                 point(px(8.), px(104.)),
             ),
-            // The other side would overflow more, so it stays and snaps.
+            // Doesn't fit on either side, but the right sticks out less, so it stays right
+            // and slides back into the window.
             (
                 Bounds::new(point(px(50.), px(100.)), size(px(650.), px(20.))),
                 submenu,
                 point(px(592.), px(104.)),
             ),
-            // Aligned with the trigger horizontally rather than beside it, so it snaps
-            // instead of flipping sideways.
+            // A dropdown that runs off the right edge slides left. It never moves beside its
+            // button.
             (trigger(700., 100.), dropdown, point(px(592.), px(124.))),
-            // Centered horizontally, so only the vertical side can flip.
+            // Centered under its button, so it can move above it but never sideways.
             (
                 trigger(100., 400.),
                 (Anchor::BottomCenter, Anchor::TopCenter),

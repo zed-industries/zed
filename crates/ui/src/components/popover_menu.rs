@@ -224,8 +224,8 @@ impl<M: ManagedView> PopoverMenu<M> {
         self
     }
 
-    /// Defines which corner of the handle to attach the menu's anchor to. A menu that would
-    /// overflow the window on that side of the handle opens on the opposite side instead.
+    /// Defines which corner of the handle to attach the menu's anchor to. If the menu doesn't
+    /// fit on that side of the handle, it opens on the other side.
     pub fn attach(mut self, attach: Anchor) -> Self {
         self.attach = Some(attach);
         self
@@ -378,8 +378,8 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                         .snap_to_window_with_margin(px(8.))
                         .anchor(self.anchor);
                     let anchored = match element_state.child_bounds {
-                        // Applied twice because the offset used to be added to both the
-                        // position and the anchored offset, and callers' offsets are tuned to that.
+                        // The offset is doubled on purpose. This used to add it twice, and
+                        // callers picked their offsets with that in mind.
                         Some(child_bounds) => anchored
                             .attach(child_bounds, self.resolved_attach())
                             .offset(offset + offset),
@@ -542,6 +542,7 @@ mod tests {
 
     struct PopoverTestView {
         handle: PopoverMenuHandle<TestMenu>,
+        top: Pixels,
     }
 
     impl Render for PopoverTestView {
@@ -550,7 +551,7 @@ mod tests {
                 div()
                     .absolute()
                     .left(px(100.))
-                    .top(px(40.))
+                    .top(self.top)
                     .debug_selector(|| "TRIGGER".into())
                     .child(
                         PopoverMenu::new("popover")
@@ -567,31 +568,39 @@ mod tests {
     }
 
     #[gpui::test]
-    fn popover_that_fits_keeps_its_default_offset(cx: &mut TestAppContext) {
+    fn popover_opens_below_its_trigger_or_above_when_it_does_not_fit(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
-        let handle = PopoverMenuHandle::default();
-        let window = cx.open_window(size(px(800.), px(600.)), |_, _| PopoverTestView {
-            handle: handle.clone(),
-        });
-        cx.run_until_parked();
-        let mut cx = VisualTestContext::from_window(window.into(), cx);
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        cx.update(|window, cx| handle.show(window, cx));
-        for _ in 0..3 {
+        for (top, opens_above) in [(px(40.), false), (px(560.), true)] {
+            let handle = PopoverMenuHandle::default();
+            let window = cx.open_window(size(px(800.), px(600.)), |_, _| PopoverTestView {
+                handle: handle.clone(),
+                top,
+            });
+            cx.run_until_parked();
+            let mut cx = VisualTestContext::from_window(window.into(), cx);
             cx.update(|window, cx| window.draw(cx).clear(cx));
-        }
+            cx.update(|window, cx| handle.show(window, cx));
+            for _ in 0..3 {
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+            }
 
-        let trigger = cx.debug_bounds("TRIGGER").expect("trigger bounds");
-        let menu = cx.debug_bounds("MENU").expect("menu bounds");
-        let offset = cx.update(|window, _| rems_from_px(5_f32) * window.rem_size());
-        assert_eq!(
-            menu.origin,
-            point(trigger.left() - offset - offset, trigger.bottom()),
-            "trigger: {trigger:?}, menu: {menu:?}"
-        );
+            let trigger = cx.debug_bounds("TRIGGER").expect("trigger bounds");
+            let menu = cx.debug_bounds("MENU").expect("menu bounds");
+            let offset = cx.update(|window, _| rems_from_px(5_f32) * window.rem_size());
+            let top = if opens_above {
+                trigger.top() - menu.size.height
+            } else {
+                trigger.bottom()
+            };
+            assert_eq!(
+                menu.origin,
+                point(trigger.left() - offset - offset, top),
+                "trigger: {trigger:?}, menu: {menu:?}"
+            );
+        }
     }
 }
