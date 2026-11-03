@@ -5,7 +5,7 @@ use crate::{
     utils::{RetainedFocusExt as _, WithRemSize},
 };
 use gpui::{
-    Action, Anchor, AnchoredPositionMode, AnyElement, App, Bounds, DismissEvent, Entity,
+    Action, Anchor, AnchoredPositionMode, AnyElement, AnyView, App, Bounds, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point,
     Role, Size, Subscription, TaskExt, anchored, canvas, deferred, point, prelude::*, px, relative,
 };
@@ -59,6 +59,8 @@ pub enum ContextMenuItem {
         selectable: bool,
         documentation_aside: Option<DocumentationAside>,
     },
+    /// A view that draws its own layout, so the menu adds no padding around it.
+    EmbeddedView(AnyView),
     Submenu {
         label: SharedString,
         icon: Option<IconName>,
@@ -237,7 +239,6 @@ pub struct ContextMenu {
     submenu_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     submenu_depth: usize,
     submenu_trigger_mouse_down: bool,
-    full_bleed: bool,
     content_focus_handle: Option<FocusHandle>,
     ignore_blur_until: Option<Instant>,
     /// When set to true, the next on_focus_in callback will not automatically
@@ -371,7 +372,6 @@ impl ContextMenu {
                     submenu_bounds: Rc::new(Cell::new(None)),
                     submenu_depth: 0,
                     submenu_trigger_mouse_down: false,
-                    full_bleed: false,
                     content_focus_handle: None,
                     ignore_blur_until: None,
                     suppress_focus_selection: !window.is_a11y_enabled(),
@@ -445,7 +445,6 @@ impl ContextMenu {
                 submenu_bounds: Rc::new(Cell::new(None)),
                 submenu_depth: 0,
                 submenu_trigger_mouse_down: false,
-                full_bleed: false,
                 content_focus_handle: None,
                 ignore_blur_until: None,
                 suppress_focus_selection: !window.is_a11y_enabled(),
@@ -879,10 +878,11 @@ impl ContextMenu {
         handler(None, window, cx);
     }
 
-    /// Renders custom rows edge to edge, without the padding around and
-    /// between items, for menus that host an embedded view such as a picker.
-    pub fn full_bleed(mut self) -> Self {
-        self.full_bleed = true;
+    /// Adds a view that draws its own layout, such as a picker, without the
+    /// padding the menu puts around its own rows. Pair it with
+    /// [`ContextMenu::focus_content`] when the view takes keyboard input.
+    pub fn embedded_view(mut self, view: impl Into<AnyView>) -> Self {
+        self.items.push(ContextMenuItem::EmbeddedView(view.into()));
         self
     }
 
@@ -1316,7 +1316,6 @@ impl ContextMenu {
                 submenu_bounds: Rc::new(Cell::new(None)),
                 submenu_depth: parent_depth + 1,
                 submenu_trigger_mouse_down: false,
-                full_bleed: false,
                 content_focus_handle: None,
                 ignore_blur_until: None,
                 suppress_focus_selection: !window.is_a11y_enabled(),
@@ -1439,6 +1438,7 @@ impl ContextMenu {
         let is_active_descendant = |selectable: bool| selectable && Some(ix) == self.selected_index;
         match item {
             ContextMenuItem::Separator => ListSeparator.into_any_element(),
+            ContextMenuItem::EmbeddedView(view) => view.clone().into_any_element(),
             ContextMenuItem::Header(header) => ListSubHeader::new(header.clone())
                 .inset(true)
                 .into_any_element(),
@@ -1513,42 +1513,37 @@ impl ContextMenu {
                             .left_0(),
                         )
                     })
-                    .map(|this| {
-                        if self.full_bleed && !selectable {
-                            return this.child(entry_render(window, cx));
-                        }
-                        this.child(
-                            ListItem::new(ix)
-                                .inset(true)
-                                .spacing(self.spacing)
-                                .when(selectable, |item| item.aria_role(Role::MenuItem))
-                                .when(is_active_descendant(selectable), |item| {
-                                    item.aria_active_descendant()
-                                })
-                                .toggle_state(Some(ix) == self.selected_index)
-                                .selectable(selectable)
-                                .when(selectable, |item| {
-                                    item.on_click({
-                                        let context = self.action_context.clone();
-                                        let keep_open_on_confirm = self.keep_open_on_confirm;
-                                        move |_, window, cx| {
-                                            handler(context.as_ref(), window, cx);
-                                            menu.update(cx, |menu, cx| {
-                                                menu.clicked = true;
+                    .child(
+                        ListItem::new(ix)
+                            .inset(true)
+                            .spacing(self.spacing)
+                            .when(selectable, |item| item.aria_role(Role::MenuItem))
+                            .when(is_active_descendant(selectable), |item| {
+                                item.aria_active_descendant()
+                            })
+                            .toggle_state(Some(ix) == self.selected_index)
+                            .selectable(selectable)
+                            .when(selectable, |item| {
+                                item.on_click({
+                                    let context = self.action_context.clone();
+                                    let keep_open_on_confirm = self.keep_open_on_confirm;
+                                    move |_, window, cx| {
+                                        handler(context.as_ref(), window, cx);
+                                        menu.update(cx, |menu, cx| {
+                                            menu.clicked = true;
 
-                                                if keep_open_on_confirm {
-                                                    menu.rebuild(window, cx);
-                                                } else {
-                                                    cx.emit(DismissEvent);
-                                                }
-                                            })
-                                            .ok();
-                                        }
-                                    })
+                                            if keep_open_on_confirm {
+                                                menu.rebuild(window, cx);
+                                            } else {
+                                                cx.emit(DismissEvent);
+                                            }
+                                        })
+                                        .ok();
+                                    }
                                 })
-                                .child(entry_render(window, cx)),
-                        )
-                    })
+                            })
+                            .child(entry_render(window, cx)),
+                    )
                     .into_any_element()
             }
             ContextMenuItem::Submenu {
@@ -2228,7 +2223,6 @@ impl ContextMenu {
             submenu_bounds: Rc::new(Cell::new(None)),
             submenu_depth: 0,
             submenu_trigger_mouse_down: false,
-            full_bleed: false,
             content_focus_handle: None,
             ignore_blur_until: None,
             suppress_focus_selection: !window.is_a11y_enabled(),
@@ -2242,7 +2236,8 @@ impl ContextMenuItem {
             ContextMenuItem::Header(_)
             | ContextMenuItem::HeaderWithLink(_, _, _)
             | ContextMenuItem::Separator
-            | ContextMenuItem::Label { .. } => false,
+            | ContextMenuItem::Label { .. }
+            | ContextMenuItem::EmbeddedView(_) => false,
             ContextMenuItem::Entry(ContextMenuEntry { disabled, .. }) => !disabled,
             ContextMenuItem::CustomEntry { selectable, .. } => *selectable,
             ContextMenuItem::Submenu { .. } => true,
@@ -2397,12 +2392,17 @@ impl Render for ContextMenu {
                             el
                         })
                         .map(|this| {
+                            let only_embedded_views = !self.items.is_empty()
+                                && self
+                                    .items
+                                    .iter()
+                                    .all(|item| matches!(item, ContextMenuItem::EmbeddedView(_)));
                             let items = self
                                 .items
                                 .iter()
                                 .enumerate()
                                 .map(|(ix, item)| self.render_menu_item(ix, item, window, cx));
-                            if self.full_bleed {
+                            if only_embedded_views {
                                 this.children(items)
                             } else {
                                 this.child(List::new().children(items))
@@ -2486,6 +2486,31 @@ mod tests {
                     .top(px(40.))
                     .child(self.menu.clone()),
             )
+        }
+    }
+
+    struct EmbeddedTestView {
+        focus_handle: FocusHandle,
+        bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    }
+
+    impl Render for EmbeddedTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let bounds = self.bounds.clone();
+            div()
+                .relative()
+                .track_focus(&self.focus_handle)
+                .child("search field")
+                .child(
+                    canvas(
+                        move |element_bounds, _, _| bounds.set(Some(element_bounds)),
+                        |_, _, _, _| {},
+                    )
+                    .size_full()
+                    .absolute()
+                    .top_0()
+                    .left_0(),
+                )
         }
     }
 
@@ -2644,8 +2669,9 @@ mod tests {
         );
     }
 
-    fn open_window_with_content_submenu(
+    fn open_window_with_embedded_view_submenu(
         content_focus: &FocusHandle,
+        content_bounds: &Rc<Cell<Option<Bounds<Pixels>>>>,
         cx: &mut TestAppContext,
     ) -> (Entity<ContextMenu>, VisualTestContext) {
         cx.update(|cx| {
@@ -2656,19 +2682,18 @@ mod tests {
 
         let window = cx.open_window(size(px(700.), px(400.)), {
             let content_focus = content_focus.clone();
+            let content_bounds = content_bounds.clone();
             move |window, cx| {
                 let menu = ContextMenu::build(window, cx, move |menu, _, _| {
                     let content_focus = content_focus.clone();
-                    menu.submenu("Search", move |menu, _, _| {
-                        let content_focus = content_focus.clone();
-                        menu.full_bleed()
+                    let content_bounds = content_bounds.clone();
+                    menu.submenu("Search", move |menu, _, cx| {
+                        let view = cx.new(|_| EmbeddedTestView {
+                            focus_handle: content_focus.clone(),
+                            bounds: content_bounds.clone(),
+                        });
+                        menu.embedded_view(view)
                             .focus_content(content_focus.clone())
-                            .custom_row(move |_, _| {
-                                div()
-                                    .track_focus(&content_focus)
-                                    .child("search field")
-                                    .into_any_element()
-                            })
                     })
                 });
                 SubmenuTestView {
@@ -2695,7 +2720,9 @@ mod tests {
     #[gpui::test]
     fn opening_submenu_from_keyboard_focuses_its_content(cx: &mut TestAppContext) {
         let content_focus = cx.update(|cx| cx.focus_handle());
-        let (menu, mut visual) = open_window_with_content_submenu(&content_focus, cx);
+        let content_bounds = Rc::new(Cell::new(None));
+        let (menu, mut visual) =
+            open_window_with_embedded_view_submenu(&content_focus, &content_bounds, cx);
 
         menu.update_in(&mut visual, |menu, window, cx| {
             menu.select_first(&SelectFirst, window, cx);
@@ -2711,9 +2738,40 @@ mod tests {
     }
 
     #[gpui::test]
+    fn embedded_view_fills_the_submenu(cx: &mut TestAppContext) {
+        let content_focus = cx.update(|cx| cx.focus_handle());
+        let content_bounds = Rc::new(Cell::new(None));
+        let (menu, mut visual) =
+            open_window_with_embedded_view_submenu(&content_focus, &content_bounds, cx);
+
+        menu.update_in(&mut visual, |menu, window, cx| {
+            menu.select_first(&SelectFirst, window, cx);
+            menu.select_submenu_child(&SelectChild, window, cx);
+        });
+        draw_frames(&mut visual);
+
+        let submenu_bounds = menu.read_with(&visual, |menu, cx| match &menu.submenu_state {
+            SubmenuState::Open(open_submenu) => open_submenu
+                .entity
+                .read(cx)
+                .main_menu_observed_bounds
+                .get()
+                .expect("submenu content bounds"),
+            SubmenuState::Closed => panic!("submenu was closed"),
+        });
+        let content_bounds = content_bounds.get().expect("embedded view bounds");
+        assert_eq!(
+            content_bounds, submenu_bounds,
+            "the embedded view must fill the submenu without padding"
+        );
+    }
+
+    #[gpui::test]
     fn hovering_open_submenu_trigger_keeps_content_focused(cx: &mut TestAppContext) {
         let content_focus = cx.update(|cx| cx.focus_handle());
-        let (menu, mut visual) = open_window_with_content_submenu(&content_focus, cx);
+        let content_bounds = Rc::new(Cell::new(None));
+        let (menu, mut visual) =
+            open_window_with_embedded_view_submenu(&content_focus, &content_bounds, cx);
 
         let trigger = menu.read_with(&visual, |menu, _| {
             menu.submenu_trigger_bounds
