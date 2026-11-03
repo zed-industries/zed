@@ -375,12 +375,6 @@ impl GitPanel {
         let diff_base = DiffBase::Merge { base_ref };
 
         if let Some(branch_list) = branch_list {
-            let previous_entries = listed_files(branch_list.list.read(cx)).or_else(|| {
-                branch_list
-                    .previous_files
-                    .take()
-                    .map(|previous| previous.entries)
-            });
             let (repo_changed, base_changed) = {
                 let list = branch_list.list.read(cx);
                 let repo_id = repo.read(cx).id;
@@ -390,6 +384,18 @@ impl GitPanel {
                     list.diff_base() != &diff_base,
                 )
             };
+            // Read before the list moves to the new base and drops its files.
+            // A switch while the previous base still loads keeps its files.
+            let previous_entries = (base_changed && !repo_changed)
+                .then(|| {
+                    listed_files(branch_list.list.read(cx)).or_else(|| {
+                        branch_list
+                            .previous_files
+                            .take()
+                            .map(|previous| previous.entries)
+                    })
+                })
+                .flatten();
             branch_list.list.update(cx, |list, cx| {
                 list.set_repo(Some(repo), cx);
                 if base_changed {
