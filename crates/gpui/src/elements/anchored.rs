@@ -185,16 +185,18 @@ impl Element for Anchored {
         };
 
         if let Placement::Attached { target, corner } = self.placement {
-            // Measured against the window edges, not the snap margins, so an element that
-            // already fits only moves when it would actually have been snapped.
+            // Measured against the visible window edges, not the snap margins, so an element
+            // that already fits only moves when it would actually have been snapped. Client-side
+            // decorations draw a transparent shadow inside the viewport, which isn't room.
+            let visible = limits.inset(window.client_inset.unwrap_or(px(0.)));
             let overflow_along = |bounds: Bounds<Pixels>, axis: Axis| match axis {
                 Axis::Horizontal => {
-                    (limits.left() - bounds.left()).max(px(0.))
-                        + (bounds.right() - limits.right()).max(px(0.))
+                    (visible.left() - bounds.left()).max(px(0.))
+                        + (bounds.right() - visible.right()).max(px(0.))
                 }
                 Axis::Vertical => {
-                    (limits.top() - bounds.top()).max(px(0.))
-                        + (bounds.bottom() - limits.bottom()).max(px(0.))
+                    (visible.top() - bounds.top()).max(px(0.))
+                        + (bounds.bottom() - visible.bottom()).max(px(0.))
                 }
             };
             let mut corner = corner;
@@ -536,6 +538,21 @@ mod tests {
                 Bounds::new(point(px(180.), px(100.)), size(px(500.), px(20.))),
                 submenu,
                 point(px(8.), px(104.)),
+            ),
+            // The other side would overflow more, so it stays and snaps.
+            (
+                Bounds::new(point(px(50.), px(100.)), size(px(650.), px(20.))),
+                submenu,
+                point(px(592.), px(104.)),
+            ),
+            // Aligned with the trigger horizontally rather than beside it, so it snaps
+            // instead of flipping sideways.
+            (trigger(700., 100.), dropdown, point(px(592.), px(124.))),
+            // Centered horizontally, so only the vertical side can flip.
+            (
+                trigger(100., 400.),
+                (Anchor::BottomCenter, Anchor::TopCenter),
+                point(px(48.), px(96.)),
             ),
         ] {
             let window = cx.open_window(size(px(800.), px(600.)), |_, _| AttachedTestView {

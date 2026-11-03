@@ -3135,11 +3135,12 @@ mod tests {
                 space_on_right > CONTEXT_MENU_MIN_WIDTH && space_on_right < submenu.size.width,
                 "trigger: {trigger:?}, submenu: {submenu:?}"
             );
-            assert!(
-                submenu.right() <= trigger.left() + px(2.),
+            assert_eq!(
+                submenu.right(),
+                trigger.left() + px(2.),
                 "trigger: {trigger:?}, submenu: {submenu:?}"
             );
-            assert!(submenu.left() >= px(8.));
+            assert_eq!(submenu.top(), trigger.top());
         });
     }
 
