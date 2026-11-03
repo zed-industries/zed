@@ -5,7 +5,7 @@ use crate::{
     open_abs_path_at_point, project_path_for_file_link,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use std::{cell::RefCell, path::Path};
 
 use acp_thread::{
