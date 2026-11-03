@@ -2370,7 +2370,11 @@ impl Render for ContextMenu {
                 )
         };
 
-        if let Some(focus_handle) = focus_submenu.as_ref() {
+        // Content inside the submenu, such as an embedded picker, can hold
+        // focus, so only move focus into the submenu when it's outside it.
+        if let Some(focus_handle) = focus_submenu.as_ref()
+            && !focus_handle.contains_focused(window, cx)
+        {
             window.focus(focus_handle, cx);
         }
 
@@ -2544,6 +2548,59 @@ mod tests {
                 assert!(submenu.right() <= px(692.));
             });
         }
+    }
+
+    #[gpui::test]
+    fn submenu_content_keeps_focus(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        let content_focus = cx.update(|cx| cx.focus_handle());
+        let window = cx.open_window(size(px(700.), px(400.)), {
+            let content_focus = content_focus.clone();
+            move |window, cx| {
+                let menu = ContextMenu::build(window, cx, move |menu, _, _| {
+                    let content_focus = content_focus.clone();
+                    menu.submenu("Search", move |menu, _, _| {
+                        let content_focus = content_focus.clone();
+                        menu.custom_row(move |_, _| {
+                            div()
+                                .track_focus(&content_focus)
+                                .child("search field")
+                                .into_any_element()
+                        })
+                    })
+                });
+                SubmenuTestView {
+                    menu,
+                    left: px(40.),
+                }
+            }
+        });
+        cx.run_until_parked();
+        let menu = window
+            .update(cx, |view, _, _| view.menu.clone())
+            .expect("submenu window");
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+        menu.update_in(&mut visual, |menu, window, cx| {
+            menu.select_first(&SelectFirst, window, cx);
+            menu.select_submenu_child(&SelectChild, window, cx);
+        });
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.update(|window, cx| window.focus(&content_focus, cx));
+        for _ in 0..2 {
+            visual.update(|window, cx| window.draw(cx).clear(cx));
+        }
+
+        let content_is_focused = visual.update(|window, _| content_focus.is_focused(window));
+        assert!(
+            content_is_focused,
+            "the menu must not move focus off content inside its open submenu"
+        );
     }
 
     fn focus_menu(menu: &Entity<ContextMenu>, cx: &mut VisualTestContext) {
