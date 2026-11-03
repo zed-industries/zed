@@ -1318,6 +1318,8 @@ pub struct GitPanel {
     /// Uncommitted files, one per path. Staging, discarding and committing
     /// act on these regardless of which mode `entries` shows.
     change_entries: Vec<GitStatusEntry>,
+    /// Diff editors look up a file's entry for every header they draw.
+    change_entry_indices: HashMap<RepoPath, usize>,
     branch_file_count: usize,
 }
 
@@ -1677,6 +1679,7 @@ impl GitPanel {
                 changes_mode_menu_handle: PopoverMenuHandle::default(),
                 branch_base: BranchBase::new(),
                 change_entries: Vec::new(),
+                change_entry_indices: HashMap::default(),
                 branch_file_count: 0,
             };
 
@@ -5888,6 +5891,7 @@ impl GitPanel {
         self.sync_branch_list(window, cx);
         self.entries.clear();
         self.change_entries.clear();
+        self.change_entry_indices.clear();
         self.branch_file_count = 0;
         self.projected_entries_by_path.clear();
         self.single_staged_entry.take();
@@ -6132,6 +6136,12 @@ impl GitPanel {
             .flat_map(|(_, entries)| entries)
             .unique_by(|entry| &entry.repo_path)
             .cloned()
+            .collect();
+        self.change_entry_indices = self
+            .change_entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.repo_path.clone(), index))
             .collect();
         let section_entries = if is_branch_mode {
             vec![(Section::Branch, branch_entries)]
@@ -8508,8 +8518,7 @@ impl GitPanel {
         let repo_path = repo.project_path_to_repo_path(&project_path, cx)?;
         let entry = GitListEntry::Status(
             self.change_entries
-                .iter()
-                .find(|entry| entry.repo_path == repo_path)?
+                .get(*self.change_entry_indices.get(&repo_path)?)?
                 .clone(),
         );
 
