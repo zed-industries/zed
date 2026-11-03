@@ -610,9 +610,12 @@ async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_tasks_spawning_the_same_process_are_deduplicated(cx: &mut TestAppContext) {
+async fn test_tasks_with_the_same_launch_from_different_templates_are_kept(
+    cx: &mut TestAppContext,
+) {
     init_test(cx);
     let inventory = cx.update(|cx| Inventory::new(cx));
+
     inventory.update(cx, |inventory, _| {
         inventory
             .update_file_based_tasks(
@@ -620,20 +623,14 @@ async fn test_tasks_spawning_the_same_process_are_deduplicated(cx: &mut TestAppC
                 Some(
                     &json!([
                         {
-                            "label": "package.json > dev",
-                            "command": "npm",
-                            "args": ["run", "dev"],
+                            "label": "probe",
+                            "command": "python",
+                            "args": ["\"$ZED_WORKTREE_ROOT/a.py\""],
                         },
                         {
-                            "label": "package.json > $ZED_CUSTOM_script",
-                            "command": "npm",
-                            "args": ["run", "$ZED_CUSTOM_script"],
-                            "tags": ["package-script"],
-                        },
-                        {
-                            "label": "package.json > dev",
-                            "command": "pnpm",
-                            "args": ["run", "dev"],
+                            "label": "probe",
+                            "command": "python",
+                            "args": ["\"$ZED_FILE\""],
                         }
                     ])
                     .to_string(),
@@ -647,34 +644,36 @@ async fn test_tasks_spawning_the_same_process_are_deduplicated(cx: &mut TestAppC
             None,
             None,
             TaskContext {
-                task_variables: TaskVariables::from_iter([(
-                    VariableName::Custom("script".into()),
-                    "dev".to_owned(),
-                )]),
+                task_variables: TaskVariables::from_iter([
+                    (VariableName::WorktreeRoot, "/project".to_owned()),
+                    (VariableName::File, "/project/a.py".to_owned()),
+                ]),
                 ..TaskContext::default()
             },
         )),
         ..TaskContexts::default()
     };
+
     let (used, current) = inventory
         .update(cx, |inventory, cx| {
             inventory.used_and_current_resolved_tasks(Arc::new(task_contexts), cx)
         })
         .await;
-    let tasks = used
+
+    let original_args = used
         .into_iter()
         .chain(current)
-        .map(|(_, task)| (task.resolved_label, task.resolved.command_label))
+        .map(|(_, task)| task.original_task().args.clone())
         .sorted()
         .collect::<Vec<_>>();
 
     assert_eq!(
-        tasks,
+        original_args,
         vec![
-            ("package.json > dev".to_string(), "npm run dev".to_string()),
-            ("package.json > dev".to_string(), "pnpm run dev".to_string()),
+            vec!["\"$ZED_FILE\"".to_string()],
+            vec!["\"$ZED_WORKTREE_ROOT/a.py\"".to_string()],
         ],
-        "Tasks spawning the same process should be listed once, tasks with the same label but a different command should stay"
+        "Debugger locators inspect the original templates, so tasks with the same launch from different templates must all be listed"
     );
 }
 
