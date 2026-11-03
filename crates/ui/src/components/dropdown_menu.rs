@@ -1,4 +1,4 @@
-use gpui::{Anchor, AnyView, Entity, Pixels, Point, Role};
+use gpui::{Anchor, AnyView, Axis, Entity, Pixels, Point, Role};
 
 use crate::{ButtonLike, ContextMenu, PopoverMenu, prelude::*};
 
@@ -125,7 +125,10 @@ impl DropdownMenu {
         self
     }
 
-    /// Defines which corner of the handle to attach the menu's anchor to.
+    /// Defines which corner of the trigger the menu lines up with. The menu opens on the other
+    /// side of that edge, so [`Anchor::BottomLeft`] (the default) opens it below the trigger
+    /// with their left edges aligned. Use [`Anchor::BottomRight`] for a trigger at the right
+    /// end of a row.
     pub fn attach(mut self, attach: Anchor) -> Self {
         self.attach = Some(attach);
         self
@@ -304,13 +307,10 @@ impl RenderOnce for DropdownMenu {
             _ => popover,
         };
 
-        let (attach, anchor) = match self.attach {
-            Some(attach) => (attach, Anchor::TopLeft),
-            None => (Anchor::BottomRight, Anchor::TopRight),
-        };
+        let attach = self.attach.unwrap_or(Anchor::BottomLeft);
         popover
             .attach(attach)
-            .anchor(anchor)
+            .anchor(attach.other_side_along(Axis::Vertical))
             .when_some(self.offset, |this, offset| this.offset(offset))
     }
 }
@@ -417,5 +417,124 @@ impl Component for DropdownMenu {
                 ),
             ])
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Bounds, TestAppContext, VisualTestContext, point, size};
+
+    use super::*;
+
+    struct DropdownTestView {
+        handle: PopoverMenuHandle<ContextMenu>,
+        menu: Entity<ContextMenu>,
+        attach: Option<Anchor>,
+        trigger_position: Point<Pixels>,
+        at_right_edge: bool,
+    }
+
+    impl Render for DropdownTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let trigger = div()
+                .absolute()
+                .top(self.trigger_position.y)
+                .map(|this| {
+                    if self.at_right_edge {
+                        this.right(self.trigger_position.x)
+                    } else {
+                        this.left(self.trigger_position.x)
+                    }
+                })
+                .debug_selector(|| "TRIGGER".into())
+                .child(
+                    DropdownMenu::new("dropdown", "Pick", self.menu.clone())
+                        .handle(self.handle.clone())
+                        .when_some(self.attach, |this, attach| this.attach(attach)),
+                );
+            div().size_full().child(trigger)
+        }
+    }
+
+    fn open_dropdown(
+        attach: Option<Anchor>,
+        trigger_position: Point<Pixels>,
+        at_right_edge: bool,
+        cx: &mut TestAppContext,
+    ) -> (Bounds<Pixels>, Bounds<Pixels>) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        let handle = PopoverMenuHandle::default();
+        let window = cx.open_window(size(px(800.), px(600.)), |window, cx| {
+            let menu = ContextMenu::build(window, cx, |menu, _, _| {
+                menu.custom_row(|_, _| {
+                    div()
+                        .debug_selector(|| "MENU_ROW".into())
+                        .w(px(300.))
+                        .h(px(20.))
+                        .into_any_element()
+                })
+            });
+            DropdownTestView {
+                handle: handle.clone(),
+                menu,
+                attach,
+                trigger_position,
+                at_right_edge,
+            }
+        });
+        cx.run_until_parked();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|window, cx| handle.show(window, cx));
+        for _ in 0..3 {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+        let trigger = cx.debug_bounds("TRIGGER").expect("trigger bounds");
+        let menu_row = cx.debug_bounds("MENU_ROW").expect("menu row bounds");
+        (trigger, menu_row)
+    }
+
+    #[gpui::test]
+    fn dropdown_opens_left_aligned_under_its_trigger_by_default(cx: &mut TestAppContext) {
+        let (trigger, menu_row) = open_dropdown(None, point(px(40.), px(40.)), false, cx);
+        assert!(
+            menu_row.top() >= trigger.bottom(),
+            "trigger: {trigger:?}, menu row: {menu_row:?}"
+        );
+        assert!(
+            (menu_row.left() - trigger.left()).abs() < px(12.),
+            "trigger: {trigger:?}, menu row: {menu_row:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn dropdown_attached_bottom_right_opens_right_aligned(cx: &mut TestAppContext) {
+        let (trigger, menu_row) =
+            open_dropdown(Some(Anchor::BottomRight), point(px(40.), px(40.)), true, cx);
+        assert!(
+            menu_row.top() >= trigger.bottom(),
+            "trigger: {trigger:?}, menu row: {menu_row:?}"
+        );
+        assert!(
+            (menu_row.right() - trigger.right()).abs() < px(12.),
+            "trigger: {trigger:?}, menu row: {menu_row:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn dropdown_near_the_window_bottom_opens_above_its_trigger(cx: &mut TestAppContext) {
+        let (trigger, menu_row) = open_dropdown(None, point(px(40.), px(560.)), false, cx);
+        assert!(
+            menu_row.bottom() <= trigger.top(),
+            "trigger: {trigger:?}, menu row: {menu_row:?}"
+        );
+        assert!(
+            (menu_row.left() - trigger.left()).abs() < px(12.),
+            "trigger: {trigger:?}, menu row: {menu_row:?}"
+        );
     }
 }
