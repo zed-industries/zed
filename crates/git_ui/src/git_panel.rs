@@ -2698,11 +2698,8 @@ impl GitPanel {
     }
 
     fn select_first_entry_if_none(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let have_entries = self
-            .active_repository
-            .as_ref()
-            .is_some_and(|active_repository| active_repository.read(cx).status_summary().count > 0);
-        if have_entries && self.selected_entry.is_none() {
+        // Branch mode can list files while there are no uncommitted changes.
+        if !self.entries.is_empty() && self.selected_entry.is_none() {
             self.select_first(&menu::SelectFirst, window, cx);
         }
     }
