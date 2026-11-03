@@ -775,10 +775,10 @@ impl GitPanel {
 
     pub(super) fn render_no_branch_changes_ui(&self, cx: &Context<Self>) -> AnyElement {
         let branch_list = self.branch_list().map(|branch_list| branch_list.read(cx));
-        let message: SharedString = if let Some(error) =
-            branch_list.and_then(|branch_list| branch_list.tree_diff_error())
+        let message: SharedString = if branch_list
+            .is_some_and(|branch_list| branch_list.tree_diff_error().is_some())
         {
-            format!("Couldn't load branch changes: {error}").into()
+            "Couldn't load branch changes".into()
         } else if branch_list.is_some_and(|branch_list| branch_list.statuses_by_path().is_none())
             || self.branch_base.is_resolving()
         {
