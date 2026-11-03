@@ -5,7 +5,7 @@ mod terminal_path_like_target;
 pub mod terminal_scrollbar;
 
 use editor::{
-    Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
+    CursorAnimationState, Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
     ui_scrollbar_settings_from_raw,
 };
 use gpui::{
@@ -137,6 +137,7 @@ pub struct TerminalView {
     has_bell: bool,
     context_menu: Option<(Entity<ContextMenu>, GpuiPoint<Pixels>, Subscription)>,
     cursor_shape: CursorShape,
+    cursor_animation: CursorAnimationState,
     blink_manager: Entity<BlinkManager>,
     mode: TerminalMode,
     /// Corner radii for the terminal's background, for when it's embedded in a
@@ -295,6 +296,7 @@ impl TerminalView {
             focus_handle,
             context_menu: None,
             cursor_shape,
+            cursor_animation: CursorAnimationState::default(),
             blink_manager,
             blinking_terminal_enabled: false,
             hover: None,
