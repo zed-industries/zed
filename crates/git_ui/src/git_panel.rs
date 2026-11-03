@@ -7596,10 +7596,12 @@ impl GitPanel {
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, move |menu, _, _| {
             let panel = state.panel.clone();
+            // The check goes at the end so "Uncommitted" lines up with the
+            // submenu trigger, which has no check slot.
             menu.toggleable_entry(
                 "Uncommitted",
                 !state.is_branch_mode,
-                IconPosition::Start,
+                IconPosition::End,
                 Some(ShowUncommittedChanges.boxed_clone()),
                 move |window, cx| {
                     panel
