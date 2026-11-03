@@ -1,5 +1,4 @@
 use super::*;
-use gpui::EntityId;
 use settings::GitDiffBaseSetting;
 
 pub(super) enum ChangesMode {
@@ -99,7 +98,7 @@ impl BranchBase {
 /// The branch diff tab the panel last adopted a base from, watched so that
 /// base changes made in the tab's own picker carry over to the panel.
 struct FollowedBranchDiff {
-    list_id: EntityId,
+    list: WeakEntity<DiffBufferList>,
     _subscription: Subscription,
 }
 
@@ -129,6 +128,9 @@ impl GitPanel {
             return;
         }
         self.changes_mode = ChangesMode::Uncommitted;
+        // The next switch to branch mode starts again from the active tab or
+        // the default branch, rather than from a base picked long ago.
+        self.branch_base.picked = None;
         self.changes_mode_changed(window, cx);
     }
 
@@ -182,6 +184,11 @@ impl GitPanel {
         self.set_active_tab(GitPanelTab::Changes, window, cx);
         if self.active_repository.is_none() {
             return;
+        }
+        // The empty state's button opens the default branch's diff, as it
+        // did before branch mode existed.
+        if !request.open_diff {
+            self.adopt_followed_branch_diff_base(window, cx);
         }
         if self.branch_base.needs_lookup_to_decide() {
             self.branch_base.show_after_lookup = Some(request);
@@ -449,25 +456,42 @@ impl GitPanel {
             .branch_base
             .followed
             .as_ref()
-            .is_some_and(|followed| followed.list_id == list.entity_id())
+            .is_some_and(|followed| followed.list.entity_id() == list.entity_id())
         {
             return;
         }
 
+        // Uncommitted mode only watches the tab, so a tab looked at long ago
+        // doesn't decide the base the next time branch mode opens.
         let subscription = cx.subscribe_in(
             &list,
             window,
             |this, list, event: &BranchDiffEvent, window, cx| {
-                if matches!(event, BranchDiffEvent::DiffBaseChanged) {
+                if matches!(event, BranchDiffEvent::DiffBaseChanged) && this.is_branch_mode() {
                     this.adopt_branch_diff_base(list, window, cx);
                 }
             },
         );
         self.branch_base.followed = Some(FollowedBranchDiff {
-            list_id: list.entity_id(),
+            list: list.downgrade(),
             _subscription: subscription,
         });
-        self.adopt_branch_diff_base(&list, window, cx);
+        if self.is_branch_mode() {
+            self.adopt_branch_diff_base(&list, window, cx);
+        }
+    }
+
+    /// Reads the watched tab rather than the workspace, because the panel's
+    /// actions run while the workspace is being updated.
+    fn adopt_followed_branch_diff_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(list) = self
+            .branch_base
+            .followed
+            .as_ref()
+            .and_then(|followed| followed.list.upgrade())
+        {
+            self.adopt_branch_diff_base(&list, window, cx);
+        }
     }
 
     fn adopt_branch_diff_base(

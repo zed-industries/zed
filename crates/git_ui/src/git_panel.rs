@@ -17830,12 +17830,13 @@ mod tests {
             })
         };
 
-        // The panel follows tabs even before it shows branch changes.
+        // Uncommitted mode only watches the active tab. Showing branch changes
+        // then starts from that tab's base.
         open_branch_diff_tab(&test, "release", cx);
-        assert_eq!(base(cx).as_deref(), Some("release"));
+        assert_eq!(base(cx), None);
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.enter_branch_mode(window, cx);
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
         });
         settle_branch_mode(cx);
         panel.read_with(cx, |panel, cx| {
