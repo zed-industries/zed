@@ -2700,6 +2700,16 @@ fn matching(
     if let Some(ranges) = ranges {
         let mut closest_pair_destination = None;
         let mut closest_distance = usize::MAX;
+        let mut self_closing_tag_range = None;
+        // // TODO!: Can we have a helper for the distance and state update check?
+        // // Or should we have a struct to handle this temporary state but
+        // // simplify the check and update pattern?
+        // let update_destination = |offset_a: MultiBufferOffset, offset_b: MultiBufferOffset| {
+        //     if offset_b.saturating_sub(offset_a) < closest_distance {
+        //         closest_distance = offset_b.saturating_sub(offset_a);
+        //         closest_pair_destination = Some(offset_b);
+        //     }
+        // };
 
         for (open_range, close_range) in ranges {
             if !match_quotes
@@ -2712,22 +2722,63 @@ fn matching(
                 continue;
             }
 
+            // REVIEW: Why do we even need this special casing for `< .. />` ?
+            // Is it just to match NeoVim's behavior where using `%` in a `<` should jump to `/`?
             if map.buffer_snapshot().chars_at(open_range.start).next() == Some('<') {
+                // Checks if the cursor is within the `< .. />` range but not on
+                // any of those characters.
                 if offset > open_range.start && offset < close_range.start {
                     let mut chars = map.buffer_snapshot().chars_at(close_range.start);
+                    // Confirms whether the closing range is the `/>` text and,
+                    // if so, just returns the display point that was provided,
+                    // effectively no moving the character?
+                    // TODO!: Can we use `window` or something here to compare
+                    // against `/>` directly?
+                    // If the `offset` is within a `<../>` tag, we don't want to
+                    // move the cursor at all.
+                    // TODO!: How to deal with the fact that there might be an
+                    // enclosing range that is within that tag that we actually
+                    // want to jump to?
                     if (Some('/'), Some('>')) == (chars.next(), chars.next()) {
-                        return display_point;
+                        // TODO!: Could this be problematic if we're in a nested
+                        // closing tag? Do we need to check the distance if
+                        // there's an existing `self_closing_tag_range`?
+                        self_closing_tag_range = Some((open_range.clone(), close_range.clone()));
+                        continue;
                     }
+
                     if let Some(tag) = matching_tag(map, display_point) {
-                        return tag;
+                        let tag_offset = tag.to_offset(map, Bias::Left);
+                        let distance = tag_offset.saturating_sub(tag_offset);
+
+                        if distance < closest_distance {
+                            closest_distance = distance;
+                            closest_pair_destination = Some(tag_offset);
+                        }
+
+                        continue;
                     }
                 } else if close_range.contains(&offset) {
-                    return open_range.start.to_display_point(map);
+                    if open_range.start.saturating_sub(offset) < closest_distance {
+                        closest_distance = open_range.start.saturating_sub(offset);
+                        closest_pair_destination = Some(open_range.start.to_offset(map));
+                    }
+                    continue;
                 } else if open_range.contains(&offset) {
-                    return (close_range.end - 1).to_display_point(map);
+                    if (close_range.end - 1).saturating_sub(offset) < closest_distance {
+                        closest_distance = (close_range.end - 1).saturating_sub(offset);
+                        closest_pair_destination = Some((close_range.end - 1).to_offset(map));
+                    }
+                    continue;
                 }
             }
 
+            // TODO: Should we prefer ranges that enclose the cursor rather than
+            // the closest one?
+            // For example, in this line, where [] represents the cursor, Zed
+            // would jump to `"` while Helix jumps to `}`:
+            //
+            // return <div style={{ border:[]"1px solid red"}} />
             if (open_range.contains(&offset) || open_range.start >= offset)
                 && line_range.contains(&open_range.start)
             {
@@ -2748,7 +2799,18 @@ fn matching(
                 }
             }
 
+            // TODO!: What do we need this `continue` for? There's no lines in
+            // the `for` block after this, so it'll naturally progress to the
+            // next iteration.
             continue;
+        }
+
+        if let Some((open_range, close_range)) = self_closing_tag_range
+            && closest_distance == usize::MAX
+        // && (dbg!(open_range.start.saturating_sub(offset)) < dbg!(closest_distance)
+        //     || dbg!(close_range.start.saturating_sub(offset)) < closest_distance)
+        {
+            closest_pair_destination = Some(offset);
         }
 
         closest_pair_destination
