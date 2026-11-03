@@ -1190,7 +1190,7 @@ impl WorkspaceDb {
         };
 
         let path_style = path_style
-            .map(deserialize_path_style)
+            .and_then(deserialize_path_style)
             .unwrap_or(PathStyle::local());
 
         Some(SerializedWorkspace {
@@ -1291,7 +1291,7 @@ impl WorkspaceDb {
         };
 
         let path_style = path_style
-            .map(deserialize_path_style)
+            .and_then(deserialize_path_style)
             .unwrap_or(PathStyle::local());
 
         Some(SerializedWorkspace {
@@ -1854,7 +1854,7 @@ impl WorkspaceDb {
                         identity_paths_list.map(|paths| PathList::deserialize(&paths)),
                         remote_connection_id.map(RemoteConnectionId),
                         session_id,
-                        path_style.map(deserialize_path_style),
+                        path_style.and_then(deserialize_path_style),
                         parse_timestamp(&timestamp),
                     )
                 },
@@ -2062,7 +2062,7 @@ impl WorkspaceDb {
                         location: SerializedWorkspaceLocation::Remote(connection_options.clone()),
                         paths: paths.clone(),
                         identity_paths: identity_paths_hint.unwrap_or(paths),
-                        path_style: path_style.unwrap_or(PathStyle::local()),
+                        path_style,
                         timestamp,
                     });
                 }
@@ -2083,7 +2083,7 @@ impl WorkspaceDb {
                     location: SerializedWorkspaceLocation::Local,
                     paths,
                     identity_paths,
-                    path_style: path_style.unwrap_or(PathStyle::local()),
+                    path_style,
                     timestamp,
                 });
             }
@@ -2696,7 +2696,7 @@ pub struct RecentWorkspace {
     pub location: SerializedWorkspaceLocation,
     pub paths: PathList,
     pub identity_paths: PathList,
-    pub path_style: PathStyle,
+    pub path_style: Option<PathStyle>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -2804,11 +2804,11 @@ fn serialize_path_style(path_style: PathStyle) -> String {
     }
 }
 
-fn deserialize_path_style(path_style: String) -> PathStyle {
+fn deserialize_path_style(path_style: String) -> Option<PathStyle> {
     match path_style.as_str() {
-        "windows" => PathStyle::Windows,
-        "unix" => PathStyle::Unix,
-        _ => PathStyle::local(),
+        "windows" => Some(PathStyle::Windows),
+        "unix" => Some(PathStyle::Unix),
+        _ => None,
     }
 }
 
@@ -3566,7 +3566,10 @@ mod tests {
             .iter()
             .find(|workspace| workspace.workspace_id == WorkspaceId(1))
             .expect("local workspace should be listed as a recent workspace");
-        assert_eq!(recent_local_workspace.path_style, non_local_path_style());
+        assert_eq!(
+            recent_local_workspace.path_style,
+            Some(non_local_path_style())
+        );
 
         let mut updated_workspace = local_workspace;
         updated_workspace.path_style = PathStyle::local();
@@ -3578,11 +3581,13 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_missing_or_unknown_path_style_falls_back_to_local() {
-        let db =
-            WorkspaceDb::open_test_db("test_missing_or_unknown_path_style_falls_back_to_local")
-                .await;
+    async fn test_missing_or_unknown_path_style(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db("test_missing_or_unknown_path_style").await;
         let workspace_id = WorkspaceId(1);
+
+        // The recent-workspaces list only includes local workspaces whose paths exist.
+        fs.insert_tree("/legacy/path-style", json!({})).await;
 
         let mut workspace = workspace_with(
             1,
@@ -3606,6 +3611,10 @@ mod tests {
             db.workspace_for_id(workspace_id).unwrap().path_style,
             PathStyle::local()
         );
+        assert_eq!(
+            recent_workspace_path_style(&db, fs.as_ref(), workspace_id).await,
+            None
+        );
 
         // The invalid case
         db.write(move |conn| {
@@ -3619,6 +3628,24 @@ mod tests {
             db.workspace_for_id(workspace_id).unwrap().path_style,
             PathStyle::local()
         );
+        assert_eq!(
+            recent_workspace_path_style(&db, fs.as_ref(), workspace_id).await,
+            None
+        );
+    }
+
+    async fn recent_workspace_path_style(
+        db: &WorkspaceDb,
+        fs: &dyn Fs,
+        workspace_id: WorkspaceId,
+    ) -> Option<PathStyle> {
+        db.recent_project_workspaces(fs)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|workspace| workspace.workspace_id == workspace_id)
+            .expect("workspace should be listed as a recent workspace")
+            .path_style
     }
 
     #[gpui::test]
@@ -4107,7 +4134,7 @@ mod tests {
             location: SerializedWorkspaceLocation::Local,
             paths,
             identity_paths,
-            path_style: PathStyle::local(),
+            path_style: Some(PathStyle::local()),
             timestamp,
         }
     }

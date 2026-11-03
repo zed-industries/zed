@@ -2480,7 +2480,7 @@ mod tests {
             location: SerializedWorkspaceLocation::Local,
             paths: paths.clone(),
             identity_paths: paths,
-            path_style: PathStyle::local(),
+            path_style: Some(PathStyle::local()),
             timestamp: Utc::now(),
         }
     }
@@ -2667,7 +2667,7 @@ mod tests {
             location: SerializedWorkspaceLocation::Local,
             paths: paths.clone(),
             identity_paths: paths.clone(),
-            path_style: PathStyle::local(),
+            path_style: Some(PathStyle::local()),
             timestamp: Utc::now(),
         };
         let remote_workspace = RecentWorkspace {
@@ -2677,7 +2677,7 @@ mod tests {
             )),
             paths: paths.clone(),
             identity_paths: paths,
-            path_style: PathStyle::local(),
+            path_style: Some(PathStyle::local()),
             timestamp: Utc::now(),
         };
 
