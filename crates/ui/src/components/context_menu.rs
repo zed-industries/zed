@@ -238,6 +238,7 @@ pub struct ContextMenu {
     submenu_depth: usize,
     submenu_trigger_mouse_down: bool,
     full_bleed: bool,
+    content_focus_handle: Option<FocusHandle>,
     ignore_blur_until: Option<Instant>,
     /// When set to true, the next on_focus_in callback will not automatically
     /// select an item. This prevents a visual flash where a submenu close in
@@ -371,6 +372,7 @@ impl ContextMenu {
                     submenu_depth: 0,
                     submenu_trigger_mouse_down: false,
                     full_bleed: false,
+                    content_focus_handle: None,
                     ignore_blur_until: None,
                     suppress_focus_selection: !window.is_a11y_enabled(),
                 },
@@ -444,6 +446,7 @@ impl ContextMenu {
                 submenu_depth: 0,
                 submenu_trigger_mouse_down: false,
                 full_bleed: false,
+                content_focus_handle: None,
                 ignore_blur_until: None,
                 suppress_focus_selection: !window.is_a11y_enabled(),
             },
@@ -453,6 +456,7 @@ impl ContextMenu {
 
         self.items = new_menu.items;
         self.spacing = new_menu.spacing;
+        self.content_focus_handle = new_menu.content_focus_handle;
         self.submenu_trigger_bounds.borrow_mut().clear();
 
         cx.notify();
@@ -882,6 +886,19 @@ impl ContextMenu {
         self
     }
 
+    /// Focuses this handle instead of the menu whenever the menu is focused as
+    /// a submenu, so that embedded content such as a picker takes keyboard input.
+    pub fn focus_content(mut self, focus_handle: FocusHandle) -> Self {
+        self.content_focus_handle = Some(focus_handle);
+        self
+    }
+
+    fn submenu_focus_target(&self) -> FocusHandle {
+        self.content_focus_handle
+            .clone()
+            .unwrap_or_else(|| self.focus_handle.clone())
+    }
+
     pub fn fixed_width(mut self, width: DefiniteLength) -> Self {
         self.fixed_width = Some(width);
         self
@@ -1165,8 +1182,8 @@ impl ContextMenu {
         );
 
         if let SubmenuState::Open(open_submenu) = &self.submenu_state {
-            let focus_handle = open_submenu.entity.read(cx).focus_handle.clone();
-            window.focus(&focus_handle, cx);
+            let focus_target = open_submenu.entity.read(cx).submenu_focus_target();
+            window.focus(&focus_target, cx);
             open_submenu.entity.update(cx, |submenu, cx| {
                 submenu.select_first(&SelectFirst, window, cx);
             });
@@ -1300,6 +1317,7 @@ impl ContextMenu {
                 submenu_depth: parent_depth + 1,
                 submenu_trigger_mouse_down: false,
                 full_bleed: false,
+                content_focus_handle: None,
                 ignore_blur_until: None,
                 suppress_focus_selection: !window.is_a11y_enabled(),
             };
@@ -2211,6 +2229,7 @@ impl ContextMenu {
             submenu_depth: 0,
             submenu_trigger_mouse_down: false,
             full_bleed: false,
+            content_focus_handle: None,
             ignore_blur_until: None,
             suppress_focus_selection: !window.is_a11y_enabled(),
         }
@@ -2251,7 +2270,8 @@ impl Render for ContextMenu {
                     .borrow()
                     .contains_key(&open_submenu.item_index) =>
             {
-                Some(open_submenu.entity.read(cx).focus_handle.clone())
+                let submenu = open_submenu.entity.read(cx);
+                Some((submenu.focus_handle.clone(), submenu.submenu_focus_target()))
             }
             _ => None,
         };
@@ -2393,10 +2413,10 @@ impl Render for ContextMenu {
 
         // Content inside the submenu, such as an embedded picker, can hold
         // focus, so only move focus into the submenu when it's outside it.
-        if let Some(focus_handle) = focus_submenu.as_ref()
-            && !focus_handle.contains_focused(window, cx)
+        if let Some((submenu_focus_handle, focus_target)) = focus_submenu.as_ref()
+            && !submenu_focus_handle.contains_focused(window, cx)
         {
-            window.focus(focus_handle, cx);
+            window.focus(focus_target, cx);
         }
 
         if is_wide_window {
@@ -2621,6 +2641,114 @@ mod tests {
         assert!(
             content_is_focused,
             "the menu must not move focus off content inside its open submenu"
+        );
+    }
+
+    fn open_window_with_content_submenu(
+        content_focus: &FocusHandle,
+        cx: &mut TestAppContext,
+    ) -> (Entity<ContextMenu>, VisualTestContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        let window = cx.open_window(size(px(700.), px(400.)), {
+            let content_focus = content_focus.clone();
+            move |window, cx| {
+                let menu = ContextMenu::build(window, cx, move |menu, _, _| {
+                    let content_focus = content_focus.clone();
+                    menu.submenu("Search", move |menu, _, _| {
+                        let content_focus = content_focus.clone();
+                        menu.full_bleed()
+                            .focus_content(content_focus.clone())
+                            .custom_row(move |_, _| {
+                                div()
+                                    .track_focus(&content_focus)
+                                    .child("search field")
+                                    .into_any_element()
+                            })
+                    })
+                });
+                SubmenuTestView {
+                    menu,
+                    left: px(40.),
+                }
+            }
+        });
+        cx.run_until_parked();
+        let menu = window
+            .update(cx, |view, _, _| view.menu.clone())
+            .expect("submenu window");
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        draw_frames(&mut visual);
+        (menu, visual)
+    }
+
+    fn draw_frames(cx: &mut VisualTestContext) {
+        for _ in 0..3 {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+    }
+
+    #[gpui::test]
+    fn opening_submenu_from_keyboard_focuses_its_content(cx: &mut TestAppContext) {
+        let content_focus = cx.update(|cx| cx.focus_handle());
+        let (menu, mut visual) = open_window_with_content_submenu(&content_focus, cx);
+
+        menu.update_in(&mut visual, |menu, window, cx| {
+            menu.select_first(&SelectFirst, window, cx);
+            menu.select_submenu_child(&SelectChild, window, cx);
+        });
+        draw_frames(&mut visual);
+
+        let content_is_focused = visual.update(|window, _| content_focus.is_focused(window));
+        assert!(
+            content_is_focused,
+            "opening the submenu must focus its content"
+        );
+    }
+
+    #[gpui::test]
+    fn hovering_open_submenu_trigger_keeps_content_focused(cx: &mut TestAppContext) {
+        let content_focus = cx.update(|cx| cx.focus_handle());
+        let (menu, mut visual) = open_window_with_content_submenu(&content_focus, cx);
+
+        let trigger = menu.read_with(&visual, |menu, _| {
+            menu.submenu_trigger_bounds
+                .borrow()
+                .get(&0)
+                .copied()
+                .expect("trigger bounds")
+        });
+        visual.simulate_mouse_move(trigger.center(), None, Modifiers::default());
+        draw_frames(&mut visual);
+        let content_is_focused = visual.update(|window, _| content_focus.is_focused(window));
+        assert!(
+            content_is_focused,
+            "opening the submenu by hover must focus its content"
+        );
+
+        let submenu_center = menu.read_with(&visual, |menu, _| {
+            menu.submenu_bounds.get().expect("submenu bounds").center()
+        });
+        visual.simulate_mouse_move(submenu_center, None, Modifiers::default());
+        draw_frames(&mut visual);
+        visual.simulate_mouse_move(trigger.center(), None, Modifiers::default());
+        draw_frames(&mut visual);
+
+        let submenu_is_open = menu.read_with(&visual, |menu, _| {
+            matches!(menu.submenu_state, SubmenuState::Open(_))
+        });
+        let content_is_focused = visual.update(|window, _| content_focus.is_focused(window));
+        assert!(
+            submenu_is_open,
+            "hovering the trigger keeps the submenu open"
+        );
+        assert!(
+            content_is_focused,
+            "hovering the trigger again must leave focus on the submenu's content"
         );
     }
 
