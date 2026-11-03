@@ -304,11 +304,13 @@ impl RenderOnce for DropdownMenu {
             _ => popover,
         };
 
+        let (attach, anchor) = match self.attach {
+            Some(attach) => (attach, Anchor::TopLeft),
+            None => (Anchor::BottomRight, Anchor::TopRight),
+        };
         popover
-            .attach(match self.attach {
-                Some(attach) => attach,
-                None => Anchor::BottomRight,
-            })
+            .attach(attach)
+            .anchor(anchor)
             .when_some(self.offset, |this, offset| this.offset(offset))
     }
 }
