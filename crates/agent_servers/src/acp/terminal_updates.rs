@@ -1,6 +1,6 @@
 use acp_thread::{AcpThread, DisplayTerminalOutput, DisplayTerminalPatch};
-use agent_client_protocol::schema::{MaybeUndefined, v2 as acp_v2};
 use agent_client_protocol::{JsonRpcMessage, UntypedMessage};
+use agent_client_protocol::{schema::MaybeUndefined, v2::schema as acp_v2};
 use anyhow::{Context as _, Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gpui::Context;
@@ -86,6 +86,7 @@ pub fn decode_terminal_notification(
                     cwd: update.cwd,
                     output,
                     exit_status: update.exit_status,
+                    capabilities: update.capabilities,
                     meta: update.meta,
                 },
             }
@@ -139,7 +140,7 @@ mod tests {
         )?;
         let error =
             parse_terminal_notification(&message).expect_err("malformed chunk must be rejected");
-        assert_eq!(error.code, agent_client_protocol::ErrorCode::InvalidParams);
+        assert_eq!(error.code, agent_client_protocol::ErrorCode::INVALID_PARAMS);
         let serialized = serde_json::to_string(&error)?;
         assert!(!serialized.contains("private-"));
         assert!(serialized.len() < 200);

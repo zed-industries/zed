@@ -1,6 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::ClientUserMessageId;
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -821,7 +821,7 @@ impl ThreadsDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol::schema::v1 as acp;
+    use agent_client_protocol::v1::schema as acp;
     use chrono::{DateTime, TimeZone, Utc};
     use collections::HashMap;
     use gpui::TestAppContext;

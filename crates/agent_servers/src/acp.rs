@@ -17,13 +17,14 @@ pub use v2::AcpV2Connection;
 
 use acp_thread::{AcpThread, AuthRequired, ElicitationStore, LoadError};
 use action_log::ActionLog;
-use agent_client_protocol::schema::{
-    v1::{self as acp, ErrorCode},
-    v2 as acp_v2,
+use agent_client_protocol::{
+    Agent, Client, HandleDispatchFrom, Handled, JsonRpcMessage, JsonRpcResponse, Protocol,
+    Responder, UntypedMessage,
+    v2::{Builder as V2Builder, ConnectionTo as V2ConnectionTo, Responder as V2Responder},
 };
 use agent_client_protocol::{
-    Agent, Client, HandleDispatchFrom, Handled, JsonRpcMessage, JsonRpcResponse, Responder,
-    UntypedMessage, V2Builder, V2ConnectionTo,
+    v1::schema::{self as acp, ErrorCode},
+    v2::schema as acp_v2,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -212,30 +213,23 @@ fn initialization_error(error: anyhow::Error, debug_log: &AcpDebugLog) -> anyhow
 
 /// Helper for flattening the nested `Result` shapes that come out of
 /// `entity.update(cx, |_, cx| fallible_op(cx))` into a single `Result<T,
-/// acp::Error>`.
+/// agent_client_protocol::Error>`.
 ///
-/// `anyhow::Error` values get converted via `acp::Error::from`, which
-/// downcasts an `acp::Error` back out of `anyhow` when present, so typed
+/// `anyhow::Error` values get converted via `agent_client_protocol::Error::from`, which
+/// downcasts an `agent_client_protocol::Error` back out of `anyhow` when present, so typed
 /// errors like auth-required survive the trip.
 trait FlattenAcpResult<T> {
-    fn flatten_acp(self) -> Result<T, acp::Error>;
+    fn flatten_acp(self) -> Result<T, agent_client_protocol::Error>;
 }
 
-impl<T> FlattenAcpResult<T> for Result<Result<T, anyhow::Error>, anyhow::Error> {
-    fn flatten_acp(self) -> Result<T, acp::Error> {
+impl<T, E> FlattenAcpResult<T> for Result<Result<T, E>, anyhow::Error>
+where
+    E: Into<agent_client_protocol::Error>,
+{
+    fn flatten_acp(self) -> Result<T, agent_client_protocol::Error> {
         match self {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(err)) => Err(err.into()),
-            Err(err) => Err(err.into()),
-        }
-    }
-}
-
-impl<T> FlattenAcpResult<T> for Result<Result<T, acp::Error>, anyhow::Error> {
-    fn flatten_acp(self) -> Result<T, acp::Error> {
-        match self {
-            Ok(Ok(value)) => Ok(value),
-            Ok(Err(err)) => Err(err),
             Err(err) => Err(err.into()),
         }
     }
@@ -254,8 +248,8 @@ struct ClientContext {
     accepts_subagent_updates: bool,
 }
 
-fn dispatch_queue_closed_error() -> acp::Error {
-    acp::Error::internal_error().data("ACP foreground dispatch queue closed")
+fn dispatch_queue_closed_error() -> agent_client_protocol::Error {
+    agent_client_protocol::Error::internal_error().data("ACP foreground dispatch queue closed")
 }
 
 /// Work items sent from `Send` handler closures to the `!Send` foreground thread.
@@ -324,7 +318,7 @@ impl ForegroundWorkItem for ClientDisconnectWork {
 
 async fn settle_after_disconnect(
     dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
-) -> Result<(), acp::Error> {
+) -> Result<(), agent_client_protocol::Error> {
     let (acknowledgment, received) = futures::channel::oneshot::channel();
     let work: ForegroundWork = Box::new(ClientDisconnectWork { acknowledgment });
     if let Err(error) = dispatch_tx.unbounded_send(work) {
@@ -347,20 +341,22 @@ async fn drain_foreground_queue(dispatch_tx: &mpsc::UnboundedSender<ForegroundWo
         .context("ACP foreground dispatch queue closed")
 }
 
-struct RequestForegroundWork<Req, Res>
+struct RequestForegroundWork<Req, Res, P>
 where
     Req: Send + 'static,
     Res: JsonRpcResponse + Send + 'static,
+    P: Protocol,
 {
     request: Req,
-    responder: Responder<Res>,
-    handler: fn(Req, Responder<Res>, &mut AsyncApp, &ClientContext),
+    responder: Responder<Res, P>,
+    handler: fn(Req, Responder<Res, P>, &mut AsyncApp, &ClientContext),
 }
 
-impl<Req, Res> ForegroundWorkItem for RequestForegroundWork<Req, Res>
+impl<Req, Res, P> ForegroundWorkItem for RequestForegroundWork<Req, Res, P>
 where
     Req: Send + 'static,
     Res: JsonRpcResponse + Send + 'static,
+    P: Protocol,
 {
     fn run(self: Box<Self>, cx: &mut AsyncApp, ctx: &ClientContext) {
         let Self {
@@ -405,14 +401,15 @@ where
     }
 }
 
-fn enqueue_request<Req, Res>(
+fn enqueue_request<Req, Res, P>(
     dispatch_tx: &mpsc::UnboundedSender<ForegroundWork>,
     request: Req,
-    responder: Responder<Res>,
-    handler: fn(Req, Responder<Res>, &mut AsyncApp, &ClientContext),
+    responder: Responder<Res, P>,
+    handler: fn(Req, Responder<Res, P>, &mut AsyncApp, &ClientContext),
 ) where
     Req: Send + 'static,
     Res: JsonRpcResponse + Send + 'static,
+    P: Protocol,
 {
     let work: ForegroundWork = Box::new(RequestForegroundWork {
         request,
@@ -728,7 +725,15 @@ fn is_disconnect_error(error: &anyhow::Error) -> bool {
         })
 }
 
-fn map_acp_error(err: acp::Error) -> anyhow::Error {
+/// Agents report `-32002` for a session that is already gone, which `session/close` and
+/// `session/delete` treat as success.
+fn is_resource_not_found(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<agent_client_protocol::Error>()
+        .is_some_and(|error| error.code == agent_client_protocol::ErrorCode::RESOURCE_NOT_FOUND)
+}
+
+fn map_acp_error(err: agent_client_protocol::Error) -> anyhow::Error {
     let error = anyhow!(err);
     match AuthRequired::from_error(&error) {
         Some(auth_required) => error.context(auth_required),
@@ -739,12 +744,12 @@ fn map_acp_error(err: acp::Error) -> anyhow::Error {
 fn session_thread(
     ctx: &ClientContext,
     session_id: &acp_v2::SessionId,
-) -> Result<WeakEntity<AcpThread>, acp::Error> {
+) -> Result<WeakEntity<AcpThread>, agent_client_protocol::Error> {
     let sessions = ctx.sessions.borrow();
     sessions
         .get(session_id)
         .map(|session| session.thread.clone())
-        .ok_or_else(|| acp::Error::internal_error().data(format!("unknown session: {session_id}")))
+        .ok_or_else(|| acp_v2::Error::session_not_found(session_id.clone()).into())
 }
 
 fn route_v2_session_notification(
@@ -800,9 +805,12 @@ fn apply_subagent_update(
 ) -> Result<Entity<AcpThread>> {
     let parent_session_id = parent.read(cx).session_id().clone();
     let session_id = update.session_id.clone();
+    let parent_work_dirs = parent.read(cx).work_dirs().cloned();
     if let Some(subagent) = parent.read(cx).subagent(&session_id).cloned() {
         subagent.update(cx, |subagent, cx| {
-            subagent.update_subagent_association(update, cx)
+            subagent.update_subagent_association(update, cx)?;
+            subagent.inherit_subagent_work_dirs(parent_work_dirs.as_ref(), cx);
+            anyhow::Ok(())
         })?;
         return Ok(subagent);
     }
@@ -838,7 +846,9 @@ fn apply_subagent_update(
         .agent_owned()
     });
     subagent.update(cx, |subagent, cx| {
-        subagent.update_subagent_association(update, cx)
+        subagent.update_subagent_association(update, cx)?;
+        subagent.inherit_subagent_work_dirs(parent_work_dirs.as_ref(), cx);
+        anyhow::Ok(())
     })?;
     // Unlike a session Zed opened, releasing a subagent must not close it: the agent
     // releases subagents when their parent closes.
@@ -940,7 +950,11 @@ fn handle_v2_session_notification(
         .log_err();
 }
 
-fn respond_err<T: JsonRpcResponse>(responder: Responder<T>, err: acp::Error) {
+fn respond_err<T: JsonRpcResponse, P: Protocol>(
+    responder: Responder<T, P>,
+    err: impl Into<agent_client_protocol::Error>,
+) {
+    let err = err.into();
     // Log the actual error we're returning — otherwise agents that hit an
     // error path (e.g. unknown session) would see only the generic internal
     // error returned over the wire with no trace of why on the client side.
@@ -951,7 +965,10 @@ fn respond_err<T: JsonRpcResponse>(responder: Responder<T>, err: acp::Error) {
     responder.respond_with_error(err).log_err();
 }
 
-fn respond_result<T: JsonRpcResponse>(responder: Responder<T>, result: Result<T, acp::Error>) {
+fn respond_result<T: JsonRpcResponse, P: Protocol>(
+    responder: Responder<T, P>,
+    result: Result<T, agent_client_protocol::Error>,
+) {
     match result {
         Ok(response) => {
             responder.respond(response).log_err();
@@ -962,13 +979,13 @@ fn respond_result<T: JsonRpcResponse>(responder: Responder<T>, result: Result<T,
 
 fn handle_v2_request_permission(
     request: acp_v2::RequestPermissionRequest,
-    responder: Responder<acp_v2::RequestPermissionResponse>,
+    responder: V2Responder<acp_v2::RequestPermissionResponse>,
     cx: &mut AsyncApp,
     context: &ClientContext,
 ) {
     let cancellation = responder.cancellation();
     if cancellation.is_cancelled() {
-        return respond_err(responder, acp::Error::request_cancelled());
+        return respond_err(responder, agent_client_protocol::Error::request_cancelled());
     }
     let thread = match session_thread(context, &request.session_id) {
         Ok(thread) => thread,
@@ -976,9 +993,9 @@ fn handle_v2_request_permission(
     };
     let (request_id, task) = match thread
         .update(cx, |thread, cx| {
-            thread
-                .request_permission(request, cx)
-                .map_err(|error| acp::Error::invalid_params().data(error.to_string()))
+            thread.request_permission(request, cx).map_err(|error| {
+                agent_client_protocol::Error::invalid_params().data(error.to_string())
+            })
         })
         .flatten_acp()
     {
@@ -1010,15 +1027,15 @@ fn handle_v2_request_permission(
     .detach();
 }
 
-fn handle_v2_create_elicitation(
+fn handle_v2_create_elicitation<P: Protocol>(
     args: acp_v2::CreateElicitationRequest,
-    responder: Responder<acp_v2::CreateElicitationResponse>,
+    responder: Responder<acp_v2::CreateElicitationResponse, P>,
     cx: &mut AsyncApp,
     ctx: &ClientContext,
 ) {
     let cancellation = responder.cancellation();
     if cancellation.is_cancelled() {
-        return respond_err(responder, acp::Error::request_cancelled());
+        return respond_err(responder, agent_client_protocol::Error::request_cancelled());
     }
     match args.scope() {
         acp_v2::ElicitationScope::Session(scope) => {
@@ -1031,7 +1048,7 @@ fn handle_v2_create_elicitation(
                 .update(cx, |thread, cx| {
                     thread
                         .request_elicitation_with_id(args, cx)
-                        .map_err(acp_thread::elicitation::error_to_v1)
+                        .map_err(agent_client_protocol::Error::from)
                 })
                 .flatten_acp()
             {
@@ -1040,7 +1057,7 @@ fn handle_v2_create_elicitation(
             };
 
             cx.spawn(async move |cx| {
-                let result: Result<_, acp::Error> = cancellation
+                let result: Result<_, agent_client_protocol::Error> = cancellation
                     .run_until_cancelled(async { Ok(task.await) })
                     .await;
 
@@ -1068,7 +1085,7 @@ fn handle_v2_create_elicitation(
             {
                 return respond_err(
                     responder,
-                    acp::Error::invalid_params()
+                    agent_client_protocol::Error::invalid_params()
                         .data("Elicitation parent request is not owned by an active caller"),
                 );
             }
@@ -1076,7 +1093,7 @@ fn handle_v2_create_elicitation(
             let (elicitation_id, task) = match store.update(cx, |store, cx| {
                 store
                     .request_elicitation_with_id(args, cx)
-                    .map_err(acp_thread::elicitation::error_to_v1)
+                    .map_err(agent_client_protocol::Error::from)
             }) {
                 Ok(task) => task,
                 Err(e) => return respond_err(responder, e),
@@ -1084,7 +1101,7 @@ fn handle_v2_create_elicitation(
             let store = store.downgrade();
 
             cx.spawn(async move |cx| {
-                let result: Result<_, acp::Error> = cancellation
+                let result: Result<_, agent_client_protocol::Error> = cancellation
                     .run_until_cancelled(async { Ok(task.await) })
                     .await;
 
@@ -1109,7 +1126,7 @@ fn handle_v2_create_elicitation(
         _ => {
             respond_err(
                 responder,
-                acp::Error::invalid_params().data("unknown elicitation scope"),
+                agent_client_protocol::Error::invalid_params().data("unknown elicitation scope"),
             );
         }
     }
