@@ -16,7 +16,7 @@ use editor::{
 use futures::StreamExt;
 #[cfg(target_os = "windows")]
 use gpui::AppContext as _;
-use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
+use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, UpdateGlobal, px};
 use itertools::Itertools;
 use language::{CursorShape, Language, LanguageConfig, Point};
 pub use neovim_backed_test_context::*;
@@ -164,6 +164,90 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     cx.disable_vim();
     cx.enable_vim();
     assert_eq!(cx.mode(), Mode::Normal);
+}
+
+#[gpui::test]
+async fn test_modal_editing_switches_live_editors(cx: &mut TestAppContext) {
+    let mut cx = VimTestContext::new(cx, false).await;
+
+    for (selection, expected_mode) in [
+        (settings::ModalEditingContent::Vim, Some(Mode::Normal)),
+        (
+            settings::ModalEditingContent::Helix,
+            Some(Mode::HelixNormal),
+        ),
+        (settings::ModalEditingContent::None, None),
+        (
+            settings::ModalEditingContent::Helix,
+            Some(Mode::HelixNormal),
+        ),
+        (settings::ModalEditingContent::Vim, Some(Mode::Normal)),
+        (settings::ModalEditingContent::None, None),
+    ] {
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| settings.modal_editing = Some(selection));
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _, cx| {
+            let actual_mode = editor
+                .addon::<VimAddon>()
+                .map(|addon| addon.entity.read(cx).mode);
+            assert_eq!(actual_mode, expected_mode, "selection={selection:?}");
+        });
+    }
+
+    cx.simulate_keystrokes("h j k l");
+    cx.assert_editor_state("hjklˇ");
+}
+
+#[gpui::test]
+async fn test_modal_editing_toggle_commands_persist_one_selection(cx: &mut TestAppContext) {
+    let mut cx = VimTestContext::new(cx, false).await;
+    let fs = cx.workspace(|workspace, _, _| workspace.app_state().fs.clone());
+    fs.create_dir(
+        paths::settings_file()
+            .parent()
+            .expect("settings must have a parent"),
+    )
+    .await
+    .expect("settings directory should be created");
+
+    for (toggle_vim, expected_selection, expected_mode) in [
+        (true, "vim", Some(Mode::Normal)),
+        (false, "helix", Some(Mode::HelixNormal)),
+        (false, "none", None),
+        (false, "helix", Some(Mode::HelixNormal)),
+        (true, "vim", Some(Mode::Normal)),
+        (true, "none", None),
+    ] {
+        if toggle_vim {
+            cx.dispatch_action(crate::ToggleVimMode);
+        } else {
+            cx.dispatch_action(crate::ToggleHelixMode);
+        }
+        cx.run_until_parked();
+
+        let text = fs
+            .load(paths::settings_file())
+            .await
+            .expect("settings should be saved");
+        let settings: serde_json::Value =
+            settings::parse_json_with_comments(&text).expect("settings should be valid JSON");
+        assert_eq!(settings["modal_editing"], expected_selection);
+        assert!(settings.get("vim_mode").is_none());
+        assert!(settings.get("helix_mode").is_none());
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(
+                editor
+                    .addon::<VimAddon>()
+                    .map(|addon| addon.entity.read(cx).mode),
+                expected_mode,
+            );
+        });
+    }
 }
 
 #[perf]

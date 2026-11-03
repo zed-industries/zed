@@ -247,10 +247,10 @@ pub struct SettingsContent {
 
     pub repl: Option<ReplSettingsContent>,
 
-    /// Whether or not to enable Helix mode.
+    /// The modal editing mode to use.
     ///
-    /// Default: false
-    pub helix_mode: Option<bool>,
+    /// Default: none
+    pub modal_editing: Option<ModalEditingContent>,
 
     /// Determines when the mouse cursor should be hidden in response to
     /// keyboard input. Applies globally across all input surfaces (editors,
@@ -308,11 +308,6 @@ pub struct SettingsContent {
 
     pub title_bar: Option<TitleBarSettingsContent>,
 
-    /// Whether or not to enable Vim mode.
-    ///
-    /// Default: false
-    pub vim_mode: Option<bool>,
-
     // Settings related to calls in Zed
     pub calls: Option<CallSettingsContent>,
 
@@ -364,6 +359,35 @@ pub struct PerformanceProfilerSettingsContent {
 #[serde(transparent)]
 pub struct FeatureFlagsMap(pub HashMap<String, String>);
 
+/// The modal editing mode to use.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ModalEditingContent {
+    /// Standard, non-modal editing.
+    #[default]
+    None,
+    /// Vim-style modal editing.
+    Vim,
+    /// Helix-style modal editing.
+    Helix,
+}
+
+impl strum::VariantNames for ModalEditingContent {
+    const VARIANTS: &'static [&'static str] = &["None", "Vim", "Helix"];
+}
+
 // A manual `JsonSchema` impl keeps this type's schema registered under a
 // unique name. The derived impl on a `#[serde(transparent)]` newtype around
 // `HashMap<String, String>` would inline to the map's own schema name (`Map_of_string`),
@@ -408,10 +432,10 @@ fallible_options::flattened_deserialize!(SettingsContent {
         call_hierarchy, command_palette, file_finder, git_panel, tabs, tab_bar, tab_switcher, status_bar, preview_tabs, agent,
         agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
         git,
-        global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
+        global_lsp_settings, image_viewer, markdown_preview, repl, modal_editing, hide_mouse,
         journal, log, line_indicator_format, language_models, copilot, outline_panel, project_panel,
         node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
-        title_bar, vim_mode, calls, which_key, vim, modeline_lines, feature_flags,
+        title_bar, calls, which_key, vim, modeline_lines, feature_flags,
         instrumentation,
     },
     defaults: {},
