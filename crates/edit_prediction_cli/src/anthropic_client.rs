@@ -247,6 +247,7 @@ impl BatchingLlmClient {
                 role: match msg.role {
                     Role::User => "user".to_string(),
                     Role::Assistant => "assistant".to_string(),
+                    Role::System => "system".to_string(),
                 },
                 content: message_content_to_string(&msg.content),
             })
@@ -571,6 +572,7 @@ impl BatchingLlmClient {
                         role: match msg.role.as_str() {
                             "user" => Role::User,
                             "assistant" => Role::Assistant,
+                            "system" => Role::System,
                             _ => Role::User,
                         },
                         content: vec![RequestContent::Text {
