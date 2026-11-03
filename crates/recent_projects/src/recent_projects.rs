@@ -43,7 +43,10 @@ use ui::{
     ButtonLike, ContextMenu, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
     ListSubHeader, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
-use util::{ResultExt, paths::PathExt};
+use util::{
+    ResultExt,
+    paths::{PathExt, PathStyle},
+};
 use workspace::{
     HistoryManager, ModalView, MultiWorkspace, OpenMode, OpenOptions, OpenVisible, RecentWorkspace,
     SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
@@ -1289,14 +1292,19 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let tooltip_path: SharedString = ordered_paths.join("\n").into();
                 let icon = icon_for_project_group(key);
                 let show_icon = self.filtered_entries_include_remote_project();
+                let path_style = self.path_style_for_project_group(key, window, cx);
 
                 let mut path_start_offset = 0;
                 let (match_labels, path_highlights): (Vec<_>, Vec<_>) = paths
                     .ordered_paths()
                     .map(|p| p.compact())
                     .map(|path| {
-                        let highlighted_text =
-                            highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
+                        let highlighted_text = highlights_for_path(
+                            path.as_ref(),
+                            path_style,
+                            &hit.positions,
+                            path_start_offset,
+                        );
                         path_start_offset += highlighted_text.1.text.len();
                         highlighted_text
                     })
@@ -1404,6 +1412,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             }
             ProjectPickerEntry::RecentProject(hit) => {
                 let workspace = self.workspaces.get(hit.candidate_id)?;
+                let path_style = workspace.effective_path_style();
                 let location = &workspace.location;
                 let raw_paths = &workspace.paths;
                 let identity_paths = &workspace.identity_paths;
@@ -1430,8 +1439,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .ordered_paths()
                     .map(|p| p.compact())
                     .map(|path| {
-                        let highlighted_text =
-                            highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
+                        let highlighted_text = highlights_for_path(
+                            path.as_ref(),
+                            path_style,
+                            &hit.positions,
+                            path_start_offset,
+                        );
                         path_start_offset += highlighted_text.1.text.len();
                         highlighted_text
                     })
@@ -1938,11 +1951,11 @@ pub(crate) fn icon_for_remote_connection(options: Option<&RemoteConnectionOption
 // Compute the highlighted text for the name and path
 pub(crate) fn highlights_for_path(
     path: &Path,
+    path_style: PathStyle,
     match_positions: &Vec<usize>,
     path_start_offset: usize,
 ) -> (Option<HighlightedMatch>, HighlightedMatch) {
-    let path_string = path.to_string_lossy();
-    let path_text = path_string.to_string();
+    let path_text = path.to_string_lossy().into_owned();
     let path_byte_len = path_text.len();
     // Get the subset of match highlight positions that line up with the given path.
     // Also adjusts them to start at the path start
@@ -1956,7 +1969,7 @@ pub(crate) fn highlights_for_path(
 
     // Again subset the highlight positions to just those that line up with the file_name
     // again adjusted to the start of the file_name
-    let file_name_text_and_positions = path.file_name().map(|file_name| {
+    let file_name_text_and_positions = path_style.file_name(path).map(|file_name| {
         let file_name_text = file_name.to_string_lossy().into_owned();
         let file_name_start_byte = path_byte_len - file_name_text.len();
         let highlight_positions = path_positions
@@ -2365,6 +2378,40 @@ impl RecentProjectsDelegate {
         }
 
         false
+    }
+
+    fn path_style_for_project_group(
+        &self,
+        key: &ProjectGroupKey,
+        window: &Window,
+        cx: &App,
+    ) -> PathStyle {
+        if key.host().is_none() {
+            return PathStyle::local();
+        }
+
+        // Prefer a loaded workspace's live connection; fall back to the persisted value for
+        // groups that haven't connected yet (e.g. restored from a previous session).
+        let live_path_style =
+            window
+                .root::<MultiWorkspace>()
+                .flatten()
+                .and_then(|multi_workspace| {
+                    multi_workspace
+                        .read(cx)
+                        .workspaces_for_project_group(key, cx)
+                        .next()
+                        .map(|workspace| workspace.read(cx).path_style(cx))
+                });
+
+        live_path_style
+            .or_else(|| {
+                self.workspaces
+                    .iter()
+                    .find(|workspace| key.matches_identity(&workspace.project_group_key()))
+                    .and_then(|workspace| workspace.path_style)
+            })
+            .unwrap_or_else(PathStyle::local)
     }
 
     fn is_active_project_group(&self, key: &ProjectGroupKey, cx: &App) -> bool {

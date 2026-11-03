@@ -2708,6 +2708,16 @@ impl RecentWorkspace {
         };
         ProjectGroupKey::new(host, self.identity_paths.clone())
     }
+
+    /// Local workspaces always use this machine's path style, so the persisted value is only
+    /// consulted for remote workspaces. Remote rows saved before `path_style` was persisted
+    /// have no value and fall back to the local style.
+    pub fn effective_path_style(&self) -> PathStyle {
+        match &self.location {
+            SerializedWorkspaceLocation::Local => PathStyle::local(),
+            SerializedWorkspaceLocation::Remote(_) => self.path_style.unwrap_or(PathStyle::local()),
+        }
+    }
 }
 
 async fn resolve_local_workspace_identity(fs: &dyn Fs, paths: &PathList) -> Option<PathList> {
