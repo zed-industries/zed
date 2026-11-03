@@ -237,6 +237,7 @@ pub struct ContextMenu {
     submenu_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     submenu_depth: usize,
     submenu_trigger_mouse_down: bool,
+    full_bleed: bool,
     ignore_blur_until: Option<Instant>,
     /// When set to true, the next on_focus_in callback will not automatically
     /// select an item. This prevents a visual flash where a submenu close in
@@ -369,6 +370,7 @@ impl ContextMenu {
                     submenu_bounds: Rc::new(Cell::new(None)),
                     submenu_depth: 0,
                     submenu_trigger_mouse_down: false,
+                    full_bleed: false,
                     ignore_blur_until: None,
                     suppress_focus_selection: !window.is_a11y_enabled(),
                 },
@@ -441,6 +443,7 @@ impl ContextMenu {
                 submenu_bounds: Rc::new(Cell::new(None)),
                 submenu_depth: 0,
                 submenu_trigger_mouse_down: false,
+                full_bleed: false,
                 ignore_blur_until: None,
                 suppress_focus_selection: !window.is_a11y_enabled(),
             },
@@ -872,6 +875,13 @@ impl ContextMenu {
         handler(None, window, cx);
     }
 
+    /// Renders custom rows edge to edge, without the padding around and
+    /// between items, for menus that host an embedded view such as a picker.
+    pub fn full_bleed(mut self) -> Self {
+        self.full_bleed = true;
+        self
+    }
+
     pub fn fixed_width(mut self, width: DefiniteLength) -> Self {
         self.fixed_width = Some(width);
         self
@@ -1289,6 +1299,7 @@ impl ContextMenu {
                 submenu_bounds: Rc::new(Cell::new(None)),
                 submenu_depth: parent_depth + 1,
                 submenu_trigger_mouse_down: false,
+                full_bleed: false,
                 ignore_blur_until: None,
                 suppress_focus_selection: !window.is_a11y_enabled(),
             };
@@ -1484,37 +1495,42 @@ impl ContextMenu {
                             .left_0(),
                         )
                     })
-                    .child(
-                        ListItem::new(ix)
-                            .inset(true)
-                            .spacing(self.spacing)
-                            .when(selectable, |item| item.aria_role(Role::MenuItem))
-                            .when(is_active_descendant(selectable), |item| {
-                                item.aria_active_descendant()
-                            })
-                            .toggle_state(Some(ix) == self.selected_index)
-                            .selectable(selectable)
-                            .when(selectable, |item| {
-                                item.on_click({
-                                    let context = self.action_context.clone();
-                                    let keep_open_on_confirm = self.keep_open_on_confirm;
-                                    move |_, window, cx| {
-                                        handler(context.as_ref(), window, cx);
-                                        menu.update(cx, |menu, cx| {
-                                            menu.clicked = true;
-
-                                            if keep_open_on_confirm {
-                                                menu.rebuild(window, cx);
-                                            } else {
-                                                cx.emit(DismissEvent);
-                                            }
-                                        })
-                                        .ok();
-                                    }
+                    .map(|this| {
+                        if self.full_bleed && !selectable {
+                            return this.child(entry_render(window, cx));
+                        }
+                        this.child(
+                            ListItem::new(ix)
+                                .inset(true)
+                                .spacing(self.spacing)
+                                .when(selectable, |item| item.aria_role(Role::MenuItem))
+                                .when(is_active_descendant(selectable), |item| {
+                                    item.aria_active_descendant()
                                 })
-                            })
-                            .child(entry_render(window, cx)),
-                    )
+                                .toggle_state(Some(ix) == self.selected_index)
+                                .selectable(selectable)
+                                .when(selectable, |item| {
+                                    item.on_click({
+                                        let context = self.action_context.clone();
+                                        let keep_open_on_confirm = self.keep_open_on_confirm;
+                                        move |_, window, cx| {
+                                            handler(context.as_ref(), window, cx);
+                                            menu.update(cx, |menu, cx| {
+                                                menu.clicked = true;
+
+                                                if keep_open_on_confirm {
+                                                    menu.rebuild(window, cx);
+                                                } else {
+                                                    cx.emit(DismissEvent);
+                                                }
+                                            })
+                                            .ok();
+                                        }
+                                    })
+                                })
+                                .child(entry_render(window, cx)),
+                        )
+                    })
                     .into_any_element()
             }
             ContextMenuItem::Submenu {
@@ -2194,6 +2210,7 @@ impl ContextMenu {
             submenu_bounds: Rc::new(Cell::new(None)),
             submenu_depth: 0,
             submenu_trigger_mouse_down: false,
+            full_bleed: false,
             ignore_blur_until: None,
             suppress_focus_selection: !window.is_a11y_enabled(),
         }
@@ -2359,14 +2376,18 @@ impl Render for ContextMenu {
                             }
                             el
                         })
-                        .child(
-                            List::new().children(
-                                self.items
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(ix, item)| self.render_menu_item(ix, item, window, cx)),
-                            ),
-                        ),
+                        .map(|this| {
+                            let items = self
+                                .items
+                                .iter()
+                                .enumerate()
+                                .map(|(ix, item)| self.render_menu_item(ix, item, window, cx));
+                            if self.full_bleed {
+                                this.children(items)
+                            } else {
+                                this.child(List::new().children(items))
+                            }
+                        }),
                 )
         };
 
