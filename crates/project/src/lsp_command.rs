@@ -2358,10 +2358,9 @@ impl LspCommand for GetReferences {
                 Ok(target_buffer_handle
                     .clone()
                     .read_with(&cx, |target_buffer, _| {
-                        let target_start = target_buffer
-                            .clip_point_utf16(point_from_lsp(location.range.start), Bias::Left);
-                        let target_end = target_buffer
-                            .clip_point_utf16(point_from_lsp(location.range.end), Bias::Left);
+                        let range = range_from_lsp(location.range);
+                        let target_start = target_buffer.clip_point_utf16(range.start, Bias::Left);
+                        let target_end = target_buffer.clip_point_utf16(range.end, Bias::Left);
                         Location {
                             buffer: target_buffer_handle,
                             range: target_buffer.anchor_after(target_start)
