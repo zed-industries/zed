@@ -118,12 +118,20 @@ impl InstanceBufferPool {
     }
 }
 
+enum DisplayLinkMode {
+    Detached,
+    Attached {
+        drawable: Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>,
+    },
+}
+
 pub struct MetalRenderer {
     device: Retained<ProtocolObject<dyn MTLDevice>>,
     layer: Option<Retained<CAMetalLayer>>,
     is_apple_gpu: bool,
     is_unified_memory: bool,
     presents_with_transaction: bool,
+    display_link_mode: DisplayLinkMode,
     /// For headless rendering, tracks whether output should be opaque
     opaque: bool,
     command_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
@@ -410,6 +418,7 @@ impl MetalRenderer {
             device,
             layer,
             presents_with_transaction: false,
+            display_link_mode: DisplayLinkMode::Detached,
             is_apple_gpu,
             is_unified_memory,
             opaque,
@@ -449,6 +458,46 @@ impl MetalRenderer {
         &self.sprite_atlas
     }
 
+    /// Draw the next frame into `drawable` instead of asking the layer for one.
+    ///
+    /// A `CAMetalDisplayLink` hands out each frame's drawable early enough for
+    /// the frame to reach the display on time; `nextDrawable` would instead
+    /// wait for the compositor to release one. Pass `None` once the frame is
+    /// done, so a drawable the frame did not use goes back to the layer.
+    ///
+    /// Returns the drawable this replaces: after a frame, `Some` means the
+    /// frame neither drew nor presented.
+    ///
+    /// This is a setter rather than a guard scoped to one frame because the
+    /// window releases its lock on the renderer while GPUI draws.
+    pub fn set_frame_drawable(
+        &mut self,
+        drawable: Option<Retained<ProtocolObject<dyn CAMetalDrawable>>>,
+    ) -> Option<Retained<ProtocolObject<dyn CAMetalDrawable>>> {
+        match &mut self.display_link_mode {
+            DisplayLinkMode::Attached { drawable: current } => mem::replace(current, drawable),
+            DisplayLinkMode::Detached => {
+                // Only a live link hands out drawables, and a link is detached
+                // only after it has been invalidated.
+                debug_assert!(
+                    drawable.is_none(),
+                    "received a display link drawable while detached"
+                );
+                None
+            }
+        }
+    }
+
+    /// Record whether a `CAMetalDisplayLink` drives the layer. While one
+    /// does, frames are drawn only into the drawables it hands out.
+    pub fn set_display_link_attached(&mut self, attached: bool) {
+        self.display_link_mode = if attached {
+            DisplayLinkMode::Attached { drawable: None }
+        } else {
+            DisplayLinkMode::Detached
+        };
+    }
+
     pub fn set_presents_with_transaction(&mut self, presents_with_transaction: bool) {
         self.presents_with_transaction = presents_with_transaction;
         if let Some(layer) = &self.layer {
@@ -469,12 +518,25 @@ impl MetalRenderer {
         // We are uncertain when this happens, but sometimes size can be 0 here. Most likely before
         // the layout pass on window creation. Zero-sized texture creation causes SIGABRT.
         // https://github.com/zed-industries/zed/issues/36229
-        self.path_intermediate_texture = None;
-        self.path_intermediate_msaa_texture = None;
         if size.width.0 <= 0 || size.height.0 <= 0 {
+            self.path_intermediate_texture = None;
+            self.path_intermediate_msaa_texture = None;
             return Ok(());
         }
 
+        if self
+            .path_intermediate_texture
+            .as_ref()
+            .is_some_and(|texture| {
+                texture.width() == size.width.0 as usize
+                    && texture.height() == size.height.0 as usize
+            })
+        {
+            return Ok(());
+        }
+
+        self.path_intermediate_texture = None;
+        self.path_intermediate_msaa_texture = None;
         let texture_descriptor = MTLTextureDescriptor::new();
         // SAFETY: The dimensions are positive and this descriptor creates a 2D texture.
         unsafe {
@@ -539,20 +601,32 @@ impl MetalRenderer {
                 return;
             }
         };
-        let viewport_size = layer.drawableSize();
-        let viewport_size: Size<DevicePixels> = size(
-            (viewport_size.width.ceil() as i32).into(),
-            (viewport_size.height.ceil() as i32).into(),
-        );
-        let drawable = if let Some(drawable) = layer.nextDrawable() {
-            drawable
-        } else {
-            log::error!(
-                "failed to retrieve next drawable, drawable size: {:?}",
-                viewport_size
-            );
-            return;
+        let drawable = match &mut self.display_link_mode {
+            DisplayLinkMode::Attached { drawable } => {
+                let Some(drawable) = drawable.take() else {
+                    log::error!("skipped a frame drawn outside its display link's update");
+                    return;
+                };
+                drawable
+            }
+            DisplayLinkMode::Detached => {
+                let Some(drawable) = layer.nextDrawable() else {
+                    log::error!(
+                        "failed to retrieve next drawable, drawable size: {:?}",
+                        layer.drawableSize()
+                    );
+                    return;
+                };
+                drawable
+            }
         };
+        // A display link's drawable was sized when the link handed it out,
+        // which can be before a resize the layer has since taken.
+        let texture = drawable.texture();
+        let viewport_size: Size<DevicePixels> = size(
+            (texture.width() as i32).into(),
+            (texture.height() as i32).into(),
+        );
 
         let command_buffer = match self.render_frame(scene, &drawable.texture(), viewport_size) {
             Ok(command_buffer) => command_buffer,
@@ -643,17 +717,8 @@ impl MetalRenderer {
             (viewport_size.width.ceil() as i32).into(),
             (viewport_size.height.ceil() as i32).into(),
         );
-        let drawable = layer
-            .nextDrawable()
-            .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
-
-        let command_buffer = self.render_frame(scene, &drawable.texture(), viewport_size)?;
-
-        // Commit and wait for completion without presenting
-        command_buffer.commit();
-        command_buffer.waitUntilCompleted();
-
-        read_texture_to_image(&drawable.texture())
+        // CAMetalDisplayLink owns the drawable, so render into a texture we own.
+        self.render_offscreen(scene, viewport_size)
     }
 
     /// Renders a scene to an image without requiring a window or CAMetalLayer.
@@ -673,50 +738,57 @@ impl MetalRenderer {
         // Headless callers do not have a Cocoa event-loop pool to release
         // autoreleased command buffers and render-pass descriptors.
         objc2::rc::autoreleasepool(|_| {
-            // Update path intermediate textures for this size
             self.update_path_intermediate_textures(size)?;
-
-            // Create an offscreen texture as render target
-            let texture_descriptor = MTLTextureDescriptor::new();
-            unsafe {
-                texture_descriptor.setWidth(size.width.0 as usize);
-                texture_descriptor.setHeight(size.height.0 as usize);
-            }
-            texture_descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
-            texture_descriptor
-                .setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
-            // Like the atlas, only Apple GPUs can create shared textures on macOS;
-            // Intel Macs cannot, even with unified memory. iOS has no managed storage.
-            let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
-            texture_descriptor.setStorageMode(if uses_shared_storage {
-                MTLStorageMode::Shared
-            } else {
-                MTLStorageMode::Managed
-            });
-            let target_texture = self
-                .device
-                .newTextureWithDescriptor(&texture_descriptor)
-                .context("allocating headless render target")?;
-
-            let command_buffer = self.render_frame(scene, &target_texture, size)?;
-
-            // Managed textures require an explicit blit synchronize before the CPU
-            // can read back the rendered data. Without this, get_bytes returns
-            // stale zeros.
-            if !uses_shared_storage {
-                let blit = command_buffer
-                    .blitCommandEncoder()
-                    .context("creating blit command encoder")?;
-                blit.synchronizeResource(ProtocolObject::from_ref(&*target_texture));
-                blit.endEncoding();
-            }
-
-            // Commit and wait for completion
-            command_buffer.commit();
-            command_buffer.waitUntilCompleted();
-
-            read_texture_to_image(&target_texture)
+            self.render_offscreen(scene, size)
         })
+    }
+
+    /// Renders a scene into a new offscreen texture of `size` and reads it
+    /// back, without presenting anything.
+    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    fn render_offscreen(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<RgbaImage> {
+        if size.width.0 <= 0 || size.height.0 <= 0 {
+            anyhow::bail!("Invalid size for render_offscreen: {:?}", size);
+        }
+
+        let texture_descriptor = MTLTextureDescriptor::new();
+        // SAFETY: The dimensions are positive and this descriptor creates a 2D texture.
+        unsafe {
+            texture_descriptor.setWidth(size.width.0 as usize);
+            texture_descriptor.setHeight(size.height.0 as usize);
+        }
+        texture_descriptor.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+        texture_descriptor.setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
+        // Like the atlas, only Apple GPUs can create shared textures on macOS;
+        // Intel Macs cannot, even with unified memory. iOS has no managed storage.
+        let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
+        texture_descriptor.setStorageMode(if uses_shared_storage {
+            MTLStorageMode::Shared
+        } else {
+            MTLStorageMode::Managed
+        });
+        let target_texture = self
+            .device
+            .newTextureWithDescriptor(&texture_descriptor)
+            .context("allocating offscreen render target")?;
+
+        let command_buffer = self.render_frame(scene, &target_texture, size)?;
+
+        // Managed textures require an explicit blit synchronize before the CPU
+        // can read back the rendered data. Without this, get_bytes returns
+        // stale zeros.
+        if !uses_shared_storage {
+            let blit = command_buffer
+                .blitCommandEncoder()
+                .context("creating blit command encoder")?;
+            blit.synchronizeResource(ProtocolObject::from_ref(&*target_texture));
+            blit.endEncoding();
+        }
+
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+
+        read_texture_to_image(&target_texture)
     }
 
     /// Renders a scene to a reused offscreen texture without reading pixels
@@ -1856,6 +1928,115 @@ mod tests {
         CVPixelBufferUnlockBaseAddress, kCVPixelBufferIOSurfacePropertiesKey,
     };
     use objc2_metal::MTLCommandBufferStatus;
+
+    #[test]
+    fn path_intermediate_textures_are_reused_until_resize() -> Result<()> {
+        let mut renderer = MetalRenderer::new_headless(Default::default())?;
+        let initial_size = size(DevicePixels(64), DevicePixels(64));
+        renderer.update_path_intermediate_textures(initial_size)?;
+        let initial_texture = renderer
+            .path_intermediate_texture
+            .clone()
+            .context("missing path intermediate texture")?;
+        let initial_msaa_texture = renderer.path_intermediate_msaa_texture.clone();
+
+        renderer.update_path_intermediate_textures(initial_size)?;
+        assert!(ptr::eq(
+            &*initial_texture,
+            renderer
+                .path_intermediate_texture
+                .as_deref()
+                .context("missing reused texture")?,
+        ));
+        assert_eq!(
+            initial_msaa_texture.as_ref().map(Retained::as_ptr),
+            renderer
+                .path_intermediate_msaa_texture
+                .as_ref()
+                .map(Retained::as_ptr),
+        );
+
+        renderer.update_path_intermediate_textures(size(DevicePixels(128), DevicePixels(64)))?;
+        let resized_texture = renderer
+            .path_intermediate_texture
+            .as_deref()
+            .context("missing resized texture")?;
+        assert_eq!(
+            (resized_texture.width(), resized_texture.height()),
+            (128, 64)
+        );
+        assert!(!ptr::eq(&*initial_texture, resized_texture));
+        if let Some(texture) = &renderer.path_intermediate_msaa_texture {
+            assert_eq!((texture.width(), texture.height()), (128, 64));
+        }
+
+        for (width, height) in [(0, 64), (64, 0), (-1, 64), (64, -1)] {
+            renderer.update_path_intermediate_textures(size(
+                DevicePixels(width),
+                DevicePixels(height),
+            ))?;
+            assert!(renderer.path_intermediate_texture.is_none());
+            assert!(renderer.path_intermediate_msaa_texture.is_none());
+            renderer.update_path_intermediate_textures(initial_size)?;
+            assert!(renderer.path_intermediate_texture.is_some());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn render_to_image_rejects_zero_sized_layer() -> Result<()> {
+        let mut renderer = MetalRenderer::new(Default::default(), false, false)?;
+        for (width, height) in [(0, 0), (0, 64), (64, 0)] {
+            renderer.update_drawable_size(size(DevicePixels(width), DevicePixels(height)));
+            assert!(renderer.render_to_image(&Scene::default()).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn display_link_mode_consumes_and_clears_drawables() -> Result<()> {
+        let mut renderer = MetalRenderer::new(Default::default(), false, false)?;
+        renderer.update_drawable_size(size(DevicePixels(64), DevicePixels(64)));
+        let drawable = renderer
+            .layer()
+            .and_then(|layer| layer.nextDrawable())
+            .context("window renderer must supply a drawable")?;
+
+        renderer.set_display_link_attached(true);
+        assert!(matches!(
+            renderer.display_link_mode,
+            DisplayLinkMode::Attached { drawable: None }
+        ));
+        assert!(
+            renderer
+                .set_frame_drawable(Some(drawable.clone()))
+                .is_none()
+        );
+        assert!(matches!(
+            renderer.display_link_mode,
+            DisplayLinkMode::Attached { drawable: Some(_) }
+        ));
+        renderer.draw(&Scene::default());
+        assert!(matches!(
+            renderer.display_link_mode,
+            DisplayLinkMode::Attached { drawable: None }
+        ));
+        // A frame that drew consumed its drawable; one that didn't hands it back.
+        assert!(
+            renderer
+                .set_frame_drawable(Some(drawable.clone()))
+                .is_none()
+        );
+        assert!(renderer.set_frame_drawable(None).is_some());
+
+        renderer.set_frame_drawable(Some(drawable));
+        renderer.set_display_link_attached(false);
+        assert!(matches!(
+            renderer.display_link_mode,
+            DisplayLinkMode::Detached
+        ));
+        Ok(())
+    }
 
     #[test]
     fn render_core_video_surface() {

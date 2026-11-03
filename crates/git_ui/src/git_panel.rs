@@ -98,7 +98,7 @@ use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
-    Item, ModalView, Workspace,
+    DraggedSelection, Item, ModalView, SelectedEntry, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
 };
@@ -296,6 +296,41 @@ impl Render for StashMessageModal {
                     .child(Headline::new(self.kind.title()).size(HeadlineSize::XSmall)),
             )
             .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
+    }
+}
+
+struct DraggedGitEntryView {
+    icon: Option<SharedString>,
+    filename: SharedString,
+    entry_count: usize,
+    click_offset: Point<Pixels>,
+}
+
+impl Render for DraggedGitEntryView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
+        h_flex()
+            .font(ui_font)
+            .pl(self.click_offset.x + px(12.))
+            .pt(self.click_offset.y + px(12.))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .py_1()
+                    .px_2()
+                    .rounded_lg()
+                    .bg(cx.theme().colors().background)
+                    .map(|this| {
+                        if self.entry_count > 1 {
+                            this.child(Label::new(format!("{} entries", self.entry_count)))
+                        } else {
+                            this.when_some(self.icon.clone(), |this, icon| {
+                                this.child(Icon::from_path(icon))
+                            })
+                            .child(Label::new(self.filename.clone()))
+                        }
+                    }),
+            )
     }
 }
 
@@ -1228,6 +1263,7 @@ pub struct GitPanel {
     commit_history_scroll_handle: UniformListScrollHandle,
     commit_history: CommitHistory,
     focused_history_entry: Option<usize>,
+    active_history_sha: Option<Oid>,
     history_keyboard_nav: bool,
     _commit_message_buffer_subscription: Option<Subscription>,
     _repo_subscriptions: Vec<Subscription>,
@@ -1371,10 +1407,18 @@ impl GitPanel {
         let pending_commit_message_restores = serialized_panel
             .map(|panel| panel.commit_messages)
             .unwrap_or_default();
+        let workspace_entity = cx.entity();
 
         cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
+
+            cx.subscribe(&workspace_entity, |this, _, event, cx| {
+                if let workspace::Event::ActiveItemChanged = event {
+                    this.update_active_history_sha(cx);
+                }
+            })
+            .detach();
 
             let mut was_sort_by = GitPanelSettings::get_global(cx).sort_by;
             let mut was_group_by = GitPanelSettings::get_global(cx).group_by;
@@ -1565,6 +1609,7 @@ impl GitPanel {
                 commit_history_scroll_handle: UniformListScrollHandle::new(),
                 commit_history: CommitHistory::Loading,
                 focused_history_entry: None,
+                active_history_sha: None,
                 history_keyboard_nav: false,
                 _commit_message_buffer_subscription: None,
                 _repo_subscriptions: Vec::new(),
@@ -1819,6 +1864,42 @@ impl GitPanel {
             Some(RowMark::Directory(key)) => self.marked_directories.contains(&key),
             None => false,
         }
+    }
+
+    /// Builds the drag payload for the status entry at `index`, reusing the
+    /// project panel's so terminals and panes accept it. A marked row drags
+    /// every marked row. Deleted files have no project entry and are skipped.
+    fn dragged_selection(
+        &self,
+        index: usize,
+        entry: &GitStatusEntry,
+        repo: &Repository,
+        cx: &App,
+    ) -> Option<DraggedSelection> {
+        let project = self.project.read(cx);
+        let selected_entry_for = |repo_path: &RepoPath| {
+            let project_path = repo.repo_path_to_project_path(repo_path, cx)?;
+            let entry_id = project.entry_for_path(&project_path, cx)?.id;
+            Some(SelectedEntry {
+                worktree_id: project_path.worktree_id,
+                entry_id,
+            })
+        };
+        let marked_selections = if self.row_is_marked(index) {
+            self.marked_entries
+                .iter()
+                .chain(&self.marked_directories)
+                .map(|key| &key.path)
+                .unique()
+                .filter_map(|repo_path| selected_entry_for(repo_path))
+                .collect()
+        } else {
+            Arc::default()
+        };
+        Some(DraggedSelection {
+            active_selection: selected_entry_for(&entry.repo_path)?,
+            marked_selections,
+        })
     }
 
     /// The entries a file operation should act on: the marked set when a
@@ -2146,7 +2227,12 @@ impl GitPanel {
         if !self.focus_handle.contains_focused(window, cx) {
             cx.emit(Event::Focus);
         }
-        if self.active_tab == GitPanelTab::History && self.focused_history_entry.is_some() {
+        // Clicking into the panel also focuses it, and that shouldn't show the
+        // keyboard focus border.
+        if self.active_tab == GitPanelTab::History
+            && self.focused_history_entry.is_some()
+            && window.last_input_was_keyboard()
+        {
             self.history_keyboard_nav = true;
             cx.notify();
         }
@@ -4748,7 +4834,7 @@ impl GitPanel {
                     return Ok(());
                 };
                 let fetch = repo.update(cx, |repo, cx| {
-                    repo.fetch(fetch_options.clone(), askpass, cx)
+                    repo.fetch(fetch_options.clone(), Some(askpass), cx)
                 });
 
                 let remote_message = fetch.await?;
@@ -5564,6 +5650,9 @@ impl GitPanel {
             }
         }
         self.active_repository = new_active_repository;
+        if active_repository_changed {
+            self.update_active_history_sha(cx);
+        }
         self.reopen_commit_buffer(window, cx);
         self.preload_commit_history(cx);
         if self.active_tab == GitPanelTab::History {
@@ -7510,6 +7599,37 @@ impl GitPanel {
         }
     }
 
+    fn active_history_entry_index(&self) -> Option<usize> {
+        let active_history_sha = self.active_history_sha?;
+        self.commit_history_entries()
+            .iter()
+            .position(|entry| entry.sha == active_history_sha)
+    }
+
+    fn update_active_history_sha(&mut self, cx: &mut Context<Self>) {
+        let active_history_sha = maybe!({
+            let repository = self.active_repository.as_ref()?;
+            let commit_view = self
+                .workspace
+                .upgrade()?
+                .read(cx)
+                .active_item_as::<CommitView>(cx)?;
+            let commit_view = commit_view.read(cx);
+            if commit_view.repository() != repository {
+                return None;
+            }
+            commit_view.commit_sha().parse().ok()
+        });
+        if self.active_history_sha == active_history_sha {
+            return;
+        }
+        self.active_history_sha = active_history_sha;
+        if let Some(index) = self.active_history_entry_index() {
+            self.focused_history_entry = Some(index);
+        }
+        cx.notify();
+    }
+
     fn select_next_history_entry(&mut self, cx: &mut Context<Self>) {
         let count = self.commit_history_entries().len();
         if count == 0 {
@@ -7703,10 +7823,14 @@ impl GitPanel {
     fn set_commit_history(&mut self, commit_history: CommitHistory, cx: &mut Context<Self>) {
         let changed = self.commit_history != commit_history;
         self.commit_history = commit_history;
-        // Keep the focused entry within range as the history grows or clears.
+        // Keep the focused entry within range as the history grows or clears,
+        // starting from the active commit when nothing is focused yet.
         let count = self.commit_history_entries().len();
-        let focused = self.focused_history_entry.unwrap_or(0);
-        self.focused_history_entry = (count > 0).then(|| focused.min(count - 1));
+        let focused = self
+            .focused_history_entry
+            .or_else(|| self.active_history_entry_index());
+        self.focused_history_entry =
+            focused.and_then(|focused| (count > 0).then(|| focused.min(count - 1)));
         if changed {
             cx.notify();
         }
@@ -7754,6 +7878,7 @@ impl GitPanel {
         let remote = self.git_remote(cx);
 
         let focused_history_entry = self.focused_history_entry;
+        let active_history_sha = self.active_history_sha;
         let is_panel_focused = self.focus_handle.is_focused(window);
         let show_focus_border = self.history_keyboard_nav;
         let has_context_menu = self.context_menu.is_some();
@@ -7853,6 +7978,7 @@ impl GitPanel {
 
                                     let is_unpushed = index < ahead_count;
                                     let is_focused = focused_history_entry == Some(index);
+                                    let is_active = active_history_sha == Some(entry.sha);
                                     let is_context_menu_target =
                                         context_menu_target_index == Some(index);
                                     let workspace = workspace.clone();
@@ -7884,10 +8010,18 @@ impl GitPanel {
                                                 )
                                             },
                                         )
-                                        .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                        .when(is_context_menu_target, |this| {
-                                            this.bg(cx.theme().colors().element_hover)
-                                        })
+                                        .when_else(
+                                            is_active,
+                                            |this| this.bg(cx.theme().colors().element_selected),
+                                            |this| {
+                                                this.hover(|s| {
+                                                    s.bg(cx.theme().colors().element_hover)
+                                                })
+                                                .when(is_context_menu_target, |this| {
+                                                    this.bg(cx.theme().colors().element_hover)
+                                                })
+                                            },
+                                        )
                                         .child(
                                             h_flex()
                                                 .gap_1()
@@ -8900,6 +9034,10 @@ impl GitPanel {
             )
         };
 
+        let dragged_selection = self.dragged_selection(ix, entry, repo, cx);
+        let dragged_icon = file_icon.clone();
+        let dragged_filename: SharedString = display_name.clone().into();
+
         let folder_indicator = settings.folder_indicator;
         let name_row = h_flex()
             .min_w_0()
@@ -9038,6 +9176,16 @@ impl GitPanel {
                             }),
                     ),
             )
+            .when_some(dragged_selection, |this, dragged_selection| {
+                this.on_drag(dragged_selection, move |selection, click_offset, _, cx| {
+                    cx.new(|_| DraggedGitEntryView {
+                        icon: dragged_icon.clone(),
+                        filename: dragged_filename.clone(),
+                        entry_count: selection.items().count(),
+                        click_offset,
+                    })
+                })
+            })
             .on_click({
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     if event.modifiers().shift {
@@ -11025,17 +11173,23 @@ mod tests {
         );
     }
 
+    struct HistoryPanelTest {
+        workspace: Entity<Workspace>,
+        panel: Entity<GitPanel>,
+        cx: VisualTestContext,
+    }
+
     async fn history_panel_for_project(
         fs: Arc<FakeFs>,
         cx: &mut TestAppContext,
-    ) -> Entity<GitPanel> {
+    ) -> HistoryPanelTest {
         let project = Project::test(fs, [Path::new(path!("/root/project"))], cx).await;
         let window_handle =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
-        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
 
         cx.read(|cx| {
             project
@@ -11051,12 +11205,16 @@ mod tests {
         .await;
         cx.executor().run_until_parked();
 
-        let panel = workspace.update_in(cx, GitPanel::new);
-        panel.update_in(cx, |panel, window, cx| {
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        panel.update_in(&mut cx, |panel, window, cx| {
             panel.activate_history_tab(&ActivateHistoryTab, window, cx);
         });
         cx.run_until_parked();
-        panel
+        HistoryPanelTest {
+            workspace,
+            panel,
+            cx,
+        }
     }
 
     async fn wait_for_commit_history_to_settle(panel: &Entity<GitPanel>, cx: &mut TestAppContext) {
@@ -11081,7 +11239,7 @@ mod tests {
         })
         .unwrap();
 
-        let panel = history_panel_for_project(fs.clone(), cx).await;
+        let panel = history_panel_for_project(fs.clone(), cx).await.panel;
 
         wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
@@ -11110,7 +11268,7 @@ mod tests {
         })
         .unwrap();
 
-        let panel = history_panel_for_project(fs.clone(), cx).await;
+        let panel = history_panel_for_project(fs.clone(), cx).await.panel;
 
         wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
@@ -11146,7 +11304,7 @@ mod tests {
         .unwrap();
         fs.set_graph_error(dot_git, Some("simulated git log failure".into()));
 
-        let panel = history_panel_for_project(fs.clone(), cx).await;
+        let panel = history_panel_for_project(fs.clone(), cx).await.panel;
 
         wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
@@ -11161,7 +11319,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree("/root", json!({ "project": {} })).await;
 
-        let panel = history_panel_for_project(fs.clone(), cx).await;
+        let panel = history_panel_for_project(fs.clone(), cx).await.panel;
 
         panel.read_with(cx, |panel, _| {
             assert_eq!(panel.commit_history, CommitHistory::Loading);
@@ -11196,6 +11354,213 @@ mod tests {
         assert!(
             !fs.is_dir(Path::new(path!("/demo/plain.txt/.git"))).await,
             "git init should not run inside a single-file worktree"
+        );
+    }
+
+    /// Opens a History tab over three commits, returned newest first.
+    async fn history_panel_with_commits(cx: &mut TestAppContext) -> (HistoryPanelTest, [Oid; 3]) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({ "project": { ".git": {} } }))
+            .await;
+
+        let dot_git = Path::new(path!("/root/project/.git"));
+        let shas = [3, 2, 1].map(|byte| Oid::from_bytes(&[byte; 20]).unwrap());
+        fs.with_git_state(dot_git, false, |state| {
+            state.refs.insert("HEAD".into(), shas[0].to_string());
+            state.graph_commits = shas
+                .into_iter()
+                .map(|sha| {
+                    Arc::new(git::repository::InitialGraphCommitData {
+                        sha,
+                        parents: SmallVec::new(),
+                        ref_names: Vec::new(),
+                    })
+                })
+                .collect();
+        })
+        .unwrap();
+
+        let mut test = history_panel_for_project(fs, cx).await;
+        wait_for_commit_history_to_settle(&test.panel, &mut test.cx).await;
+
+        (test, shas)
+    }
+
+    impl HistoryPanelTest {
+        fn history_state(&self) -> (Option<Oid>, Option<usize>) {
+            self.panel.read_with(&self.cx, |panel, _| {
+                (panel.active_history_sha, panel.focused_history_entry)
+            })
+        }
+
+        fn open_commit(&mut self, sha: Oid) {
+            let repository = self.panel.read_with(&self.cx, |panel, _| {
+                panel.active_repository.clone().unwrap()
+            });
+            let workspace = self.workspace.downgrade();
+            self.cx.update(|window, cx| {
+                CommitView::open(
+                    sha.to_string(),
+                    repository.downgrade(),
+                    workspace,
+                    None,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            self.cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_history_tab_highlights_opened_commit_view(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (mut test, [_, middle_sha, _]) = history_panel_with_commits(cx).await;
+
+        assert_eq!(
+            test.history_state(),
+            (None, None),
+            "no commit should be highlighted or focused before one is opened"
+        );
+
+        test.open_commit(middle_sha);
+        assert_eq!(test.history_state(), (Some(middle_sha), Some(1)));
+    }
+
+    #[gpui::test]
+    async fn test_history_tab_clears_highlight_for_non_commit_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (mut test, [_, middle_sha, _]) = history_panel_with_commits(cx).await;
+        test.open_commit(middle_sha);
+        let commit_view = test
+            .workspace
+            .read_with(&test.cx, |workspace, cx| {
+                workspace.active_item_as::<CommitView>(cx)
+            })
+            .unwrap();
+
+        test.workspace
+            .update_in(&mut test.cx, |workspace, window, cx| {
+                let test_item = cx.new(TestItem::new);
+                workspace.add_item_to_active_pane(Box::new(test_item), None, true, window, cx);
+            });
+        test.cx.run_until_parked();
+        assert_eq!(
+            test.history_state(),
+            (None, Some(1)),
+            "switching to a non-commit tab should clear the highlight but keep the cursor"
+        );
+
+        test.workspace
+            .update_in(&mut test.cx, |workspace, window, cx| {
+                workspace.active_pane().update(cx, |pane, cx| {
+                    let index = pane.index_for_item(&commit_view).unwrap();
+                    pane.activate_item(index, true, true, window, cx);
+                });
+            });
+        test.cx.run_until_parked();
+        assert_eq!(test.history_state(), (Some(middle_sha), Some(1)));
+    }
+
+    #[gpui::test]
+    async fn test_history_tab_focuses_active_commit_after_reload(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (mut test, [_, _, oldest_sha]) = history_panel_with_commits(cx).await;
+        test.open_commit(oldest_sha);
+
+        test.panel.update_in(&mut test.cx, |panel, window, cx| {
+            panel.activate_changes_tab(&ActivateChangesTab, window, cx);
+        });
+        assert_eq!(test.history_state(), (Some(oldest_sha), None));
+
+        test.panel.update_in(&mut test.cx, |panel, window, cx| {
+            panel.activate_history_tab(&ActivateHistoryTab, window, cx);
+        });
+        wait_for_commit_history_to_settle(&test.panel, &mut test.cx).await;
+        assert_eq!(
+            test.history_state(),
+            (Some(oldest_sha), Some(2)),
+            "reloading the history should place the cursor on the active commit"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_history_tab_highlights_next_commit_view_after_close(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (mut test, [_, middle_sha, oldest_sha]) = history_panel_with_commits(cx).await;
+        test.open_commit(middle_sha);
+        test.open_commit(oldest_sha);
+        assert_eq!(test.history_state(), (Some(oldest_sha), Some(2)));
+
+        test.workspace
+            .update_in(&mut test.cx, |workspace, window, cx| {
+                workspace.active_pane().update(cx, |pane, cx| {
+                    let item_id = pane.active_item().unwrap().item_id();
+                    pane.close_item_by_id(item_id, workspace::SaveIntent::Skip, window, cx)
+                })
+            })
+            .await
+            .unwrap();
+        test.cx.run_until_parked();
+        assert_eq!(
+            test.history_state(),
+            (Some(middle_sha), Some(1)),
+            "closing the active commit view should highlight the commit view activated next"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_history_tab_focus_border_only_for_keyboard_focus(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (mut test, [_, middle_sha, _]) = history_panel_with_commits(cx).await;
+        test.workspace
+            .update_in(&mut test.cx, |workspace, window, cx| {
+                workspace.add_panel(test.panel.clone(), window, cx);
+                workspace.open_panel::<GitPanel>(window, cx);
+            });
+        test.open_commit(middle_sha);
+        let commit_view = test
+            .workspace
+            .read_with(&test.cx, |workspace, cx| {
+                workspace.active_item_as::<CommitView>(cx)
+            })
+            .unwrap();
+        let focus_panel = |cx: &mut VisualTestContext| {
+            test.panel
+                .update_in(cx, |panel, window, cx| panel.focus_handle.focus(window, cx));
+            cx.run_until_parked();
+        };
+        let focus_commit_view = |cx: &mut VisualTestContext| {
+            commit_view.update_in(cx, |commit_view, window, cx| {
+                commit_view.focus_handle(cx).focus(window, cx)
+            });
+            cx.run_until_parked();
+        };
+
+        focus_commit_view(&mut test.cx);
+        test.cx
+            .simulate_mouse_move(gpui::point(px(1.), px(1.)), None, Modifiers::none());
+        focus_panel(&mut test.cx);
+        assert!(
+            !test
+                .panel
+                .read_with(&test.cx, |panel, _| panel.history_keyboard_nav),
+            "focusing the panel after mouse input shouldn't show the focus border"
+        );
+
+        focus_commit_view(&mut test.cx);
+        test.cx.simulate_keystrokes("f19");
+        focus_panel(&mut test.cx);
+        assert!(
+            test.panel
+                .read_with(&test.cx, |panel, _| panel.history_keyboard_nav),
+            "focusing the panel after keyboard input should show the focus border"
         );
     }
 
@@ -14393,6 +14758,194 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_auto_fetch(cx: &mut TestAppContext) {
+        use collections::HashSet;
+        use project::trusted_worktrees::{DbTrustedPaths, PathTrust, TrustedWorktrees};
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "repo": {
+                    ".git": {},
+                    "file.rs": "fn main() {}"
+                }
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(path!("/root/repo/.git")),
+            &[("file.rs", StatusCode::Modified.worktree())],
+        );
+        fs.insert_branches(Path::new(path!("/root/repo/.git")), &["origin/main"]);
+        fs.set_remote_for_repo(
+            Path::new(path!("/root/repo/.git")),
+            "origin",
+            "https://example.com/repo.git",
+        );
+
+        // Use 20s interval (above the 15s minimum clamp)
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(
+                        r#"{"git": {"auto_fetch": {"enabled": true, "interval_secs": 20}}}"#,
+                        cx,
+                    )
+                    .unwrap();
+            });
+            project::trusted_worktrees::init(DbTrustedPaths::default(), cx);
+        });
+
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [path!("/root/repo").as_ref()], cx).await;
+
+        cx.run_until_parked();
+
+        let repo = project
+            .update(cx, |project, cx| project.active_repository(cx))
+            .expect("should have an active repository");
+        repo.read_with(cx, |repo, _| {
+            assert!(!repo.is_trusted(), "repository should start untrusted");
+        });
+
+        let fetch_count = |fs: &FakeFs| {
+            fs.with_git_state(Path::new(path!("/root/repo/.git")), false, |state| {
+                state.fetches.lock().len()
+            })
+            .unwrap()
+        };
+
+        assert_eq!(fetch_count(&fs), 0, "no fetch before timer fires");
+
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_secs(40));
+        cx.run_until_parked();
+        assert_eq!(
+            fetch_count(&fs),
+            0,
+            "untrusted repository should never be auto-fetched"
+        );
+
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_id = worktree_store.read_with(cx, |store, cx| {
+            store.worktrees().next().unwrap().read(cx).id()
+        });
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should be set"));
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                &worktree_store,
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        repo.read_with(cx, |repo, _| {
+            assert!(
+                repo.is_trusted(),
+                "repository should be trusted after trusting its worktree"
+            );
+        });
+
+        // Change an unrelated setting mid-wait — should not reset the timer
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_secs(10));
+        cx.run_until_parked();
+        assert_eq!(fetch_count(&fs), 0, "no fetch at 10s");
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(
+                        r#"{"git": {"auto_fetch": {"enabled": true, "interval_secs": 20}, "inline_blame": {"enabled": false}}}"#,
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+
+        // Advance the remaining 10s — fetch should fire on the original schedule
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_secs(10));
+        cx.run_until_parked();
+
+        assert!(
+            fetch_count(&fs) >= 1,
+            "unrelated settings change should not reset auto-fetch timer"
+        );
+
+        // Second fetch fires on schedule
+        let count_after_first = fetch_count(&fs);
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_secs(20));
+        cx.run_until_parked();
+
+        assert!(
+            fetch_count(&fs) > count_after_first,
+            "auto-fetch should trigger again on next interval"
+        );
+
+        // Disable auto-fetch via settings change
+        let count_before_disable = fetch_count(&fs);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(
+                        r#"{"git": {"auto_fetch": {"enabled": false, "interval_secs": 20}}}"#,
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_secs(30));
+        cx.run_until_parked();
+
+        assert_eq!(
+            fetch_count(&fs),
+            count_before_disable,
+            "no fetches should occur after disabling auto-fetch"
+        );
+
+        // Re-enable with a longer interval
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(
+                        r#"{"git": {"auto_fetch": {"enabled": true, "interval_secs": 30}}}"#,
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+        let count_before_re_enable = fetch_count(&fs);
+
+        // Advance less than the new interval — should not fetch
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_secs(20));
+        cx.run_until_parked();
+
+        assert_eq!(
+            fetch_count(&fs),
+            count_before_re_enable,
+            "should not fetch before new interval elapses"
+        );
+
+        // Advance past the new interval — should fetch
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_secs(10));
+        cx.run_until_parked();
+
+        assert!(
+            fetch_count(&fs) > count_before_re_enable,
+            "should fetch after new interval elapses"
+        );
+    }
+
+    #[gpui::test]
     async fn test_dispatch_context_with_focus_states(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -16468,6 +17021,41 @@ mod tests {
             panel.clear_marks_and_select(c_ix, cx);
             assert!(panel.marked_entries.is_empty());
             assert_eq!(panel.selected_entry, Some(c_ix));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_dragged_selection_carries_marked_rows(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_fs, _project, panel, mut cx) = setup_flat_marks_fixture(cx).await;
+
+        fn dragged_paths(panel: &GitPanel, path: &str, cx: &App) -> HashSet<RepoPath> {
+            let index = entry_index_for_repo_path(panel, &repo_path(path)).unwrap();
+            let entry = panel.entries[index].status_entry().unwrap();
+            let repo = panel.active_repository.as_ref().unwrap().read(cx);
+            let selection = panel.dragged_selection(index, entry, repo, cx).unwrap();
+            let project = panel.project.read(cx);
+            selection
+                .items()
+                .map(|item| project.path_for_entry(item.entry_id, cx).unwrap())
+                .map(|project_path| repo.project_path_to_repo_path(&project_path, cx).unwrap())
+                .collect()
+        }
+
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            mark_file(panel, "a.txt");
+            mark_file(panel, "b.txt");
+
+            assert_eq!(
+                dragged_paths(panel, "a.txt", cx),
+                HashSet::from_iter([repo_path("a.txt"), repo_path("b.txt")]),
+                "dragging a marked row should carry every marked row",
+            );
+            assert_eq!(
+                dragged_paths(panel, "c.txt", cx),
+                HashSet::from_iter([repo_path("c.txt")]),
+                "dragging an unmarked row should carry only that row",
+            );
         });
     }
 

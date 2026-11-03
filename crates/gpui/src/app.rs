@@ -1,7 +1,7 @@
 use scheduler::Instant;
 use std::{
     any::{TypeId, type_name},
-    cell::{BorrowMutError, Cell, Ref, RefCell, RefMut},
+    cell::{Cell, Ref, RefCell, RefMut},
     ffi::OsString,
     marker::PhantomData,
     mem,
@@ -87,22 +87,42 @@ pub struct AppCell {
     borrow_origin: Cell<Option<(&'static std::panic::Location<'static>, &'static str)>>,
 }
 
-impl AppCell {
-    #[cold]
-    #[track_caller]
-    fn borrow_failed(&self, kind: &str) -> ! {
-        let attempted = std::panic::Location::caller();
-        if let Some((origin, existing_kind)) = self.borrow_origin.get() {
-            panic!(
-                "RefCell already borrowed: attempted {kind} App borrow at {attempted}; \
-                 existing {existing_kind} borrow group began at {origin}"
-            );
-        }
-        panic!(
-            "RefCell already borrowed: attempted {kind} App borrow at {attempted}; origin unavailable"
-        );
-    }
+struct AppBorrowError {
+    attempted: &'static std::panic::Location<'static>,
+    kind: &'static str,
+    origin: Option<(&'static std::panic::Location<'static>, &'static str)>,
+}
 
+impl std::fmt::Display for AppBorrowError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            attempted,
+            kind,
+            origin,
+        } = self;
+        write!(
+            formatter,
+            "RefCell already borrowed: attempted {kind} App borrow at {attempted}; "
+        )?;
+        match origin {
+            Some((origin, existing_kind)) => write!(
+                formatter,
+                "existing {existing_kind} borrow group began at {origin}"
+            ),
+            None => write!(formatter, "origin unavailable"),
+        }
+    }
+}
+
+impl std::fmt::Debug for AppBorrowError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, formatter)
+    }
+}
+
+impl std::error::Error for AppBorrowError {}
+
+impl AppCell {
     #[doc(hidden)]
     #[track_caller]
     pub fn borrow(&self) -> AppRef<'_> {
@@ -113,10 +133,16 @@ impl AppCell {
         // Keep the first origin across overlapping shared borrows. The old
         // origin may remain after release; the next group replaces it.
         let starts_borrow_group = self.app.try_borrow_mut().is_ok();
-        let borrow = match self.app.try_borrow() {
-            Ok(borrow) => borrow,
-            Err(_) => self.borrow_failed("shared"),
-        };
+        let attempted = std::panic::Location::caller();
+        let borrow = self
+            .app
+            .try_borrow()
+            .map_err(|_error| AppBorrowError {
+                attempted,
+                kind: "shared",
+                origin: self.borrow_origin.get(),
+            })
+            .unwrap();
         if starts_borrow_group {
             self.borrow_origin
                 .set(Some((std::panic::Location::caller(), "shared")));
@@ -127,20 +153,27 @@ impl AppCell {
     #[doc(hidden)]
     #[track_caller]
     pub fn borrow_mut(&self) -> AppRefMut<'_> {
-        match self.try_borrow_mut() {
-            Ok(borrow) => borrow,
-            Err(_) => self.borrow_failed("mutable"),
-        }
+        self.try_borrow_mut().unwrap()
     }
 
     #[doc(hidden)]
     #[track_caller]
-    pub fn try_borrow_mut(&self) -> Result<AppRefMut<'_>, BorrowMutError> {
+    pub fn try_borrow_mut(&self) -> Result<AppRefMut<'_>> {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
         }
-        let borrow = self.app.try_borrow_mut()?;
+        let borrow = match self.app.try_borrow_mut() {
+            Ok(borrow) => borrow,
+            Err(_error) => {
+                return Err(AppBorrowError {
+                    attempted: std::panic::Location::caller(),
+                    kind: "mutable",
+                    origin: self.borrow_origin.get(),
+                }
+                .into());
+            }
+        };
         self.borrow_origin
             .set(Some((std::panic::Location::caller(), "mutable")));
         Ok(AppRefMut(borrow))
@@ -897,7 +930,12 @@ pub struct App {
 
     /// Per-App element arena. This isolates element allocations between different
     /// App instances (important for tests where multiple Apps run concurrently).
-    pub(crate) element_arena: RefCell<Arena>,
+    ///
+    /// Kept in its own allocation because draws reach it through a raw pointer
+    /// (`CURRENT_ELEMENT_ARENA`) while a `&mut App` is live. If it were stored
+    /// inline, those accesses would alias memory the `&mut App` claims
+    /// exclusively, which is undefined behavior.
+    pub(crate) element_arena: Rc<RefCell<Arena>>,
     /// Per-App event arena.
     pub(crate) event_arena: Arena,
 
@@ -1055,7 +1093,7 @@ impl App {
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
-                element_arena: RefCell::new(Arena::new(1024 * 1024)),
+                element_arena: Rc::new(RefCell::new(Arena::new(1024 * 1024))),
                 event_arena: Arena::new(1024 * 1024),
 
                 #[cfg(any(test, gpui_leak_detection))]
@@ -1422,16 +1460,9 @@ impl App {
         &mut self,
         callback: impl FnOnce(&mut App) -> R,
     ) -> (R, FxHashSet<EntityId>) {
-        let accessed_entities_start = self.entities.accessed_entities.get_mut().clone();
+        self.entities.push_access_scope();
         let result = callback(self);
-        let entities_accessed_in_callback = self
-            .entities
-            .accessed_entities
-            .get_mut()
-            .difference(&accessed_entities_start)
-            .copied()
-            .collect::<FxHashSet<EntityId>>();
-        (result, entities_accessed_in_callback)
+        (result, self.entities.pop_access_scope())
     }
 
     pub(crate) fn record_entities_accessed(

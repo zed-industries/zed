@@ -1,6 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::ClientUserMessageId;
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -821,7 +821,7 @@ impl ThreadsDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol::schema::v1 as acp;
+    use agent_client_protocol::v1::schema as acp;
     use chrono::{DateTime, TimeZone, Utc};
     use collections::HashMap;
     use gpui::TestAppContext;
@@ -1296,6 +1296,7 @@ mod tests {
         child_thread.subagent_context = Some(crate::SubagentContext {
             parent_thread_id: parent_id.clone(),
             depth: 1,
+            outcomes: Vec::new(),
         });
 
         let mut grandchild_thread = make_thread(
@@ -1305,6 +1306,7 @@ mod tests {
         grandchild_thread.subagent_context = Some(crate::SubagentContext {
             parent_thread_id: child_id.clone(),
             depth: 2,
+            outcomes: Vec::new(),
         });
 
         let unrelated_thread = make_thread(
@@ -1345,6 +1347,7 @@ mod tests {
         child_thread.subagent_context = Some(crate::SubagentContext {
             parent_thread_id: parent_id.clone(),
             depth: 2,
+            outcomes: Vec::new(),
         });
 
         database
