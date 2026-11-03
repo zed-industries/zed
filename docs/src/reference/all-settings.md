@@ -430,7 +430,7 @@ page ({#action zed::Extensions}) does this automatically.
 By default, no limitations are applied to extensions.
 
 > **Warning:** This setting is experimental and may change in a backward-incompatible way.
-> Restrictions apply to all extensions at once, and any extension that needs a revoked capability stops working.
+> Restrictions apply to all extensions at once. Expect an extension that needs a revoked capability to stop working.
 
 Patterns are not globs: `*` matches exactly one whole value, such as a command, host, package, argument, or path segment, and `**` as the last element matches all remaining ones.
 See [Restricting Capabilities](../extensions/capabilities.md#restricting-capabilities) for examples.
