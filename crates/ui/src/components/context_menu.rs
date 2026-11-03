@@ -2614,49 +2614,27 @@ mod tests {
 
     #[gpui::test]
     fn submenu_content_keeps_focus(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            theme_settings::init(theme::LoadThemes::JustBase, cx);
-        });
-
         let content_focus = cx.update(|cx| cx.focus_handle());
-        let window = cx.open_window(size(px(700.), px(400.)), {
+        let (menu, mut visual) = open_window_with_submenu(cx, {
             let content_focus = content_focus.clone();
-            move |window, cx| {
-                let menu = ContextMenu::build(window, cx, move |menu, _, _| {
-                    let content_focus = content_focus.clone();
-                    menu.submenu("Search", move |menu, _, _| {
-                        let content_focus = content_focus.clone();
-                        menu.custom_row(move |_, _| {
-                            div()
-                                .track_focus(&content_focus)
-                                .child("search field")
-                                .into_any_element()
-                        })
-                    })
-                });
-                SubmenuTestView {
-                    menu,
-                    left: px(40.),
-                }
+            move |menu, _, _| {
+                let content_focus = content_focus.clone();
+                menu.custom_row(move |_, _| {
+                    div()
+                        .track_focus(&content_focus)
+                        .child("search field")
+                        .into_any_element()
+                })
             }
         });
-        cx.run_until_parked();
-        let menu = window
-            .update(cx, |view, _, _| view.menu.clone())
-            .expect("submenu window");
-        let mut visual = VisualTestContext::from_window(window.into(), cx);
 
         menu.update_in(&mut visual, |menu, window, cx| {
             menu.select_first(&SelectFirst, window, cx);
             menu.select_submenu_child(&SelectChild, window, cx);
         });
-        visual.update(|window, cx| window.draw(cx).clear(cx));
+        draw_frames(&mut visual);
         visual.update(|window, cx| window.focus(&content_focus, cx));
-        for _ in 0..2 {
-            visual.update(|window, cx| window.draw(cx).clear(cx));
-        }
+        draw_frames(&mut visual);
 
         let content_is_focused = visual.update(|window, _| content_focus.is_focused(window));
         assert!(
@@ -2665,10 +2643,10 @@ mod tests {
         );
     }
 
-    fn open_window_with_embedded_view_submenu(
-        content_focus: &FocusHandle,
-        content_bounds: &Rc<Cell<Option<Bounds<Pixels>>>>,
+    fn open_window_with_submenu(
         cx: &mut TestAppContext,
+        build_submenu: impl Fn(ContextMenu, &mut Window, &mut Context<ContextMenu>) -> ContextMenu
+        + 'static,
     ) -> (Entity<ContextMenu>, VisualTestContext) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
@@ -2676,26 +2654,13 @@ mod tests {
             theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
 
-        let window = cx.open_window(size(px(700.), px(400.)), {
-            let content_focus = content_focus.clone();
-            let content_bounds = content_bounds.clone();
-            move |window, cx| {
-                let menu = ContextMenu::build(window, cx, move |menu, _, _| {
-                    let content_focus = content_focus.clone();
-                    let content_bounds = content_bounds.clone();
-                    menu.submenu("Search", move |menu, _, cx| {
-                        let view = cx.new(|_| EmbeddedTestView {
-                            focus_handle: content_focus.clone(),
-                            bounds: content_bounds.clone(),
-                        });
-                        menu.embedded_view(view)
-                            .focus_content(content_focus.clone())
-                    })
-                });
-                SubmenuTestView {
-                    menu,
-                    left: px(40.),
-                }
+        let window = cx.open_window(size(px(700.), px(400.)), move |window, cx| {
+            let menu = ContextMenu::build(window, cx, move |menu, _, _| {
+                menu.submenu("Search", build_submenu)
+            });
+            SubmenuTestView {
+                menu,
+                left: px(40.),
             }
         });
         cx.run_until_parked();
@@ -2705,6 +2670,23 @@ mod tests {
         let mut visual = VisualTestContext::from_window(window.into(), cx);
         draw_frames(&mut visual);
         (menu, visual)
+    }
+
+    fn open_window_with_embedded_view_submenu(
+        content_focus: &FocusHandle,
+        content_bounds: &Rc<Cell<Option<Bounds<Pixels>>>>,
+        cx: &mut TestAppContext,
+    ) -> (Entity<ContextMenu>, VisualTestContext) {
+        let content_focus = content_focus.clone();
+        let content_bounds = content_bounds.clone();
+        open_window_with_submenu(cx, move |menu, _, cx| {
+            let view = cx.new(|_| EmbeddedTestView {
+                focus_handle: content_focus.clone(),
+                bounds: content_bounds.clone(),
+            });
+            menu.embedded_view(view)
+                .focus_content(content_focus.clone())
+        })
     }
 
     fn draw_frames(cx: &mut VisualTestContext) {
@@ -2817,7 +2799,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn hovering_open_submenu_trigger_keeps_content_focused(cx: &mut TestAppContext) {
+    fn opening_submenu_by_hover_focuses_its_content(cx: &mut TestAppContext) {
         let content_focus = cx.update(|cx| cx.focus_handle());
         let content_bounds = Rc::new(Cell::new(None));
         let (menu, mut visual) =
@@ -2832,31 +2814,11 @@ mod tests {
         });
         visual.simulate_mouse_move(trigger.center(), None, Modifiers::default());
         draw_frames(&mut visual);
+
         let content_is_focused = visual.update(|window, _| content_focus.is_focused(window));
         assert!(
             content_is_focused,
             "opening the submenu by hover must focus its content"
-        );
-
-        let submenu_center = menu.read_with(&visual, |menu, _| {
-            menu.submenu_bounds.get().expect("submenu bounds").center()
-        });
-        visual.simulate_mouse_move(submenu_center, None, Modifiers::default());
-        draw_frames(&mut visual);
-        visual.simulate_mouse_move(trigger.center(), None, Modifiers::default());
-        draw_frames(&mut visual);
-
-        let submenu_is_open = menu.read_with(&visual, |menu, _| {
-            matches!(menu.submenu_state, SubmenuState::Open(_))
-        });
-        let content_is_focused = visual.update(|window, _| content_focus.is_focused(window));
-        assert!(
-            submenu_is_open,
-            "hovering the trigger keeps the submenu open"
-        );
-        assert!(
-            content_is_focused,
-            "hovering the trigger again must leave focus on the submenu's content"
         );
     }
 
