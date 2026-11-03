@@ -710,7 +710,9 @@ impl Default for TransformationMatrix {
 #[expect(missing_docs)]
 pub struct MonochromeSprite {
     pub order: DrawOrder,
-    pub pad: u32,
+    /// 1 for a font glyph mask, 0 for any other mask such as an SVG icon. The Windows
+    /// renderer applies its text contrast and gamma correction only to glyph masks.
+    pub is_glyph: u32,
     pub tile: AtlasTile,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,

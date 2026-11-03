@@ -1139,7 +1139,7 @@ float4 underline_fragment(UnderlineFragmentInput input): SV_Target {
 
 struct MonochromeSprite {
     uint order;
-    uint pad;
+    uint is_glyph;
     AtlasTile tile;
     Bounds bounds;
     Bounds content_mask;
@@ -1151,6 +1151,7 @@ struct MonochromeSpriteVertexOutput {
     float4 position: SV_Position;
     float2 tile_position: POSITION;
     nointerpolation float4 color: COLOR;
+    nointerpolation uint is_glyph: GLYPH;
     float4 clip_distance: SV_ClipDistance;
 };
 
@@ -1158,6 +1159,7 @@ struct MonochromeSpriteFragmentInput {
     float4 position: SV_Position;
     float2 tile_position: POSITION;
     nointerpolation float4 color: COLOR;
+    nointerpolation uint is_glyph: GLYPH;
     float4 clip_distance: SV_ClipDistance;
 };
 
@@ -1177,14 +1179,19 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     output.position = device_position;
     output.tile_position = tile_position;
     output.color = color;
+    output.is_glyph = sprite.is_glyph;
     output.clip_distance = clip_distance;
     return output;
 }
 
+// Text correction compensates for how glyph coverage is perceived; applied to an SVG
+// mask it thickens icons beyond how a browser draws the same SVG.
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
-    float alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
-    return float4(input.color.rgb, input.color.a * alpha_corrected);
+    float alpha = input.is_glyph != 0
+        ? apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios)
+        : sample;
+    return float4(input.color.rgb, input.color.a * alpha);
 }
 
 MonochromeSpriteVertexOutput subpixel_sprite_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
