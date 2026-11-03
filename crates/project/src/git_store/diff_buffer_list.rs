@@ -45,6 +45,7 @@ pub struct DiffBufferList {
     tree_diff: Option<TreeDiff>,
     statuses_by_path: Option<SumTree<StatusEntry>>,
     tree_diff_base_task: Option<Task<()>>,
+    tree_diff_error: Option<SharedString>,
     _subscription: Subscription,
     update_needed: postage::watch::Sender<()>,
     _task: Task<()>,
@@ -105,6 +106,7 @@ impl DiffBufferList {
             tree_diff: None,
             statuses_by_path: None,
             tree_diff_base_task: None,
+            tree_diff_error: None,
             _subscription: git_store_subscription,
             _task: worker,
             update_needed: send,
@@ -130,6 +132,7 @@ impl DiffBufferList {
         self.tree_diff = None;
         self.statuses_by_path = None;
         self.tree_diff_base_task = None;
+        self.tree_diff_error = None;
         cx.emit(BranchDiffEvent::FileListChanged);
         *self.update_needed.borrow_mut() = ();
     }
@@ -144,6 +147,7 @@ impl DiffBufferList {
         self.tree_diff = None;
         self.statuses_by_path = None;
         self.tree_diff_base_task = None;
+        self.tree_diff_error = None;
         self.diff_base = diff_base;
 
         cx.emit(BranchDiffEvent::DiffBaseChanged);
@@ -230,11 +234,33 @@ impl DiffBufferList {
         }
 
         let task = cx.spawn(async move |this, cx| {
-            Self::reload_tree_diff(this, cx).await.log_err();
+            let result = Self::reload_tree_diff(this.clone(), cx).await;
+            let error = result.err().map(|error| {
+                log::error!("failed to load tree diff: {error:#}");
+                SharedString::from(format!("{error:#}"))
+            });
+            this.update(cx, |this, cx| {
+                let had_error = this.tree_diff_error.is_some();
+                let has_error = error.is_some();
+                this.tree_diff_error = error;
+                // A successful reload announces its file list before the stale
+                // error is cleared here, so recovering from an error announces
+                // again.
+                if has_error || had_error {
+                    cx.emit(BranchDiffEvent::FileListChanged);
+                }
+            })
+            .log_err();
         });
 
         self.tree_diff_base_task = Some(task);
         cx.notify();
+    }
+
+    /// The error from the last failed tree diff reload, such as a base ref
+    /// that no longer exists.
+    pub fn tree_diff_error(&self) -> Option<&SharedString> {
+        self.tree_diff_error.as_ref()
     }
 
     pub fn is_tree_base_loading(&self) -> bool {

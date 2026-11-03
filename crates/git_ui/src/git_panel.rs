@@ -1,6 +1,7 @@
 use git_ui_core::askpass_modal::AskPassModal;
 pub(crate) use git_ui_core::notifications::{open_output, show_error_toast};
 
+use crate::branch_diff::BranchDiff;
 use crate::commit_context_menu::{
     CommitContextMenuData, CommitContextMenuSource, commit_context_menu,
 };
@@ -67,7 +68,9 @@ use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{
-        CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op,
+        CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId,
+        diff_buffer_list::{BranchDiffEvent, DiffBase, DiffBufferList},
+        pending_op,
     },
     project_settings::{GitPathStyle, ProjectSettings},
 };
@@ -164,6 +167,10 @@ actions!(
         ActivateChangesTab,
         /// Activates the History tab.
         ActivateHistoryTab,
+        /// Shows the files changed on the current branch since its base branch.
+        ShowBranchChanges,
+        /// Shows the uncommitted changes.
+        ShowUncommittedChanges,
     ]
 );
 
@@ -404,6 +411,7 @@ fn git_panel_context_menu(
 
 fn git_panel_view_options_menu(
     focus_handle: FocusHandle,
+    show_group_by: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
@@ -479,51 +487,53 @@ fn git_panel_view_options_menu(
                             })
                     })
             })
-            .separator()
-            .header("Group By")
-            .item({
-                let view_options_menu_state = view_options_menu_state.clone();
-                ContextMenuEntry::new("None")
-                    .toggle(IconPosition::End, state.group_by == GitPanelGroupBy::None)
-                    .handler(move |window, cx| {
-                        if state.group_by != GitPanelGroupBy::None {
-                            view_options_menu_state.set(GitPanelViewOptionsMenuState {
-                                group_by: GitPanelGroupBy::None,
-                                ..state
-                            });
-                            window.dispatch_action(Box::new(SetGroupByNone), cx);
-                        }
+            .when(show_group_by, |this| {
+                this.separator()
+                    .header("Group By")
+                    .item({
+                        let view_options_menu_state = view_options_menu_state.clone();
+                        ContextMenuEntry::new("None")
+                            .toggle(IconPosition::End, state.group_by == GitPanelGroupBy::None)
+                            .handler(move |window, cx| {
+                                if state.group_by != GitPanelGroupBy::None {
+                                    view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                        group_by: GitPanelGroupBy::None,
+                                        ..state
+                                    });
+                                    window.dispatch_action(Box::new(SetGroupByNone), cx);
+                                }
+                            })
                     })
-            })
-            .item({
-                let view_options_menu_state = view_options_menu_state.clone();
-                ContextMenuEntry::new("Tracked & Untracked")
-                    .toggle(IconPosition::End, state.group_by == GitPanelGroupBy::Status)
-                    .handler(move |window, cx| {
-                        if state.group_by != GitPanelGroupBy::Status {
-                            view_options_menu_state.set(GitPanelViewOptionsMenuState {
-                                group_by: GitPanelGroupBy::Status,
-                                ..state
-                            });
-                            window.dispatch_action(Box::new(SetGroupByStatus), cx);
-                        }
+                    .item({
+                        let view_options_menu_state = view_options_menu_state.clone();
+                        ContextMenuEntry::new("Tracked & Untracked")
+                            .toggle(IconPosition::End, state.group_by == GitPanelGroupBy::Status)
+                            .handler(move |window, cx| {
+                                if state.group_by != GitPanelGroupBy::Status {
+                                    view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                        group_by: GitPanelGroupBy::Status,
+                                        ..state
+                                    });
+                                    window.dispatch_action(Box::new(SetGroupByStatus), cx);
+                                }
+                            })
                     })
-            })
-            .item({
-                let view_options_menu_state = view_options_menu_state.clone();
-                ContextMenuEntry::new("Staged & Unstaged")
-                    .toggle(
-                        IconPosition::End,
-                        state.group_by == GitPanelGroupBy::Staging,
-                    )
-                    .handler(move |window, cx| {
-                        if state.group_by != GitPanelGroupBy::Staging {
-                            view_options_menu_state.set(GitPanelViewOptionsMenuState {
-                                group_by: GitPanelGroupBy::Staging,
-                                ..state
-                            });
-                            window.dispatch_action(Box::new(SetGroupByStaging), cx);
-                        }
+                    .item({
+                        let view_options_menu_state = view_options_menu_state.clone();
+                        ContextMenuEntry::new("Staged & Unstaged")
+                            .toggle(
+                                IconPosition::End,
+                                state.group_by == GitPanelGroupBy::Staging,
+                            )
+                            .handler(move |window, cx| {
+                                if state.group_by != GitPanelGroupBy::Staging {
+                                    view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                        group_by: GitPanelGroupBy::Staging,
+                                        ..state
+                                    });
+                                    window.dispatch_action(Box::new(SetGroupByStaging), cx);
+                                }
+                            })
                     })
             })
     })
@@ -561,6 +571,20 @@ pub fn register(workspace: &mut Workspace) {
         if let Some(panel) = workspace.panel::<GitPanel>(cx) {
             panel.update(cx, |panel, cx| {
                 panel.toggle_commit_editor(&Default::default(), window, cx)
+            });
+        }
+    });
+    workspace.register_action(|workspace, action: &ShowBranchChanges, window, cx| {
+        if let Some(panel) = workspace.focus_panel::<GitPanel>(window, cx) {
+            panel.update(cx, |panel, cx| {
+                panel.show_branch_changes(action, window, cx)
+            });
+        }
+    });
+    workspace.register_action(|workspace, action: &ShowUncommittedChanges, window, cx| {
+        if let Some(panel) = workspace.focus_panel::<GitPanel>(window, cx) {
+            panel.update(cx, |panel, cx| {
+                panel.show_uncommitted_changes(action, window, cx)
             });
         }
     });
@@ -650,6 +674,23 @@ enum Section {
     New,
     Staged,
     Unstaged,
+    /// Every file changed since the merge base with the branch mode's base,
+    /// shown read-only.
+    Branch,
+}
+
+/// Which changes the Changes tab lists.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ChangesMode {
+    Uncommitted,
+    Branch,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum DefaultBranch {
+    Loading,
+    Found(SharedString),
+    Missing,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -776,6 +817,7 @@ impl GitHeaderEntry {
                 !repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path)
                     && GitPanel::stage_status_for_entry(status_entry, repo).has_unstaged()
             }
+            Section::Branch => false,
         }
     }
     pub fn title(&self) -> &'static str {
@@ -785,6 +827,7 @@ impl GitHeaderEntry {
             Section::New => "Untracked",
             Section::Staged => "Staged",
             Section::Unstaged => "Unstaged",
+            Section::Branch => "Branch Changes",
         }
     }
 }
@@ -1193,6 +1236,13 @@ impl TruncatedPatch {
     }
 }
 
+/// The branch diff tab the panel last adopted a base from, watched so that
+/// base changes made in the tab's own picker carry over to the panel.
+struct FollowedBranchDiff {
+    branch_diff: WeakEntity<BranchDiff>,
+    _subscription: Subscription,
+}
+
 struct GitPanelContextMenu {
     menu: Entity<ContextMenu>,
     position: Point<Pixels>,
@@ -1272,6 +1322,20 @@ pub struct GitPanel {
     commit_menu_handle: PopoverMenuHandle<ContextMenu>,
     changes_actions_menu_handle: PopoverMenuHandle<ContextMenu>,
     remote_action_menu_handle: PopoverMenuHandle<ContextMenu>,
+    changes_mode: ChangesMode,
+    /// The base picked in the panel or adopted from the last active branch
+    /// diff tab. `None` falls back to the default branch.
+    branch_base: Option<SharedString>,
+    default_branch: DefaultBranch,
+    default_branch_task: Option<Task<()>>,
+    /// Only exists in branch mode, so the panel runs no tree diffs otherwise.
+    branch_list: Option<Entity<DiffBufferList>>,
+    _branch_list_subscription: Option<Subscription>,
+    followed_branch_diff: Option<FollowedBranchDiff>,
+    /// Uncommitted files, one per path. Staging, discarding and committing
+    /// act on these regardless of which mode `entries` shows.
+    change_entries: Vec<GitStatusEntry>,
+    branch_file_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1413,9 +1477,10 @@ impl GitPanel {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
 
-            cx.subscribe(&workspace_entity, |this, _, event, cx| {
+            cx.subscribe_in(&workspace_entity, window, |this, _, event, window, cx| {
                 if let workspace::Event::ActiveItemChanged = event {
                     this.update_active_history_sha(cx);
+                    this.follow_active_branch_diff(window, cx);
                 }
             })
             .detach();
@@ -1544,6 +1609,13 @@ impl GitPanel {
                             })
                             .ok();
                     }
+                    GitStoreEvent::RepositoryUpdated(
+                        _,
+                        RepositoryEvent::BranchListChanged,
+                        true,
+                    ) => {
+                        this.resolve_default_branch(window, cx);
+                    }
                     GitStoreEvent::RepositoryUpdated(_, _, _) => {}
                     GitStoreEvent::JobsUpdated
                     | GitStoreEvent::ConflictsUpdated
@@ -1618,6 +1690,15 @@ impl GitPanel {
                 commit_menu_handle: PopoverMenuHandle::default(),
                 changes_actions_menu_handle: PopoverMenuHandle::default(),
                 remote_action_menu_handle: PopoverMenuHandle::default(),
+                changes_mode: ChangesMode::Uncommitted,
+                branch_base: None,
+                default_branch: DefaultBranch::Loading,
+                default_branch_task: None,
+                branch_list: None,
+                _branch_list_subscription: None,
+                followed_branch_diff: None,
+                change_entries: Vec::new(),
+                branch_file_count: 0,
             };
 
             this.schedule_update(window, cx);
@@ -2569,6 +2650,10 @@ impl GitPanel {
 
     /// Show diff view at selected entry, only if the diff view is open
     fn move_diff_to_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_branch_mode() {
+            self.move_branch_diff_to_entry(window, cx);
+            return;
+        }
         maybe!({
             let workspace = self.workspace.upgrade()?;
             let selected_index = self.selected_entry?;
@@ -2601,6 +2686,36 @@ impl GitPanel {
                 }
             }
 
+            Some(())
+        });
+    }
+
+    fn move_branch_diff_to_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        maybe!({
+            let entry = self
+                .entries
+                .get(self.selected_entry?)?
+                .status_entry()?
+                .clone();
+            let base_ref = self.branch_base()?;
+            let repo_id = self.active_repository.as_ref()?.read(cx).id;
+            let branch_diff = self
+                .workspace
+                .upgrade()?
+                .read(cx)
+                .items_of_type::<BranchDiff>(cx)
+                .find(|branch_diff| {
+                    let branch_diff = branch_diff.read(cx);
+                    matches!(
+                        branch_diff.diff_base(cx),
+                        DiffBase::Merge { base_ref: existing } if *existing == base_ref
+                    ) && branch_diff
+                        .repo(cx)
+                        .is_some_and(|repo| repo.read(cx).id == repo_id)
+                })?;
+            branch_diff.update(cx, |branch_diff, cx| {
+                branch_diff.move_to_entry(entry, window, cx);
+            });
             Some(())
         });
     }
@@ -2665,11 +2780,7 @@ impl GitPanel {
     }
 
     fn change_entries_by_path(&self) -> impl Iterator<Item = &GitStatusEntry> {
-        // A grouping can project one changed file into multiple list rows.
-        self.entries
-            .iter()
-            .filter_map(GitListEntry::status_entry)
-            .unique_by(|entry| entry.repo_path.clone())
+        self.change_entries.iter()
     }
 
     fn has_untracked_files(&self) -> bool {
@@ -2730,6 +2841,18 @@ impl GitPanel {
             self.toggle_directory(&dir_entry.key, window, cx);
             return;
         }
+        if self.is_branch_mode() {
+            let entry = self
+                .selected_entry
+                .and_then(|index| self.entries.get(index))
+                .and_then(GitListEntry::status_entry)
+                .cloned();
+            if let Some(entry) = entry {
+                self.open_branch_diff(Some(entry), window, cx);
+                self.focus_handle.focus(window, cx);
+            }
+            return;
+        }
         maybe!({
             let selected_index = self.selected_entry?;
             let entry = self.entries.get(selected_index)?.status_entry()?;
@@ -2777,6 +2900,12 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A file diff shows uncommitted changes, so branch rows open the
+        // branch diff instead.
+        if self.is_branch_mode() {
+            self.open_diff(&menu::Confirm, window, cx);
+            return;
+        }
         let Some(repository) = self.active_repository.clone() else {
             return;
         };
@@ -5628,7 +5757,6 @@ impl GitPanel {
     }
 
     fn schedule_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let handle = cx.entity().downgrade();
         let new_active_repository = self.project.read(cx).active_repository(cx);
         let active_repository_changed = self.active_repository.as_ref().map(Entity::entity_id)
             != new_active_repository.as_ref().map(Entity::entity_id);
@@ -5652,12 +5780,20 @@ impl GitPanel {
         self.active_repository = new_active_repository;
         if active_repository_changed {
             self.update_active_history_sha(cx);
+            self.reset_branch_state(window, cx);
+        } else if self.default_branch_task.is_none() {
+            self.resolve_default_branch(window, cx);
         }
         self.reopen_commit_buffer(window, cx);
         self.preload_commit_history(cx);
         if self.active_tab == GitPanelTab::History {
             self.load_commit_history(cx);
         }
+        self.schedule_visible_entries_update(window, cx);
+    }
+
+    fn schedule_visible_entries_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let handle = cx.entity().downgrade();
         self.update_visible_entries_task = cx.spawn_in(window, async move |_, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             if let Some(git_panel) = handle.upgrade() {
@@ -5668,6 +5804,250 @@ impl GitPanel {
                     .ok();
             }
         });
+    }
+
+    fn is_branch_mode(&self) -> bool {
+        self.changes_mode == ChangesMode::Branch
+    }
+
+    /// The base branch mode compares against, if one is known yet.
+    fn branch_base(&self) -> Option<SharedString> {
+        self.branch_base
+            .clone()
+            .or_else(|| match &self.default_branch {
+                DefaultBranch::Found(default_branch) => Some(default_branch.clone()),
+                DefaultBranch::Loading | DefaultBranch::Missing => None,
+            })
+    }
+
+    fn can_show_branch_changes(&self) -> bool {
+        self.active_repository.is_some()
+            && (self.branch_base.is_some() || self.default_branch != DefaultBranch::Missing)
+    }
+
+    fn set_changes_mode(&mut self, mode: ChangesMode, window: &mut Window, cx: &mut Context<Self>) {
+        if self.changes_mode == mode {
+            return;
+        }
+        self.changes_mode = mode;
+        self.clear_marks();
+        self.bulk_staging.take();
+        self.context_menu.take();
+        self.selected_entry = None;
+        self.sync_branch_list(window, cx);
+        self.update_visible_entries(window, cx);
+    }
+
+    fn set_branch_base(
+        &mut self,
+        base_ref: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.branch_base.as_ref() == Some(&base_ref) {
+            return;
+        }
+        self.branch_base = Some(base_ref);
+        if self.is_branch_mode() {
+            self.sync_branch_list(window, cx);
+            self.schedule_visible_entries_update(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn show_branch_changes(
+        &mut self,
+        _: &ShowBranchChanges,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.can_show_branch_changes() {
+            return;
+        }
+        self.set_active_tab(GitPanelTab::Changes, window, cx);
+        self.set_changes_mode(ChangesMode::Branch, window, cx);
+    }
+
+    fn show_uncommitted_changes(
+        &mut self,
+        _: &ShowUncommittedChanges,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_active_tab(GitPanelTab::Changes, window, cx);
+        self.set_changes_mode(ChangesMode::Uncommitted, window, cx);
+    }
+
+    /// Branch names don't carry over between repositories, so switching
+    /// repositories starts again from the new one's default branch.
+    fn reset_branch_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.branch_base = None;
+        self.followed_branch_diff = None;
+        self.default_branch = DefaultBranch::Loading;
+        self.resolve_default_branch(window, cx);
+        self.sync_branch_list(window, cx);
+    }
+
+    fn resolve_default_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            self.default_branch = DefaultBranch::Missing;
+            self.default_branch_task = Some(Task::ready(()));
+            return;
+        };
+        let default_branch = repo.update(cx, |repo, _| repo.default_branch(true));
+        self.default_branch_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let default_branch = match default_branch.await.ok().and_then(ResultExt::log_err) {
+                Some(Some(default_branch)) => DefaultBranch::Found(default_branch),
+                Some(None) | None => DefaultBranch::Missing,
+            };
+            this.update_in(cx, |this, window, cx| {
+                if this.default_branch == default_branch {
+                    return;
+                }
+                this.default_branch = default_branch;
+                this.sync_branch_list(window, cx);
+                this.schedule_visible_entries_update(window, cx);
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Creates, updates or drops the branch file list to match the mode,
+    /// repository and base.
+    fn sync_branch_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (true, Some(repo), Some(base_ref)) = (
+            self.is_branch_mode(),
+            self.active_repository.clone(),
+            self.branch_base(),
+        ) else {
+            self.branch_list = None;
+            self._branch_list_subscription = None;
+            return;
+        };
+        let diff_base = DiffBase::Merge { base_ref };
+
+        if let Some(branch_list) = &self.branch_list {
+            branch_list.update(cx, |branch_list, cx| {
+                branch_list.set_repo(Some(repo), cx);
+                if branch_list.diff_base() != &diff_base {
+                    branch_list.set_diff_base(diff_base, cx);
+                }
+            });
+            return;
+        }
+
+        let git_store = self.project.read(cx).git_store().clone();
+        let branch_list = cx.new(|cx| DiffBufferList::new(diff_base, git_store, Some(repo), cx));
+        self._branch_list_subscription = Some(cx.subscribe_in(
+            &branch_list,
+            window,
+            |this, _, event: &BranchDiffEvent, window, cx| match event {
+                BranchDiffEvent::FileListChanged | BranchDiffEvent::DiffBaseChanged => {
+                    this.schedule_visible_entries_update(window, cx);
+                }
+            },
+        ));
+        self.branch_list = Some(branch_list);
+    }
+
+    fn branch_status_entries(&self, cx: &App) -> Vec<GitStatusEntry> {
+        let Some(statuses) = self
+            .branch_list
+            .as_ref()
+            .and_then(|branch_list| branch_list.read(cx).statuses_by_path())
+        else {
+            return Vec::new();
+        };
+        statuses
+            .iter()
+            .map(|status_entry| GitStatusEntry {
+                repo_path: status_entry.repo_path.clone(),
+                status: status_entry.status,
+                staging: status_entry.status.staging(),
+                // Per-file stats against the merge base aren't computed yet.
+                diff_stat: None,
+            })
+            .collect()
+    }
+
+    /// Adopts the base of the active branch diff tab when one becomes active,
+    /// and keeps following base changes made in that tab's own picker.
+    fn follow_active_branch_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let Some(branch_diff) = workspace.read(cx).active_item_as::<BranchDiff>(cx) else {
+            self.followed_branch_diff = None;
+            return;
+        };
+        if self
+            .followed_branch_diff
+            .as_ref()
+            .is_some_and(|followed| followed.branch_diff.entity_id() == branch_diff.entity_id())
+        {
+            return;
+        }
+
+        let branch_list = branch_diff.read(cx).branch_diff_list(cx);
+        let subscription = cx.subscribe_in(&branch_list, window, {
+            let branch_diff = branch_diff.downgrade();
+            move |this, _, event: &BranchDiffEvent, window, cx| {
+                if matches!(event, BranchDiffEvent::DiffBaseChanged)
+                    && let Some(branch_diff) = branch_diff.upgrade()
+                {
+                    this.adopt_branch_diff_base(&branch_diff, window, cx);
+                }
+            }
+        });
+        self.followed_branch_diff = Some(FollowedBranchDiff {
+            branch_diff: branch_diff.downgrade(),
+            _subscription: subscription,
+        });
+        self.adopt_branch_diff_base(&branch_diff, window, cx);
+    }
+
+    fn adopt_branch_diff_base(
+        &mut self,
+        branch_diff: &Entity<BranchDiff>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let branch_diff = branch_diff.read(cx);
+        let DiffBase::Merge { base_ref } = branch_diff.diff_base(cx) else {
+            return;
+        };
+        let is_active_repository = branch_diff
+            .repo(cx)
+            .zip(self.active_repository.as_ref())
+            .is_some_and(|(repo, active_repo)| repo.read(cx).id == active_repo.read(cx).id);
+        if !is_active_repository {
+            return;
+        }
+        let base_ref = base_ref.clone();
+        self.set_branch_base(base_ref, window, cx);
+    }
+
+    /// Opens the branch diff at the panel's base, focusing an existing tab
+    /// with that base, and scrolls to `entry` when given.
+    fn open_branch_diff(
+        &mut self,
+        entry: Option<GitStatusEntry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(repo), Some(base_ref)) = (self.active_repository.clone(), self.branch_base())
+        else {
+            return;
+        };
+        let project = self.project.clone();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                BranchDiff::deploy_branch_diff_with_base_ref(
+                    workspace, project, repo, base_ref, None, entry, window, cx,
+                );
+            })
+            .ok();
     }
 
     fn reopen_commit_buffer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5795,8 +6175,11 @@ impl GitPanel {
             self.active_repository = active_repository;
             self.git_access = None;
             self.clear_marks();
+            self.reset_branch_state(window, cx);
         }
         self.entries.clear();
+        self.change_entries.clear();
+        self.branch_file_count = 0;
         self.projected_entries_by_path.clear();
         self.single_staged_entry.take();
         self.single_tracked_entry.take();
@@ -5960,6 +6343,14 @@ impl GitPanel {
             self.single_tracked_entry = tracked_entries.pop();
         }
 
+        let is_branch_mode = self.is_branch_mode();
+        let mut branch_entries = if is_branch_mode {
+            self.branch_status_entries(cx)
+        } else {
+            Vec::new()
+        };
+        self.branch_file_count = branch_entries.len();
+
         if !is_tree_view {
             let sort_entries = |entries: &mut Vec<GitStatusEntry>| match sort_by {
                 GitPanelSortBy::Path => entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path)),
@@ -5976,6 +6367,7 @@ impl GitPanel {
             sort_entries(&mut new_entries);
             sort_entries(&mut staged_entries);
             sort_entries(&mut unstaged_entries);
+            sort_entries(&mut branch_entries);
         }
 
         let mut push_entry =
@@ -6024,6 +6416,24 @@ impl GitPanel {
                 (Section::New, std::mem::take(&mut new_entries)),
             ]
         };
+        // Picks each file's first row in display order, matching which row a
+        // grouping that projects one file into several rows lists first.
+        self.change_entries = section_entries
+            .iter()
+            .flat_map(|(_, entries)| entries)
+            .unique_by(|entry| &entry.repo_path)
+            .cloned()
+            .collect();
+        let section_entries = if is_branch_mode {
+            vec![(Section::Branch, branch_entries)]
+        } else {
+            section_entries
+        };
+        let section_has_header = |section: Section| match section {
+            Section::Branch => false,
+            Section::Tracked => group_by != GitPanelGroupBy::None,
+            Section::Conflict | Section::New | Section::Staged | Section::Unstaged => true,
+        };
 
         // Keep Staged/Unstaged headers pinned even when empty (as long as there's
         // anything to show at all) so the layout stays stable while staging.
@@ -6055,12 +6465,11 @@ impl GitPanel {
                         continue;
                     }
 
-                    let section_has_header =
-                        section != Section::Tracked || group_by != GitPanelGroupBy::None;
+                    let has_header = section_has_header(section);
                     let section_is_collapsed =
-                        section_has_header && self.collapsed_sections.contains(&section);
+                        has_header && self.collapsed_sections.contains(&section);
 
-                    if section_has_header {
+                    if has_header {
                         push_entry(
                             self,
                             GitListEntry::Header(GitHeaderEntry { header: section }),
@@ -6105,7 +6514,7 @@ impl GitPanel {
                         continue;
                     }
 
-                    if section != Section::Tracked || group_by != GitPanelGroupBy::None {
+                    if section_has_header(section) {
                         push_entry(
                             self,
                             GitListEntry::Header(GitHeaderEntry { header: section }),
@@ -6140,7 +6549,8 @@ impl GitPanel {
             .as_ref()
             .filter(|op| op.repo_id == repo.id)
             .and_then(|op| self.entry_by_path(&op.anchor));
-        if bulk_staging_anchor_new_index == last_staged_path_prev_index
+        if !is_branch_mode
+            && bulk_staging_anchor_new_index == last_staged_path_prev_index
             && let Some(index) = bulk_staging_anchor_new_index
             && let Some(entry) = self.entries.get(index)
             && let Some(entry) = entry.status_entry()
@@ -6193,6 +6603,7 @@ impl GitPanel {
             Section::Conflict => (self.conflicted_staged_count, self.conflicted_count),
             Section::Staged => (self.entry_count, self.entry_count),
             Section::Unstaged => (0, self.entry_count),
+            Section::Branch => (0, 0),
         };
         if staged_count == 0 {
             ToggleState::Unselected
@@ -6597,6 +7008,8 @@ impl GitPanel {
 
     fn render_view_options_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
+        // The branch list has a single section, so grouping doesn't apply.
+        let show_group_by = !self.is_branch_mode();
 
         PopoverMenu::new(id.into())
             .trigger_with_tooltip(
@@ -6607,6 +7020,7 @@ impl GitPanel {
             .menu(move |window, cx| {
                 Some(git_panel_view_options_menu(
                     focus_handle.clone(),
+                    show_group_by,
                     window,
                     cx,
                 ))
@@ -6991,7 +7405,12 @@ impl GitPanel {
 
         self.active_repository.as_ref()?;
 
+        let is_branch_mode = self.is_branch_mode();
         let diff_stat_total = self.diff_stat_total;
+        let show_diff_stat = !is_branch_mode
+            && GitPanelSettings::get_global(cx).diff_stats
+            && diff_stat_total != DiffStat::default();
+        let focus_handle = self.focus_handle.clone();
 
         Some(
             h_flex()
@@ -7004,49 +7423,162 @@ impl GitPanel {
                 .gap_1()
                 .justify_between()
                 .child(
-                    ButtonLike::new("diff-button")
+                    h_flex()
+                        .gap_1()
+                        .child(self.render_changes_mode_toggle(cx))
                         .child(
-                            h_flex()
-                                .gap_1()
+                            ButtonLike::new("diff-button")
                                 .child(
-                                    Icon::new(IconName::Diff)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Icon::new(IconName::Diff)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new("View Diff")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .when(show_diff_stat, |this| {
+                                            this.child(ui::DiffStat::new(
+                                                "changes-diff-stat-total",
+                                                diff_stat_total.added as usize,
+                                                diff_stat_total.deleted as usize,
+                                            ))
+                                        }),
                                 )
-                                .child(
-                                    Label::new("View Diff")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .when(
-                                    GitPanelSettings::get_global(cx).diff_stats
-                                        && diff_stat_total != DiffStat::default(),
-                                    |this| {
-                                        this.child(ui::DiffStat::new(
-                                            "changes-diff-stat-total",
-                                            diff_stat_total.added as usize,
-                                            diff_stat_total.deleted as usize,
-                                        ))
-                                    },
-                                ),
-                        )
-                        .tooltip(Tooltip::for_action_title_in(
-                            "View Diff",
-                            &Diff,
-                            &self.focus_handle,
-                        ))
-                        .on_click(|_, _, cx| {
-                            cx.defer(|cx| {
-                                cx.dispatch_action(&Diff);
-                            })
-                        }),
+                                .tooltip(move |_window, cx| {
+                                    if is_branch_mode {
+                                        Tooltip::simple("View Branch Diff", cx)
+                                    } else {
+                                        Tooltip::for_action_in(
+                                            "View Diff",
+                                            &Diff,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    if this.is_branch_mode() {
+                                        this.open_branch_diff(None, window, cx);
+                                    } else {
+                                        cx.defer(|cx| {
+                                            cx.dispatch_action(&Diff);
+                                        })
+                                    }
+                                })),
+                        ),
                 )
                 .child(
                     h_flex()
                         .gap_1()
+                        .when(is_branch_mode, |this| {
+                            this.children(self.render_branch_base_picker(cx))
+                        })
                         .child(self.render_view_options_menu("view_options_menu"))
-                        .child(self.render_git_changes_actions_button(cx)),
+                        .when(!is_branch_mode, |this| {
+                            this.child(self.render_git_changes_actions_button(cx))
+                        }),
                 ),
+        )
+    }
+
+    fn render_changes_mode_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_branch_mode = self.is_branch_mode();
+        let can_show_branch_changes = self.can_show_branch_changes();
+        let focus_handle = self.focus_handle.clone();
+
+        h_flex()
+            .gap_0p5()
+            .child(
+                Button::new("uncommitted-changes-mode", "Uncommitted")
+                    .label_size(LabelSize::Small)
+                    .toggle_state(!is_branch_mode)
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Show Uncommitted Changes",
+                                &ShowUncommittedChanges,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.set_changes_mode(ChangesMode::Uncommitted, window, cx);
+                    })),
+            )
+            .child(
+                Button::new("branch-changes-mode", "Branch")
+                    .label_size(LabelSize::Small)
+                    .toggle_state(is_branch_mode)
+                    .disabled(!can_show_branch_changes)
+                    .tooltip(move |_window, cx| {
+                        if can_show_branch_changes {
+                            Tooltip::for_action_in(
+                                "Show Branch Changes",
+                                &ShowBranchChanges,
+                                &focus_handle,
+                                cx,
+                            )
+                        } else {
+                            Tooltip::simple("No default branch found", cx)
+                        }
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.set_changes_mode(ChangesMode::Branch, window, cx);
+                    })),
+            )
+    }
+
+    fn render_branch_base_picker(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let repository = self.active_repository.clone()?;
+        let base_ref = self.branch_base();
+        let label: SharedString = match &base_ref {
+            Some(base_ref) => format!("since {base_ref}").into(),
+            None => "Pick Base".into(),
+        };
+        let workspace = self.workspace.clone();
+        let panel = cx.weak_entity();
+
+        Some(
+            PopoverMenu::new("git-panel-branch-base-picker")
+                .menu(move |window, cx| {
+                    let on_select: branch_picker::SelectBranchCallback = Arc::new({
+                        let panel = panel.clone();
+                        move |branch: Branch, window: &mut Window, cx: &mut App| {
+                            let base_ref: SharedString = branch.name().to_owned().into();
+                            panel
+                                .update(cx, |panel, cx| {
+                                    panel.set_branch_base(base_ref, window, cx);
+                                })
+                                .ok();
+                        }
+                    });
+                    Some(branch_picker::select_popover(
+                        workspace.clone(),
+                        Some(repository.clone()),
+                        base_ref.clone(),
+                        on_select,
+                        window,
+                        cx,
+                    ))
+                })
+                .trigger_with_tooltip(
+                    Button::new("git-panel-branch-base", label)
+                        .label_size(LabelSize::Small)
+                        .end_icon(
+                            Icon::new(IconName::ChevronDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                    Tooltip::text("Pick Base Branch"),
+                )
+                .anchor(Anchor::TopRight),
         )
     }
 
@@ -7492,6 +8024,11 @@ impl GitPanel {
 
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = self.active_tab;
+        let changes_count = if self.is_branch_mode() {
+            self.branch_file_count
+        } else {
+            self.changes_count
+        };
 
         let focus_handle = self.focus_handle.clone();
         let tab = |id: ElementId,
@@ -7517,9 +8054,9 @@ impl GitPanel {
                         .border_color(cx.theme().colors().border.opacity(0.6))
                 })
                 .child(Label::new(label.clone()).when(!active, |this| this.color(Color::Muted)))
-                .when(show_changes && self.changes_count > 0, |this| {
+                .when(show_changes && changes_count > 0, |this| {
                     this.child(
-                        Label::new(format!("({})", self.changes_count))
+                        Label::new(format!("({})", changes_count))
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
@@ -8204,6 +8741,7 @@ impl GitPanel {
         let content = match (self.git_access, &self.active_repository) {
             (Some(GitAccess::No), Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
             (_, None) => self.render_uninitialized_ui(cx),
+            (_, Some(_)) if self.is_branch_mode() => self.render_no_branch_changes_ui(cx),
             (_, Some(_)) => self.render_no_changes_ui(cx),
         };
 
@@ -8227,13 +8765,41 @@ impl GitPanel {
                     Button::new("view_branch_diff", "View Branch Diff")
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Outlined)
-                        .on_click(move |_, _, cx| {
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.set_changes_mode(ChangesMode::Branch, window, cx);
                             cx.defer(move |cx| {
                                 cx.dispatch_action(&DeployBranchDiff);
                             })
-                        }),
+                        })),
                 )
             })
+            .into_any_element()
+    }
+
+    fn render_no_branch_changes_ui(&self, cx: &Context<Self>) -> AnyElement {
+        let branch_list = self
+            .branch_list
+            .as_ref()
+            .map(|branch_list| branch_list.read(cx));
+        let message: SharedString = if let Some(error) =
+            branch_list.and_then(|branch_list| branch_list.tree_diff_error())
+        {
+            format!("Couldn't load branch changes: {error}").into()
+        } else if branch_list.is_some_and(|branch_list| branch_list.statuses_by_path().is_none())
+            || (self.branch_base.is_none() && self.default_branch == DefaultBranch::Loading)
+        {
+            // Only the first load for a base shows this, so refreshes after
+            // every status change don't flicker.
+            "Loading branch changes…".into()
+        } else if let Some(base_ref) = self.branch_base() {
+            format!("No changes since {base_ref}").into()
+        } else {
+            "No default branch found. Pick a base branch.".into()
+        };
+
+        h_flex()
+            .px_4()
+            .child(Label::new(message).color(Color::Muted))
             .into_any_element()
     }
 
@@ -8360,8 +8926,12 @@ impl GitPanel {
         let repo = self.active_repository.as_ref()?.read(cx);
         let project_path = (file.worktree_id(cx), file.path().clone()).into();
         let repo_path = repo.project_path_to_repo_path(&project_path, cx)?;
-        let ix = self.entry_by_path(&repo_path)?;
-        let entry = self.entries.get(ix)?;
+        let entry = GitListEntry::Status(
+            self.change_entries
+                .iter()
+                .find(|entry| entry.repo_path == repo_path)?
+                .clone(),
+        );
 
         let is_staging_or_staged = repo
             .pending_ops_for_path(&repo_path)
@@ -8382,7 +8952,6 @@ impl GitPanel {
             .fill()
             .elevation(ElevationIndex::Surface)
             .on_click({
-                let entry = entry.clone();
                 let git_panel = entity.downgrade();
                 move |_, window, cx| {
                     git_panel
@@ -8808,6 +9377,48 @@ impl GitPanel {
         })
     }
 
+    /// Branch rows are read-only, so their menu only navigates.
+    fn build_branch_context_menu(
+        &self,
+        file_count: usize,
+        target_kind: SelectionTargetKind,
+        has_history: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let plural = file_count > 1;
+        let is_file_or_bulk = !matches!(target_kind, SelectionTargetKind::Directory);
+        let view_file_title = if plural { "View Files" } else { "View File" };
+        let copy_path_title = if plural { "Copy Paths" } else { "Copy Path" };
+        let copy_relative_path_title = if plural {
+            "Copy Relative Paths"
+        } else {
+            "Copy Relative Path"
+        };
+        let view_file_history_title = if plural {
+            "View File Histories"
+        } else {
+            "View File History"
+        };
+        ContextMenu::build(window, cx, |context_menu, _, _| {
+            context_menu
+                .context(self.focus_handle.clone())
+                .when(is_file_or_bulk, |context_menu| {
+                    context_menu
+                        .action("Open Diff", menu::Confirm.boxed_clone())
+                        .action(view_file_title, ViewFile.boxed_clone())
+                        .separator()
+                })
+                .action(copy_path_title, CopyPath.boxed_clone())
+                .action(copy_relative_path_title, CopyRelativePath.boxed_clone())
+                .when(is_file_or_bulk && has_history, |context_menu| {
+                    context_menu
+                        .separator()
+                        .action(view_file_history_title, Box::new(git::FileHistory))
+                })
+        })
+    }
+
     fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -8828,6 +9439,18 @@ impl GitPanel {
         let entries = self.effective_status_entries();
 
         if entries.is_empty() {
+            return;
+        }
+
+        if self.is_branch_mode() {
+            let has_history = entries.iter().any(|entry| !entry.status.is_untracked());
+            self.set_context_menu(
+                self.build_branch_context_menu(entries.len(), target_kind, has_history, window, cx),
+                position,
+                None,
+                window,
+                cx,
+            );
             return;
         }
 
@@ -8863,6 +9486,11 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Every action in this menu acts on uncommitted changes, which the
+        // branch list doesn't show.
+        if self.is_branch_mode() {
+            return;
+        }
         let has_stash_items = self.stash_entries.entries.len() > 0;
         let has_tracked_changes = self.has_tracked_changes();
         let has_staged_changes = self.has_staged_changes();
@@ -8950,6 +9578,7 @@ impl GitPanel {
 
         let selected = self.selected_entry == Some(ix);
         let marked = self.row_is_marked(ix);
+        let is_branch_mode = self.is_branch_mode();
         let status_style = settings.status_style;
         let status = entry.status;
         let file_icon = if settings.file_icons {
@@ -9122,6 +9751,7 @@ impl GitPanel {
             .child(
                 div()
                     .id(checkbox_wrapper_id)
+                    .when(is_branch_mode, |this| this.hidden())
                     .flex_none()
                     .occlude()
                     .cursor_pointer()
@@ -9231,6 +9861,7 @@ impl GitPanel {
     ) -> AnyElement {
         let selected = self.selected_entry == Some(ix);
         let marked = self.marked_directories.contains(&entry.key);
+        let is_branch_mode = self.is_branch_mode();
         let label_color = Color::Muted;
         let id: ElementId = ElementId::Name(format!("dir_{}_{}", entry.name, ix).into());
         let checkbox_id: ElementId =
@@ -9347,6 +9978,7 @@ impl GitPanel {
             .child(
                 div()
                     .id(checkbox_wrapper_id)
+                    .when(is_branch_mode, |this| this.hidden())
                     .flex_none()
                     .occlude()
                     .cursor_pointer()
@@ -9719,22 +10351,13 @@ impl Render for GitPanel {
             .key_context(self.dispatch_context(window, cx))
             .track_focus(&self.focus_handle)
             .when(has_write_access && !project.is_read_only(cx), |this| {
-                this.on_action(cx.listener(Self::toggle_staged_for_selected))
-                    .on_action(cx.listener(Self::stage_range))
-                    .on_action(cx.listener(GitPanel::on_commit))
+                this.on_action(cx.listener(GitPanel::on_commit))
                     .on_action(cx.listener(GitPanel::toggle_skip_hooks))
                     .on_action(cx.listener(GitPanel::on_amend))
                     .on_action(cx.listener(GitPanel::toggle_signoff_enabled))
                     .on_action(cx.listener(Self::stage_all))
                     .on_action(cx.listener(Self::unstage_all))
-                    .on_action(cx.listener(Self::stage_selected))
-                    .on_action(cx.listener(Self::unstage_selected))
-                    .on_action(cx.listener(Self::stage_section))
-                    .on_action(cx.listener(Self::unstage_section))
                     .on_action(cx.listener(Self::restore_tracked_files))
-                    .on_action(cx.listener(Self::revert_selected))
-                    .on_action(cx.listener(Self::add_to_gitignore))
-                    .on_action(cx.listener(Self::add_to_git_info_exclude))
                     .on_action(cx.listener(Self::clean_all))
                     .on_action(cx.listener(Self::generate_commit_message_action))
                     .on_action(cx.listener(Self::stash_all))
@@ -9742,6 +10365,22 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::stash_staged))
                     .on_action(cx.listener(Self::stash_pop))
             })
+            // Branch rows are read-only, so actions on the selected rows only
+            // apply to the uncommitted list.
+            .when(
+                has_write_access && !project.is_read_only(cx) && !self.is_branch_mode(),
+                |this| {
+                    this.on_action(cx.listener(Self::toggle_staged_for_selected))
+                        .on_action(cx.listener(Self::stage_range))
+                        .on_action(cx.listener(Self::stage_selected))
+                        .on_action(cx.listener(Self::unstage_selected))
+                        .on_action(cx.listener(Self::stage_section))
+                        .on_action(cx.listener(Self::unstage_section))
+                        .on_action(cx.listener(Self::revert_selected))
+                        .on_action(cx.listener(Self::add_to_gitignore))
+                        .on_action(cx.listener(Self::add_to_git_info_exclude))
+                },
+            )
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::collapse_selected_entry))
             .on_action(cx.listener(Self::expand_selected_entry))
