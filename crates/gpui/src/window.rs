@@ -1294,6 +1294,9 @@ pub struct Window {
     /// Incremented every time focus moves. Used to invalidate a
     /// pending keyboard activation state when focus changes.
     pub(crate) focus_generation: u64,
+    /// How many frames the window has drawn, which a cached view's recorded
+    /// ranges are checked against before they are reused.
+    pub(crate) frames_drawn: u64,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SingleSubscriberSet<AnyObserver>,
@@ -2416,6 +2419,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             focus_generation: 0,
+            frames_drawn: 0,
             pending_input: None,
             pending_modifier: ModifierState::default(),
             pending_input_observers: SingleSubscriberSet::new(),
@@ -3658,6 +3662,7 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        self.frames_drawn += 1;
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -10406,6 +10411,104 @@ mod tests {
             .update(cx, |_, window, _| window.refresh())
             .expect("refresh window");
         assert_eq!(renders(cx), (3, 3, 2));
+    }
+
+    #[gpui::test]
+    fn cached_view_carried_by_its_ancestor_renders_again(cx: &mut TestAppContext) {
+        struct Leaf {
+            text: &'static str,
+            renders: usize,
+        }
+
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders += 1;
+                div().size_full().child(self.text)
+            }
+        }
+
+        struct Parent {
+            leaves: [crate::Entity<Leaf>; 2],
+        }
+
+        impl Render for Parent {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .flex()
+                    .children(self.leaves.iter().map(|leaf| {
+                        leaf.clone()
+                            .cached(crate::StyleRefinement::default().w(px(100.)).h(px(20.)))
+                    }))
+            }
+        }
+
+        struct Root {
+            lines: usize,
+            parent: crate::Entity<Parent>,
+        }
+
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .children((0..self.lines).map(|i| div().h(px(20.)).child(format!("line {i}"))))
+                    .child(
+                        self.parent
+                            .clone()
+                            .cached(crate::StyleRefinement::default().w(px(200.)).h(px(20.))),
+                    )
+            }
+        }
+
+        let leaves = [
+            cx.new(|_| Leaf {
+                text: "left",
+                renders: 0,
+            }),
+            cx.new(|_| Leaf {
+                text: "right",
+                renders: 0,
+            }),
+        ];
+        let parent = cx.new(|_| Parent {
+            leaves: leaves.clone(),
+        });
+        let window = cx.add_window(|_, _| Root {
+            lines: 4,
+            parent: parent.clone(),
+        });
+        let draw = |cx: &mut TestAppContext| {
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("draw window");
+        };
+        let renders = |cx: &mut TestAppContext| {
+            cx.read(|cx| (leaves[0].read(cx).renders, leaves[1].read(cx).renders))
+        };
+
+        draw(cx);
+
+        // The root renders again with fewer lines of its own; the parent is reused
+        // whole, carrying both leaves' state forward with the ranges of the first
+        // frame.
+        window
+            .update(cx, |root, _, cx| {
+                root.lines = 0;
+                cx.notify();
+            })
+            .expect("update root");
+        draw(cx);
+
+        // One leaf changes, so the parent renders again. The other leaf's ranges
+        // index the first frame, so it renders again rather than reusing them.
+        leaves[0].update(cx, |_, cx| cx.notify());
+        draw(cx);
+        assert_eq!(renders(cx), (2, 2));
+
+        // In the next frame the untouched leaf is reused.
+        leaves[0].update(cx, |_, cx| cx.notify());
+        draw(cx);
+        assert_eq!(renders(cx), (3, 2));
     }
 
     #[gpui::test]

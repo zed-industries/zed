@@ -322,6 +322,11 @@ impl<V: View> IntoElement for ViewElement<V> {
 struct ViewElementState {
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
+    /// The draws `prepaint_range` and `paint_range` were recorded in. A cached
+    /// ancestor reused whole carries this state into the next frame without
+    /// moving its ranges, which then index a frame that is gone.
+    prepaint_frame: u64,
+    paint_frame: u64,
     cache_key: ViewElementCacheKey,
     /// The entities the view accessed while it was last drawn, in any phase,
     /// restored when its prepaint is reused so the window stays subscribed.
@@ -555,6 +560,8 @@ fn prepaint_view(
                     && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
                     && !window.dirty_views.contains(&entity_id)
                     && !window.refreshing
+                    && element_state.prepaint_frame + 1 == window.frames_drawn
+                    && element_state.paint_frame + 1 == window.frames_drawn
                 {
                     let prepaint_start = window.prepaint_index();
                     window.reuse_prepaint(element_state.prepaint_range.clone());
@@ -562,6 +569,7 @@ fn prepaint_view(
                         .extend_accessed(element_state.accessed_entities.iter().copied());
                     let prepaint_end = window.prepaint_index();
                     element_state.prepaint_range = prepaint_start..prepaint_end;
+                    element_state.prepaint_frame = window.frames_drawn;
 
                     return (None, element_state);
                 }
@@ -585,6 +593,8 @@ fn prepaint_view(
                         accessed_entities,
                         prepaint_range: prepaint_start..prepaint_end,
                         paint_range: PaintIndex::default()..PaintIndex::default(),
+                        prepaint_frame: window.frames_drawn,
+                        paint_frame: 0,
                         cache_key: ViewElementCacheKey {
                             bounds,
                             content_mask,
@@ -650,6 +660,7 @@ fn paint_view(
 
                     let paint_end = window.paint_index();
                     element_state.paint_range = paint_start..paint_end;
+                    element_state.paint_frame = window.frames_drawn;
 
                     ((), element_state)
                 },
