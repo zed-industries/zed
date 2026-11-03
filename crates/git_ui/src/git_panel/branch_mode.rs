@@ -266,6 +266,9 @@ impl GitPanel {
     /// repositories starts again from the new one's default branch.
     pub(super) fn reset_branch_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.branch_base = BranchBase::new();
+        // The active tab may have become active before the repository switch,
+        // when it didn't belong to the active repository yet.
+        self.follow_active_branch_diff(window, cx);
         if self.is_branch_mode() {
             self.ensure_default_branch(window, cx);
         }
