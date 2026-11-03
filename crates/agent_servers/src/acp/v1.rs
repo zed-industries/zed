@@ -8463,6 +8463,31 @@ exit 7
             .await
             .expect_err("child config is read-only");
         assert!(error.to_string().contains("read-only"));
+        notify(
+            &parent_id,
+            acp::SessionUpdate::SubagentUpdate(
+                acp::SubagentUpdate::new("child").cwd(PathBuf::from(util::path!("/worktree"))),
+            ),
+            cx,
+        );
+        child.read_with(cx, |child, _| {
+            assert_eq!(
+                terminal_cwd(child, None),
+                Some(PathBuf::from(util::path!("/worktree"))),
+                "a subagent terminal without a cwd runs in the subagent's cwd"
+            );
+            assert_eq!(
+                terminal_cwd(child, Some(PathBuf::from(util::path!("/explicit")))),
+                Some(PathBuf::from(util::path!("/explicit")))
+            );
+        });
+        parent.read_with(cx, |parent, _| {
+            assert_eq!(
+                terminal_cwd(parent, None),
+                None,
+                "root sessions are unchanged"
+            );
+        });
         child.read_with(cx, |child, _| {
             assert_eq!(child.parent_session_id(), Some(&parent_session_id));
             assert_eq!(
@@ -10437,6 +10462,15 @@ fn handle_session_notification(
     }
 }
 
+/// The subagents RFD runs a subagent's terminal that has no `cwd` in the subagent's own
+/// working directory.
+fn terminal_cwd(thread: &AcpThread, cwd: Option<PathBuf>) -> Option<PathBuf> {
+    cwd.or_else(|| {
+        thread.parent_session_id()?;
+        thread.work_dirs()?.ordered_paths().next().cloned()
+    })
+}
+
 fn handle_create_terminal(
     args: acp::CreateTerminalRequest,
     responder: Responder<acp::CreateTerminalResponse>,
@@ -10447,11 +10481,16 @@ fn handle_create_terminal(
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
     };
-    let project = match thread
-        .read_with(cx, |thread, _cx| thread.project().clone())
+    let (project, cwd) = match thread
+        .read_with(cx, |thread, _cx| {
+            (
+                thread.project().clone(),
+                terminal_cwd(thread, args.cwd.clone()),
+            )
+        })
         .map_err(agent_client_protocol::Error::from)
     {
-        Ok(p) => p,
+        Ok(read) => read,
         Err(e) => return respond_err(responder, e),
     };
 
@@ -10464,7 +10503,7 @@ fn handle_create_terminal(
                     .into_iter()
                     .map(|env| (env.name, env.value))
                     .collect(),
-                args.cwd.clone(),
+                cwd.clone(),
                 &project,
                 cx,
             )
@@ -10474,7 +10513,7 @@ fn handle_create_terminal(
                 thread.register_terminal_created(
                     acp_v2::TerminalId::new(uuid::Uuid::new_v4().to_string()),
                     format!("{} {}", args.command, args.args.join(" ")),
-                    args.cwd.clone(),
+                    cwd,
                     args.output_byte_limit,
                     terminal_entity,
                     cx,

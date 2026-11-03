@@ -1675,6 +1675,40 @@ impl AgentConnection for AcpV2Connection {
             .map_err(map_acp_error)
     }
 
+    fn cancel_tool_call(
+        &self,
+        session_id: &acp::SessionId,
+        tool_call_id: &acp::ToolCallId,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let response = Self::scoped_request(
+            &self.connection,
+            &self.dispatch_tx,
+            acp::CancelToolCallRequest::new(session_id.clone(), tool_call_id.clone()),
+        );
+        cx.foreground_executor().spawn(async move {
+            response.await?;
+            Ok(())
+        })
+    }
+
+    fn cancel_terminal(
+        &self,
+        session_id: &acp::SessionId,
+        terminal_id: &acp::TerminalId,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let response = Self::scoped_request(
+            &self.connection,
+            &self.dispatch_tx,
+            acp::CancelTerminalRequest::new(session_id.clone(), terminal_id.clone()),
+        );
+        cx.foreground_executor().spawn(async move {
+            response.await?;
+            Ok(())
+        })
+    }
+
     fn request_elicitations(&self) -> Option<Entity<ElicitationStore>> {
         Some(self.request_elicitations.clone())
     }
@@ -2698,6 +2732,85 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_subagent_directories_inherit_through_nested_subagents(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::MaybeUndefined;
+
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let parent = harness.thread(cx).await;
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(
+                acp::SubagentUpdate::new("child")
+                    .cwd(acp::AbsolutePath::new(session_path("worktree"))),
+            ),
+        );
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("grandchild")),
+        );
+        harness.drain_updates(cx).await;
+        let child = parent
+            .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
+            .expect("child");
+        let grandchild = child
+            .read_with(cx, |child, _| child.subagent(&"grandchild".into()).cloned())
+            .expect("grandchild");
+        let work_dirs = |thread: &Entity<AcpThread>, cx: &mut TestAppContext| {
+            thread.read_with(cx, |thread, _| {
+                thread
+                    .work_dirs()
+                    .expect("working directories")
+                    .ordered_paths()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+        };
+        let parent_dirs = work_dirs(&parent, cx);
+        let mut expected = parent_dirs.clone();
+        expected[0] = session_path("worktree");
+        assert_eq!(
+            work_dirs(&child, cx),
+            expected,
+            "the child keeps the parent's other dirs"
+        );
+        assert_eq!(
+            work_dirs(&grandchild, cx),
+            expected,
+            "the grandchild inherits the child's"
+        );
+
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(
+                acp::SubagentUpdate::new("child").additional_directories(Vec::new()),
+            ),
+        );
+        harness.drain_updates(cx).await;
+        assert_eq!(work_dirs(&child, cx), [session_path("worktree")]);
+        assert_eq!(
+            work_dirs(&grandchild, cx),
+            [session_path("worktree")],
+            "a change to the child's directories reaches the grandchild"
+        );
+
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(
+                acp::SubagentUpdate::new("child")
+                    .cwd(MaybeUndefined::Null)
+                    .additional_directories(MaybeUndefined::Null),
+            ),
+        );
+        harness.drain_updates(cx).await;
+        assert_eq!(
+            work_dirs(&child, cx),
+            parent_dirs,
+            "cleared fields inherit again"
+        );
+        assert_eq!(work_dirs(&grandchild, cx), parent_dirs);
+    }
+
+    #[gpui::test]
     async fn v2_subagent_updates_route_and_patch_child_sessions(cx: &mut TestAppContext) {
         use acp_thread::{ThreadStatus, subagents::SubagentAssociation};
         use agent_client_protocol::schema::MaybeUndefined;
@@ -2736,6 +2849,8 @@ mod tests {
                     title: Some("Investigator".into()),
                     description: None,
                     can_cancel: true,
+                    cwd: None,
+                    additional_directories: None,
                 })
             );
             assert_eq!(child.entries().len(), 1, "child traffic reaches the child");
@@ -2788,6 +2903,8 @@ mod tests {
                     title: None,
                     description: None,
                     can_cancel: true,
+                    cwd: None,
+                    additional_directories: None,
                 })
             );
             assert_eq!(child.subagents().count(), 0);
@@ -3188,6 +3305,129 @@ mod tests {
             thread.read_with(cx, |thread, _| thread.pending_permission_requests().count()),
             0
         );
+    }
+
+    #[gpui::test]
+    async fn v2_background_work_is_tracked_and_stoppable(cx: &mut TestAppContext) {
+        use acp_thread::ToolCallStatus;
+
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness.thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::ToolCallUpdate(
+                acp::ToolCallUpdate::new("watcher")
+                    .status(acp::ToolCallStatus::Paused)
+                    .capabilities(
+                        acp::ToolCallCapabilities::new()
+                            .cancel(acp::ToolCallCancelCapabilities::new()),
+                    ),
+            ),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::ToolCallUpdate(
+                acp::ToolCallUpdate::new("fixed").status(acp::ToolCallStatus::InProgress),
+            ),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::TerminalUpdate(acp::TerminalUpdate::new("server").capabilities(
+                acp::TerminalCapabilities::new().cancel(acp::TerminalCancelCapabilities::new()),
+            )),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::StateUpdate(acp::StateUpdate::Idle(
+                acp::IdleStateUpdate::new()
+                    .stop_reason(acp::StopReason::EndTurn)
+                    .background(vec![
+                        acp::BackgroundWork::Terminal(acp::BackgroundTerminal::new("server")),
+                        acp::BackgroundWork::ToolCall(acp::BackgroundToolCall::new("watcher")),
+                    ]),
+            )),
+        );
+        harness.drain_updates(cx).await;
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.background_work().map(<[_]>::len), Some(2));
+            let (_, watcher) = thread.tool_call(&"watcher".into()).expect("watcher");
+            assert_eq!(watcher.status(), ToolCallStatus::Paused);
+            assert!(
+                watcher.can_cancel(),
+                "paused tool calls can advertise cancel"
+            );
+            let (_, fixed) = thread.tool_call(&"fixed".into()).expect("fixed");
+            assert!(!fixed.can_cancel());
+            assert!(
+                thread
+                    .terminal("server".into())
+                    .expect("server")
+                    .read(cx)
+                    .can_cancel()
+            );
+        });
+
+        // The agent has no handler for these methods, so the SDK answers -32602 once a
+        // request reaches it. A local refusal never sends one.
+        let sent_code = |result: Result<()>| {
+            result
+                .expect_err("the harness agent rejects cancellation")
+                .downcast_ref::<agent_client_protocol::Error>()
+                .map(|error| error.code)
+        };
+        let invalid_params = Some(agent_client_protocol::ErrorCode::INVALID_PARAMS);
+        let stop_watcher = thread.update(cx, |thread, cx| {
+            thread.cancel_tool_call(&"watcher".into(), cx)
+        });
+        assert_eq!(sent_code(bounded(stop_watcher, cx).await), invalid_params);
+        let stop_fixed = thread.update(cx, |thread, cx| {
+            thread.cancel_tool_call(&"fixed".into(), cx)
+        });
+        assert_eq!(
+            sent_code(bounded(stop_fixed, cx).await),
+            None,
+            "an unadvertised tool call is never sent tool_call/cancel"
+        );
+        let stop_server = thread.update(cx, |thread, cx| {
+            thread.cancel_terminal(&"server".into(), cx)
+        });
+        assert_eq!(sent_code(bounded(stop_server, cx).await), invalid_params);
+
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::TerminalUpdate(
+                acp::TerminalUpdate::new("server").exit_status(acp::TerminalExitStatus::new()),
+            ),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::ToolCallUpdate(
+                acp::ToolCallUpdate::new("watcher").status(acp::ToolCallStatus::Cancelled),
+            ),
+        );
+        harness.send_update(
+            &session_id.0,
+            acp::SessionUpdate::StateUpdate(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+        );
+        harness.drain_updates(cx).await;
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.background_work(),
+                None,
+                "an omitted list means background work is unknown"
+            );
+            let (_, watcher) = thread.tool_call(&"watcher".into()).expect("watcher");
+            assert!(!watcher.can_cancel(), "final tool calls can't be stopped");
+            assert!(
+                !thread
+                    .terminal("server".into())
+                    .expect("server")
+                    .read(cx)
+                    .can_cancel(),
+                "exited terminals can't be stopped"
+            );
+        });
     }
 
     #[gpui::test]
