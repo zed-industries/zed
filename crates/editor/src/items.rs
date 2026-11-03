@@ -686,12 +686,18 @@ impl Item for Editor {
                     .buffer_id()
                     .is_some_and(|buffer_id| self.is_buffer_folded(buffer_id, cx))
             };
-            if newest_selection.head() == offset && !was_folded(cx) && !buffer_was_folded(cx) {
+            if !data.is_last_edit_jump
+                && newest_selection.head() == offset
+                && !was_folded(cx)
+                && !buffer_was_folded(cx)
+            {
                 false
             } else {
                 self.set_scroll_anchor(scroll_anchor, window, cx);
                 self.change_selections(
-                    SelectionEffects::default().nav_history(false).unfold(),
+                    SelectionEffects::default()
+                        .nav_history(data.is_last_edit_jump)
+                        .unfold(),
                     window,
                     cx,
                     |s| s.select_ranges([offset..offset]),

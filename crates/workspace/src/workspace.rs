@@ -124,7 +124,7 @@ use sqlez::{
 use status_bar::StatusBar;
 pub use status_bar::{HideStatusItem, StatusItemView, add_hide_button_entry};
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     borrow::Cow,
     cell::{Cell, RefCell},
     cmp,
@@ -1568,6 +1568,13 @@ struct DispatchingKeystrokes {
     task: Option<Shared<Task<()>>>,
 }
 
+#[derive(Clone)]
+struct LastEditLocation {
+    item_id: EntityId,
+    project_path: ProjectPath,
+    data: Arc<dyn Any + Send + Sync>,
+}
+
 /// Collects everything project-related for a certain window opened.
 /// In some way, is a counterpart of a window, as the [`WindowHandle`] could be downcast into `Workspace`.
 ///
@@ -1621,6 +1628,7 @@ pub struct Workspace {
     _serialize_workspace_task: Option<Task<()>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
+    last_edit_location: Option<LastEditLocation>,
     bounds: Bounds<Pixels>,
     pub centered_layout: bool,
     bounds_save_task_queued: Option<Task<()>>,
@@ -2128,6 +2136,7 @@ impl Workspace {
             leader_updates_tx,
             _subscriptions: subscriptions,
             pane_history_timestamp,
+            last_edit_location: None,
             workspace_actions: Default::default(),
             // This data will be incorrect, but it will be overwritten by the time it needs to be used.
             bounds: Default::default(),
@@ -3081,6 +3090,7 @@ impl Workspace {
     }
 
     pub fn clear_navigation_history(&mut self, window: &mut Window, cx: &mut Context<Workspace>) {
+        self.last_edit_location = None;
         for pane in &self.panes {
             pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
         }
@@ -3412,6 +3422,68 @@ impl Workspace {
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
         self.navigate_history(pane, NavigationMode::GoingForward, window, cx)
+    }
+
+    pub fn set_last_edit_location(
+        &mut self,
+        item_id: EntityId,
+        project_path: ProjectPath,
+        data: Arc<dyn Any + Send + Sync>,
+    ) {
+        self.last_edit_location = Some(LastEditLocation {
+            item_id,
+            project_path,
+            data,
+        });
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn last_edit_data(&self) -> Option<Arc<dyn Any + Send + Sync>> {
+        Some(self.last_edit_location.as_ref()?.data.clone())
+    }
+
+    pub fn go_to_last_edit_location(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Result<()>> {
+        let Some(last_edit) = self.last_edit_location.clone() else {
+            return Task::ready(Ok(()));
+        };
+
+        let open_item = self
+            .panes
+            .iter()
+            .flat_map(|pane| pane.read(cx).items().map(move |item| (pane, item)))
+            .filter(|(_, item)| {
+                item.item_id() == last_edit.item_id
+                    || (item.buffer_kind(cx) == ItemBufferKind::Singleton
+                        && item.project_path(cx).as_ref() == Some(&last_edit.project_path))
+            })
+            .max_by_key(|(pane, item)| {
+                (
+                    item.item_id() == last_edit.item_id,
+                    *pane == &self.active_pane,
+                )
+            })
+            .map(|(pane, item)| (pane.clone(), item.boxed_clone()));
+
+        if let Some((pane, item)) = open_item {
+            pane.update(cx, |pane, cx| {
+                if let Some(index) = pane.index_for_item(item.as_ref()) {
+                    pane.activate_item(index, true, true, window, cx);
+                }
+            });
+            item.navigate(last_edit.data, window, cx);
+            return Task::ready(Ok(()));
+        }
+
+        let open_path = self.open_path(last_edit.project_path, None, true, window, cx);
+        cx.spawn_in(window, async move |_, cx| {
+            let item = open_path.await?;
+            cx.update(|window, cx| item.navigate(last_edit.data, window, cx))?;
+            Ok(())
+        })
     }
 
     pub fn reopen_closed_item(
@@ -8473,6 +8545,13 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ReopenClosedItem, window, cx| {
                     workspace.reopen_closed_item(window, cx).detach();
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &GoToLastEditLocation, window, cx| {
+                    workspace
+                        .go_to_last_edit_location(window, cx)
+                        .detach_and_log_err(cx);
                 },
             ))
             .on_action(cx.listener(
