@@ -1667,7 +1667,6 @@ impl ContextMenu {
                     ix,
                     submenu,
                     is_active_descendant(!submenu.disabled),
-                    window,
                     cx,
                 )
                 .into_any_element(),
@@ -1679,7 +1678,6 @@ impl ContextMenu {
         ix: usize,
         submenu: &ContextMenuSubmenu,
         is_active_descendant: bool,
-        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ContextMenuSubmenu {
@@ -1848,7 +1846,7 @@ impl ContextMenu {
                     ),
             )
             .when_some(submenu, |this, (submenu, trigger_bounds)| {
-                this.child(self.render_submenu_container(ix, submenu, trigger_bounds, window, cx))
+                this.child(self.render_submenu_container(ix, submenu, trigger_bounds.size, cx))
             })
     }
 
@@ -1870,21 +1868,9 @@ impl ContextMenu {
         &self,
         ix: usize,
         submenu: Entity<ContextMenu>,
-        trigger_bounds: Bounds<Pixels>,
-        window: &Window,
+        trigger_size: Size<Pixels>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let space_on_right = window.viewport_size().width - trigger_bounds.right();
-        let space_on_left = trigger_bounds.left();
-        let flip_left = space_on_right < CONTEXT_MENU_MIN_WIDTH && space_on_left > space_on_right;
-        let anchor_position = point(
-            if flip_left {
-                px(2.)
-            } else {
-                trigger_bounds.size.width - px(2.)
-            },
-            px(0.),
-        );
         let bounds_cell = self.submenu_bounds.clone();
         let canvas = canvas(
             {
@@ -1904,13 +1890,13 @@ impl ContextMenu {
         div().absolute().top_0().left_0().w(px(0.)).h(px(0.)).child(
             deferred(
                 anchored()
-                    .position(anchor_position)
                     .position_mode(AnchoredPositionMode::Local)
-                    .anchor(if flip_left {
-                        Anchor::TopRight
-                    } else {
-                        Anchor::TopLeft
-                    })
+                    .attach(
+                        Bounds::new(Point::default(), trigger_size),
+                        Anchor::TopRight,
+                    )
+                    .anchor(Anchor::TopLeft)
+                    .offset(point(px(-2.), px(0.)))
                     .snap_to_window_with_margin(px(8.0))
                     .child(
                         div()
@@ -3100,6 +3086,60 @@ mod tests {
                 assert!(submenu.right() <= px(692.));
             });
         }
+    }
+
+    #[gpui::test]
+    fn wide_submenu_opens_on_the_side_it_fits(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        let window = cx.open_window(size(px(900.), px(400.)), |window, cx| {
+            let menu = ContextMenu::build(window, cx, |menu, _, _| {
+                menu.submenu("Wide", |menu, _, _| {
+                    menu.custom_row(|_, _| div().w(px(320.)).child("wide").into_any_element())
+                })
+            });
+            SubmenuTestView {
+                menu,
+                left: px(400.),
+            }
+        });
+        cx.run_until_parked();
+        let menu = window
+            .update(cx, |view, _, _| view.menu.clone())
+            .expect("submenu window");
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        draw_frames(&mut visual);
+
+        menu.update_in(&mut visual, |menu, window, cx| {
+            menu.select_first(&SelectFirst, window, cx);
+            menu.select_submenu_child(&SelectChild, window, cx);
+        });
+        draw_frames(&mut visual);
+
+        menu.read_with(&visual, |menu, _| {
+            let trigger = menu
+                .submenu_trigger_bounds
+                .borrow()
+                .get(&0)
+                .copied()
+                .expect("trigger bounds");
+            let submenu = menu.submenu_bounds.get().expect("submenu bounds");
+            let space_on_right = px(900.) - trigger.right();
+            assert!(
+                space_on_right > CONTEXT_MENU_MIN_WIDTH && space_on_right < submenu.size.width,
+                "trigger: {trigger:?}, submenu: {submenu:?}"
+            );
+            assert_eq!(
+                submenu.right(),
+                trigger.left() + px(2.),
+                "trigger: {trigger:?}, submenu: {submenu:?}"
+            );
+            assert_eq!(submenu.top(), trigger.top());
+        });
     }
 
     #[gpui::test]
