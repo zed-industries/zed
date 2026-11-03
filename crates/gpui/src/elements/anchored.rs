@@ -61,16 +61,11 @@ impl Anchored {
         self
     }
 
-    /// Places the element against `target`, putting the element's [`Anchored::anchor`] corner
-    /// on the given `corner` of `target`, such as a submenu's top-left on its trigger's top-right.
+    /// Places the element's [`Anchored::anchor`] corner on `corner` of `target`, interpreted
+    /// per [`Anchored::position_mode`]. Replaces [`Anchored::position`].
     ///
-    /// Along each axis where this puts the element outside `target`, an element that would
-    /// overflow the window moves to the other side of `target` if it overflows less there.
-    /// That mirrors both corners and the [`Anchored::offset`] along the axis, so a submenu
-    /// opens to the left of its trigger and a dropdown opens above its button.
-    ///
-    /// Replaces [`Anchored::position`]. `target` is interpreted like a position, according to
-    /// [`Anchored::position_mode`].
+    /// On each axis where the element sits outside `target`, it moves to the other side of
+    /// `target` when that overflows the window less, mirroring both corners and the offset.
     pub fn attach(mut self, target: Bounds<Pixels>, corner: Anchor) -> Self {
         self.placement = Placement::Attached { target, corner };
         self
@@ -84,8 +79,9 @@ impl Anchored {
     }
 
     /// Sets the position mode for this anchored element. Local will have this
-    /// interpret its [`Anchored::position`] or [`Anchored::attach`] target as relative to the parent element.
-    /// While Window will have it interpret the position as relative to the window.
+    /// interpret its [`Anchored::position`] or [`Anchored::attach`] target as
+    /// relative to the parent element. While Window will have it interpret the
+    /// position as relative to the window.
     pub fn position_mode(mut self, mode: AnchoredPositionMode) -> Self {
         self.position_mode = mode;
         self
@@ -184,10 +180,9 @@ impl Element for Anchored {
             size: window.viewport_size(),
         };
 
-        if let Placement::Attached { target, corner } = self.placement {
-            // Measured against the visible window edges, not the snap margins, so an element
-            // that already fits only moves when it would actually have been snapped. Client-side
-            // decorations draw a transparent shadow inside the viewport, which isn't room.
+        if let Placement::Attached { target, mut corner } = self.placement {
+            // Ignores the snap margins so an element that fits stays put, and excludes the
+            // client inset because client-side decoration shadows aren't room.
             let visible = limits.inset(window.client_inset.unwrap_or(px(0.)));
             let overflow_along = |bounds: Bounds<Pixels>, axis: Axis| match axis {
                 Axis::Horizontal => {
@@ -199,7 +194,6 @@ impl Element for Anchored {
                         + (bounds.bottom() - visible.bottom()).max(px(0.))
                 }
             };
-            let mut corner = corner;
             let mut anchor = self.anchor;
             let mut offset = self.offset.unwrap_or_default();
             for axis in [Axis::Horizontal, Axis::Vertical] {

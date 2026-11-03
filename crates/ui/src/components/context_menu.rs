@@ -1846,7 +1846,7 @@ impl ContextMenu {
                     ),
             )
             .when_some(submenu, |this, (submenu, trigger_bounds)| {
-                this.child(self.render_submenu_container(ix, submenu, trigger_bounds, cx))
+                this.child(self.render_submenu_container(ix, submenu, trigger_bounds.size, cx))
             })
     }
 
@@ -1868,7 +1868,7 @@ impl ContextMenu {
         &self,
         ix: usize,
         submenu: Entity<ContextMenu>,
-        trigger_bounds: Bounds<Pixels>,
+        trigger_size: Size<Pixels>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let bounds_cell = self.submenu_bounds.clone();
@@ -1892,7 +1892,7 @@ impl ContextMenu {
                 anchored()
                     .position_mode(AnchoredPositionMode::Local)
                     .attach(
-                        Bounds::new(Point::default(), trigger_bounds.size),
+                        Bounds::new(Point::default(), trigger_size),
                         Anchor::TopRight,
                     )
                     .anchor(Anchor::TopLeft)
