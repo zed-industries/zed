@@ -592,6 +592,11 @@ impl CursorAnimationState {
             }
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
 }
 
 fn nearly_equal(left: f32, right: f32) -> bool {
