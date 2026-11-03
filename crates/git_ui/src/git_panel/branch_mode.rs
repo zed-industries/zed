@@ -274,10 +274,15 @@ impl GitPanel {
     }
 
     pub(super) fn branch_status_entries(&self, cx: &App) -> Vec<GitStatusEntry> {
-        let Some(statuses) = self
-            .branch_list()
-            .and_then(|branch_list| branch_list.read(cx).statuses_by_path())
-        else {
+        let Some(branch_list) = self.branch_list().map(|branch_list| branch_list.read(cx)) else {
+            return Vec::new();
+        };
+        // A failed reload keeps the rows from the last base that loaded, so
+        // they're cleared to show the error instead.
+        if branch_list.tree_diff_error().is_some() {
+            return Vec::new();
+        }
+        let Some(statuses) = branch_list.statuses_by_path() else {
             return Vec::new();
         };
         statuses
