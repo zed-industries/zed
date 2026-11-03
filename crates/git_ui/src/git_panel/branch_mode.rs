@@ -8,14 +8,37 @@ pub(super) enum ChangesMode {
     Branch(Option<BranchList>),
 }
 
-/// How long the previous base's rows stay while a new base loads. Most bases
+/// How long the previous base's files stay while a new base loads. Most bases
 /// load sooner, so switching doesn't flash a loading state.
-const KEEP_PREVIOUS_ROWS_FOR: Duration = Duration::from_millis(300);
+const KEEP_PREVIOUS_FILES_FOR: Duration = Duration::from_millis(300);
 
 pub(super) struct BranchList {
     list: Entity<DiffBufferList>,
-    keep_previous_rows: Option<Task<()>>,
+    previous_files: Option<PreviousFiles>,
     _subscription: Subscription,
+}
+
+/// Rebuilds keep using these until the new base loads, so view changes and
+/// folder toggles still apply while it does.
+struct PreviousFiles {
+    entries: Vec<GitStatusEntry>,
+    _expire: Task<()>,
+}
+
+fn listed_files(list: &DiffBufferList) -> Option<Vec<GitStatusEntry>> {
+    let statuses = list.statuses_by_path()?;
+    Some(
+        statuses
+            .iter()
+            .map(|status_entry| GitStatusEntry {
+                repo_path: status_entry.repo_path.clone(),
+                status: status_entry.status,
+                staging: status_entry.status.staging(),
+                // Per-file stats against the merge base aren't computed yet.
+                diff_stat: None,
+            })
+            .collect(),
+    )
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -352,6 +375,12 @@ impl GitPanel {
         let diff_base = DiffBase::Merge { base_ref };
 
         if let Some(branch_list) = branch_list {
+            let previous_entries = listed_files(branch_list.list.read(cx)).or_else(|| {
+                branch_list
+                    .previous_files
+                    .take()
+                    .map(|previous| previous.entries)
+            });
             let (repo_changed, base_changed) = {
                 let list = branch_list.list.read(cx);
                 let repo_id = repo.read(cx).id;
@@ -369,23 +398,27 @@ impl GitPanel {
             });
             if repo_changed {
                 // Another repository's files would be wrong, not just stale.
-                branch_list.keep_previous_rows = None;
+                branch_list.previous_files = None;
             } else if base_changed {
-                branch_list.keep_previous_rows =
-                    Some(cx.spawn_in(window, async move |this, cx| {
-                        cx.background_executor().timer(KEEP_PREVIOUS_ROWS_FOR).await;
+                branch_list.previous_files = previous_entries.map(|entries| PreviousFiles {
+                    entries,
+                    _expire: cx.spawn_in(window, async move |this, cx| {
+                        cx.background_executor()
+                            .timer(KEEP_PREVIOUS_FILES_FOR)
+                            .await;
                         this.update_in(cx, |this, window, cx| {
                             if let ChangesMode::Branch(Some(branch_list)) = &mut this.changes_mode {
-                                branch_list.keep_previous_rows = None;
+                                branch_list.previous_files = None;
                             }
                             this.update_visible_entries(window, cx);
                         })
                         .ok();
-                    }));
+                    }),
+                });
             } else {
                 let list = branch_list.list.read(cx);
                 if list.statuses_by_path().is_some() || list.tree_diff_error().is_some() {
-                    branch_list.keep_previous_rows = None;
+                    branch_list.previous_files = None;
                 }
             }
             return;
@@ -403,40 +436,29 @@ impl GitPanel {
         );
         *branch_list = Some(BranchList {
             list,
-            keep_previous_rows: None,
+            previous_files: None,
             _subscription: subscription,
         });
     }
 
-    pub(super) fn keeps_previous_branch_rows(&self) -> bool {
-        matches!(
-            &self.changes_mode,
-            ChangesMode::Branch(Some(branch_list)) if branch_list.keep_previous_rows.is_some()
-        )
-    }
-
     pub(super) fn branch_status_entries(&self, cx: &App) -> Vec<GitStatusEntry> {
-        let Some(branch_list) = self.branch_list().map(|branch_list| branch_list.read(cx)) else {
+        let ChangesMode::Branch(Some(branch_list)) = &self.changes_mode else {
             return Vec::new();
         };
+        let list = branch_list.list.read(cx);
         // A failed reload keeps the rows from the last base that loaded, so
         // they're cleared to show the error instead.
-        if branch_list.tree_diff_error().is_some() {
+        if list.tree_diff_error().is_some() {
             return Vec::new();
         }
-        let Some(statuses) = branch_list.statuses_by_path() else {
-            return Vec::new();
-        };
-        statuses
-            .iter()
-            .map(|status_entry| GitStatusEntry {
-                repo_path: status_entry.repo_path.clone(),
-                status: status_entry.status,
-                staging: status_entry.status.staging(),
-                // Per-file stats against the merge base aren't computed yet.
-                diff_stat: None,
+        listed_files(list)
+            .or_else(|| {
+                branch_list
+                    .previous_files
+                    .as_ref()
+                    .map(|previous| previous.entries.clone())
             })
-            .collect()
+            .unwrap_or_default()
     }
 
     pub(super) fn follow_active_branch_diff(
