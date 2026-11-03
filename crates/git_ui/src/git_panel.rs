@@ -17739,11 +17739,18 @@ mod tests {
             panel.compare_against_base("develop".into(), window, cx);
         });
         settle_branch_mode(cx);
-        panel.read_with(cx, |panel, _| {
+        // The fake repository lists the same files for every base, so check
+        // that the list itself moved to the new base.
+        panel.read_with(cx, |panel, cx| {
             assert!(panel.is_branch_mode());
             assert_eq!(panel.branch_base.effective().as_deref(), Some("develop"));
+            assert_eq!(
+                panel.branch_list().unwrap().read(cx).diff_base(),
+                &DiffBase::Merge {
+                    base_ref: "develop".into()
+                }
+            );
         });
-        assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
     }
 
     #[gpui::test]
@@ -17751,6 +17758,10 @@ mod tests {
         let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
         let cx = &mut cx;
         let panel = test.panel.clone();
+        test.workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<GitPanel>(window, cx);
+        });
 
         panel.update_in(cx, |panel, window, cx| {
             panel.enter_branch_mode(window, cx);
@@ -17764,6 +17775,8 @@ mod tests {
             panel.selected_entry = Some(d_index);
             panel.focus_handle.focus(window, cx);
         });
+        // Actions only reach the panel's handlers once it has been drawn.
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.dispatch_action(ToggleStaged);
         settle_branch_mode(cx);
 
