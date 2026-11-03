@@ -379,7 +379,7 @@ pub fn task_contexts(
     let active_worktree = active_item_worktree.or_else(|| {
         workspace
             .visible_worktrees(cx)
-            .next()
+            .find(|worktree| is_visible_directory(worktree, cx))
             .map(|tree| tree.read(cx).id())
     });
 
@@ -742,43 +742,20 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let (project, workspace, cx) = init_project_with_worktree_task(cx).await;
-        task_inventory(&workspace, cx)
-            .update(cx, |inventory, _| {
-                inventory.update_file_based_tasks(
-                    TaskSettingsLocation::Global(Path::new(path!("/zed-config/tasks.json"))),
-                    Some(GLOBAL_TASKS_JSON),
-                )
-            })
-            .unwrap();
+        assert_global_task_spawned_in_project_root(&project, &workspace, cx).await;
+    }
 
-        open_file_in_invisible_worktree(
-            &project,
-            &workspace,
-            path!("/zed-config"),
-            "tasks.json",
+    #[gpui::test]
+    async fn test_spawn_by_name_resolves_global_task_with_single_file_worktree_listed_first(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace, cx) = init_project_with_worktree_task_and_roots(
             cx,
+            &[path!("/external/notes.txt"), path!("/project")],
         )
         .await;
 
-        cx.dispatch_action(Spawn::ByName {
-            task_name: "print global task context".to_string(),
-            reveal_target: None,
-        });
-        cx.run_until_parked();
-
-        let scheduled_task = last_scheduled_task(&workspace, cx);
-        assert_eq!(
-            scheduled_task.resolved.args,
-            vec![
-                path!("/project").to_string(),
-                "tasks.json".to_string(),
-                "no file".to_string(),
-            ]
-        );
-        assert_eq!(
-            scheduled_task.resolved.cwd.as_deref(),
-            Some(Path::new(path!("/project")))
-        );
+        assert_global_task_spawned_in_project_root(&project, &workspace, cx).await;
     }
 
     #[gpui::test]
@@ -1047,6 +1024,17 @@ mod tests {
     async fn init_project_with_worktree_task(
         cx: &mut TestAppContext,
     ) -> (Entity<Project>, Entity<Workspace>, &mut VisualTestContext) {
+        init_project_with_worktree_task_and_roots(cx, &[path!("/project")]).await
+    }
+
+    async fn init_project_with_worktree_task_and_roots<'a>(
+        cx: &'a mut TestAppContext,
+        roots: &[&str],
+    ) -> (
+        Entity<Project>,
+        Entity<Workspace>,
+        &'a mut VisualTestContext,
+    ) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -1082,7 +1070,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let project = Project::test(fs, roots.iter().map(|root| Path::new(*root)), cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
@@ -1129,6 +1117,44 @@ mod tests {
                 path!("/project").to_string(),
                 "no file".to_string(),
                 "no file".to_string()
+            ]
+        );
+        assert_eq!(
+            scheduled_task.resolved.cwd.as_deref(),
+            Some(Path::new(path!("/project")))
+        );
+    }
+
+    async fn assert_global_task_spawned_in_project_root(
+        project: &Entity<Project>,
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) {
+        task_inventory(workspace, cx)
+            .update(cx, |inventory, _| {
+                inventory.update_file_based_tasks(
+                    TaskSettingsLocation::Global(Path::new(path!("/zed-config/tasks.json"))),
+                    Some(GLOBAL_TASKS_JSON),
+                )
+            })
+            .unwrap();
+
+        open_file_in_invisible_worktree(project, workspace, path!("/zed-config"), "tasks.json", cx)
+            .await;
+
+        cx.dispatch_action(Spawn::ByName {
+            task_name: "print global task context".to_string(),
+            reveal_target: None,
+        });
+        cx.run_until_parked();
+
+        let scheduled_task = last_scheduled_task(workspace, cx);
+        assert_eq!(
+            scheduled_task.resolved.args,
+            vec![
+                path!("/project").to_string(),
+                "tasks.json".to_string(),
+                "no file".to_string(),
             ]
         );
         assert_eq!(
