@@ -258,6 +258,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2026_08_30::nest_markdown_preview_settings),
         MigrationType::Json(migrations::m_2026_09_16::nest_agent_threads_sidebar_settings),
         MigrationType::Json(migrations::m_2026_09_29::move_copilot_enterprise_uri),
+        MigrationType::Json(migrations::m_2026_11_03::combine_modal_editing_settings),
     ];
     run_migrations(text, migrations)
 }
@@ -4277,7 +4278,7 @@ mod tests {
                         },
                         "Minimal": {
                             "settings": {
-                                "vim_mode": true
+                                "modal_editing": "vim"
                             }
                         }
                     }
