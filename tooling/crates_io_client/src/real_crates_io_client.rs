@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use futures::AsyncReadExt as _;
 use http_client::{AsyncBody, HttpClient, Method, Request, Response, http::header};
 use parking_lot::Mutex;
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use url::Url;
 
 use crate::*;
@@ -17,6 +17,7 @@ const BASE_URL: &str = "https://crates.io/api/v1";
 // User agent and request rate requirements: https://crates.io/data-access
 const USER_AGENT: &str = "Zed GPUI releases (https://github.com/zed-industries/zed)";
 pub(crate) const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(1);
+const MAX_PER_PAGE: u32 = 100;
 
 /// Reserving the send time before waiting makes concurrent requests queue up
 /// behind each other instead of all waking at the same instant.
@@ -57,6 +58,14 @@ impl RealCratesIoClient {
 
     fn url(path: &str) -> Result<Url> {
         Ok(Url::parse(&format!("{BASE_URL}{path}")).context("Invalid crates.io URL")?)
+    }
+
+    fn crate_url(name: &CrateName) -> Result<Url> {
+        let mut url = Self::url("/crates")?;
+        url.path_segments_mut()
+            .map_err(|()| anyhow::anyhow!("crates.io URL cannot have path segments"))?
+            .push(name.as_str());
+        Ok(url)
     }
 
     async fn request_response(
@@ -123,5 +132,93 @@ impl CratesIoClient for RealCratesIoClient {
     async fn get_site_metadata(&self) -> Result<SiteMetadata> {
         self.request_json(Method::GET, Self::url("/site_metadata")?, None)
             .await
+    }
+
+    async fn list_crates(&self, query: &CrateListQuery) -> Result<Vec<Crate>> {
+        #[derive(Deserialize)]
+        struct CrateListResponse {
+            crates: Vec<Crate>,
+            meta: CrateListMeta,
+        }
+
+        #[derive(Deserialize)]
+        struct CrateListMeta {
+            /// A query string for the next page, which preserves the filters.
+            next_page: Option<String>,
+        }
+
+        let mut url = Self::url("/crates")?;
+        {
+            let mut pairs = url.query_pairs_mut();
+            pairs.append_pair("per_page", &MAX_PER_PAGE.to_string());
+            if let Some(search) = &query.search {
+                pairs.append_pair("q", search);
+            }
+            if let Some(category) = &query.category {
+                pairs.append_pair("category", category);
+            }
+            if let Some(keyword) = &query.keyword {
+                pairs.append_pair("keyword", keyword);
+            }
+            if let Some(user_id) = query.user_id {
+                pairs.append_pair("user_id", &user_id.0.to_string());
+            }
+            if query.exclude_yanked {
+                pairs.append_pair("include_yanked", "no");
+            }
+        }
+
+        let mut crates = Vec::new();
+        loop {
+            let mut page: CrateListResponse = self.request_json(Method::GET, url, None).await?;
+            let is_last_page = page.crates.is_empty();
+            crates.append(&mut page.crates);
+
+            match page.meta.next_page {
+                Some(next_page) if !is_last_page => {
+                    url = Self::url(&format!("/crates{next_page}"))?;
+                }
+                _ => return Ok(crates),
+            }
+        }
+    }
+
+    async fn get_crate(&self, name: &CrateName) -> Result<CrateDetails> {
+        #[derive(Deserialize)]
+        struct CrateResponse {
+            #[serde(rename = "crate")]
+            krate: Crate,
+            versions: Option<Vec<Version>>,
+        }
+
+        let mut url = Self::crate_url(name)?;
+        url.query_pairs_mut()
+            .append_pair("include", "versions,keywords,categories");
+        let response: CrateResponse = self.request_json(Method::GET, url, None).await?;
+        Ok(CrateDetails {
+            krate: response.krate,
+            versions: response.versions.unwrap_or_default(),
+        })
+    }
+
+    async fn update_crate(&self, name: &CrateName, update: &CrateUpdate) -> Result<Crate> {
+        #[derive(Serialize)]
+        struct UpdateRequest<'a> {
+            #[serde(rename = "crate")]
+            krate: &'a CrateUpdate,
+        }
+
+        #[derive(Deserialize)]
+        struct UpdateResponse {
+            #[serde(rename = "crate")]
+            krate: Crate,
+        }
+
+        let body = serde_json::to_vec(&UpdateRequest { krate: update })
+            .context("Failed to serialize crate update")?;
+        let response: UpdateResponse = self
+            .request_json(Method::PATCH, Self::crate_url(name)?, Some(body))
+            .await?;
+        Ok(response.krate)
     }
 }
