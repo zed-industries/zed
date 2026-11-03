@@ -224,6 +224,7 @@ impl AnthropicCompatibleLanguageModelProvider {
                         name,
                         value,
                         is_default,
+                        supports_disabling_thinking: None,
                     }
                 })
                 .collect(),

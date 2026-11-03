@@ -86,7 +86,7 @@ try {
         awaitPromise: true, returnByValue: true,
         expression: `(async () => {
             if (!crossOriginIsolated) throw new Error("Shared-memory isolation headers are required");
-            const fixture = await import("/queue_test.js");
+            const fixture = await import("/queue-test.js");
             await fixture.default();
             let trapped = false;
             try { fixture.forbidden_main_thread_wait(); }

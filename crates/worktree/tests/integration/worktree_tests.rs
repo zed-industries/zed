@@ -870,6 +870,69 @@ async fn test_scan_symlinks_always(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_deleted_external_symlink_before_read_dir_cleans_up_watch(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.scan_symlinks =
+                    Some(settings::ScanSymlinksSetting::Always);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({})).await;
+    fs.insert_tree("/outside", json!({"data": {}})).await;
+    fs.create_symlink("/root/link".as_ref(), "/outside/data".into())
+        .await
+        .unwrap();
+
+    fs.before_read_dir(
+        "/root/link",
+        Box::pin({
+            let fs = fs.clone();
+            async move {
+                let mut watched_paths = fs.registered_watch_paths();
+                watched_paths.sort();
+                assert_eq!(
+                    watched_paths,
+                    vec![PathBuf::from("/outside/data"), PathBuf::from("/root")]
+                );
+                fs.remove_file("/root/link".as_ref(), RemoveOptions::default())
+                    .await
+                    .unwrap();
+            }
+        }),
+    );
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![rel_path("")]
+        );
+    });
+    assert_eq!(fs.registered_watch_paths(), vec![PathBuf::from("/root")]);
+}
+
+#[gpui::test]
 async fn test_relative_path_for_external_abs_path(cx: &mut TestAppContext) {
     init_test(cx);
 

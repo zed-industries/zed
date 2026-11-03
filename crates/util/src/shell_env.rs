@@ -87,22 +87,7 @@ async fn capture_unix(
     let mut command_string = String::new();
     let mut command = new_std_command(shell_path);
     command.args(args);
-    // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
-    // so file descriptor 0 (stdin) is used instead. This impacts zsh, old bash; perhaps others.
-    // See: https://github.com/zed-industries/zed/pull/32136#issuecomment-2999645482
-    const FD_STDIN: std::os::fd::RawFd = 0;
-    const FD_STDOUT: std::os::fd::RawFd = 1;
-    const FD_STDERR: std::os::fd::RawFd = 2;
-
-    let (fd_num, redir) = match shell_kind {
-        ShellKind::Rc => (FD_STDIN, format!(">[1={}]", FD_STDIN)), // `[1=0]`
-        ShellKind::Nushell | ShellKind::Tcsh => (FD_STDOUT, "".to_string()),
-        // xonsh doesn't support redirecting to stdin, and control sequences are printed to
-        // stdout on startup
-        ShellKind::Xonsh => (FD_STDERR, "o>e".to_string()),
-        ShellKind::PowerShell => (FD_STDIN, format!(">{}", FD_STDIN)),
-        _ => (FD_STDIN, format!(">&{}", FD_STDIN)), // `>&0`
-    };
+    let (fd_num, redir) = capture_output_redirection(shell_kind);
 
     match shell_kind {
         ShellKind::Csh | ShellKind::Tcsh => {
@@ -175,6 +160,26 @@ async fn capture_unix(
             )
         },
     )
+}
+
+#[cfg(unix)]
+fn capture_output_redirection(shell_kind: ShellKind) -> (std::os::fd::RawFd, String) {
+    // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
+    // so file descriptor 0 (stdin) is used instead. This impacts zsh, old bash; perhaps others.
+    // See: https://github.com/zed-industries/zed/pull/32136#issuecomment-2999645482
+    const FD_STDIN: std::os::fd::RawFd = 0;
+    const FD_STDOUT: std::os::fd::RawFd = 1;
+    const FD_STDERR: std::os::fd::RawFd = 2;
+
+    match shell_kind {
+        ShellKind::Rc => (FD_STDIN, format!(">[1={FD_STDIN}]")), // `[1=0]`
+        ShellKind::Nushell | ShellKind::Tcsh => (FD_STDOUT, "".to_string()),
+        // xonsh doesn't support redirecting to stdin, and control sequences are printed to
+        // stdout on startup
+        ShellKind::Xonsh => (FD_STDERR, "o>e".to_string()),
+        ShellKind::PowerShell | ShellKind::Pwsh => (FD_STDIN, format!("> /dev/fd/{FD_STDIN}")),
+        _ => (FD_STDIN, format!(">&{FD_STDIN}")), // `>&0`
+    }
 }
 
 #[cfg(unix)]
@@ -322,6 +327,32 @@ mod tests {
         use std::os::windows::process::ExitStatusExt;
 
         ExitStatus::from_raw(code)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capture_powershell_environment_without_startup_output() -> Result<()> {
+        for shell in ["pwsh", "powershell"] {
+            let (descriptor, redirection) =
+                capture_output_redirection(ShellKind::new(shell, false));
+            if let Ok(shell_path) = which::which(shell) {
+                let directory = tempfile::tempdir()?;
+                let script =
+                    format!("Write-Output '{{}}'; /bin/echo '{{\"PROBE\":\"ok\"}}' {redirection}");
+                let mut command = crate::command::new_std_command(shell_path);
+                command
+                    .args(["-NoProfile", "-l", "-i", "-c", &script])
+                    .current_dir(directory.path());
+                let (output, process_output) =
+                    smol::block_on(spawn_and_read_fd(command, descriptor))?;
+                assert!(process_output.status.success(), "{process_output:?}");
+                assert_eq!(output, b"{\"PROBE\":\"ok\"}\n");
+                assert_eq!(process_output.stdout, b"{}\n");
+                assert!(!directory.path().join("0").exists());
+            }
+            assert_eq!((descriptor, redirection), (0, String::from("> /dev/fd/0")));
+        }
+        Ok(())
     }
 
     #[test]

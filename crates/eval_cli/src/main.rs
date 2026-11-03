@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 
 use acp_thread::AgentConnection as _;
 use agent::{NativeAgent, NativeAgentConnection, Templates, ThreadStore};
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::{Context, Result};
 use clap::Parser;
 use feature_flags::FeatureFlagAppExt as _;
@@ -859,12 +859,16 @@ async fn run_agent(
         },
         _ = sigterm_future.fuse() => {
             eprintln!("[eval-cli] received SIGTERM, cancelling...");
-            acp_thread.update(cx, |t: &mut acp_thread::AcpThread, cx| t.cancel(cx)).await;
-            Ok(AgentOutcome::Interrupted)
+            acp_thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| thread.cancel(cx))
+                .await
+                .context("cancelling agent after SIGTERM")
+                .map(|()| AgentOutcome::Interrupted)
         },
         _ = timeout_future.fuse() => {
-            acp_thread.update(cx, |t: &mut acp_thread::AcpThread, cx| t.cancel(cx)).await;
-            Ok(AgentOutcome::Timeout { seconds: timeout.unwrap_or(0) })
+            acp_thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| thread.cancel(cx))
+                .await
+                .context("cancelling agent after timeout")
+                .map(|()| AgentOutcome::Timeout { seconds: timeout.unwrap_or(0) })
         }
     };
 

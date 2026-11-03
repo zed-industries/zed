@@ -1139,6 +1139,7 @@ mod tests {
             id: OrganizationId(id.into()),
             name: id.into(),
             is_personal,
+            ui_permissions: Default::default(),
         };
 
         assert!(!user_store.read_with(cx, |store, _| {

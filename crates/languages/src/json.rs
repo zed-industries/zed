@@ -4,8 +4,8 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
+use github_releases::{GitHubLspBinaryVersion, latest_github_release};
 use gpui::{App, AsyncApp, Entity, Task};
-use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
     Buffer, ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
     LspAdapterDelegate, LspInstaller, Toolchain,
