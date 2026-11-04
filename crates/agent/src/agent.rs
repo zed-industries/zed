@@ -34,7 +34,7 @@ use acp_thread::{
     AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, ProcessOutput,
     TokenUsageRatio,
 };
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use agent_skills::{
     AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, ProjectSkillGroup,
     SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError, SkillLoadWarning, SkillScopeId,
@@ -926,6 +926,8 @@ impl NativeAgent {
                     title: subagent_title,
                     description: None,
                     can_cancel: true,
+                    cwd: None,
+                    additional_directories: None,
                 });
             }
             acp_thread.set_draft_prompt(draft_prompt, cx);
