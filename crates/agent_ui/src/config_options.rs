@@ -1,7 +1,7 @@
 use std::{rc::Rc, sync::Arc};
 
 use acp_thread::AgentSessionConfigOptions;
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use agent_servers::AgentServer;
 
 use collections::HashSet;
