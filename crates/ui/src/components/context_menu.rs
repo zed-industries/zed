@@ -212,6 +212,7 @@ impl From<ContextMenuEntry> for ContextMenuItem {
 pub struct ContextMenuSubmenu {
     id: Option<ElementId>,
     label: SharedString,
+    trigger_render: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
     icon: Option<IconName>,
     icon_color: Option<Color>,
     disabled: bool,
@@ -226,6 +227,7 @@ impl ContextMenuSubmenu {
         Self {
             id: None,
             label: label.into(),
+            trigger_render: None,
             icon: None,
             icon_color: None,
             disabled: false,
@@ -251,6 +253,18 @@ impl ContextMenuSubmenu {
 
     pub fn icon_color(mut self, color: Color) -> Self {
         self.icon_color = Some(color);
+        self
+    }
+
+    /// Replaces the trigger's visual content, including its icon and chevron.
+    /// The label passed to [`Self::new`] remains the accessible name, and the
+    /// menu retains responsibility for interaction and disabled behavior.
+    /// Custom content controls its own styling, including disabled colors.
+    pub fn custom_trigger(
+        mut self,
+        trigger_render: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        self.trigger_render = Some(Box::new(trigger_render));
         self
     }
 }
@@ -1667,6 +1681,7 @@ impl ContextMenu {
                     ix,
                     submenu,
                     is_active_descendant(!submenu.disabled),
+                    window,
                     cx,
                 )
                 .into_any_element(),
@@ -1678,10 +1693,12 @@ impl ContextMenu {
         ix: usize,
         submenu: &ContextMenuSubmenu,
         is_active_descendant: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ContextMenuSubmenu {
             label,
+            trigger_render,
             icon,
             icon_color,
             disabled,
@@ -1809,8 +1826,9 @@ impl ContextMenu {
                             }
                         }
                     }))
-                    .child(
-                        h_flex()
+                    .child(match trigger_render {
+                        Some(trigger_render) => trigger_render(window, cx),
+                        None => h_flex()
                             .w_full()
                             .gap_2()
                             .justify_between()
@@ -1842,8 +1860,9 @@ impl ContextMenu {
                                     } else {
                                         Color::Muted
                                     }),
-                            ),
-                    ),
+                            )
+                            .into_any_element(),
+                    }),
             )
             .when_some(submenu, |this, (submenu, trigger_bounds)| {
                 this.child(self.render_submenu_container(ix, submenu, trigger_bounds.size, cx))
@@ -2637,6 +2656,97 @@ mod tests {
     }
 
     #[gpui::test]
+    fn custom_submenu_trigger_keeps_menu_interactions(cx: &mut TestAppContext) {
+        let (menu, mut visual) = submenu_test_window(cx, |window, cx| {
+            ContextMenu::build(window, cx, |menu, _, _| {
+                menu.item(
+                    ContextMenuSubmenu::new("Disabled submenu", |_, _, _| {
+                        panic!("disabled submenu must not open")
+                    })
+                    .disabled(true)
+                    .custom_trigger(|_, _| {
+                        div()
+                            .debug_selector(|| "disabled-trigger".into())
+                            .child(Label::new("Unavailable").color(Color::Disabled))
+                            .into_any_element()
+                    }),
+                )
+                .item(
+                    ContextMenuSubmenu::new("Group by", |menu, _, _| {
+                        menu.entry("Project", None, |_, _| {})
+                    })
+                    .custom_trigger(|_, _| {
+                        h_flex()
+                            .debug_selector(|| "custom-trigger".into())
+                            .w_full()
+                            .justify_between()
+                            .child(Label::new("Group by"))
+                            .child(Label::new("Project").color(Color::Muted))
+                            .into_any_element()
+                    }),
+                )
+            })
+        });
+        let disabled_bounds = visual
+            .debug_bounds("disabled-trigger")
+            .expect("disabled custom content");
+        visual.simulate_mouse_move(disabled_bounds.center(), None, Modifiers::default());
+        visual.simulate_click(disabled_bounds.center(), Modifiers::default());
+        menu.read_with(&visual, |menu, _| {
+            assert!(matches!(menu.submenu_state, SubmenuState::Closed));
+        });
+
+        menu.update_in(&mut visual, |menu, window, cx| {
+            window.focus(&menu.focus_handle, cx);
+            menu.select_first(&SelectFirst, window, cx);
+            assert_eq!(menu.selected_index(), Some(1));
+        });
+        let submenu = open_selected_submenu(&menu, &mut visual);
+        visual.update(|window, cx| assert!(submenu.focus_handle(cx).is_focused(window)));
+        visual.dispatch_action(SelectParent);
+        visual.run_until_parked();
+        menu.read_with(&visual, |menu, _| {
+            assert!(matches!(menu.submenu_state, SubmenuState::Closed));
+            assert_eq!(menu.selected_index(), Some(1));
+        });
+        visual.update(|window, cx| {
+            assert!(menu.focus_handle(cx).is_focused(window));
+            window.draw(cx).clear(cx);
+        });
+
+        let bounds = visual
+            .debug_bounds("custom-trigger")
+            .expect("custom content");
+        visual.simulate_click(bounds.center(), Modifiers::default());
+        menu.read_with(&visual, |menu, _| {
+            assert!(matches!(menu.submenu_state, SubmenuState::Open(_)));
+        });
+        visual.dispatch_action(SelectParent);
+        visual.run_until_parked();
+        visual.simulate_mouse_move(disabled_bounds.center(), None, Modifiers::default());
+        visual.simulate_mouse_move(bounds.center(), None, Modifiers::default());
+        visual.run_until_parked();
+        let submenu = menu.read_with(&visual, |menu, _| match &menu.submenu_state {
+            SubmenuState::Open(open) => open.entity.clone(),
+            SubmenuState::Closed => panic!("hover should open the submenu"),
+        });
+
+        let dismissals = Rc::new(Cell::new(0));
+        let _subscription = visual.update(|_, cx| {
+            let dismissals = dismissals.clone();
+            cx.subscribe(&menu, move |_, _: &DismissEvent, _| {
+                dismissals.set(dismissals.get() + 1);
+            })
+        });
+        submenu.update_in(&mut visual, |submenu, window, cx| {
+            submenu.select_first(&SelectFirst, window, cx);
+        });
+        visual.dispatch_action(menu::Confirm);
+        visual.run_until_parked();
+        assert_eq!(dismissals.get(), 1);
+    }
+
+    #[gpui::test]
     fn persistent_submenu_refreshes_for_mouse_and_keyboard(cx: &mut TestAppContext) {
         let changes = Rc::new(Cell::new(0));
         let builds = Rc::new(Cell::new(0));
@@ -2818,12 +2928,32 @@ mod tests {
                                 }
                             })
                             .id("filters")
-                            .disabled(count == 0),
+                            .disabled(count == 0)
+                            .custom_trigger(move |_, _| {
+                                div()
+                                    .debug_selector(move || {
+                                        match count {
+                                            0 => "no-filters",
+                                            1 => "one-filter",
+                                            _ => "two-filters",
+                                        }
+                                        .into()
+                                    })
+                                    .child(Label::new(format!("{count} filters")).color(
+                                        if count == 0 {
+                                            Color::Disabled
+                                        } else {
+                                            Color::Default
+                                        },
+                                    ))
+                                    .into_any_element()
+                            }),
                         )
                         .entry("After", None, |_, _| {})
                 }
             })
         });
+        assert!(visual.debug_bounds("two-filters").is_some());
         let dismissals = Rc::new(Cell::new(0));
         let _subscription = visual.update(|_, cx| {
             let dismissals = dismissals.clone();
@@ -2843,6 +2973,8 @@ mod tests {
         visual.simulate_click(bounds.center(), Modifiers::default());
         visual.run_until_parked();
         visual.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(visual.debug_bounds("one-filter").is_some());
+        assert!(visual.debug_bounds("two-filters").is_none());
         menu.read_with(&visual, |menu, _| {
             assert!(matches!(&menu.submenu_state, SubmenuState::Open(open) if open.item_index == 2 && open.entity == submenu));
             assert!(matches!(menu.items.get(2), Some(ContextMenuItem::Submenu(trigger)) if trigger.label.as_ref() == "Filters (1)"));
@@ -2863,6 +2995,8 @@ mod tests {
         visual.update(|window, cx| assert!(menu.focus_handle(cx).is_focused(window)));
         assert_eq!(dismissals.get(), 0);
         visual.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(visual.debug_bounds("no-filters").is_some());
+        assert!(visual.debug_bounds("one-filter").is_none());
         let trigger_bounds = menu.read_with(&visual, |menu, _| {
             menu.submenu_trigger_bounds
                 .borrow()
