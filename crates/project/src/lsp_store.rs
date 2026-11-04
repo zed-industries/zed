@@ -8145,85 +8145,90 @@ impl LspStore {
                     .get_request_timeout()
             });
 
-            let resolutions = futures::stream::iter(completion_indices.into_iter().unique()).map(
-                |completion_index| {
-                    let completions = completions.clone();
-                    let resolvable_servers = resolvable_servers.clone();
-                    let client = client.clone();
-                    let lsp_store = lsp_store.clone();
-                    let buffer_snapshot = buffer_snapshot.clone();
-                    let mut cx = cx.clone();
-                    async move {
-                        let server_id = {
-                            let completion = &completions.borrow()[completion_index];
-                            completion.source.server_id()
-                        };
-                        let Some(server_id) = server_id else {
-                            resolve_word_completion(
-                                &buffer_snapshot,
-                                &mut completions.borrow_mut()[completion_index],
-                            );
-                            return false;
-                        };
+            let mut did_resolve = false;
+            if let Some((client, project_id)) = client {
+                for completion_index in completion_indices {
+                    let server_id = {
+                        let completion = &completions.borrow()[completion_index];
+                        completion.source.server_id()
+                    };
+                    if let Some(server_id) = server_id {
                         if !resolvable_servers.contains(&server_id) {
-                            return false;
+                            continue;
                         }
-                        if let Some((client, project_id)) = client {
-                            Self::resolve_completion_remote(
-                                project_id,
-                                server_id,
-                                buffer_id,
-                                completions,
-                                completion_index,
-                                client,
-                            )
-                            .await
-                            .log_err()
-                            .is_some()
-                        } else {
-                            let server_and_adapter = lsp_store
-                                .read_with(&mut cx, |lsp_store, _| {
-                                    let server = lsp_store.language_server_for_id(server_id)?;
-                                    let adapter = lsp_store
-                                        .language_server_adapter_for_id(server.server_id())?;
-                                    Some((server, adapter))
-                                })
-                                .ok()
-                                .flatten();
-                            let Some((server, adapter)) = server_and_adapter else {
-                                return false;
-                            };
-                            let resolved = Self::resolve_completion_local(
-                                server,
+                        if Self::resolve_completion_remote(
+                            project_id,
+                            server_id,
+                            buffer_id,
+                            completions.clone(),
+                            completion_index,
+                            client.clone(),
+                        )
+                        .await
+                        .log_err()
+                        .is_some()
+                        {
+                            did_resolve = true;
+                        }
+                    } else {
+                        resolve_word_completion(
+                            &buffer_snapshot,
+                            &mut completions.borrow_mut()[completion_index],
+                        );
+                    }
+                }
+            } else {
+                for completion_index in completion_indices {
+                    let server_id = {
+                        let completion = &completions.borrow()[completion_index];
+                        completion.source.server_id()
+                    };
+                    if let Some(server_id) = server_id {
+                        if !resolvable_servers.contains(&server_id) {
+                            continue;
+                        }
+                        let server_and_adapter = lsp_store
+                            .read_with(cx, |lsp_store, _| {
+                                let server = lsp_store.language_server_for_id(server_id)?;
+                                let adapter =
+                                    lsp_store.language_server_adapter_for_id(server.server_id())?;
+                                Some((server, adapter))
+                            })
+                            .ok()
+                            .flatten();
+                        let Some((server, adapter)) = server_and_adapter else {
+                            continue;
+                        };
+
+                        let resolved = Self::resolve_completion_local(
+                            server,
+                            completions.clone(),
+                            completion_index,
+                            request_timeout,
+                            true,
+                        )
+                        .await
+                        .log_err()
+                        .is_some();
+                        if resolved {
+                            Self::regenerate_completion_labels(
+                                adapter,
+                                &buffer_snapshot,
                                 completions.clone(),
                                 completion_index,
-                                request_timeout,
-                                true,
                             )
                             .await
-                            .log_err()
-                            .is_some();
-                            if resolved {
-                                Self::regenerate_completion_labels(
-                                    adapter,
-                                    &buffer_snapshot,
-                                    completions,
-                                    completion_index,
-                                )
-                                .await
-                                .log_err();
-                            }
-                            resolved
+                            .log_err();
+                            did_resolve = true;
                         }
+                    } else {
+                        resolve_word_completion(
+                            &buffer_snapshot,
+                            &mut completions.borrow_mut()[completion_index],
+                        );
                     }
-                },
-            );
-            let did_resolve = resolutions
-                .buffer_unordered(16)
-                .fold(false, |did_resolve, resolved| async move {
-                    did_resolve || resolved
-                })
-                .await;
+                }
+            }
 
             Ok(did_resolve)
         })
