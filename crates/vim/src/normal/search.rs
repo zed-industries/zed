@@ -720,8 +720,8 @@ impl Replacement {
                 } else if phase == 1 && c == '$' {
                     // Second '$' escapes by fallthrough
                     buffer.push('$')
-                // vim's escaped parens, `\+` and `\{n\}` are the regex operators,
-                // which are written unescaped in Zed's regex syntax
+                // Vim's default regex syntax escapes grouping and repetition operators,
+                // while Zed's regex syntax uses them unescaped.
                 } else if phase == 0 && matches!(c, '(' | ')' | '+' | '{' | '}') {
                 } else if c != delimiter {
                     buffer.push('\\')
@@ -787,6 +787,7 @@ mod test {
     use editor::{DisplayPoint, display_map::DisplayRow};
 
     use indoc::indoc;
+    use itertools::Itertools;
     use search::BufferSearchBar;
     use settings::SettingsStore;
 
@@ -800,31 +801,26 @@ mod test {
         assert!(parsed.flag_g);
     }
 
-    #[test]
-    fn test_replacement_parse_repetition_operators() {
-        let parsed = super::Replacement::parse(r"/a\([0-9]\+\)b\{2\}/\1/g".chars().peekable())
-            .expect("parse should succeed");
-
-        assert_eq!(parsed.search, "a([0-9]+)b{2}");
-        assert_eq!(parsed.replacement, "$1");
-    }
-
     #[gpui::test]
     async fn test_replace_repetition_operators(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        for command in [
-            r":%s=db\([0-9]\{2\}\)=ch/\1=g",
-            r":%s=db\([0-9]\+\)=ch/\1=g",
-            r":%s=db\([0-9]*\)=ch/\1=g",
-        ] {
-            cx.set_state("ˇdb01\ndb02\n", Mode::Normal);
-            let keystrokes = command.chars().map(String::from).collect::<Vec<_>>();
-            cx.simulate_keystrokes(&keystrokes.join(" "));
-            cx.simulate_keystrokes("enter");
-            cx.run_until_parked();
-            cx.assert_state("ch/01\nˇch/02\n", Mode::Normal);
-        }
+        cx.set_shared_state("ˇA12345B\nA123B\nAB").await;
+
+        cx.simulate_shared_keystrokes(&r":%s/A\([0-9]\{3\}\)B/\1/g".chars().join(" "))
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq("A12345B\nˇ123\nAB");
+
+        cx.simulate_shared_keystrokes(&r":%s/A\([0-9]\+\)B/\1/g".chars().join(" "))
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq("ˇ12345\n123\nAB");
+
+        cx.simulate_shared_keystrokes(&r":%s/A\([0-9]*\)B/\1/g".chars().join(" "))
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq("12345\n123\nˇ");
     }
 
     #[gpui::test]
