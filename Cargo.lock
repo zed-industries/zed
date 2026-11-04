@@ -17876,10 +17876,13 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "language",
+ "languages",
  "menu",
+ "node_runtime",
  "picker",
  "project",
  "serde_json",
+ "settings",
  "task",
  "tree-sitter",
  "tree-sitter-json",
@@ -22400,7 +22403,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.28.0"
+version = "1.29.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
