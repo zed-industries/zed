@@ -3872,6 +3872,7 @@ impl language::File for File {
             mtime: self.disk_state.mtime().map(|time| time.into()),
             is_deleted: self.disk_state.is_deleted(),
             is_historic: matches!(self.disk_state, DiskState::Historic { .. }),
+            is_private: self.is_private,
         }
     }
 
@@ -3959,7 +3960,7 @@ impl File {
             disk_state,
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
-            is_private: false,
+            is_private: proto.is_private,
         })
     }
 

@@ -13,6 +13,7 @@ message File {
   Timestamp mtime = 4;
   bool is_deleted = 5;
   bool is_historic = 6;
+  bool is_private = 7;
 }
 
 message Entry {
