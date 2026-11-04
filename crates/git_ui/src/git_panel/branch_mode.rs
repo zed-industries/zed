@@ -1,4 +1,5 @@
 use super::*;
+use futures::future::{FutureExt as _, Shared};
 use settings::GitDiffBaseSetting;
 
 pub(super) enum ChangesMode {
@@ -85,9 +86,18 @@ pub(super) struct BranchBase {
     /// commit, fetch and push.
     default: DefaultBranch,
     default_is_stale: bool,
-    default_lookup: Task<()>,
-    show_after_lookup: Option<ShowBranchChangesRequest>,
+    /// Requests waiting on the default branch await clones of this, so
+    /// dropping one of them leaves the lookup running.
+    default_lookup: Shared<Task<()>>,
+    pending_show: Option<PendingShow>,
     followed: Option<FollowedBranchDiff>,
+}
+
+/// A request to show branch changes that waits for the default branch to
+/// know between switching modes and opening the base picker.
+struct PendingShow {
+    request: ShowBranchChangesRequest,
+    wait: Task<()>,
 }
 
 /// The active branch diff tab. Branch mode adopts its base and follows base
@@ -110,8 +120,8 @@ impl BranchBase {
             picked: None,
             default: DefaultBranch::NotLoaded,
             default_is_stale: false,
-            default_lookup: Task::ready(()),
-            show_after_lookup: None,
+            default_lookup: Task::ready(()).shared(),
+            pending_show: None,
             followed: None,
         }
     }
@@ -262,10 +272,9 @@ impl GitPanel {
         // A pending request means a lookup is already running, so this one
         // replaces it rather than acting on a default that's being refreshed
         // and then having the stale request run on top of it.
-        if self.branch_base.show_after_lookup.is_some() || self.branch_base.needs_lookup_to_decide()
-        {
-            self.branch_base.show_after_lookup = Some(request);
+        if self.branch_base.pending_show.is_some() || self.branch_base.needs_lookup_to_decide() {
             self.ensure_default_branch(window, cx);
+            self.show_after_lookup(request, window, cx);
             return;
         }
         if self.branch_base.is_unavailable() {
@@ -365,7 +374,29 @@ impl GitPanel {
     /// finishes, so anything the user does in the meantime that it would undo
     /// has to drop it. The lookup itself keeps running.
     pub(super) fn cancel_pending_branch_changes(&mut self) {
-        self.branch_base.show_after_lookup = None;
+        self.branch_base.pending_show = None;
+    }
+
+    fn show_after_lookup(
+        &mut self,
+        request: ShowBranchChangesRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let lookup = self.branch_base.default_lookup.clone();
+        let wait = cx.spawn_in(window, async move |this, cx| {
+            lookup.await;
+            this.update_in(cx, |this, window, cx| {
+                // This task is the pending one, and dropping a task's handle
+                // while it runs would cancel it.
+                if let Some(pending) = this.branch_base.pending_show.take() {
+                    pending.wait.detach();
+                }
+                this.show_branch_changes_for(request, window, cx);
+            })
+            .ok();
+        });
+        self.branch_base.pending_show = Some(PendingShow { request, wait });
     }
 
     pub(super) fn show_uncommitted_changes(
@@ -417,7 +448,7 @@ impl GitPanel {
             self.branch_base.default = DefaultBranch::Loading;
         }
         let default_branch = repo.update(cx, |repo, _| repo.default_branch(true));
-        self.branch_base.default_lookup = cx.spawn_in(window, async move |this, cx| {
+        let lookup = cx.spawn_in(window, async move |this, cx| {
             let default_branch = match default_branch.await.ok().and_then(ResultExt::log_err) {
                 Some(Some(default_branch)) => DefaultBranch::Found(default_branch),
                 Some(None) | None => DefaultBranch::Missing,
@@ -428,12 +459,16 @@ impl GitPanel {
                     this.schedule_visible_entries_update(window, cx);
                     cx.notify();
                 }
-                if let Some(request) = this.branch_base.show_after_lookup.take() {
-                    this.show_branch_changes_for(request, window, cx);
-                }
             })
             .ok();
         });
+        self.branch_base.default_lookup = lookup.shared();
+        // No caller restarts the lookup while a request waits today, but a
+        // request left on the old lookup would keep it running, and it could
+        // then overwrite the newer result.
+        if let Some(pending) = self.branch_base.pending_show.take() {
+            self.show_after_lookup(pending.request, window, cx);
+        }
     }
 
     /// Runs at the start of every entries update, so changes to the mode,
