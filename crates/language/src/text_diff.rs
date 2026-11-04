@@ -176,6 +176,10 @@ pub fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)
 
 /// Computes word-level diff ranges between two strings.
 ///
+/// Lines are first paired by similarity, preserving their order, and words are
+/// only diffed within paired lines. Lines without a similar counterpart get no
+/// ranges, so they read as whole-line additions or deletions.
+///
 /// Returns a tuple of (old_ranges, new_ranges) where each vector contains
 /// the byte ranges of changed words in the respective text.
 pub fn word_diff_ranges(
@@ -183,9 +187,159 @@ pub fn word_diff_ranges(
     new_text: &str,
     options: DiffOptions,
 ) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    let old_lines = line_ranges(old_text);
+    let new_lines = line_ranges(new_text);
+    let mut line_diffs: Vec<Vec<Option<LineDiff>>> = old_lines
+        .iter()
+        .map(|old_line| {
+            new_lines
+                .iter()
+                .map(|new_line| {
+                    LineDiff::new(
+                        &old_text[old_line.clone()],
+                        &new_text[new_line.clone()],
+                        &options,
+                    )
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut old_ranges = Vec::new();
+    let mut new_ranges = Vec::new();
+    for (old_ix, new_ix) in align_lines(&line_diffs) {
+        let Some(line_diff) = line_diffs[old_ix][new_ix].take() else {
+            continue;
+        };
+        let old_start = old_lines[old_ix].start;
+        let new_start = new_lines[new_ix].start;
+        old_ranges.extend(
+            line_diff
+                .old_ranges
+                .into_iter()
+                .map(|range| old_start + range.start..old_start + range.end),
+        );
+        new_ranges.extend(
+            line_diff
+                .new_ranges
+                .into_iter()
+                .map(|range| new_start + range.start..new_start + range.end),
+        );
+    }
+
+    (old_ranges, new_ranges)
+}
+
+/// Lines further apart than this are treated as unrelated rather than modified.
+/// Matches the default `max-line-distance` of delta.
+const MAX_LINE_DISTANCE: f32 = 0.6;
+
+/// Word-level diff of a single pair of lines.
+struct LineDiff {
+    /// Fraction of bytes, across both lines, that changed.
+    distance: f32,
+    old_ranges: Vec<Range<usize>>,
+    new_ranges: Vec<Range<usize>>,
+}
+
+impl LineDiff {
+    /// Returns `None` when the lines are too dissimilar to pair.
+    fn new(old_line: &str, new_line: &str, options: &DiffOptions) -> Option<Self> {
+        let (old_ranges, new_ranges) =
+            token_diff_ranges(old_line, new_line, options.language_scope.clone());
+        let total_len = old_line.len() + new_line.len();
+        let distance = if total_len == 0 {
+            0.0
+        } else {
+            let changed_len: usize = old_ranges.iter().chain(&new_ranges).map(Range::len).sum();
+            changed_len as f32 / total_len as f32
+        };
+        (distance <= MAX_LINE_DISTANCE).then_some(Self {
+            distance,
+            old_ranges,
+            new_ranges,
+        })
+    }
+}
+
+/// Returns the byte ranges of the lines in `text`, excluding line terminators.
+fn line_ranges(text: &str) -> Vec<Range<usize>> {
+    let mut start = 0;
+    text.split_inclusive('\n')
+        .map(|line| {
+            let range = start..start + line.trim_end_matches('\n').len();
+            start += line.len();
+            range
+        })
+        .collect()
+}
+
+/// Pairs old and new lines in order, minimizing the total cost where an
+/// unpaired line costs 1 and a pair costs its distance. Only pairable lines,
+/// those with a `LineDiff`, are considered. Returns `(old_ix, new_ix)` pairs.
+fn align_lines(line_diffs: &[Vec<Option<LineDiff>>]) -> Vec<(usize, usize)> {
+    #[derive(Clone, Copy)]
+    enum Step {
+        Delete,
+        Insert,
+        Pair,
+    }
+
+    let old_len = line_diffs.len();
+    let new_len = line_diffs.first().map_or(0, Vec::len);
+    let mut costs = vec![vec![0.0_f32; new_len + 1]; old_len + 1];
+    let mut steps = vec![vec![Step::Delete; new_len + 1]; old_len + 1];
+    for old_ix in 0..=old_len {
+        for new_ix in 0..=new_len {
+            let mut best = (f32::INFINITY, Step::Delete);
+            if old_ix > 0 {
+                best = (costs[old_ix - 1][new_ix] + 1.0, Step::Delete);
+            }
+            if new_ix > 0 && costs[old_ix][new_ix - 1] + 1.0 < best.0 {
+                best = (costs[old_ix][new_ix - 1] + 1.0, Step::Insert);
+            }
+            if old_ix > 0
+                && new_ix > 0
+                && let Some(line_diff) = &line_diffs[old_ix - 1][new_ix - 1]
+                && costs[old_ix - 1][new_ix - 1] + line_diff.distance < best.0
+            {
+                best = (
+                    costs[old_ix - 1][new_ix - 1] + line_diff.distance,
+                    Step::Pair,
+                );
+            }
+            if old_ix > 0 || new_ix > 0 {
+                (costs[old_ix][new_ix], steps[old_ix][new_ix]) = best;
+            }
+        }
+    }
+
+    let mut pairs = Vec::new();
+    let (mut old_ix, mut new_ix) = (old_len, new_len);
+    while old_ix > 0 || new_ix > 0 {
+        match steps[old_ix][new_ix] {
+            Step::Delete => old_ix -= 1,
+            Step::Insert => new_ix -= 1,
+            Step::Pair => {
+                old_ix -= 1;
+                new_ix -= 1;
+                pairs.push((old_ix, new_ix));
+            }
+        }
+    }
+    pairs.reverse();
+    pairs
+}
+
+/// Diffs the tokens of two strings, returning the changed byte ranges of each.
+fn token_diff_ranges(
+    old_text: &str,
+    new_text: &str,
+    language_scope: Option<LanguageScope>,
+) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
     let mut input: InternedInput<&str> = InternedInput::default();
-    input.update_before(tokenize(old_text, options.language_scope.clone()));
-    input.update_after(tokenize(new_text, options.language_scope));
+    input.update_before(tokenize(old_text, language_scope.clone()));
+    input.update_after(tokenize(new_text, language_scope));
 
     let mut old_ranges: Vec<Range<usize>> = Vec::new();
     let mut new_ranges: Vec<Range<usize>> = Vec::new();
@@ -451,6 +605,84 @@ mod tests {
         assert_eq!(
             tokenize(text, None).collect::<Vec<_>>(),
             vec!["   ", "one", "\n ", "two", " ", "three"]
+        );
+    }
+
+    #[test]
+    fn test_word_diff_ranges() {
+        fn word_diffs<'a>(old_text: &'a str, new_text: &'a str) -> (Vec<&'a str>, Vec<&'a str>) {
+            let (old_ranges, new_ranges) =
+                word_diff_ranges(old_text, new_text, DiffOptions::default());
+            (
+                old_ranges
+                    .into_iter()
+                    .map(|range| &old_text[range])
+                    .collect(),
+                new_ranges
+                    .into_iter()
+                    .map(|range| &new_text[range])
+                    .collect(),
+            )
+        }
+
+        assert_eq!(
+            word_diffs("foo(a, b)\n", "foo(a, c)\n"),
+            (vec!["b"], vec!["c"])
+        );
+
+        // Similar lines are paired across inserted and deleted lines.
+        assert_eq!(
+            word_diffs(
+                "let x = 1;\nremoved();\nlet y = 2;\n",
+                "fn new() {}\nlet x = 10;\nlet y = 20;\n"
+            ),
+            (vec!["1", "2"], vec!["10", "20"])
+        );
+
+        // Unrelated lines are not paired, so they get no word ranges.
+        assert_eq!(
+            word_diffs("first_function();\n", "let unrelated = 42;\n"),
+            (vec![], vec![])
+        );
+
+        // Pairing picks the most similar line rather than the first one.
+        assert_eq!(
+            word_diffs(
+                "call(alpha, beta, gamma);\n",
+                "call(alpha, delta);\ncall(alpha, beta, omega);\n"
+            ),
+            (vec!["gamma"], vec!["omega"])
+        );
+
+        // Long lines are still diffed.
+        let prefix = "a".repeat(600);
+        assert_eq!(
+            word_diffs(&format!("{prefix} = 1;\n"), &format!("{prefix} = 2;\n")),
+            (vec!["1"], vec!["2"])
+        );
+
+        // Multibyte lines are paired across an inserted line.
+        assert_eq!(
+            word_diffs("hello world 世界\n", "\nhello world 朋友\n"),
+            (vec!["世界"], vec!["朋友"])
+        );
+
+        // The final line may lack a trailing newline.
+        assert_eq!(
+            word_diffs("value = 1", "inserted();\nvalue = 2"),
+            (vec!["1"], vec!["2"])
+        );
+
+        assert_eq!(word_diffs("", "added\n"), (vec![], vec![]));
+
+        // Ranges point at the paired line, not an identical earlier one.
+        assert_eq!(
+            word_diff_ranges(
+                "x = 1;\nx = 1;\n",
+                "x = 1;\nx = 2;\n",
+                DiffOptions::default()
+            ),
+            (vec![11..12], vec![11..12])
         );
     }
 
