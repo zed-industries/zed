@@ -24,8 +24,11 @@ pub trait ManagedResource: Sized + Send + Sync + 'static {
     ) -> impl Future<Output = anyhow::Result<Self>>;
 }
 
-pub trait ManagedResourceCommand<Resource: ManagedResource>: Sized {
-    type Output;
+pub trait ManagedResourceCommand<Resource: ManagedResource>: Sized + 'static {
+    type Output: 'static;
+
+    /// Describe the specific operation for approval without performing it.
+    fn permission_description(&self, resource: &Resource) -> String;
 
     fn run(self, resource: Arc<Resource>) -> impl Future<Output = Self::Output>;
 }
@@ -34,6 +37,15 @@ pub trait ManagedResourceCommand<Resource: ManagedResource>: Sized {
 pub struct ResourceId {
     pub kind: String,
     pub key: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResourcePermissionRequest {
+    Obtain(ResourceId),
+    ExecuteCommand {
+        resource: ResourceId,
+        description: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +78,8 @@ impl ResourcePermissions {
 pub enum ResourceAccessError {
     #[error("access to the managed resource was denied")]
     Denied,
+    #[error("permission to execute the managed resource command was denied")]
+    CommandDenied,
     #[error("failed to obtain the managed resource: {0}")]
     Obtain(#[source] Arc<anyhow::Error>),
     #[error("the managed resource identity is already in use by another resource type")]
@@ -74,7 +88,7 @@ pub enum ResourceAccessError {
     StoreDropped,
 }
 
-type RequestApproval = dyn Fn(ResourceId, &mut App) -> Task<ResourcePermission>;
+type RequestApproval = dyn Fn(ResourcePermissionRequest, &mut App) -> Task<ResourcePermission>;
 type ResourceTask = Shared<Task<Result<Arc<dyn Any + Send + Sync>, ResourceAccessError>>>;
 
 pub struct ManagedResourceStore {
@@ -93,7 +107,8 @@ struct ResourceEntry {
 impl ManagedResourceStore {
     pub fn new(
         permissions: ResourcePermissions,
-        request_approval: impl Fn(ResourceId, &mut App) -> Task<ResourcePermission> + 'static,
+        request_approval: impl Fn(ResourcePermissionRequest, &mut App) -> Task<ResourcePermission>
+        + 'static,
     ) -> Self {
         Self {
             permissions,
@@ -136,17 +151,23 @@ impl ManagedResourceStore {
         cx.notify();
     }
 
-    /// Approval and acquisition are shared; callbacks may run concurrently.
-    /// Dropping the returned task cancels only that callback, not shared acquisition.
-    /// Permission changes supersede a pending approval and are checked before each
-    /// callback, but cannot revoke resource handles already handed out.
-    pub fn with_managed_resource<Resource: ManagedResource, Ret: 'static>(
+    /// Resource approval and acquisition are shared; commands may run concurrently.
+    /// Each invocation requires separate command approval, which is not persisted.
+    /// Dropping the returned task cancels that command, not shared acquisition.
+    /// Resource permission is rechecked after command approval; revocation cannot
+    /// cancel commands that have already started running.
+    pub fn execute_command<Resource: ManagedResource>(
         &mut self,
         key: Resource::Key,
         context: Rc<Resource::Context>,
+        command: Resource::Command,
         cx: &mut Context<Self>,
-        operation: impl AsyncFnOnce(Arc<Resource>) -> Ret + 'static,
-    ) -> Task<Result<Ret, ResourceAccessError>> {
+    ) -> Task<
+        Result<
+            <Resource::Command as ManagedResourceCommand<Resource>>::Output,
+            ResourceAccessError,
+        >,
+    > {
         let id = Resource::id(&key);
         if self.permission(&id) == Some(ResourcePermission::Denied) {
             return Task::ready(Err(ResourceAccessError::Denied));
@@ -202,12 +223,26 @@ impl ManagedResourceStore {
 
         cx.spawn(async move |this, cx| {
             let resource = resource.await?;
-            this.read_with(cx, |this, _| Self::check_permission(&this.permissions, &id))
+            let request_approval = this
+                .read_with(cx, |this, _| {
+                    Self::check_permission(&this.permissions, &id)?;
+                    Ok(this.request_approval.clone())
+                })
                 .map_err(|_| ResourceAccessError::StoreDropped)??;
             let resource = resource
                 .downcast::<Resource>()
                 .map_err(|_| ResourceAccessError::ConflictingResourceType)?;
-            Ok(operation(resource).await)
+            let request = ResourcePermissionRequest::ExecuteCommand {
+                resource: id.clone(),
+                description: command.permission_description(&resource),
+            };
+            let permission = cx.update(|cx| request_approval(request, cx)).await;
+            this.read_with(cx, |this, _| Self::check_permission(&this.permissions, &id))
+                .map_err(|_| ResourceAccessError::StoreDropped)??;
+            if permission == ResourcePermission::Denied {
+                return Err(ResourceAccessError::CommandDenied);
+            }
+            Ok(command.run(resource).await)
         })
     }
 
@@ -229,7 +264,9 @@ impl ManagedResourceStore {
             })
             .map_err(|_| ResourceAccessError::StoreDropped)??;
         if let Some((revision, request_approval)) = approval {
-            let permission = cx.update(|cx| request_approval(id.clone(), cx)).await;
+            let permission = cx
+                .update(|cx| request_approval(ResourcePermissionRequest::Obtain(id.clone()), cx))
+                .await;
             this.update(cx, |this, cx| {
                 if this
                     .resources
@@ -265,30 +302,39 @@ mod tests {
     use futures::{channel::oneshot, poll};
     use gpui::{AppContext as _, Entity, TestAppContext};
     use std::{
-        cell::Cell,
+        cell::{Cell, RefCell},
+        collections::VecDeque,
         sync::atomic::{AtomicUsize, Ordering::SeqCst},
     };
 
     type TestResource = Counter<0>;
     type OtherResource = Counter<1>;
 
-    fn deny_approval(_: ResourceId, _: &mut App) -> Task<ResourcePermission> {
-        Task::ready(ResourcePermission::Denied)
+    fn deny_obtain_allow_commands(
+        request: ResourcePermissionRequest,
+        _: &mut App,
+    ) -> Task<ResourcePermission> {
+        Task::ready(match request {
+            ResourcePermissionRequest::Obtain(_) => ResourcePermission::Denied,
+            ResourcePermissionRequest::ExecuteCommand { .. } => ResourcePermission::Allowed,
+        })
     }
 
     fn new_store(cx: &mut TestAppContext) -> Entity<ManagedResourceStore> {
-        cx.new(|_| ManagedResourceStore::new(ResourcePermissions::default(), deny_approval))
+        cx.new(|_| {
+            ManagedResourceStore::new(ResourcePermissions::default(), deny_obtain_allow_commands)
+        })
     }
 
-    fn access<Resource: ManagedResource, Ret: 'static>(
+    fn execute<const KIND: u8>(
         store: &Entity<ManagedResourceStore>,
-        key: Resource::Key,
-        context: &Rc<Resource::Context>,
+        key: &'static str,
+        context: &Rc<TestContext>,
+        command: TestCommand,
         cx: &mut TestAppContext,
-        operation: impl AsyncFnOnce(Arc<Resource>) -> Ret + 'static,
-    ) -> Task<Result<Ret, ResourceAccessError>> {
+    ) -> Task<Result<Result<usize, TestError>, ResourceAccessError>> {
         store.update(cx, |store, cx| {
-            store.with_managed_resource(key, context.clone(), cx, operation)
+            store.execute_command::<Counter<KIND>>(key, context.clone(), command, cx)
         })
     }
 
@@ -301,7 +347,10 @@ mod tests {
         let (response, receive_response) = oneshot::channel();
         let receive_response = Cell::new(Some(receive_response));
         let store = cx.new(|_| {
-            ManagedResourceStore::new(ResourcePermissions::default(), move |id, cx| {
+            ManagedResourceStore::new(ResourcePermissions::default(), move |request, cx| {
+                let ResourcePermissionRequest::Obtain(id) = request else {
+                    return Task::ready(ResourcePermission::Allowed);
+                };
                 assert_eq!(id, TestResource::id(&"first"));
                 let receive_response = receive_response
                     .take()
@@ -309,6 +358,29 @@ mod tests {
                 cx.spawn(async move |_| {
                     receive_response.await.expect("approval response cancelled")
                 })
+            })
+        });
+        (store, response)
+    }
+
+    fn pending_command_approval_store(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<ManagedResourceStore>,
+        oneshot::Sender<ResourcePermission>,
+    ) {
+        let (response, receive_response) = oneshot::channel();
+        let receive_response = Cell::new(Some(receive_response));
+        let store = cx.new(|_| {
+            ManagedResourceStore::new(ResourcePermissions::default(), move |request, cx| {
+                if matches!(request, ResourcePermissionRequest::ExecuteCommand { .. })
+                    && let Some(receive_response) = receive_response.take()
+                {
+                    return cx.spawn(async move |_| {
+                        receive_response.await.expect("approval response cancelled")
+                    });
+                }
+                Task::ready(ResourcePermission::Allowed)
             })
         });
         (store, response)
@@ -362,17 +434,49 @@ mod tests {
     }
 
     enum TestCommand {
+        Read,
         Add(usize),
+        Wait {
+            started: Rc<Cell<bool>>,
+            ready: oneshot::Receiver<()>,
+            value: usize,
+        },
         Fail,
+        Unexpected,
     }
 
     impl<const KIND: u8> ManagedResourceCommand<Counter<KIND>> for TestCommand {
         type Output = Result<usize, TestError>;
 
+        fn permission_description(&self, resource: &Counter<KIND>) -> String {
+            let operation = match self {
+                Self::Read => "Read".into(),
+                Self::Add(value) => format!("Add {value}"),
+                Self::Wait { value, .. } => format!("Wait and add {value}"),
+                Self::Fail => "Fail".into(),
+                Self::Unexpected => "Unexpected command".into(),
+            };
+            format!(
+                "{operation} (current value: {})",
+                resource.value.load(SeqCst)
+            )
+        }
+
         async fn run(self, resource: Arc<Counter<KIND>>) -> Self::Output {
             match self {
+                Self::Read => Ok(resource.value.load(SeqCst)),
                 Self::Add(value) => Ok(resource.value.fetch_add(value, SeqCst) + value),
+                Self::Wait {
+                    started,
+                    ready,
+                    value,
+                } => {
+                    started.set(true);
+                    ready.await.map_err(|_| TestError::Cancelled)?;
+                    Ok(resource.value.fetch_add(value, SeqCst) + value)
+                }
                 Self::Fail => Err(TestError::Command),
+                Self::Unexpected => panic!("this command must not run"),
             }
         }
     }
@@ -383,9 +487,11 @@ mod tests {
         let store = cx.new(|_| {
             ManagedResourceStore::new(ResourcePermissions::default(), {
                 let approval_count = approval_count.clone();
-                move |_, _| {
-                    approval_count.set(approval_count.get() + 1);
-                    Task::ready(ResourcePermission::Denied)
+                move |request, cx| {
+                    if matches!(request, ResourcePermissionRequest::Obtain(_)) {
+                        approval_count.set(approval_count.get() + 1);
+                    }
+                    deny_obtain_allow_commands(request, cx)
                 }
             })
         });
@@ -393,10 +499,7 @@ mod tests {
         let id = TestResource::id(&"first");
 
         for _ in 0..2 {
-            let result = access::<TestResource, _>(&store, "first", &context, cx, async |_| {
-                panic!("an unapproved resource must not reach the callback")
-            })
-            .await;
+            let result = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx).await;
             assert!(matches!(result, Err(ResourceAccessError::Denied)));
         }
         assert_eq!(
@@ -409,45 +512,33 @@ mod tests {
         store.update(cx, |store, cx| {
             store.set_permission(id.clone(), ResourcePermission::Allowed, cx)
         });
-        let retained = access::<TestResource, _>(&store, "first", &context, cx, async |resource| {
-            assert_eq!(TestCommand::Add(7).run(resource.clone()).await, Ok(12));
-            resource
-        })
-        .await
-        .expect("resource allowed");
+        assert_eq!(
+            execute::<0>(&store, "first", &context, TestCommand::Add(7), cx)
+                .await
+                .expect("resource allowed"),
+            Ok(12)
+        );
 
         store.update(cx, |store, cx| {
             store.set_permission(id.clone(), ResourcePermission::Denied, cx)
         });
-        let result = access::<TestResource, _>(&store, "first", &context, cx, async |_| {
-            panic!("a cached resource must not bypass denial")
-        })
-        .await;
+        let result = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx).await;
         assert!(matches!(result, Err(ResourceAccessError::Denied)));
-        assert_eq!(retained.value.load(SeqCst), 12);
 
         store.update(cx, |store, cx| store.clear_permission(&id, cx));
-        let result = access::<TestResource, _>(&store, "first", &context, cx, async |_| {
-            panic!("a cached resource must not bypass missing approval")
-        })
-        .await;
+        let result = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx).await;
         assert!(matches!(result, Err(ResourceAccessError::Denied)));
         assert_eq!(approval_count.get(), 2);
 
         store.update(cx, |store, cx| {
             store.set_permission(id, ResourcePermission::Allowed, cx)
         });
-        let cached =
-            access::<TestResource, _>(&store, "first", &context, cx, async |resource| resource)
+        assert_eq!(
+            execute::<0>(&store, "first", &context, TestCommand::Add(3), cx)
                 .await
-                .expect("resource allowed again");
-        assert!(Arc::ptr_eq(&cached, &retained));
-        let result = cx
-            .background_executor
-            .spawn(async move { TestCommand::Add(3).run(cached).await })
-            .await;
-        assert_eq!(result, Ok(15));
-        assert_eq!(retained.value.load(SeqCst), 15);
+                .expect("resource allowed again"),
+            Ok(15)
+        );
         assert_eq!(context.obtain_count.get(), 1);
         assert_eq!(approval_count.get(), 2);
     }
@@ -461,11 +552,12 @@ mod tests {
             store.set_permission(TestResource::id(&"second"), ResourcePermission::Denied, cx);
             store.set_permission(OtherResource::id(&"first"), ResourcePermission::Denied, cx);
         });
-        let original =
-            access::<TestResource, _>(&store, "first", &context, cx, async |resource| resource)
+        assert_eq!(
+            execute::<0>(&store, "first", &context, TestCommand::Add(7), cx)
                 .await
-                .expect("resource allowed");
-        assert_eq!(TestCommand::Add(7).run(original.clone()).await, Ok(12));
+                .expect("resource allowed"),
+            Ok(12)
+        );
 
         let permissions = store.read_with(cx, |store, _| store.permissions());
         let serialized = serde_json::to_value(&permissions).expect("serializable permissions");
@@ -479,45 +571,36 @@ mod tests {
         let restored = cx.new(|_| {
             ManagedResourceStore::new(
                 serde_json::from_value(serialized).expect("restorable permissions"),
-                deny_approval,
+                deny_obtain_allow_commands,
             )
         });
         assert_eq!(
             restored.read_with(cx, |store, _| store.permissions()),
             permissions
         );
-        let resource =
-            access::<TestResource, _>(&restored, "first", &context, cx, async |resource| resource)
+        assert_eq!(
+            execute::<0>(&restored, "first", &context, TestCommand::Add(11), cx)
                 .await
-                .expect("restored permission");
-        assert!(!Arc::ptr_eq(&original, &resource));
-        assert_eq!(TestCommand::Add(11).run(resource).await, Ok(16));
+                .expect("restored permission"),
+            Ok(16)
+        );
         assert_eq!(context.obtain_count.get(), 2);
 
         for key in ["second", "third"] {
-            let result = access::<TestResource, _>(&restored, key, &context, cx, async |_| {
-                panic!("approval must not extend to another key")
-            })
-            .await;
+            let result = execute::<0>(&restored, key, &context, TestCommand::Unexpected, cx).await;
             assert!(matches!(result, Err(ResourceAccessError::Denied)));
         }
-        let result = access::<OtherResource, _>(&restored, "first", &context, cx, async |_| {
-            panic!("approval must not extend to another resource kind")
-        })
-        .await;
+        let result = execute::<1>(&restored, "first", &context, TestCommand::Unexpected, cx).await;
         assert!(matches!(result, Err(ResourceAccessError::Denied)));
         assert_eq!(context.obtain_count.get(), 2);
 
         restored.update(cx, |store, cx| {
             store.set_permission(OtherResource::id(&"first"), ResourcePermission::Allowed, cx)
         });
-        let value =
-            access::<OtherResource, _>(&restored, "first", &context, cx, async |resource| {
-                resource.value.load(SeqCst)
-            })
+        let value = execute::<1>(&restored, "first", &context, TestCommand::Read, cx)
             .await
             .expect("other resource allowed");
-        assert_eq!(value, 5);
+        assert_eq!(value, Ok(5));
         assert_eq!(context.obtain_count.get(), 3);
     }
 
@@ -531,12 +614,8 @@ mod tests {
         store.update(cx, |store, cx| {
             store.set_permission(TestResource::id(&"first"), ResourcePermission::Allowed, cx)
         });
-        let first = access::<TestResource, _>(&store, "first", &context, cx, async |_| {
-            panic!("failed acquisition must not reach the callback")
-        });
-        let second = access::<TestResource, _>(&store, "first", &context, cx, async |_| {
-            panic!("failed acquisition must not reach another callback")
-        });
+        let first = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx);
+        let second = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx);
         cx.run_until_parked();
         assert_eq!(context.obtain_count.get(), 1);
         ready.send(()).expect("acquisition pending");
@@ -552,23 +631,19 @@ mod tests {
             Some(&TestError::Obtain)
         );
 
-        let value = access::<TestResource, _>(&store, "first", &context, cx, async |resource| {
-            TestCommand::Add(4).run(resource).await
-        })
-        .await
-        .expect("acquisition retried");
+        let value = execute::<0>(&store, "first", &context, TestCommand::Add(4), cx)
+            .await
+            .expect("acquisition retried");
         assert_eq!(value, Ok(9));
-        let result = access::<TestResource, _>(&store, "first", &context, cx, async |resource| {
-            TestCommand::Fail.run(resource).await
-        })
-        .await
-        .expect("resource cached");
+        let result = execute::<0>(&store, "first", &context, TestCommand::Fail, cx)
+            .await
+            .expect("resource cached");
         assert_eq!(result, Err(TestError::Command));
         assert_eq!(context.obtain_count.get(), 2);
     }
 
     #[gpui::test]
-    async fn concurrent_access_shares_acquisition_without_serializing_callbacks(
+    async fn concurrent_commands_share_acquisition_without_serializing_execution(
         cx: &mut TestAppContext,
     ) {
         let store = new_store(cx);
@@ -586,29 +661,28 @@ mod tests {
             );
         });
 
-        let mut first = access::<TestResource, _>(&store, "first", &context, cx, {
-            let command_started = command_started.clone();
-            async move |resource| {
-                command_started.set(true);
-                command_wait.await.expect("command released");
-                resource
-            }
-        });
-        let mut second =
-            access::<TestResource, _>(&store, "first", &context, cx, async |resource| resource);
+        let mut first = execute::<0>(
+            &store,
+            "first",
+            &context,
+            TestCommand::Wait {
+                started: command_started.clone(),
+                ready: command_wait,
+                value: 3,
+            },
+            cx,
+        );
+        let mut second = execute::<0>(&store, "first", &context, TestCommand::Add(7), cx);
         cx.run_until_parked();
         assert!(poll!(&mut first).is_pending());
         assert!(poll!(&mut second).is_pending());
         assert_eq!(context.obtain_count.get(), 1);
         assert!(!command_started.get());
 
-        let different =
-            access::<TestResource, _>(&store, "different", &context, cx, async |resource| {
-                resource.value.load(SeqCst)
-            })
+        let different = execute::<0>(&store, "different", &context, TestCommand::Read, cx)
             .await
             .expect("other resource independent");
-        assert_eq!(different, 9);
+        assert_eq!(different, Ok(9));
 
         obtain_ready.send(()).expect("acquisition pending");
         cx.run_until_parked();
@@ -616,17 +690,15 @@ mod tests {
         assert!(poll!(&mut first).is_pending());
         let second = second
             .await
-            .expect("second callback does not wait for first");
-        assert_eq!(TestCommand::Add(7).run(second.clone()).await, Ok(12));
-        command_ready.send(()).expect("first callback pending");
-        let first = first.await.expect("first callback completed");
-        assert!(Arc::ptr_eq(&first, &second));
-        assert_eq!(first.value.load(SeqCst), 12);
+            .expect("second command does not wait for first");
+        assert_eq!(second, Ok(12));
+        command_ready.send(()).expect("first command pending");
+        assert_eq!(first.await.expect("first command completed"), Ok(15));
         assert_eq!(context.obtain_count.get(), 2);
     }
 
     #[gpui::test]
-    async fn revocation_blocks_new_callbacks_without_cancelling_running_callbacks(
+    async fn revocation_blocks_new_commands_without_cancelling_running_commands(
         cx: &mut TestAppContext,
     ) {
         let store = new_store(cx);
@@ -637,29 +709,30 @@ mod tests {
         });
         let (command_ready, command_wait) = oneshot::channel();
         let started = Rc::new(Cell::new(false));
-        let running = access::<TestResource, _>(&store, "first", &context, cx, {
-            let started = started.clone();
-            async move |resource| {
-                started.set(true);
-                command_wait.await.expect("command released");
-                TestCommand::Add(2).run(resource).await
-            }
-        });
+        let running = execute::<0>(
+            &store,
+            "first",
+            &context,
+            TestCommand::Wait {
+                started: started.clone(),
+                ready: command_wait,
+                value: 2,
+            },
+            cx,
+        );
         cx.run_until_parked();
         assert!(started.get());
-        let waiting = access::<TestResource, _>(&store, "first", &context, cx, async |_| {
-            panic!("a callback not yet started must observe revocation")
-        });
+        let waiting = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx);
         store.update(cx, |store, cx| {
             store.set_permission(id, ResourcePermission::Denied, cx)
         });
         command_ready.send(()).expect("command pending");
-        assert_eq!(running.await.expect("running callback allowed"), Ok(7));
+        assert_eq!(running.await.expect("running command allowed"), Ok(7));
         assert!(matches!(waiting.await, Err(ResourceAccessError::Denied)));
     }
 
     #[gpui::test]
-    async fn revocation_during_acquisition_prevents_callbacks(cx: &mut TestAppContext) {
+    async fn revocation_during_acquisition_prevents_commands(cx: &mut TestAppContext) {
         for permission in [Some(ResourcePermission::Denied), None] {
             let store = new_store(cx);
             let context = Rc::new(TestContext::default());
@@ -669,12 +742,8 @@ mod tests {
             });
             let (obtain_ready, obtain_wait) = oneshot::channel();
             context.obtain_ready.set(Some(obtain_wait));
-            let first = access::<TestResource, _>(&store, "first", &context, cx, async |_| {
-                panic!("revocation during acquisition must prevent the callback")
-            });
-            let second = access::<TestResource, _>(&store, "first", &context, cx, async |_| {
-                panic!("revocation must also prevent concurrent callbacks")
-            });
+            let first = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx);
+            let second = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx);
             cx.run_until_parked();
             assert_eq!(context.obtain_count.get(), 1);
             store.update(cx, |store, cx| match permission {
@@ -688,19 +757,16 @@ mod tests {
             store.update(cx, |store, cx| {
                 store.set_permission(id, ResourcePermission::Allowed, cx)
             });
-            let value =
-                access::<TestResource, _>(&store, "first", &context, cx, async |resource| {
-                    resource.value.load(SeqCst)
-                })
+            let value = execute::<0>(&store, "first", &context, TestCommand::Read, cx)
                 .await
                 .expect("completed acquisition cached");
-            assert_eq!(value, 5);
+            assert_eq!(value, Ok(5));
             assert_eq!(context.obtain_count.get(), 1);
         }
     }
 
     #[gpui::test]
-    async fn cancelled_callback_does_not_cancel_shared_acquisition(cx: &mut TestAppContext) {
+    async fn cancelled_command_does_not_cancel_shared_acquisition(cx: &mut TestAppContext) {
         let store = new_store(cx);
         let context = Rc::new(TestContext::default());
         store.update(cx, |store, cx| {
@@ -708,9 +774,7 @@ mod tests {
         });
         let (obtain_ready, obtain_wait) = oneshot::channel();
         context.obtain_ready.set(Some(obtain_wait));
-        let cancelled = access::<TestResource, _>(&store, "first", &context, cx, async |_| {
-            panic!("cancelled callback must not run")
-        });
+        let cancelled = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx);
         cx.run_until_parked();
         assert_eq!(context.obtain_count.get(), 1);
         drop(cancelled);
@@ -719,12 +783,10 @@ mod tests {
             .send(())
             .expect("shared acquisition still pending");
         cx.run_until_parked();
-        let value = access::<TestResource, _>(&store, "first", &context, cx, async |resource| {
-            resource.value.load(SeqCst)
-        })
-        .await
-        .expect("completed acquisition cached without waiters");
-        assert_eq!(value, 5);
+        let value = execute::<0>(&store, "first", &context, TestCommand::Read, cx)
+            .await
+            .expect("completed acquisition cached without waiters");
+        assert_eq!(value, Ok(5));
         assert_eq!(context.obtain_count.get(), 1);
     }
 
@@ -749,7 +811,13 @@ mod tests {
         impl ManagedResourceCommand<Self> for ConflictingResource {
             type Output = ();
 
-            async fn run(self, _: Arc<Self>) {}
+            fn permission_description(&self, _: &Self) -> String {
+                panic!("a conflicting resource must not request command approval")
+            }
+
+            async fn run(self, _: Arc<Self>) {
+                panic!("a conflicting resource must not run commands")
+            }
         }
 
         let store = new_store(cx);
@@ -757,16 +825,22 @@ mod tests {
         store.update(cx, |store, cx| {
             store.set_permission(TestResource::id(&"first"), ResourcePermission::Allowed, cx)
         });
-        let first = access::<TestResource, _>(&store, "first", &context, cx, async |_| ());
-        let result = access::<ConflictingResource, _>(&store, (), &Rc::new(()), cx, async |_| {
-            panic!("a conflicting resource must not reach the callback")
-        })
-        .await;
+        let first = execute::<0>(&store, "first", &context, TestCommand::Read, cx);
+        let result = store
+            .update(cx, |store, cx| {
+                store.execute_command::<ConflictingResource>(
+                    (),
+                    Rc::new(()),
+                    ConflictingResource,
+                    cx,
+                )
+            })
+            .await;
         assert!(matches!(
             result,
             Err(ResourceAccessError::ConflictingResourceType)
         ));
-        first.await.expect("original resource allowed");
+        assert_eq!(first.await.expect("original resource allowed"), Ok(5));
     }
 
     #[gpui::test]
@@ -774,10 +848,8 @@ mod tests {
         for permission in [ResourcePermission::Allowed, ResourcePermission::Denied] {
             let (store, approve) = pending_approval_store(cx);
             let context = Rc::new(TestContext::default());
-            let mut first =
-                access::<TestResource, _>(&store, "first", &context, cx, async |resource| resource);
-            let mut second =
-                access::<TestResource, _>(&store, "first", &context, cx, async |resource| resource);
+            let mut first = execute::<0>(&store, "first", &context, TestCommand::Read, cx);
+            let mut second = execute::<0>(&store, "first", &context, TestCommand::Read, cx);
             cx.run_until_parked();
             assert!(poll!(&mut first).is_pending());
             assert!(poll!(&mut second).is_pending());
@@ -794,21 +866,16 @@ mod tests {
                     cx,
                 )
             });
-            let different =
-                access::<TestResource, _>(&store, "different", &context, cx, async |resource| {
-                    resource.value.load(SeqCst)
-                })
+            let different = execute::<0>(&store, "different", &context, TestCommand::Read, cx)
                 .await
                 .expect("other resource independent of approval");
-            assert_eq!(different, 9);
+            assert_eq!(different, Ok(9));
 
             approve.send(permission).expect("approval pending");
             match permission {
                 ResourcePermission::Allowed => {
-                    let first = first.await.expect("approval granted");
-                    let second = second.await.expect("approval shared");
-                    assert!(Arc::ptr_eq(&first, &second));
-                    assert_eq!(first.value.load(SeqCst), 5);
+                    assert_eq!(first.await.expect("approval granted"), Ok(5));
+                    assert_eq!(second.await.expect("approval shared"), Ok(5));
                     assert_eq!(context.obtain_count.get(), 2);
                 }
                 ResourcePermission::Denied => {
@@ -835,10 +902,7 @@ mod tests {
                 let (store, approve) = pending_approval_store(cx);
                 let context = Rc::new(TestContext::default());
                 let id = TestResource::id(&"first");
-                let pending =
-                    access::<TestResource, _>(&store, "first", &context, cx, async |resource| {
-                        resource.value.load(SeqCst)
-                    });
+                let pending = execute::<0>(&store, "first", &context, TestCommand::Read, cx);
                 cx.run_until_parked();
                 store.update(cx, |store, cx| match permission {
                     Some(permission) => store.set_permission(id.clone(), permission, cx),
@@ -846,7 +910,7 @@ mod tests {
                 });
                 approve.send(response).expect("approval pending");
                 if permission == Some(ResourcePermission::Allowed) {
-                    assert_eq!(pending.await.expect("explicit approval wins"), 5);
+                    assert_eq!(pending.await.expect("explicit approval wins"), Ok(5));
                     assert_eq!(context.obtain_count.get(), 1);
                 } else {
                     assert!(matches!(pending.await, Err(ResourceAccessError::Denied)));
@@ -880,9 +944,7 @@ mod tests {
                 }
             })
         });
-        let pending = access::<TestResource, _>(&store, "first", &context, cx, async |_| {
-            panic!("observer revoked access")
-        });
+        let pending = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx);
         cx.run_until_parked();
         approve
             .send(ResourcePermission::Allowed)
@@ -898,45 +960,231 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn cancelled_callback_does_not_cancel_shared_approval(cx: &mut TestAppContext) {
+    async fn cancelled_command_does_not_cancel_shared_approval(cx: &mut TestAppContext) {
         let (store, approve) = pending_approval_store(cx);
         let context = Rc::new(TestContext::default());
-        let cancelled = access::<TestResource, _>(&store, "first", &context, cx, async |_| {
-            panic!("cancelled callback must not run")
-        });
+        let cancelled = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx);
         cx.run_until_parked();
         drop(cancelled);
         cx.run_until_parked();
-        let pending = access::<TestResource, _>(&store, "first", &context, cx, async |resource| {
-            resource.value.load(SeqCst)
-        });
+        let pending = execute::<0>(&store, "first", &context, TestCommand::Read, cx);
         cx.run_until_parked();
         assert_eq!(context.obtain_count.get(), 0);
         approve
             .send(ResourcePermission::Allowed)
             .expect("approval still pending");
-        assert_eq!(pending.await.expect("shared approval granted"), 5);
+        assert_eq!(pending.await.expect("shared approval granted"), Ok(5));
         assert_eq!(context.obtain_count.get(), 1);
     }
 
     #[gpui::test]
-    async fn dropping_store_prevents_pending_callbacks(cx: &mut TestAppContext) {
-        let (store, approve) = pending_approval_store(cx);
-        let weak_store = store.downgrade();
-        let context = Rc::new(TestContext::default());
-        let pending = access::<TestResource, _>(&store, "first", &context, cx, async |_| {
-            panic!("a dropped store must not start a callback")
+    async fn dropping_store_prevents_pending_commands(cx: &mut TestAppContext) {
+        for awaiting_command in [false, true] {
+            let (store, approve) = if awaiting_command {
+                pending_command_approval_store(cx)
+            } else {
+                pending_approval_store(cx)
+            };
+            let weak_store = store.downgrade();
+            let context = Rc::new(TestContext::default());
+            let pending = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx);
+            cx.run_until_parked();
+            drop(store);
+            assert!(weak_store.upgrade().is_none());
+            approve
+                .send(ResourcePermission::Allowed)
+                .expect("approval pending");
+            assert!(matches!(
+                pending.await,
+                Err(ResourceAccessError::StoreDropped)
+            ));
+            assert_eq!(context.obtain_count.get(), usize::from(awaiting_command));
+        }
+    }
+
+    #[gpui::test]
+    async fn command_approval_is_awaited_after_obtain_and_not_remembered(cx: &mut TestAppContext) {
+        for permission in [ResourcePermission::Allowed, ResourcePermission::Denied] {
+            let context = Rc::new(TestContext::default());
+            let (obtain_ready, obtain_wait) = oneshot::channel();
+            context.obtain_ready.set(Some(obtain_wait));
+            let (approve, response) = oneshot::channel();
+            let response = Cell::new(Some(response));
+            let requests = Rc::new(RefCell::new(Vec::new()));
+            let next_permission = Rc::new(Cell::new(ResourcePermission::Denied));
+            let store = cx.new(|_| {
+                ManagedResourceStore::new(ResourcePermissions::default(), {
+                    let requests = requests.clone();
+                    let next_permission = next_permission.clone();
+                    move |request, cx| {
+                        requests.borrow_mut().push(request.clone());
+                        match request {
+                            ResourcePermissionRequest::Obtain(_) => {
+                                Task::ready(ResourcePermission::Allowed)
+                            }
+                            ResourcePermissionRequest::ExecuteCommand { .. } => {
+                                if let Some(response) = response.take() {
+                                    cx.spawn(async move |_| {
+                                        response.await.expect("approval pending")
+                                    })
+                                } else {
+                                    Task::ready(next_permission.get())
+                                }
+                            }
+                        }
+                    }
+                })
+            });
+            let mut pending = execute::<0>(&store, "first", &context, TestCommand::Add(7), cx);
+            cx.run_until_parked();
+            assert!(poll!(&mut pending).is_pending());
+            assert_eq!(
+                *requests.borrow(),
+                [ResourcePermissionRequest::Obtain(TestResource::id(
+                    &"first"
+                ))]
+            );
+            obtain_ready.send(()).expect("acquisition pending");
+            cx.run_until_parked();
+            assert!(poll!(&mut pending).is_pending());
+            assert_eq!(
+                *requests.borrow(),
+                [
+                    ResourcePermissionRequest::Obtain(TestResource::id(&"first")),
+                    ResourcePermissionRequest::ExecuteCommand {
+                        resource: TestResource::id(&"first"),
+                        description: "Add 7 (current value: 5)".into(),
+                    },
+                ]
+            );
+            let permissions = store.read_with(cx, |store, _| store.permissions());
+            approve.send(permission).expect("command approval pending");
+            let expected_value = match permission {
+                ResourcePermission::Allowed => {
+                    assert_eq!(pending.await.expect("command approved"), Ok(12));
+                    12
+                }
+                ResourcePermission::Denied => {
+                    assert!(matches!(
+                        pending.await,
+                        Err(ResourceAccessError::CommandDenied)
+                    ));
+                    5
+                }
+            };
+
+            for value in [7, 11] {
+                assert!(matches!(
+                    execute::<0>(&store, "first", &context, TestCommand::Add(value), cx).await,
+                    Err(ResourceAccessError::CommandDenied)
+                ));
+            }
+            next_permission.set(ResourcePermission::Allowed);
+            assert_eq!(
+                execute::<0>(&store, "first", &context, TestCommand::Read, cx)
+                    .await
+                    .expect("read approved"),
+                Ok(expected_value)
+            );
+            assert_eq!(requests.borrow().len(), 5);
+            assert_eq!(context.obtain_count.get(), 1);
+            assert_eq!(
+                store.read_with(cx, |store, _| store.permissions()),
+                permissions
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn concurrent_commands_have_independent_approvals(cx: &mut TestAppContext) {
+        let (approve_first, first_response) = oneshot::channel();
+        let (approve_second, second_response) = oneshot::channel();
+        let responses = RefCell::new(VecDeque::from([first_response, second_response]));
+        let store = cx.new(|_| {
+            ManagedResourceStore::new(ResourcePermissions::default(), move |request, cx| {
+                if matches!(request, ResourcePermissionRequest::ExecuteCommand { .. })
+                    && let Some(response) = responses.borrow_mut().pop_front()
+                {
+                    return cx.spawn(async move |_| response.await.expect("approval pending"));
+                }
+                Task::ready(ResourcePermission::Allowed)
+            })
         });
+        let context = Rc::new(TestContext::default());
+        let mut first = execute::<0>(&store, "first", &context, TestCommand::Add(7), cx);
+        let mut second = execute::<0>(&store, "first", &context, TestCommand::Add(7), cx);
         cx.run_until_parked();
-        drop(store);
-        assert!(weak_store.upgrade().is_none());
-        approve
+        assert!(poll!(&mut first).is_pending());
+        assert!(poll!(&mut second).is_pending());
+        approve_second
             .send(ResourcePermission::Allowed)
-            .expect("approval pending");
-        assert!(matches!(
-            pending.await,
-            Err(ResourceAccessError::StoreDropped)
-        ));
-        assert_eq!(context.obtain_count.get(), 0);
+            .expect("independent approval pending");
+        cx.run_until_parked();
+        approve_first
+            .send(ResourcePermission::Denied)
+            .expect("other approval still pending");
+        let results = [first.await, second.await];
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Ok(Ok(12))))
+                .count(),
+            1
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(ResourceAccessError::CommandDenied)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            execute::<0>(&store, "first", &context, TestCommand::Read, cx)
+                .await
+                .expect("read approved"),
+            Ok(12)
+        );
+        assert_eq!(context.obtain_count.get(), 1);
+    }
+
+    #[gpui::test]
+    async fn revocation_during_command_approval_prevents_execution(cx: &mut TestAppContext) {
+        for permission in [Some(ResourcePermission::Denied), None] {
+            let (store, approve) = pending_command_approval_store(cx);
+            let context = Rc::new(TestContext::default());
+            let pending = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx);
+            cx.run_until_parked();
+            assert_eq!(context.obtain_count.get(), 1);
+            store.update(cx, |store, cx| {
+                let id = TestResource::id(&"first");
+                match permission {
+                    Some(permission) => store.set_permission(id, permission, cx),
+                    None => store.clear_permission(&id, cx),
+                }
+            });
+            approve
+                .send(ResourcePermission::Allowed)
+                .expect("command approval pending");
+            assert!(matches!(pending.await, Err(ResourceAccessError::Denied)));
+        }
+    }
+
+    #[gpui::test]
+    async fn cancelled_command_drops_its_approval_but_keeps_the_resource(cx: &mut TestAppContext) {
+        let (store, approve) = pending_command_approval_store(cx);
+        let context = Rc::new(TestContext::default());
+        let cancelled = execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx);
+        cx.run_until_parked();
+        assert_eq!(context.obtain_count.get(), 1);
+        drop(cancelled);
+        cx.run_until_parked();
+        assert!(approve.send(ResourcePermission::Allowed).is_err());
+        assert_eq!(
+            execute::<0>(&store, "first", &context, TestCommand::Read, cx)
+                .await
+                .expect("read approved"),
+            Ok(5)
+        );
+        assert_eq!(context.obtain_count.get(), 1);
     }
 }
