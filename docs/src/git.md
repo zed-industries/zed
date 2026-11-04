@@ -203,6 +203,7 @@ Git worktrees let you keep multiple checkouts of the same repository on disk at 
 This is useful when you want to work on more than one branch or task without stashing, rebuilding, or disturbing the files in your main checkout.
 
 Open the worktree picker from the title bar, next to the project picker, or by running {#action git::Worktree}.
+Search by worktree name or checked-out branch name to find an existing worktree.
 From the picker, you can:
 
 - Create a new linked worktree either from the current branch or default branch
@@ -375,8 +376,8 @@ Zed can open or copy a permanent link to a file or code selection on your Git ho
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
 
 For the current selection in the editor, use {#action editor::CopyPermalinkToLine} or
-{#action editor::OpenPermalinkToLine} from the [Command Palette](./getting-started.md#command-palette)
-(search for `permalink`), via [custom key bindings](./key-bindings.md#custom-key-bindings),
+{#action editor::OpenPermalinkToLine} from the [Command Palette](./command-palette.md)
+(search for `permalink`), via [custom key bindings](./key-bindings.md#keymap-editor),
 or by right-clicking and selecting **Copy Permalink to Line**.
 
 From a file tab or the Project Panel, you can also **Open File Permalink** or **Copy File Permalink**

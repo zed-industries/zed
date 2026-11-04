@@ -4,7 +4,7 @@ use anyhow::Context;
 use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use release_channel::app_identifier;
-use util::ResultExt;
+use util::{ResultExt, paths::parse_path_with_position};
 use windows::{
     Win32::{
         Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GENERIC_WRITE, GetLastError, HANDLE},
@@ -107,6 +107,27 @@ fn retrieve_message_from_pipe_inner(pipe: HANDLE) -> anyhow::Result<String> {
     Ok(message.to_string_lossy().into_owned())
 }
 
+fn split_paths_and_urls(paths_or_urls: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut paths = vec![];
+    let mut urls = vec![];
+    for path in paths_or_urls {
+        if path.starts_with("zed://")
+            || path.starts_with("http://")
+            || path.starts_with("https://")
+            || path.starts_with("file://")
+            || path.starts_with("ssh://")
+        {
+            urls.push(path.clone());
+        } else {
+            match parse_path_with_position(path) {
+                Ok(path) => paths.push(path),
+                Err(error) => log::error!("error parsing path argument: {}", error),
+            }
+        }
+    }
+    (paths, urls)
+}
+
 // This part of code is mostly from crates/cli/src/main.rs
 fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
     if let Some(dock_menu_action_idx) = args.dock_action {
@@ -119,27 +140,8 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
     let url = format!("zed-cli://{server_name}");
 
     let request = {
-        let mut paths = vec![];
-        let mut urls = vec![];
+        let (paths, urls) = split_paths_and_urls(&args.paths_or_urls);
         let mut diff_paths = vec![];
-        for path in args.paths_or_urls.iter() {
-            match std::fs::canonicalize(&path) {
-                Ok(path) => paths.push(path.to_string_lossy().into_owned()),
-                Err(error) => {
-                    if path.starts_with("zed://")
-                        || path.starts_with("http://")
-                        || path.starts_with("https://")
-                        || path.starts_with("file://")
-                        || path.starts_with("ssh://")
-                    {
-                        urls.push(path.clone());
-                    } else {
-                        log::error!("error parsing path argument: {}", error);
-                    }
-                }
-            }
-        }
-
         for path in args.diff.chunks(2) {
             let old = std::fs::canonicalize(&path[0]).log_err();
             let new = std::fs::canonicalize(&path[1]).log_err();
@@ -221,4 +223,21 @@ fn write_message_to_instance_pipe(message: &[u8]) -> anyhow::Result<()> {
         CloseHandle(pipe)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_paths_and_urls;
+
+    #[test]
+    fn test_split_paths_and_urls() {
+        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+        let canonical = std::fs::canonicalize(file).unwrap();
+        let url = "zed://file/C:/project/main.rs:3";
+
+        let (paths, urls) = split_paths_and_urls(&[format!("{file}:2:5"), url.to_string()]);
+
+        assert_eq!(paths, [format!("{}:2:5", canonical.display())]);
+        assert_eq!(urls, [url]);
+    }
 }

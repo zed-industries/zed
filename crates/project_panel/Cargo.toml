@@ -49,6 +49,7 @@ telemetry.workspace = true
 notifications.workspace = true
 fs.workspace = true
 log.workspace = true
+svg_preview.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

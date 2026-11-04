@@ -131,6 +131,10 @@ impl EditPredictionProvider {
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct EditPredictionSettingsContent {
+    /// Whether to show the edit prediction button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
     /// Determines which edit prediction provider to use.
     pub provider: Option<EditPredictionProvider>,
     /// Disable edit predictions for files matching these glob patterns.
