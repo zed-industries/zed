@@ -691,6 +691,7 @@ impl Replacement {
     // convert a vim query into something more usable by zed.
     // we don't attempt to fully convert between the two regex syntaxes,
     // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
+    // convert \+, \{ and \} to +, { and } in the pattern,
     // convert \0..\9 to $0..$9 in the replacement so that common idioms work,
     // and escape literal `$` to `$$` in the replacement so vim's literal `$`
     // is not interpreted as a Rust regex capture-group reference.
@@ -719,8 +720,9 @@ impl Replacement {
                 } else if phase == 1 && c == '$' {
                     // Second '$' escapes by fallthrough
                     buffer.push('$')
-                // unescape escaped parens
-                } else if phase == 0 && (c == '(' || c == ')') {
+                // vim's escaped parens, `\+` and `\{n\}` are the regex operators,
+                // which are written unescaped in Zed's regex syntax
+                } else if phase == 0 && matches!(c, '(' | ')' | '+' | '{' | '}') {
                 } else if c != delimiter {
                     buffer.push('\\')
                 }
@@ -796,6 +798,33 @@ mod test {
         assert_eq!(parsed.search, r"\$test");
         assert_eq!(parsed.replacement, "$$rest");
         assert!(parsed.flag_g);
+    }
+
+    #[test]
+    fn test_replacement_parse_repetition_operators() {
+        let parsed = super::Replacement::parse(r"/a\([0-9]\+\)b\{2\}/\1/g".chars().peekable())
+            .expect("parse should succeed");
+
+        assert_eq!(parsed.search, "a([0-9]+)b{2}");
+        assert_eq!(parsed.replacement, "$1");
+    }
+
+    #[gpui::test]
+    async fn test_replace_repetition_operators(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        for command in [
+            r":%s=db\([0-9]\{2\}\)=ch/\1=g",
+            r":%s=db\([0-9]\+\)=ch/\1=g",
+            r":%s=db\([0-9]*\)=ch/\1=g",
+        ] {
+            cx.set_state("ˇdb01\ndb02\n", Mode::Normal);
+            let keystrokes = command.chars().map(String::from).collect::<Vec<_>>();
+            cx.simulate_keystrokes(&keystrokes.join(" "));
+            cx.simulate_keystrokes("enter");
+            cx.run_until_parked();
+            cx.assert_state("ch/01\nˇch/02\n", Mode::Normal);
+        }
     }
 
     #[gpui::test]
