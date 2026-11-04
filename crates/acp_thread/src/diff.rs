@@ -500,11 +500,15 @@ impl Diff {
                     .as_ref()
                     .map(|diff| diff.read(cx).changed_row_counts())
                     .or(resolved.fallback_row_counts),
-                FinalizedDiffState::Deferred(deferred) => Some(
-                    *deferred
-                        .changed_row_counts
-                        .get_or_init(|| finalized.compute_deferred_row_counts(&deferred.new_text)),
-                ),
+                FinalizedDiffState::Deferred(deferred) => {
+                    Some(*deferred.changed_row_counts.get_or_init(|| {
+                        FinalizedDiff::compute_deferred_row_counts(
+                            &finalized.base_text,
+                            finalized.base_text_exists,
+                            &deferred.new_text,
+                        )
+                    }))
+                }
             },
         }
     }
@@ -748,11 +752,13 @@ impl FinalizedDiff {
         match &mut self.state {
             FinalizedDiffState::Resolved(resolved) => read(resolved),
             FinalizedDiffState::Deferred(deferred) => {
-                let fallback_row_counts = Some(
-                    *deferred
-                        .changed_row_counts
-                        .get_or_init(|| self.compute_deferred_row_counts(&deferred.new_text)),
-                );
+                let fallback_row_counts = Some(*deferred.changed_row_counts.get_or_init(|| {
+                    Self::compute_deferred_row_counts(
+                        &self.base_text,
+                        self.base_text_exists,
+                        &deferred.new_text,
+                    )
+                }));
                 let resolved = build_finalized(
                     self.path.clone(),
                     self.base_text_exists,
@@ -769,11 +775,18 @@ impl FinalizedDiff {
         }
     }
 
-    fn compute_deferred_row_counts(&self, new_text: &str) -> (u32, u32) {
-        let Some(new_text) = self.normalized_changed_text(new_text.to_string()) else {
+    fn compute_deferred_row_counts(
+        base_text: &Arc<str>,
+        base_text_exists: bool,
+        new_text: &str,
+    ) -> (u32, u32) {
+        let base_text_normalized = LineEnding::normalize_arc(base_text.clone());
+        let mut new_text = new_text.to_string();
+        LineEnding::normalize(&mut new_text);
+        if base_text_exists && new_text.as_str() == base_text_normalized.as_ref() {
             return (0, 0);
-        };
-        if !self.base_text_exists {
+        }
+        if !base_text_exists {
             let added = if new_text.is_empty() {
                 0
             } else {
@@ -781,8 +794,7 @@ impl FinalizedDiff {
             };
             return (added, 0);
         }
-        let base_text = LineEnding::normalize_arc(self.base_text.clone());
-        let patch = diffy::create_patch(base_text.as_ref(), &new_text);
+        let patch = diffy::create_patch(base_text_normalized.as_ref(), &new_text);
         let mut added = 0u32;
         let mut removed = 0u32;
         for hunk in patch.hunks() {
@@ -1274,23 +1286,12 @@ mod tests {
         });
         cx.run_until_parked();
 
-        diff.read_with(cx, |diff, cx| {
-            assert_eq!(diff.changed_row_counts(cx), Some((1, 1)));
-        });
-
-        diff.update(cx, |diff, cx| {
-            diff.finalize(cx);
-            assert_eq!(diff.changed_row_counts(cx), Some((1, 1)));
-        });
+        diff.update(cx, |diff, cx| diff.finalize(cx));
         assert_eq!(
             diff.update(cx, |diff, cx| diff.multibuffer(cx)),
             multibuffer
         );
         cx.run_until_parked();
-
-        diff.read_with(cx, |diff, cx| {
-            assert_eq!(diff.changed_row_counts(cx), Some((1, 1)));
-        });
 
         buffer.update(cx, |buffer, cx| buffer.set_text("later", cx));
         cx.run_until_parked();
@@ -1304,6 +1305,30 @@ mod tests {
             }),
             ["HELLO!"]
         );
+    }
+
+    #[gpui::test]
+    async fn test_diff_changed_row_counts(cx: &mut TestAppContext) {
+        let buffer = cx.new(|cx| Buffer::local("hello!\nworld\n", cx));
+        let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text("HELLO!\nworld\nnew line\n", cx);
+        });
+        cx.run_until_parked();
+
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.changed_row_counts(cx), Some((2, 1)));
+        });
+
+        diff.update(cx, |diff, cx| {
+            diff.finalize(cx);
+            assert_eq!(diff.changed_row_counts(cx), Some((2, 1)));
+        });
+        cx.run_until_parked();
+
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.changed_row_counts(cx), Some((2, 1)));
+        });
 
         let restored = cx.new(|cx| {
             let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
