@@ -788,6 +788,12 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub show_all_repositories: Option<bool>,
 
+    /// Whether to hide repositories without changes in the all-repositories view.
+    /// Does not affect the current-repository view.
+    ///
+    /// Default: false
+    pub hide_clean_repositories: Option<bool>,
+
     /// Whether to show the addition/deletion change count next to each file in the Git panel.
     ///
     /// Default: true
