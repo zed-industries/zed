@@ -8128,6 +8128,192 @@ pub(crate) mod tests {
         assert!(connection.take_receipt_prompt().is_none());
     }
 
+    fn reopen_conversation(
+        conversation_view: &Entity<ConversationView>,
+        connection: StubAgentConnection,
+        cx: &mut VisualTestContext,
+    ) -> Entity<ConversationView> {
+        let (session_id, thread_id, workspace, project) =
+            conversation_view.read_with(cx, |view, _| {
+                (
+                    view.root_session_id.clone(),
+                    view.thread_id,
+                    view.workspace.clone(),
+                    view.project.clone(),
+                )
+            });
+        cx.update(|window, cx| {
+            let connection_store = cx.new(|cx| AgentConnectionStore::new(project.clone(), cx));
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::new(connection)),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    session_id,
+                    Some(thread_id),
+                    None,
+                    None,
+                    None,
+                    workspace,
+                    project,
+                    None,
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                )
+            })
+        })
+    }
+
+    #[gpui::test]
+    async fn test_queued_messages_are_restored_paused_after_reopening(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new()
+            .with_receipt_submissions(true)
+            .with_supports_load_session(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        let thread_id = conversation_view.read_with(cx, |view, _| view.thread_id);
+        let first: Vec<acp_v2::ContentBlock> = vec!["first queued".into()];
+        let second: Vec<acp_v2::ContentBlock> = vec!["second queued".into()];
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.add_to_queue(first.clone(), vec![], window, cx);
+            view.add_to_queue(second.clone(), vec![], window, cx);
+        });
+        cx.executor()
+            .advance_clock(QUEUED_MESSAGES_PERSIST_DEBOUNCE);
+        cx.run_until_parked();
+
+        let reopened = reopen_conversation(&conversation_view, connection.clone(), cx);
+        cx.run_until_parked();
+
+        let reopened_thread = active_thread(&reopened, cx);
+        reopened_thread.update_in(cx, |view, window, cx| {
+            let contents = view
+                .message_queue
+                .iter()
+                .map(|entry| entry.content.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(contents, vec![first.clone(), second.clone()]);
+            assert!(
+                !view.send_queued_message_after_generation_stopped(false, window, cx),
+                "restored messages must wait for the user"
+            );
+        });
+        cx.run_until_parked();
+        assert!(connection.take_receipt_prompt().is_none());
+        reopened_thread.read_with(cx, |view, _| assert_eq!(view.message_queue.len(), 2));
+
+        reopened_thread.update(cx, |view, cx| {
+            let first_id = view.message_queue.first_id().expect("restored entry");
+            view.remove_from_queue(first_id, cx);
+        });
+        cx.executor()
+            .advance_clock(QUEUED_MESSAGES_PERSIST_DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|_, cx| crate::draft_prompt_store::read_queued_messages(thread_id, cx)),
+            Some(vec![second]),
+        );
+
+        reopened_thread.update(cx, |view, cx| view.clear_queue(cx));
+        cx.executor()
+            .advance_clock(QUEUED_MESSAGES_PERSIST_DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|_, cx| crate::draft_prompt_store::read_queued_messages(thread_id, cx)),
+            None,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_quitting_flushes_pending_queued_message_write(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let thread_id = conversation_view.read_with(cx, |view, _| view.thread_id);
+        let queued: Vec<acp_v2::ContentBlock> = vec!["queued right before quitting".into()];
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.add_to_queue(queued.clone(), vec![], window, cx);
+        });
+
+        cx.update(|_, cx| cx.defer(|cx| cx.shutdown()));
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.read(|cx| crate::draft_prompt_store::read_queued_messages(thread_id, cx)),
+            Some(vec![queued]),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_subagent_queue_does_not_overwrite_root_queue(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let thread_id = conversation_view.read_with(cx, |view, _| view.thread_id);
+        let root_view = active_thread(&conversation_view, cx);
+        let (root_session_id, conversation) = root_view.read_with(cx, |view, cx| {
+            (
+                view.thread.read(cx).session_id().clone(),
+                view.conversation.clone(),
+            )
+        });
+        let child_view = conversation_view.update_in(cx, |view, window, cx| {
+            let child = create_test_acp_thread(
+                Some(root_session_id),
+                "child",
+                Rc::new(StubAgentConnection::new()),
+                view.project.clone(),
+                cx,
+            );
+            conversation.update(cx, |conversation, cx| {
+                conversation.register_thread(child.clone(), cx);
+            });
+            view.new_thread_view(child, conversation.clone(), false, None, window, cx)
+        });
+
+        child_view.update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["queued for subagent".into()], vec![], window, cx);
+        });
+        cx.executor()
+            .advance_clock(QUEUED_MESSAGES_PERSIST_DEBOUNCE);
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.update(|_, cx| crate::draft_prompt_store::read_queued_messages(thread_id, cx)),
+            None,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_deleting_thread_deletes_persisted_queue(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let thread_id = conversation_view.read_with(cx, |view, _| view.thread_id);
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["queued".into()], vec![], window, cx);
+        });
+        cx.executor()
+            .advance_clock(QUEUED_MESSAGES_PERSIST_DEBOUNCE);
+        cx.run_until_parked();
+        assert!(
+            cx.update(|_, cx| crate::draft_prompt_store::read_queued_messages(thread_id, cx))
+                .is_some()
+        );
+
+        cx.update(|_, cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| store.delete(thread_id, cx));
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.update(|_, cx| crate::draft_prompt_store::read_queued_messages(thread_id, cx)),
+            None,
+        );
+    }
+
     #[gpui::test]
     async fn test_reset_ignores_events_from_retained_previous_owner(cx: &mut TestAppContext) {
         init_test(cx);

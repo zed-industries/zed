@@ -4895,7 +4895,7 @@ impl ThreadView {
             .into_any_element()
     }
 
-    fn clear_queue(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn clear_queue(&mut self, cx: &mut Context<Self>) {
         self.message_queue.clear();
         self.sync_queue_flag_to_native_thread(cx);
         self.schedule_queue_persist(cx);
