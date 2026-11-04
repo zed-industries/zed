@@ -843,6 +843,7 @@ pub trait GitRepository: Send + Sync {
     fn merge_message(&self) -> BoxFuture<'_, Option<String>>;
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
+    fn tracked_files(&self, path_prefixes: &[RepoPath]) -> Task<Result<Vec<RepoPath>>>;
     fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>>;
 
     fn stash_entries(&self) -> BoxFuture<'static, Result<GitStash>>;
@@ -1898,6 +1899,22 @@ impl GitRepository for RealGitRepository {
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 anyhow::bail!("git status failed: {stderr}");
+            }
+        })
+    }
+
+    fn tracked_files(&self, path_prefixes: &[RepoPath]) -> Task<Result<Vec<RepoPath>>> {
+        let git = self.git_binary_in_worktree();
+        let args = git_ls_files_args(path_prefixes);
+        log::debug!("Checking for tracked files in {path_prefixes:?}");
+        self.executor.spawn(async move {
+            let git = git?;
+            let output = git.build_command(&args).output().await?;
+            if output.status.success() {
+                parse_ls_files_output(&output.stdout)
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("git ls-files failed: {stderr}");
             }
         })
     }
@@ -3678,6 +3695,37 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
     args
 }
 
+fn git_ls_files_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
+    // `--literal-pathspecs` keeps directory names containing `*`, `?` or `[`
+    // from being interpreted as glob patterns.
+    let mut args = vec![
+        OsString::from("--literal-pathspecs"),
+        OsString::from("ls-files"),
+        OsString::from("-z"),
+        OsString::from("--"),
+    ];
+    args.extend(path_prefixes.iter().map(|path_prefix| {
+        if path_prefix.is_empty() {
+            Path::new(".").into()
+        } else {
+            path_prefix.as_std_path().into()
+        }
+    }));
+    args
+}
+
+fn parse_ls_files_output(output: &[u8]) -> Result<Vec<RepoPath>> {
+    let mut paths = Vec::new();
+    for entry in output.split(|&b| b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        let str_slice = std::str::from_utf8(entry)?;
+        paths.push(RepoPath::new(str_slice)?);
+    }
+    Ok(paths)
+}
+
 pub(crate) struct GitBinary {
     git_binary_path: PathBuf,
     working_directory: PathBuf,
@@ -4395,6 +4443,40 @@ mod tests {
             original_repo_path_from_common_dir(&repository.common_dir).unwrap(),
             repo_dir.path(),
         );
+    }
+
+    #[gpui::test]
+    async fn test_tracked_files_treats_prefixes_as_literal_paths(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        for dir in ["a*", "ab", "[x]", "x"] {
+            fs::create_dir_all(repo_dir.path().join(dir)).unwrap();
+            fs::write(repo_dir.path().join(dir).join("file"), "").unwrap();
+        }
+        git_command(repo_dir.path(), ["add", "."]);
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        for (prefix, expected) in [("a*", "a*/file"), ("[x]", "[x]/file")] {
+            let tracked_files = repository
+                .tracked_files(&[repo_path(prefix)])
+                .await
+                .unwrap();
+            assert_eq!(
+                tracked_files,
+                vec![repo_path(expected)],
+                "prefix {prefix:?}"
+            );
+        }
     }
 
     #[gpui::test]
