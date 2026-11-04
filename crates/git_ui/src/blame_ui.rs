@@ -1,5 +1,8 @@
 use crate::{
-    commit_tooltip::{CommitAvatar, CommitTooltip, commit_tag_chips, shallow_boundary_notice},
+    commit_tooltip::{
+        CommitAvatar, CommitTooltip, blame_entry_timestamp, commit_tag_chips,
+        shallow_boundary_notice,
+    },
     commit_view::{CommitView, GitBlob, build_buffer, worktree_id_for_repo_path},
 };
 use anyhow::Context as _;
@@ -34,8 +37,8 @@ const GIT_BLAME_AVATAR_SIZE: Rems = rems(1.);
 
 pub struct GitBlameRenderer;
 
-fn format_blame_text(blame_entry: &BlameEntry, cx: &App) -> String {
-    let relative_timestamp = blame_entry_relative_timestamp(blame_entry);
+fn format_blame_text(blame_entry: &BlameEntry, style: settings::GitDateStyle, cx: &App) -> String {
+    let timestamp = blame_entry_timestamp(blame_entry, style, cx);
     let author = blame_entry.author.as_deref().unwrap_or_default();
     let summary_enabled = ProjectSettings::get_global(cx)
         .git
@@ -44,15 +47,15 @@ fn format_blame_text(blame_entry: &BlameEntry, cx: &App) -> String {
 
     match blame_entry.summary.as_ref() {
         Some(summary) if summary_enabled => {
-            format!("{author}, {relative_timestamp} - {summary}")
+            format!("{author}, {timestamp} - {summary}")
         }
-        _ => format!("{author}, {relative_timestamp}"),
+        _ => format!("{author}, {timestamp}"),
     }
 }
 
 #[derive(Default)]
 pub struct GitBlameStatus {
-    text: Option<SharedString>,
+    text: Option<(SharedString, SharedString)>,
     active_editor: Option<Entity<Editor>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -64,7 +67,13 @@ impl GitBlameStatus {
             if inline_blame.enabled && inline_blame.location == InlineBlameLocation::StatusBar {
                 editor
                     .update(cx, |editor, cx| editor.active_git_blame_entry(cx))
-                    .map(|blame_entry| SharedString::from(format_blame_text(&blame_entry, cx)))
+                    .map(|blame_entry| {
+                        (
+                            format_blame_text(&blame_entry, inline_blame.date_style, cx).into(),
+                            format_blame_text(&blame_entry, settings::GitDateStyle::Absolute, cx)
+                                .into(),
+                        )
+                    })
             } else {
                 None
             };
@@ -83,9 +92,9 @@ impl Render for GitBlameStatus {
             return div();
         }
 
-        div().when_some(self.text.clone(), |el, text| {
+        div().when_some(self.text.clone(), |el, (text, tooltip)| {
             el.child(
-                Button::new("git-blame-status", text.clone())
+                Button::new("git-blame-status", text)
                     .label_size(LabelSize::Small)
                     .start_icon(
                         Icon::new(IconName::FileGit)
@@ -102,7 +111,7 @@ impl Render for GitBlameStatus {
                             );
                         }
                     }))
-                    .tooltip(ui::Tooltip::text(text)),
+                    .tooltip(ui::Tooltip::text(tooltip)),
             )
         })
     }
@@ -137,6 +146,30 @@ impl BlameRenderer for GitBlameRenderer {
         GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED
     }
 
+    fn timestamp_cache_key(&self, cx: &App) -> Option<editor::BlameTimestampCacheKey> {
+        let git = &ProjectSettings::get_global(cx).git;
+        (git.blame.date_style == settings::GitDateStyle::Absolute).then(|| {
+            let offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+            editor::BlameTimestampCacheKey {
+                date_format: git.date_format.clone(),
+                utc_offset: offset,
+                // Locale dates read "Today" or "Yesterday", so their width changes with the date.
+                local_date: time::OffsetDateTime::now_utc().to_offset(offset).date(),
+            }
+        })
+    }
+
+    fn timestamp_length(&self, entry: &BlameEntry, cx: &App) -> usize {
+        unicode_width::UnicodeWidthStr::width(
+            blame_entry_timestamp(
+                entry,
+                ProjectSettings::get_global(cx).git.blame.date_style,
+                cx,
+            )
+            .as_str(),
+        )
+    }
+
     fn blame_entry_non_text_width(&self, window: &Window, cx: &App) -> Pixels {
         let show_avatar = ProjectSettings::get_global(cx).git.blame.show_avatar;
         let gap_count = if show_avatar { 3. } else { 2. };
@@ -164,7 +197,11 @@ impl BlameRenderer for GitBlameRenderer {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
+        let timestamp = blame_entry_timestamp(
+            &blame_entry,
+            ProjectSettings::get_global(cx).git.blame.date_style,
+            cx,
+        );
         let short_commit_id = blame_entry.sha.display_short();
         let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
@@ -217,7 +254,7 @@ impl BlameRenderer for GitBlameRenderer {
                                 .children(avatar)
                                 .child(name),
                         )
-                        .child(relative_timestamp)
+                        .child(timestamp)
                         .hover(|style| style.bg(cx.theme().colors().element_hover))
                         .cursor_pointer()
                         .on_mouse_down(MouseButton::Right, {
@@ -283,7 +320,11 @@ impl BlameRenderer for GitBlameRenderer {
         blame_entry: BlameEntry,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let text = format_blame_text(&blame_entry, cx);
+        let text = format_blame_text(
+            &blame_entry,
+            ProjectSettings::get_global(cx).git.inline_blame.date_style,
+            cx,
+        );
 
         Some(
             h_flex()
@@ -342,12 +383,10 @@ impl BlameRenderer for GitBlameRenderer {
             .get(..git::SHORT_SHA_LENGTH)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| sha.clone());
-        let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-        let absolute_timestamp = time_format::format_localized_timestamp(
+        let absolute_timestamp = crate::git_timestamp::format_git_timestamp(
             commit_time,
-            OffsetDateTime::now_utc(),
-            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
+            cx,
         );
         let link_color = cx.theme().colors().text_accent;
         let markdown_style = {
@@ -759,18 +798,122 @@ fn existing_blame_editor(
         })
 }
 
-fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
-    match blame_entry.author_offset_date_time() {
-        Ok(timestamp) => {
-            let local_offset =
-                time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-            time_format::format_localized_timestamp(
-                timestamp,
-                time::OffsetDateTime::now_utc(),
-                local_offset,
-                time_format::TimestampFormat::Relative,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn status_bar_blame_tooltip_remains_absolute(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.set_user_settings(
+                    r#"{"git":{"date_format":"iso","inline_blame":{"enabled":true,"location":"status_bar","date_style":"relative"}}}"#,
+                    cx,
+                ).result().expect("valid settings");
+            });
+        });
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            util::path!("/repo"),
+            serde_json::json!({".git": {}, "file.txt": "line\n"}),
+        )
+        .await;
+        fs.set_blame_for_repo(
+            std::path::Path::new(util::path!("/repo/.git")),
+            vec![(
+                git::repository::repo_path("file.txt"),
+                git::blame::Blame {
+                    entries: vec![BlameEntry {
+                        sha: "1b1b1b".parse().expect("valid commit"),
+                        range: 0..1,
+                        original_line_number: 0,
+                        author: Some("Author".into()),
+                        author_mail: None,
+                        author_time: Some(1_717_848_000),
+                        author_tz: Some("+0000".into()),
+                        committer_name: None,
+                        committer_email: None,
+                        committer_time: None,
+                        committer_tz: None,
+                        summary: None,
+                        previous: None,
+                        filename: "file.txt".into(),
+                        boundary: false,
+                    }],
+                    ..Default::default()
+                },
+            )],
+        );
+        let project = project::Project::test(fs, [util::path!("/repo").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(util::path!("/repo/file.txt"), cx)
+            })
+            .await
+            .expect("file opens");
+        let buffer = cx.new(|cx| multi_buffer::MultiBuffer::singleton(buffer, cx));
+        let window = cx.add_window(|window, cx| {
+            Editor::new(
+                editor::EditorMode::full(),
+                buffer,
+                Some(project),
+                window,
+                cx,
             )
-        }
-        Err(_) => "Error parsing date".to_string(),
+        });
+        let editor = window.root(cx).expect("editor window");
+        let status_window = cx.add_window(|_, _| GitBlameStatus::default());
+        let status = status_window.root(cx).expect("status window");
+        let cx = &mut VisualTestContext::from_window(*status_window, cx);
+        editor.update(cx, |editor, cx| {
+            editor
+                .blame()
+                .expect("blame running")
+                .clone()
+                .update(cx, |blame, cx| blame.focus(cx));
+        });
+        cx.run_until_parked();
+        status.update_in(cx, |status, window, cx| {
+            status.active_editor = Some(editor.clone());
+            status._subscriptions = vec![cx.observe_in(&editor, window, GitBlameStatus::update)];
+            status.update(editor.clone(), window, cx);
+            let (row, tooltip) = status.text.as_ref().expect("loaded status blame");
+            let entry = editor
+                .update(cx, |editor, cx| editor.active_git_blame_entry(cx))
+                .expect("active blame entry");
+            assert_eq!(
+                row.as_ref(),
+                format_blame_text(&entry, settings::GitDateStyle::Relative, cx)
+            );
+            assert_eq!(
+                tooltip.as_ref(),
+                format_blame_text(&entry, settings::GitDateStyle::Absolute, cx)
+            );
+            assert_ne!(row, tooltip);
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let previous = status.read_with(cx, |status, _| status.text.clone().expect("status text"));
+        cx.update(|_, cx| SettingsStore::update_global(cx, |store, cx| {
+            store.set_user_settings(
+                r#"{"git":{"date_format":"%Y","inline_blame":{"enabled":true,"location":"status_bar","date_style":"relative"}}}"#,
+                cx,
+            ).result().expect("valid settings");
+        }));
+        cx.run_until_parked();
+        status.read_with(cx, |status, _| {
+            let (row, tooltip) = status.text.as_ref().expect("updated status text");
+            assert_eq!(row, &previous.0);
+            assert_eq!(tooltip.as_ref(), "Author, 2024");
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
     }
 }
