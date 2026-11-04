@@ -4562,7 +4562,7 @@ impl Thread {
             temperature: AgentSettings::temperature_for_model(&model, cx),
             thinking_allowed,
             thinking_effort,
-            speed: if uses_thread_model {
+            speed: if preserves_request_prefix {
                 self.speed()
             } else {
                 None
