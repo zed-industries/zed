@@ -8,7 +8,7 @@ use acp_thread::{
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
 use agent::{NativeAgentServer, NoModelConfiguredError, ThreadStore};
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
 use agent_servers::{AgentServer, GEMINI_TERMINAL_AUTH_METHOD_ID};
@@ -4308,7 +4308,7 @@ pub(crate) mod tests {
     use acp_thread::{ClientUserMessageId, StubAgentConnection};
     use action_log::ActionLog;
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
-    use agent_client_protocol::schema::v1 as acp_v1;
+    use agent_client_protocol::v1::schema as acp_v1;
     use agent_servers::FakeAcpAgentServer;
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
@@ -9707,7 +9707,7 @@ pub(crate) mod tests {
 
     #[gpui::test]
     async fn test_plan_panel_dismissal_and_status_updates(cx: &mut TestAppContext) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
 
         init_test(cx);
         let (conversation_view, cx) =
@@ -11945,7 +11945,7 @@ pub(crate) mod tests {
     async fn test_keyed_updates_preserve_unchanged_thought_scroll_position(
         cx: &mut TestAppContext,
     ) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
 
         init_test(cx);
         let (conversation_view, cx) =
@@ -12054,7 +12054,7 @@ pub(crate) mod tests {
     async fn test_keyed_thought_snapshot_keeps_expansion_on_original_chunk(
         cx: &mut TestAppContext,
     ) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
 
         init_test(cx);
         let (conversation_view, cx) =
@@ -12691,7 +12691,7 @@ pub(crate) mod tests {
 
     #[gpui::test]
     async fn test_new_patch_hunk_auto_expands_only_on_creation(cx: &mut TestAppContext) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
 
         init_test(cx);
         cx.update(|cx| {
@@ -12781,7 +12781,7 @@ pub(crate) mod tests {
 
     #[gpui::test]
     async fn test_awaiting_authorization_searches_visible_patch_content(cx: &mut TestAppContext) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
 
         init_test(cx);
         cx.update(|cx| {
@@ -12897,7 +12897,7 @@ pub(crate) mod tests {
     async fn test_thread_search_tracks_shared_tool_patch_content_and_raw_fallback(
         cx: &mut TestAppContext,
     ) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
 
         init_test(cx);
         let (conversation_view, cx) =
@@ -14021,7 +14021,7 @@ pub(crate) mod tests {
 
     #[gpui::test]
     async fn test_thread_search_refreshes_older_keyed_assistant_snapshot(cx: &mut TestAppContext) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
 
         init_test(cx);
         let (conversation_view, cx) =
@@ -14717,7 +14717,7 @@ pub(crate) mod tests {
     async fn test_focused_read_only_keyed_user_message_refreshes_supported_snapshot(
         cx: &mut TestAppContext,
     ) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
 
         init_test(cx);
         let (conversation_view, cx) =
@@ -14805,7 +14805,7 @@ pub(crate) mod tests {
     async fn test_keyed_user_metadata_and_identical_snapshots_preserve_selection(
         cx: &mut TestAppContext,
     ) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
         use multi_buffer::MultiBufferOffset;
 
         init_test(cx);
@@ -14868,10 +14868,10 @@ pub(crate) mod tests {
     }
 
     async fn assert_unsupported_source_message_cannot_regenerate(
-        unsupported: agent_client_protocol::schema::v2::ContentBlock,
+        unsupported: agent_client_protocol::v2::schema::ContentBlock,
         cx: &mut TestAppContext,
     ) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
 
         init_test(cx);
         let (conversation_view, cx) =
@@ -14964,7 +14964,7 @@ pub(crate) mod tests {
 
     #[gpui::test]
     async fn test_unsupported_source_message_cannot_regenerate(cx: &mut TestAppContext) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
 
         assert_unsupported_source_message_cannot_regenerate(
             acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
@@ -14978,7 +14978,7 @@ pub(crate) mod tests {
 
     #[gpui::test]
     async fn test_unknown_annotation_source_message_cannot_regenerate(cx: &mut TestAppContext) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
 
         assert_unsupported_source_message_cannot_regenerate(
             acp_v2::ContentBlock::Text(acp_v2::TextContent::new("annotated text").annotations(
@@ -14993,7 +14993,7 @@ pub(crate) mod tests {
     async fn test_regenerate_does_not_resend_fallback_after_delayed_rewind(
         cx: &mut TestAppContext,
     ) {
-        use agent_client_protocol::schema::v2 as acp_v2;
+        use agent_client_protocol::v2::schema as acp_v2;
 
         init_test(cx);
         for (cancel_before_update, cancel_after_update) in
@@ -15837,6 +15837,7 @@ pub(crate) mod tests {
                 .upsert_display_terminal(
                     "display".into(),
                     acp_thread::DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         command: agent_client_protocol::schema::MaybeUndefined::Value(
                             "actual command".into(),
                         ),
@@ -15868,6 +15869,7 @@ pub(crate) mod tests {
                 .upsert_display_terminal(
                     "display".into(),
                     acp_thread::DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         output: agent_client_protocol::schema::MaybeUndefined::Value(
                             acp_thread::DisplayTerminalOutput {
                                 data: b"new output".to_vec(),
@@ -15904,6 +15906,7 @@ pub(crate) mod tests {
                 .upsert_display_terminal(
                     "display".into(),
                     acp_thread::DisplayTerminalPatch {
+                        capabilities: Default::default(),
                         output: agent_client_protocol::schema::MaybeUndefined::Null,
                         exit_status: agent_client_protocol::schema::MaybeUndefined::Null,
                         ..Default::default()
