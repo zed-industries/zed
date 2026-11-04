@@ -775,9 +775,9 @@ impl MacWindowState {
     fn update_traffic_light_visibility(&self) {
         let window = self.native_window();
         for button in [
-            Objc2NSWindowButton::CloseButton,
-            Objc2NSWindowButton::MiniaturizeButton,
-            Objc2NSWindowButton::ZoomButton,
+            NSWindowButton::CloseButton,
+            NSWindowButton::MiniaturizeButton,
+            NSWindowButton::ZoomButton,
         ] {
             if let Some(button) = window.standardWindowButton(button) {
                 button.setHidden(!self.traffic_lights_visible);
