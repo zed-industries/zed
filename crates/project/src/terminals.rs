@@ -587,7 +587,7 @@ impl Project {
                             &env,
                             None,
                             None,
-                            Interactive::Yes,
+                            Interactive::No,
                         )?;
                         let mut command = new_std_command(command_template.program);
                         command.args(command_template.args);
