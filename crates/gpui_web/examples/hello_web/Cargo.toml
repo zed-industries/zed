@@ -7,11 +7,11 @@ edition = "2024"
 publish = false
 
 [[bin]]
-name = "hello_web"
+name = "hello-web"
 path = "main.rs"
 
 [[bin]]
-name = "hello_world"
+name = "hello-world"
 path = "../../../gpui/examples/hello_world.rs"
 
 [[bin]]
@@ -19,11 +19,11 @@ name = "text"
 path = "../../../gpui/examples/text.rs"
 
 [[bin]]
-name = "text_layout"
+name = "text-layout"
 path = "../../../gpui/examples/text_layout.rs"
 
 [[bin]]
-name = "text_wrapper"
+name = "text-wrapper"
 path = "../../../gpui/examples/text_wrapper.rs"
 
 [[bin]]
@@ -31,19 +31,19 @@ name = "input"
 path = "../../../gpui/examples/input.rs"
 
 [[bin]]
-name = "font_fallback_test"
+name = "font-fallback-test"
 path = "font_fallback_test.rs"
 
 [[bin]]
-name = "queue_test"
+name = "queue-test"
 path = "queue_test.rs"
 
 [[bin]]
-name = "dynamic_fonts"
+name = "dynamic-fonts"
 path = "dynamic_fonts.rs"
 
 [[bin]]
-name = "http_client_test"
+name = "http-client-test"
 path = "http_client_test.rs"
 
 [dependencies]

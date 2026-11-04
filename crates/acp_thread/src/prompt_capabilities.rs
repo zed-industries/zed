@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::{v1::schema as acp_v1, v2::schema as acp_v2};
 
 pub fn from_v1(capabilities: acp_v1::PromptCapabilities) -> acp_v2::PromptCapabilities {
     acp_v2::PromptCapabilities::new()

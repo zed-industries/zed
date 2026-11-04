@@ -769,7 +769,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let keystrokes = action
             .command
             .chars()
-            .filter_map(|c| Keystroke::parse(&c.to_string()).ok())
+            .filter_map(|c| Keystroke::parse_with_os(&c.to_string(), cx.platform_info().os).ok())
             .collect();
         vim.switch_mode(Mode::Normal, true, window, cx);
         if let Some(override_rows) = &action.override_rows {

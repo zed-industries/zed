@@ -23,8 +23,9 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelCompletionStream, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRequest, LanguageModelToolChoiceSupport, ModelRateLimiters, OPEN_AI_PROVIDER_ID,
-    OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, RateLimiter, X_AI_PROVIDER_ID,
-    X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME, unavailable_error,
+    OPEN_AI_PROVIDER_NAME, PromptCompactionStrategy, ProviderErrorCategory, RateLimiter,
+    X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    unavailable_error,
 };
 
 use schemars::JsonSchema;
@@ -537,6 +538,7 @@ pub fn language_model(model: &cloud_llm_client::LanguageModel) -> LanguageModel 
                 name: effort_level.name.clone().into(),
                 value: effort_level.value.clone().into(),
                 is_default: effort_level.is_default.unwrap_or(false),
+                supports_disabling_thinking: effort_level.supports_disabling_thinking,
             })
             .collect(),
         supports_streaming_tools: model.supports_streaming_tools,
@@ -544,6 +546,11 @@ pub fn language_model(model: &cloud_llm_client::LanguageModel) -> LanguageModel 
             auto: true,
             none: true,
             any: model.provider != Anthropic || anthropic::supports_forced_tool_use(&model.id.0),
+        },
+        // Anthropic invalidates cached messages when `tool_choice` changes.
+        prompt_compaction_strategy: match model.provider {
+            OpenAi | XAi => PromptCompactionStrategy::PreserveRequestPrefix,
+            Anthropic | Google => PromptCompactionStrategy::RebuildPrompt,
         },
         supports_split_token_display: matches!(model.provider, OpenAi | XAi),
         max_output_tokens: Some(model.max_output_tokens as u64),
@@ -2140,6 +2147,18 @@ mod tests {
     }
 
     #[test]
+    fn prompt_compaction_preserves_prefix_only_for_supported_upstreams() {
+        assert_eq!(
+            language_model(&cloud_test_config()).prompt_compaction_strategy,
+            PromptCompactionStrategy::PreserveRequestPrefix
+        );
+        assert_eq!(
+            language_model(&cloud_anthropic_test_config()).prompt_compaction_strategy,
+            PromptCompactionStrategy::RebuildPrompt
+        );
+    }
+
+    #[test]
     fn config_resolves_current_model_list_and_rejects_unlisted_models() {
         let listed = language_model(&cloud_test_config());
         let mut provider = test_provider(
@@ -2524,6 +2543,32 @@ mod tests {
     ) -> (CloudModelProvider<TestTokenProvider>, LanguageModel) {
         let model = language_model(&config);
         (test_provider(http_client, vec![config]), model)
+    }
+
+    #[test]
+    fn test_disabling_thinking_support_uses_effort_level_override() {
+        let mut config = cloud_anthropic_test_config();
+        config.supports_disabling_thinking = false;
+        config.supported_effort_levels = vec![
+            cloud_llm_client::SupportedEffortLevel {
+                name: Arc::from("High"),
+                value: Arc::from("high"),
+                is_default: Some(true),
+                supports_disabling_thinking: Some(true),
+            },
+            cloud_llm_client::SupportedEffortLevel {
+                name: Arc::from("Max"),
+                value: Arc::from("max"),
+                is_default: None,
+                supports_disabling_thinking: None,
+            },
+        ];
+        let model = language_model(&config);
+
+        assert!(model.supports_disabling_thinking_at_effort(None));
+        assert!(model.supports_disabling_thinking_at_effort(Some("high")));
+        assert!(!model.supports_disabling_thinking_at_effort(Some("max")));
+        assert!(!model.supports_disabling_thinking_at_effort(Some("unknown")));
     }
 
     fn cloud_anthropic_test_config() -> cloud_llm_client::LanguageModel {
