@@ -61,11 +61,12 @@ impl RealCratesIoClient {
         Ok(Url::parse(&format!("{BASE_URL}{path}")).context("Invalid crates.io URL")?)
     }
 
-    fn crate_url(name: &CrateName) -> Result<Url> {
+    fn crate_url(name: &CrateName, subpath: &[&str]) -> Result<Url> {
         let mut url = Self::url("/crates")?;
         url.path_segments_mut()
             .map_err(|()| anyhow::anyhow!("crates.io URL cannot have path segments"))?
-            .push(name.as_str());
+            .push(name.as_str())
+            .extend(subpath);
         Ok(url)
     }
 
@@ -126,6 +127,67 @@ impl RealCratesIoClient {
         Ok(serde_json::from_slice(&body)
             .with_context(|| format!("Failed to parse crates.io response from {url}"))?)
     }
+
+    /// Adding and removing owners share their request and response bodies.
+    async fn change_owners(
+        &self,
+        method: Method,
+        name: &CrateName,
+        owners: &[OwnerLogin],
+    ) -> Result<String> {
+        #[derive(Serialize)]
+        struct ChangeOwnersRequest<'a> {
+            owners: &'a [OwnerLogin],
+        }
+
+        #[derive(Deserialize)]
+        struct ChangeOwnersResponse {
+            msg: String,
+        }
+
+        let body = serde_json::to_vec(&ChangeOwnersRequest { owners })
+            .context("Failed to serialize crate owners")?;
+        let response: ChangeOwnersResponse = self
+            .request_json(method, Self::crate_url(name, &["owners"])?, Some(body))
+            .await?;
+        Ok(response.msg)
+    }
+}
+
+/// crates.io joins one sentence per added owner with commas, which crate
+/// names, usernames, and team logins cannot contain.
+fn parse_owner_additions(message: &str, crate_name: &CrateName) -> Vec<OwnerAddition> {
+    let invited_suffix = format!(" has been invited to be an owner of crate {crate_name}");
+    let already_invited_suffix =
+        format!(" already has a pending invitation to be an owner of crate {crate_name}");
+    let team_suffix = format!(" has been added as an owner of crate {crate_name}");
+
+    message
+        .split(',')
+        .map(|sentence| {
+            let user = sentence.strip_prefix("Crates.io user ");
+            if let Some(username) = user.and_then(|rest| rest.strip_suffix(&invited_suffix)) {
+                OwnerAddition::UserInvited {
+                    username: username.to_owned(),
+                }
+            } else if let Some(username) =
+                user.and_then(|rest| rest.strip_suffix(&already_invited_suffix))
+            {
+                OwnerAddition::UserAlreadyInvited {
+                    username: username.to_owned(),
+                }
+            } else if let Some(login) = sentence
+                .strip_prefix("team ")
+                .and_then(|rest| rest.strip_suffix(&team_suffix))
+            {
+                OwnerAddition::TeamAdded {
+                    login: login.to_owned(),
+                }
+            } else {
+                OwnerAddition::Other(sentence.to_owned())
+            }
+        })
+        .collect()
 }
 
 #[async_trait]
@@ -192,7 +254,7 @@ impl CratesIoClient for RealCratesIoClient {
             versions: Option<Vec<Version>>,
         }
 
-        let mut url = Self::crate_url(name)?;
+        let mut url = Self::crate_url(name, &[])?;
         url.query_pairs_mut()
             .append_pair("include", "versions,keywords,categories");
         let response: CrateResponse = self.request_json(Method::GET, url, None).await?;
@@ -218,9 +280,34 @@ impl CratesIoClient for RealCratesIoClient {
         let body = serde_json::to_vec(&UpdateRequest { krate: update })
             .context("Failed to serialize crate update")?;
         let response: UpdateResponse = self
-            .request_json(Method::PATCH, Self::crate_url(name)?, Some(body))
+            .request_json(Method::PATCH, Self::crate_url(name, &[])?, Some(body))
             .await?;
         Ok(response.krate)
+    }
+
+    async fn list_owners(&self, name: &CrateName) -> Result<Vec<Owner>> {
+        #[derive(Deserialize)]
+        struct OwnersResponse {
+            users: Vec<Owner>,
+        }
+
+        let url = Self::crate_url(name, &["owners"])?;
+        let response: OwnersResponse = self.request_json(Method::GET, url, None).await?;
+        Ok(response.users)
+    }
+
+    async fn add_owners(
+        &self,
+        name: &CrateName,
+        owners: &[OwnerLogin],
+    ) -> Result<Vec<OwnerAddition>> {
+        let message = self.change_owners(Method::PUT, name, owners).await?;
+        Ok(parse_owner_additions(&message, name))
+    }
+
+    async fn remove_owners(&self, name: &CrateName, owners: &[OwnerLogin]) -> Result<()> {
+        self.change_owners(Method::DELETE, name, owners).await?;
+        Ok(())
     }
 
     async fn list_github_configs(&self, crate_name: &CrateName) -> Result<Vec<GitHubConfig>> {
