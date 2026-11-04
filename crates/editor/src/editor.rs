@@ -1229,6 +1229,8 @@ pub struct Editor {
     outline_symbols_at_cursor: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
     sticky_headers_task: Task<()>,
     sticky_headers: Option<Vec<OutlineItem<Anchor>>>,
+    /// Whether a headerless multibuffer with a single excerpt gets sticky headers.
+    single_excerpt_sticky_headers: bool,
     pub(crate) colorize_brackets_task: Task<()>,
 }
 
@@ -1944,6 +1946,29 @@ impl Editor {
         Editor::new_internal(mode, buffer, project, None, window, cx)
     }
 
+    /// Returns the buffer to take sticky headers from: a singleton buffer, or, when
+    /// enabled, the only buffer of a headerless multibuffer with a single excerpt,
+    /// such as the full-file diff view.
+    pub(crate) fn sticky_header_buffer<'a>(
+        &self,
+        multi_buffer: &'a MultiBufferSnapshot,
+    ) -> Option<&'a BufferSnapshot> {
+        if let Some(buffer) = multi_buffer.as_singleton() {
+            return Some(buffer);
+        }
+        let mut excerpts = multi_buffer.excerpts();
+        if !self.single_excerpt_sticky_headers
+            || multi_buffer.show_headers()
+            || excerpts.next().is_none()
+            || excerpts.next().is_some()
+        {
+            return None;
+        }
+        multi_buffer
+            .anchor_to_buffer_anchor(Anchor::Min)
+            .map(|(_, buffer)| buffer)
+    }
+
     pub fn refresh_sticky_headers(
         &mut self,
         display_snapshot: &DisplaySnapshot,
@@ -1957,7 +1982,11 @@ impl Editor {
             .scroll_manager
             .native_anchor(display_snapshot, cx)
             .anchor;
-        let Some(buffer_snapshot) = multi_buffer.as_singleton() else {
+        let Some(buffer_snapshot) = self.sticky_header_buffer(&multi_buffer) else {
+            // A multibuffer can stop being eligible, e.g. when a diff view
+            // switches from the full file to hunks only.
+            self.sticky_headers = None;
+            self.sticky_headers_task = Task::ready(());
             return;
         };
 
@@ -2615,6 +2644,7 @@ impl Editor {
             outline_symbols_at_cursor: None,
             sticky_headers_task: Task::ready(()),
             sticky_headers: None,
+            single_excerpt_sticky_headers: false,
             colorize_brackets_task: Task::ready(()),
         };
 
@@ -11726,6 +11756,10 @@ impl Editor {
 
     fn disable_runnables(&mut self) {
         self.enable_runnables = false;
+    }
+
+    pub(crate) fn enable_single_excerpt_sticky_headers(&mut self) {
+        self.single_excerpt_sticky_headers = true;
     }
 
     pub fn disable_code_lens(&mut self, cx: &mut Context<Self>) {

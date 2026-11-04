@@ -280,7 +280,15 @@ impl EditorElement {
                 let number = relative_number
                     .filter(|&delta| delta != 0)
                     .map(|delta| delta.unsigned_abs() as u32)
-                    .unwrap_or(start_point.row + 1);
+                    .unwrap_or_else(|| {
+                        // `start_point` is in multibuffer rows, which include expanded
+                        // deleted hunks, so map it back to the file row like the gutter.
+                        let buffer_row = snapshot
+                            .buffer_snapshot()
+                            .point_to_buffer_point(start_point)
+                            .map_or(start_point.row, |(_, point)| point.row);
+                        buffer_row + 1
+                    });
                 let color = cx.theme().colors().editor_line_number;
                 self.shape_line_number(SharedString::from(number.to_string()), color, window)
             });

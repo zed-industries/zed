@@ -8580,7 +8580,6 @@ impl Element for EditorElement {
         };
 
         let is_minimap = self.editor.read(cx).mode.is_minimap();
-        let is_singleton = self.editor.read(cx).buffer_kind(cx) == ItemBufferKind::Singleton;
 
         if !is_minimap {
             let focus_handle = self.editor.focus_handle(cx);
@@ -9404,7 +9403,11 @@ impl Element for EditorElement {
                         scroll_position.y * f64::from(line_height),
                     );
                     let sticky_headers = if !is_minimap
-                        && is_singleton
+                        && self
+                            .editor
+                            .read(cx)
+                            .sticky_header_buffer(snapshot.buffer_snapshot())
+                            .is_some()
                         && EditorSettings::get_global(cx).sticky_scroll.enabled
                     {
                         let relative = self.editor.read(cx).relative_line_numbers(cx);

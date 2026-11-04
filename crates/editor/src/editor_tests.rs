@@ -44922,6 +44922,87 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_sticky_scroll_in_headerless_single_excerpt_multibuffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer = cx.new(|cx| {
+        language::Buffer::local(
+            indoc! {"
+                fn foo() {
+                    let abc = 123;
+                }
+                struct Bar;
+                impl Bar {
+                    fn new() -> Self {
+                        Self
+                    }
+                }
+                fn baz() {
+                }
+            "},
+            cx,
+        )
+        .with_language(rust_lang(), cx)
+    });
+    let max_point = buffer.read_with(cx, |buffer, _| buffer.max_point());
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::without_headers(language::Capability::ReadWrite);
+        multibuffer.set_excerpts_for_buffer(buffer.clone(), [Point::zero()..max_point], 0, cx);
+        multibuffer
+    });
+    let editor = cx.add_window(|window, cx| build_editor(multibuffer.clone(), window, cx));
+    cx.run_until_parked();
+
+    let sticky_headers = |offset: ScrollOffset, cx: &mut TestAppContext| {
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.scroll(gpui::Point { x: 0., y: offset }, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        editor
+            .update(cx, |editor, window, cx| {
+                EditorElement::sticky_headers(editor, &editor.snapshot(window, cx))
+                    .into_iter()
+                    .map(|StickyHeader { start_point, .. }| start_point)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap()
+    };
+
+    assert_eq!(
+        sticky_headers(4.5, cx),
+        vec![],
+        "single excerpt sticky headers are opt-in"
+    );
+
+    editor
+        .update(cx, |editor, _, _| {
+            editor.enable_single_excerpt_sticky_headers()
+        })
+        .unwrap();
+    let impl_bar = Point { row: 4, column: 0 };
+    let fn_new = Point { row: 5, column: 4 };
+    // Scroll away and back so the headers are refreshed.
+    sticky_headers(0.0, cx);
+    assert_eq!(sticky_headers(4.5, cx), vec![impl_bar, fn_new]);
+
+    // Several excerpts are no longer a single file, so sticky headers are cleared.
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_buffer(
+            buffer.clone(),
+            [
+                Point::new(0, 0)..Point::new(2, 1),
+                Point::new(5, 0)..max_point,
+            ],
+            0,
+            cx,
+        );
+    });
+    assert_eq!(sticky_headers(4.5, cx), vec![]);
+}
+
+#[gpui::test]
 async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
