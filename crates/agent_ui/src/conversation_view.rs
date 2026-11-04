@@ -108,6 +108,7 @@ const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
 
 pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
+pub(crate) const QUEUED_MESSAGES_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
 
 pub(crate) mod elicitation;
 mod message_queue;
@@ -1493,6 +1494,12 @@ impl ConversationView {
                         if let Some(recovery) = &this.recovery {
                             current.update(cx, |view, cx| {
                                 view.restore_recovery(recovery, window, cx);
+                            });
+                        } else if let Some(queued) =
+                            crate::draft_prompt_store::read_queued_messages(this.thread_id, cx)
+                        {
+                            current.update(cx, |view, cx| {
+                                view.restore_persisted_queue(queued, window, cx);
                             });
                         }
 

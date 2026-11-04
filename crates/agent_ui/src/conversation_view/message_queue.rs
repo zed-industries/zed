@@ -17,6 +17,18 @@ pub struct QueueEntry {
     pub _subscription: Subscription,
 }
 
+impl QueueEntry {
+    /// The entry's content including any edits not yet saved back to `content`.
+    pub fn latest_content(&self, cx: &App) -> Vec<acp_v2::ContentBlock> {
+        let editor = self.editor.read(cx);
+        if editor.editor().read(cx).read_only(cx) {
+            self.content.clone()
+        } else {
+            editor.draft_content_blocks_snapshot(cx)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProcessingState {
     AutoProcess,
