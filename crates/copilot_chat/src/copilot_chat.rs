@@ -538,6 +538,7 @@ pub struct CopilotChat {
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
     credentials_provider: Arc<dyn CredentialsProvider>,
+    load_task: Option<Task<Result<()>>>,
     sign_in_task: Option<Task<()>>,
 }
 
@@ -563,11 +564,14 @@ async fn load_stored_token(
     configuration: &CopilotChatConfiguration,
     cx: &AsyncApp,
 ) -> Option<String> {
-    let (_, token) = credentials_provider
-        .read_credentials(&configuration.credentials_url(), cx)
-        .await
-        .ok()
-        .flatten()?;
+    let (_, token) = language_model::read_credentials(
+        credentials_provider.as_ref(),
+        &configuration.credentials_url(),
+        cx,
+    )
+    .await
+    .ok()
+    .flatten()?;
     String::from_utf8(token).ok()
 }
 
@@ -587,7 +591,7 @@ impl CopilotChat {
 
         // Load a previously-stored token (or the one from the environment) and
         // fetch models if we end up authenticated.
-        cx.spawn(async move |this, cx| {
+        let load_task = cx.spawn(async move |this, cx| {
             let (env_token, credentials_provider, configuration) =
                 this.read_with(cx, |this, _| {
                     (
@@ -620,8 +624,7 @@ impl CopilotChat {
                 Self::update_models(&this, cx).await?;
             }
             anyhow::Ok(())
-        })
-        .detach();
+        });
 
         Self {
             status: CopilotChatStatus::Starting,
@@ -631,6 +634,7 @@ impl CopilotChat {
             configuration,
             client,
             credentials_provider,
+            load_task: Some(load_task),
             sign_in_task: None,
         }
     }
@@ -649,6 +653,7 @@ impl CopilotChat {
             return;
         }
 
+        self.load_task = None;
         let client = self.client.clone();
         let configuration = self.configuration.clone();
         let credentials_url = configuration.credentials_url();
@@ -711,6 +716,7 @@ impl CopilotChat {
         self.oauth_token = None;
         self.api_endpoint = None;
         self.models = None;
+        self.load_task = None;
         self.sign_in_task = None;
         self.status = CopilotChatStatus::SignedOut;
         cx.notify();
@@ -901,7 +907,7 @@ impl CopilotChat {
 
             let credentials_provider = self.credentials_provider.clone();
             let configuration = self.configuration.clone();
-            cx.spawn(async move |this, cx| {
+            self.load_task = Some(cx.spawn(async move |this, cx| {
                 let token = load_stored_token(&credentials_provider, &configuration, cx).await;
                 let configuration_is_current = this.update(cx, |this, cx| {
                     if this.configuration != configuration {
@@ -926,8 +932,7 @@ impl CopilotChat {
                     }
                 }
                 Ok::<_, anyhow::Error>(())
-            })
-            .detach_and_log_err(cx);
+            }));
         }
     }
 }
@@ -1228,6 +1233,9 @@ async fn stream_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use credentials_provider::test_support::FakeCredentialsProvider;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
 
     #[test]
     fn test_github_urls() {
@@ -1928,4 +1936,44 @@ mod tests {
             "\"none\""
         );
     }
+
+    #[gpui::test]
+    async fn test_disabled_credential_load_configuration_and_signout(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            language_model::set_credentials_read_gate::<DisabledAi>(
+                |cx| cx.global::<DisabledAi>().0,
+                cx,
+            );
+        });
+        for sign_out in [false, true] {
+            cx.update(|cx| cx.set_global(DisabledAi(true)));
+            let credentials = Arc::new(FakeCredentialsProvider::default());
+            let client = FakeHttpClient::create(|_| async { panic!("unexpected HTTP request") });
+            let mut configuration = CopilotChatConfiguration::default();
+            let chat = cx.new(|cx| {
+                let mut chat =
+                    CopilotChat::new(client, credentials.clone(), configuration.clone(), cx);
+                chat.oauth_token = None;
+                chat
+            });
+            cx.run_until_parked();
+            configuration.enterprise_uri = Some("https://enterprise.example".to_string());
+            chat.update(cx, |chat, cx| chat.set_configuration(configuration, cx));
+            cx.run_until_parked();
+            assert_eq!(credentials.take_reads(), Vec::<String>::new());
+            if sign_out {
+                chat.update(cx, |chat, cx| chat.sign_out(cx))
+                    .await
+                    .expect("sign out");
+            }
+            cx.update(|cx| cx.set_global(DisabledAi(false)));
+            cx.run_until_parked();
+            let expected = vec!["https://enterprise.example/copilot-agent"; usize::from(!sign_out)];
+            assert_eq!(credentials.take_reads(), expected);
+        }
+    }
+
+    struct DisabledAi(bool);
+
+    impl Global for DisabledAi {}
 }
