@@ -16,8 +16,11 @@ struct CratesIoState {
     site_metadata: SiteMetadata,
     token_user: UserId,
     crates: BTreeMap<CrateName, SimulatedCrate>,
+    github_configs: BTreeMap<GitHubConfigId, GitHubConfig>,
     latest_id: i32,
 }
+
+const MAX_GITHUB_CONFIGS_PER_CRATE: usize = 5;
 
 struct SimulatedCrate {
     krate: Crate,
@@ -37,6 +40,20 @@ impl CratesIoState {
             .ok_or_else(|| CratesIoError::NotFound {
                 message: format!("crate `{name}` does not exist"),
             })
+    }
+
+    /// crates.io answers non-owners of a crate with a bad request rather than
+    /// a permission error on the Trusted Publishing endpoints.
+    fn require_token_user_owns(&mut self, name: &CrateName) -> Result<()> {
+        let token_user = self.token_user;
+        if self.simulated_crate(name)?.owners.contains(&token_user) {
+            Ok(())
+        } else {
+            Err(CratesIoError::Upstream {
+                status: StatusCode::BAD_REQUEST,
+                message: "You are not an owner of this crate".to_owned(),
+            })
+        }
     }
 }
 
@@ -67,6 +84,7 @@ impl SimulatedCratesIoClient {
                 },
                 token_user: UserId(1),
                 crates: BTreeMap::new(),
+                github_configs: BTreeMap::new(),
                 latest_id: 1,
             }),
         })
@@ -230,5 +248,63 @@ impl CratesIoClient for SimulatedCratesIoClient {
             simulated_crate.krate.trustpub_only = trustpub_only;
         }
         Ok(listed(&simulated_crate.krate))
+    }
+
+    async fn list_github_configs(&self, crate_name: &CrateName) -> Result<Vec<GitHubConfig>> {
+        let mut state = self.state.lock();
+        state.require_token_user_owns(crate_name)?;
+        Ok(state
+            .github_configs
+            .values()
+            .filter(|config| &config.crate_name == crate_name)
+            .cloned()
+            .collect())
+    }
+
+    async fn create_github_config(&self, config: &NewGitHubConfig) -> Result<GitHubConfig> {
+        let mut state = self.state.lock();
+        state.require_token_user_owns(&config.crate_name)?;
+        let existing_configs = state
+            .github_configs
+            .values()
+            .filter(|existing| existing.crate_name == config.crate_name)
+            .count();
+        if existing_configs >= MAX_GITHUB_CONFIGS_PER_CRATE {
+            return Err(CratesIoError::Upstream {
+                status: StatusCode::CONFLICT,
+                message: format!(
+                    "This crate already has the maximum number of GitHub Trusted Publishing configurations ({MAX_GITHUB_CONFIGS_PER_CRATE})"
+                ),
+            });
+        }
+
+        let id = GitHubConfigId(state.next_id());
+        let repository_owner_id = GitHubAccountId(state.next_id());
+        let github_config = GitHubConfig {
+            id,
+            crate_name: config.crate_name.clone(),
+            repository_owner: config.repository_owner.clone(),
+            repository_owner_id,
+            repository_name: config.repository_name.clone(),
+            workflow_filename: config.workflow_filename.clone(),
+            environment: config.environment.clone(),
+            created_at: test_timestamp(),
+        };
+        state.github_configs.insert(id, github_config.clone());
+        Ok(github_config)
+    }
+
+    async fn delete_github_config(&self, id: GitHubConfigId) -> Result<()> {
+        let mut state = self.state.lock();
+        let crate_name = state
+            .github_configs
+            .get(&id)
+            .map(|config| config.crate_name.clone())
+            .ok_or_else(|| CratesIoError::NotFound {
+                message: "Not Found".to_owned(),
+            })?;
+        state.require_token_user_owns(&crate_name)?;
+        state.github_configs.remove(&id);
+        Ok(())
     }
 }
