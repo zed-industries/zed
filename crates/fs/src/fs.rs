@@ -1471,7 +1471,6 @@ struct FakeFsState {
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
     remove_dir_errors: std::collections::HashMap<PathBuf, String>,
-    load_delays: std::collections::HashMap<PathBuf, Duration>,
     case_sensitive: bool,
 }
 
@@ -1868,7 +1867,6 @@ impl FakeFs {
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             trash: Mutex::new(SlotMap::with_key()),
             remove_dir_errors: Default::default(),
-            load_delays: Default::default(),
             case_sensitive: true,
         }));
         let native_watcher = fs_watcher::OsWatcher::with_backend(
@@ -2041,21 +2039,10 @@ impl FakeFs {
         entry.file_content(&path).cloned()
     }
 
-    pub fn set_load_delay(&self, path: impl AsRef<Path>, delay: Duration) {
-        self.state
-            .lock()
-            .load_delays
-            .insert(normalize_path(path.as_ref()), delay);
-    }
-
     async fn load_internal(&self, path: impl AsRef<Path>) -> Result<Vec<u8>> {
         let path = path.as_ref();
         let path = normalize_path(path);
         self.simulate_random_delay().await;
-        let delay = self.state.lock().load_delays.get(&path).copied();
-        if let Some(delay) = delay {
-            self.executor.timer(delay).await;
-        }
         let mut state = self.state.lock();
         let entry = state.entry(&path)?;
         entry.file_content(&path).cloned()
