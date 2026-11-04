@@ -570,6 +570,9 @@ actions!(
         /// Folds all code blocks at indentation level 9.
         #[action(name = "FoldAtLevel_9")]
         FoldAtLevel9,
+        /// Folds all code blocks at the same indentation level of the current
+        /// line.
+        FoldAtCurrentLevel,
         /// Folds all function bodies in the editor.
         FoldFunctionBodies,
         /// Folds the current code block and all its children.

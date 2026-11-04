@@ -327,6 +327,55 @@ impl Editor {
         self.fold_at_level(&actions::FoldAtLevel(9), window, cx);
     }
 
+    pub fn fold_at_current_level(
+        &mut self,
+        _: &actions::FoldAtCurrentLevel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Ensure that we're not working on a multibuffer and that there's only
+        // one single selection.
+        if self.selections.count() > 1 || !self.buffer().read(cx).is_singleton() {
+            dbg!("Early returning...");
+            return;
+        }
+
+        // Fetch the indentation level of the line the cursor is currently on.
+        let display_snapshot = self.display_snapshot(cx);
+        // TODO!: Isn't there a way to use `MultiBufferOffset` here and then
+        // obtain the `MultiBufferRow` from the offset using the
+        // `MultiBufferSnapshot`?
+        // TODO!: Also, if we're sure it's a singleton, shouldn't we use
+        // `BufferSnapshot` and similar `BufferX` structs?
+        let selection = self.selections.newest::<Point>(&display_snapshot);
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let multi_buffer_row = MultiBufferRow(selection.head().row);
+        let multi_buffer_offset = self
+            .selections
+            .newest::<MultiBufferOffset>(&display_snapshot)
+            .head();
+
+        // We need a way to convert from the `LineIndent` to actual
+        // `FoldAtLevel` value, and I believe that will depend on the buffer's
+        // indent size or something.
+        if let Some(language_indent) =
+            multi_buffer_snapshot.language_indent_size_at(multi_buffer_offset, cx)
+        {
+            // I believe we don't need these anymore. However, unsure because
+            // we're getting the language settings from the offset, meaning the
+            // cursor might be inside like a CSS string in a JSX document, and
+            // we might just want to grab the language settings at the first
+            // non-whitespace character of the buffer row instead.
+            // let language_settings =
+            //     multi_buffer_snapshot.language_settings_at(multi_buffer_offset, cx);
+            // let indent = multi_buffer_snapshot.line_indent_for_row(multi_buffer_row);
+            let indent_size = multi_buffer_snapshot.indent_size_for_line(multi_buffer_row);
+            let level = dbg!((indent_size.len / language_indent.len) + 1);
+
+            self.fold_at_level(&actions::FoldAtLevel(level), window, cx);
+        }
+    }
+
     pub fn fold_all(&mut self, _: &actions::FoldAll, window: &mut Window, cx: &mut Context<Self>) {
         if self.buffer.read(cx).is_singleton() {
             let mut fold_ranges = Vec::new();
