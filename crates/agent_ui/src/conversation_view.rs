@@ -8227,6 +8227,30 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_send_now_resumes_paused_queue(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["first".into()], vec![], window, cx);
+            view.add_to_queue(vec!["second".into()], vec![], window, cx);
+            view.message_queue.pause();
+            let first_id = view.message_queue.first_id().expect("queued message");
+            view.send_queued_message_now(first_id, window, cx);
+        });
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, _| {
+            assert!(
+                view.message_queue.is_empty(),
+                "the second message should be sent once the first one finishes"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_quitting_flushes_pending_queued_message_write(cx: &mut TestAppContext) {
         init_test(cx);
         let (conversation_view, cx) =

@@ -199,12 +199,15 @@ impl MessageQueue {
 
     /// Removes an entry for an explicit "Send Now". If a generation is in
     /// flight, the dispatch will cancel it, so we must absorb that
-    /// cancellation's Stopped event.
+    /// cancellation's Stopped event. Either way this is active engagement, so
+    /// the rest of the queue resumes auto-processing if it was paused.
     pub fn send_now(&mut self, id: QueueEntryId, is_generating: bool) -> Option<QueueEntry> {
         let entry = self.remove(id)?;
-        if is_generating {
-            self.processing_state = ProcessingState::AbsorbingCancel;
-        }
+        self.processing_state = if is_generating {
+            ProcessingState::AbsorbingCancel
+        } else {
+            ProcessingState::AutoProcess
+        };
         Some(entry)
     }
 
