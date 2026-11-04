@@ -21,6 +21,8 @@ use onboarding::show_onboarding_view;
 use recent_projects::{RemoteSettings, navigate_to_positions, open_remote_project};
 use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
+#[cfg(target_os = "windows")]
+use std::path::{Component, Prefix};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -225,8 +227,10 @@ impl OpenRequest {
             // URL paths keep a `/` before a Windows drive letter (`/C:/x`), which Windows cannot open.
             #[cfg(target_os = "windows")]
             if let Some(path) = decoded.strip_prefix('/')
-                && path.as_bytes().get(1) == Some(&b':')
-                && path.starts_with(|c: char| c.is_ascii_alphabetic())
+                && matches!(
+                    Path::new(path).components().next(),
+                    Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_))
+                )
             {
                 self.open_paths.push(path.to_owned());
                 return;
