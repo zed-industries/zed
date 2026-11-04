@@ -95,7 +95,7 @@ impl OpenAiCompatibleLanguageModelProvider {
                 any: model.capabilities.tools,
                 none: true,
             },
-            prompt_compaction_strategy: PromptCompactionStrategy::PreserveRequestPrefix,
+            prompt_compaction_strategy: PromptCompactionStrategy::RebuildPrompt,
             supports_streaming_tools: true,
             supports_thinking: default_thinking_reasoning_effort(model).is_some(),
             supported_effort_levels: supported_thinking_effort_levels(model).into(),
