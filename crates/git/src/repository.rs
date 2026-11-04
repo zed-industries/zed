@@ -1376,6 +1376,27 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     .await
 }
 
+/// The committer identity `git commit` will use in this worktree, or `None`
+/// when either `user.name` or `user.email` is unset.
+async fn worktree_committer_identity(git: &GitBinary) -> Option<(String, String)> {
+    let name = git.run(&["config", "user.name"]).await.ok()?;
+    let email = git.run(&["config", "user.email"]).await.ok()?;
+    let (name, email) = (name.trim().to_string(), email.trim().to_string());
+    if name.is_empty() || email.is_empty() {
+        return None;
+    }
+    Some((name, email))
+}
+
+/// Whether the commit message already carries the `Signed-off-by:` trailer
+/// that `git commit --signoff` would add for this committer. When present, the
+/// flag is redundant in the dedupe case and produces a duplicate trailer in
+/// every other one (#66536), so the caller drops it.
+fn message_already_has_signoff(message: &str, name: &str, email: &str) -> bool {
+    let trailer = format!("Signed-off-by: {name} <{email}>");
+    message.lines().any(|line| line.trim() == trailer)
+}
+
 fn parse_remote_urls(stdout: &str) -> HashMap<String, String> {
     let mut urls = HashMap::default();
     for line in stdout.lines() {
@@ -2785,6 +2806,20 @@ impl GitRepository for RealGitRepository {
         // which we want to block on.
         async move {
             let git = git?;
+            // `git commit --signoff` only skips appending when the message ends
+            // with a conforming footer carrying the committer's exact trailer.
+            // Messages loaded back for uncommit/amend may hold that trailer
+            // anywhere (with co-author lines or prose following it), in which
+            // case git appends a duplicate sign-off (#66536). When the trailer
+            // this commit would produce is already present, drop the flag.
+            let mut signoff = options.signoff;
+            if signoff
+                && message.contains("Signed-off-by:")
+                && let Some((name, email)) = worktree_committer_identity(&git).await
+                && message_already_has_signoff(&message, &name, &email)
+            {
+                signoff = false;
+            }
             git.run_remote_command(Some(askpass), &env, &["commit", "--quiet", "-m"], |cmd| {
                 cmd.arg(&message.to_string())
                     .arg("--cleanup=strip")
@@ -2795,7 +2830,7 @@ impl GitRepository for RealGitRepository {
                     cmd.arg("--amend");
                 }
 
-                if options.signoff {
+                if signoff {
                     cmd.arg("--signoff");
                 }
 
@@ -4224,6 +4259,60 @@ mod tests {
 
     use super::*;
     use gpui::TestAppContext;
+
+    #[test]
+    fn test_message_already_has_signoff() {
+        let (name, email) = ("Raph", "raph@example.com");
+        let trailer = "Signed-off-by: Raph <raph@example.com>";
+
+        // trailer as the last line, with and without the trailing newline
+        assert!(message_already_has_signoff(
+            &format!("subject body\n\n{trailer}\n"),
+            name,
+            email
+        ));
+        assert!(message_already_has_signoff(
+            &format!("subject body\n\n{trailer}"),
+            name,
+            email
+        ));
+
+        // trailer followed by a co-author line: git's dedupe does not trigger
+        // here, which is exactly the duplicate from #66536
+        assert!(message_already_has_signoff(
+            &format!("subject body\n\n{trailer}\n\nCo-authored-by: Other <other@example.com>"),
+            name,
+            email
+        ));
+
+        // surrounding whitespace on the line is tolerated
+        assert!(message_already_has_signoff(
+            &format!("subject body\n\n  {trailer}  \n"),
+            name,
+            email
+        ));
+
+        // no trailer at all
+        assert!(!message_already_has_signoff(
+            "subject body\n\nsome prose\n",
+            name,
+            email
+        ));
+
+        // a different committer's trailer is left alone (DCO chains)
+        assert!(!message_already_has_signoff(
+            "subject body\n\nSigned-off-by: Someone Else <else@example.com>\n",
+            name,
+            email
+        ));
+
+        // a longer line that merely contains the trailer is not a sign-off
+        assert!(!message_already_has_signoff(
+            &format!("subject body\n\n{trailer} reviewed-by-me\n"),
+            name,
+            email
+        ));
+    }
 
     #[test]
     fn test_create_ref_requires_ref_to_not_exist() {
