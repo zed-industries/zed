@@ -106,6 +106,16 @@ mod tests {
     }
 
     #[test]
+    fn try_parse_accepts_valid_and_rejects_invalid_formats() {
+        for format in ["locale", "", " ", "iso", "%Y-%m-%d"] {
+            assert!(GitDateFormat::try_parse(format).is_ok(), "{format:?}");
+        }
+        for format in ["%Q", "%"] {
+            assert!(GitDateFormat::try_parse(format).is_err(), "{format:?}");
+        }
+    }
+
+    #[test]
     fn locale_and_invalid_formats_preserve_surface_defaults() {
         let timestamp = datetime!(2024-06-08 23:45:12 UTC);
         let reference = timestamp + time::Duration::days(3);

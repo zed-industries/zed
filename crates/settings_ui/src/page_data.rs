@@ -8221,7 +8221,16 @@ fn version_control_page() -> SettingsPage {
                         content.git.get_or_insert_default().date_format = value
                     },
                 }),
-                metadata: None,
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    validate_text: Some(|format| {
+                        project::project_settings::GitDateFormat::try_parse(format)
+                            .map(|_| ())
+                            .map_err(|error| {
+                                format!("Invalid date format: {error}. Using \"locale\" instead.")
+                            })
+                    }),
+                    ..Default::default()
+                })),
                 files: USER,
             }),
             SettingsPageItem::DynamicItem(DynamicItem {

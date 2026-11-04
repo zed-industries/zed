@@ -446,6 +446,7 @@ struct SettingsFieldMetadata {
     display_clear_button: bool,
     confirm_on_focus_out: bool,
     treat_missing_text_as_empty: bool,
+    validate_text: Option<fn(&str) -> Result<(), String>>,
 }
 
 pub fn init(cx: &mut App) {
@@ -5048,9 +5049,14 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
             .map(|text| text.as_ref().to_string())
     };
 
+    let validation_error = metadata
+        .and_then(|metadata| metadata.validate_text)
+        .zip(initial_text.as_deref())
+        .and_then(|(validate, text)| validate(text).err());
+
     // The JSON path uniquely identifies the setting this field edits, making
     // it a stable, collision-free element ID within the page.
-    SettingsInputField::new(field.json_path.unwrap_or("settings-text-field"))
+    let input = SettingsInputField::new(field.json_path.unwrap_or("settings-text-field"))
         .tab_index(0)
         .aria_label(title)
         .when(!description.is_empty(), |editor| {
@@ -5086,8 +5092,21 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
                 )
                 .log_err(); // todo(settings_ui) don't log err
             }
-        })
-        .into_any_element()
+        });
+
+    match validation_error {
+        Some(error) => v_flex()
+            .w_64()
+            .gap_1()
+            .child(input)
+            .child(
+                Banner::new()
+                    .severity(Severity::Warning)
+                    .child(Label::new(error).size(LabelSize::Small)),
+            )
+            .into_any_element(),
+        None => input.into_any_element(),
+    }
 }
 
 fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
