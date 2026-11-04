@@ -85,6 +85,13 @@ pub struct InstallNpmPackages {
 impl ManagedResourceCommand<Npm> for InstallNpmPackages {
     type Output = Result<()>;
 
+    fn permission_description(&self, _: &Npm) -> String {
+        format!(
+            "Install npm packages {:?} in {:?}",
+            self.packages, self.directory
+        )
+    }
+
     async fn run(self, npm: Arc<Npm>) -> Self::Output {
         let packages = self
             .packages

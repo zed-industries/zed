@@ -115,6 +115,16 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
                     ("another-package".into(), "4.5.6".into()),
                 ],
             };
+            let description = install().permission_description(&npm);
+            for detail in [
+                "@example/server",
+                "1.2.3",
+                "another-package",
+                "4.5.6",
+                installation_directory.to_str().expect("UTF-8 test path"),
+            ] {
+                assert!(description.contains(detail), "{description}");
+            }
             install().run(npm.clone()).await?;
             let arguments = fs::read_to_string(directory.join("npm.args"))?;
             let arguments = arguments.lines().collect::<Vec<_>>();
