@@ -1519,13 +1519,14 @@ mod tests {
         cx.run_until_parked();
         assert!(workspace.read_with(cx, |workspace, _| workspace.titlebar_item().is_some()));
 
+        let size = workspace.update_in(cx, |_, window, _| window.bounds().size);
         workspace.update_in(cx, |_, window, _| window.toggle_fullscreen());
-        cx.simulate_resize(gpui::size(px(1200.), px(800.)));
+        cx.simulate_resize(size);
         cx.run_until_parked();
         assert!(workspace.read_with(cx, |workspace, _| workspace.titlebar_item().is_none()));
 
         workspace.update_in(cx, |_, window, _| window.toggle_fullscreen());
-        cx.simulate_resize(gpui::size(px(1000.), px(700.)));
+        cx.simulate_resize(size);
         cx.run_until_parked();
         assert!(workspace.read_with(cx, |workspace, _| workspace.titlebar_item().is_some()));
 

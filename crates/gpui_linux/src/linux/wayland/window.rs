@@ -1114,6 +1114,7 @@ impl WaylandWindowStatePtr {
 
                 if let Some(mut configure) = state.in_progress_configure.take() {
                     let got_unmaximized = state.maximized && !configure.maximized;
+                    let fullscreen_changed = state.fullscreen != configure.fullscreen;
                     state.fullscreen = configure.fullscreen;
                     state.maximized = configure.maximized;
                     state.tiling = configure.tiling;
@@ -1150,6 +1151,9 @@ impl WaylandWindowStatePtr {
                     }
                     if let Some(size) = configure.size {
                         self.resize(size);
+                    }
+                    if fullscreen_changed {
+                        self.notify_resize();
                     }
                 }
             }
@@ -1546,6 +1550,18 @@ impl WaylandWindowStatePtr {
             viewport.set_destination(f32::from(size.width) as i32, f32::from(size.height) as i32);
         }
         update_window(state);
+    }
+
+    fn notify_resize(&self) {
+        let (size, scale) = {
+            let state = self.state.borrow();
+            (state.bounds.size, state.scale)
+        };
+        let callback = self.callbacks.borrow_mut().resize.take();
+        if let Some(mut fun) = callback {
+            fun(size, scale);
+            self.callbacks.borrow_mut().resize = Some(fun);
+        }
     }
 
     pub fn resize(&self, size: Size<Pixels>) {
