@@ -1110,6 +1110,11 @@
     //
     // Default: false
     "show_all_repositories": false,
+    // Whether to hide repositories without changes in the all-repositories view.
+    // Does not affect the current-repository view.
+    //
+    // Default: false
+    "hide_clean_repositories": false,
     // Whether the git panel should open on startup.
     //
     // Default: false
