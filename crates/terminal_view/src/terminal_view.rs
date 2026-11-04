@@ -2741,7 +2741,11 @@ mod tests {
         let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
         // Splitting focuses the new empty pane while the terminal stays visible.
         cx.update(|window, cx| {
-            let workspace = terminal_view.read(cx).workspace.upgrade().unwrap();
+            let workspace = terminal_view
+                .read(cx)
+                .workspace
+                .upgrade()
+                .expect("test window should keep the workspace alive");
             workspace.update(cx, |workspace, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.split_pane(pane, workspace::SplitDirection::Right, window, cx);
