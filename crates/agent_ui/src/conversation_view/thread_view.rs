@@ -14694,7 +14694,6 @@ mod tests {
                     PathStyle::local(),
                     cx,
                 ),
-                checkpoint: None,
                 indented: false,
             });
             let non_message = AgentThreadEntry::Elicitation(ElicitationEntryId("request".into()));
