@@ -770,7 +770,9 @@ struct RawToolCall {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
+    use language_model::{
+        LanguageModelImage, LanguageModelRequestMessage, MessageContent, ReasoningMode,
+    };
 
     fn tool_call_chunk(
         id: Option<&str>,
@@ -872,6 +874,7 @@ mod tests {
             stop: vec![],
             thinking_allowed: true,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: Default::default(),
             compact_at_tokens: None,
             max_output_tokens,
@@ -921,6 +924,7 @@ mod tests {
             stop: vec![],
             thinking_allowed,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: Default::default(),
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -998,6 +1002,7 @@ mod tests {
             stop: vec![],
             thinking_allowed: true,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,

@@ -118,6 +118,8 @@ pub enum Model {
         max_output_tokens: Option<u64>,
         max_completion_tokens: Option<u64>,
         reasoning_effort: Option<ReasoningEffort>,
+        #[serde(default)]
+        supports_pro_reasoning: bool,
         #[serde(default = "default_supports_chat_completions")]
         supports_chat_completions: bool,
         #[serde(default = "default_supports_images")]
@@ -385,6 +387,24 @@ impl Model {
         }
     }
 
+    pub fn supports_pro_reasoning(&self) -> bool {
+        self.uses_responses_api()
+            && match self {
+                Self::FivePointSixSol
+                | Self::FivePointSixTerra
+                | Self::FivePointSixLuna
+                | Self::SixAstra
+                | Self::SixSol
+                | Self::SixLuna
+                | Self::SixPointOneSol => true,
+                Self::Custom {
+                    supports_pro_reasoning,
+                    ..
+                } => *supports_pro_reasoning,
+                _ => false,
+            }
+    }
+
     pub fn uses_responses_api(&self) -> bool {
         match self {
             Self::Custom {
@@ -507,6 +527,67 @@ mod tests {
     };
 
     use super::{Model, ReasoningEffort, RequestError, StatusCode};
+    use anyhow::Result;
+    use serde_json::json;
+    use strum::IntoEnumIterator;
+
+    #[test]
+    fn built_in_pro_reasoning_support_matches_supported_families() {
+        let supported_ids = [
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-6-astra",
+            "gpt-6-sol",
+            "gpt-6-luna",
+            "gpt-6.1-sol",
+        ];
+        for model in Model::iter().filter(|model| !matches!(model, Model::Custom { .. })) {
+            assert_eq!(
+                model.supports_pro_reasoning(),
+                supported_ids.contains(&model.id()),
+                "pro reasoning support for {}",
+                model.id(),
+            );
+        }
+        assert!(!Model::FivePointFourPro.supports_pro_reasoning());
+        assert!(!Model::FivePointFivePro.supports_pro_reasoning());
+    }
+
+    #[test]
+    fn custom_pro_reasoning_requires_opt_in_and_responses() -> Result<()> {
+        for supports_pro_reasoning in [false, true] {
+            for supports_chat_completions in [false, true] {
+                let model: Model = serde_json::from_value(json!({
+                    "custom": {
+                        "name": "gpt-6-sol",
+                        "max_tokens": 128_000,
+                        "supports_pro_reasoning": supports_pro_reasoning,
+                        "supports_chat_completions": supports_chat_completions,
+                    }
+                }))?;
+                assert_eq!(
+                    model.supports_pro_reasoning(),
+                    supports_pro_reasoning && !supports_chat_completions,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn custom_pro_reasoning_defaults_to_disabled() -> Result<()> {
+        let model: Model = serde_json::from_value(json!({
+            "custom": {
+                "name": "gpt-6-sol",
+                "max_tokens": 128_000,
+                "supports_chat_completions": false,
+            }
+        }))?;
+        assert!(model.uses_responses_api());
+        assert!(!model.supports_pro_reasoning());
+        Ok(())
+    }
 
     #[test]
     fn gpt_5_1_uses_none_reasoning_by_default() {

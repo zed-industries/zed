@@ -844,7 +844,7 @@ mod tests {
     use futures::executor::block_on;
     use language_model_core::{
         ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, LanguageModelCompletionEvent,
-        LanguageModelImage, LanguageModelRequestMessage, MessageContent, TokenUsage,
+        LanguageModelImage, LanguageModelRequestMessage, MessageContent, ReasoningMode, TokenUsage,
     };
 
     #[test]
@@ -928,6 +928,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: Some(1024),
@@ -1042,6 +1043,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: Some(8192),
@@ -1108,6 +1110,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             thinking_effort: Some("xhigh".into()),
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -1162,6 +1165,7 @@ mod tests {
                 tool_choice: None,
                 thinking_allowed: true,
                 thinking_effort: None,
+                reasoning_mode: ReasoningMode::Standard,
                 speed: None,
                 compact_at_tokens: None,
                 max_output_tokens: None,
@@ -1234,6 +1238,7 @@ mod tests {
                 tool_choice: None,
                 thinking_allowed: false,
                 thinking_effort: None,
+                reasoning_mode: ReasoningMode::Standard,
                 speed: None,
                 compact_at_tokens: None,
                 max_output_tokens: None,
@@ -1297,6 +1302,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: false,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -1361,6 +1367,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -1398,6 +1405,7 @@ mod tests {
                 reasoning_details: None,
             }],
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             thread_id: None,
             prompt_cache_key: None,
             prompt_id: None,

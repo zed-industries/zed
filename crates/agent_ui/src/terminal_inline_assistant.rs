@@ -16,7 +16,7 @@ use gpui::{App, Entity, Focusable, Global, Subscription, Task, UpdateGlobal, Wea
 use language::Buffer;
 use language_model::{
     CompletionIntent, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    Role,
+    ReasoningMode, Role,
 };
 use language_models::provider::anthropic::telemetry::{
     AnthropicCompletionType, AnthropicEventData, AnthropicEventType, report_anthropic_event,
@@ -275,6 +275,7 @@ impl TerminalInlineAssistant {
                 temperature,
                 thinking_allowed: false,
                 thinking_effort: None,
+                reasoning_mode: ReasoningMode::Standard,
                 speed: None,
                 compact_at_tokens: None,
                 max_output_tokens: None,

@@ -159,6 +159,8 @@ Use OpenAI API access when you have an OpenAI API key or API billing. ChatGPT Pl
 
 Zed also reads `OPENAI_API_KEY` from the local Zed process environment.
 
+For supported models, use the reasoning mode dropdown next to thinking effort in the Agent composer to select **Standard** or **Pro**. New threads start in **Standard**; your selection is saved only for the current thread. Pro mode is independent of thinking effort and uses more tokens, increasing cost and latency. Like thinking effort, it only applies while thinking is on, so the dropdown is hidden when you turn thinking off. See [OpenAI's reasoning mode documentation](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode) for supported models.
+
 #### Custom OpenAI Models {#openai-custom-models}
 
 Add custom OpenAI models in your settings file when you need alternate model IDs, preview releases, or custom request parameters.
@@ -182,6 +184,8 @@ Add custom OpenAI models in your settings file when you need alternate model IDs
 ```
 
 You must provide the model's context window in `max_tokens`. For reasoning-focused models, set `max_completion_tokens` to avoid high reasoning-token costs.
+
+For a custom model that supports Pro reasoning, set `capabilities.chat_completions` to `false` and `capabilities.pro_reasoning` to `true`. This enables the Responses API and the reasoning mode selector without selecting Pro by default.
 
 ### Google AI {#google-ai}
 

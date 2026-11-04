@@ -1846,6 +1846,7 @@ mod tests {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            reasoning_mode: language_model::ReasoningMode::Standard,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
