@@ -8028,7 +8028,7 @@ mod tests {
         assert_eq!(request.tool_choice, None);
         assert!(!request.thinking_allowed);
         assert_eq!(request.thinking_effort, None);
-        assert_eq!(request.speed, Some(Speed::Fast));
+        assert_eq!(request.speed, None);
     }
 
     #[gpui::test]
