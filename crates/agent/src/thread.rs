@@ -4700,7 +4700,6 @@ fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
         .saturating_add(usage.cache_read_input_tokens)
 }
 
-/// Reserves output without subtracting it from an independent input ceiling.
 fn build_request_tools(
     tools: &BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     cx: &App,
@@ -4750,6 +4749,7 @@ fn build_request_tools(
         .collect()
 }
 
+/// Reserves output without subtracting it from an independent input ceiling.
 fn compaction_input_capacity(
     input_limit: u64,
     combined_limit: Option<u64>,
