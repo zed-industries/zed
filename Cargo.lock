@@ -3035,6 +3035,7 @@ dependencies = [
  "rayon",
  "release_channel",
  "serde",
+ "serde_json",
  "tempfile",
  "util",
  "walkdir",
