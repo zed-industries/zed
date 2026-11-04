@@ -523,6 +523,11 @@ pub fn language_model(model: &cloud_llm_client::LanguageModel) -> LanguageModel 
         supports_thinking: model.supports_thinking,
         supports_disabling_thinking: model.supports_disabling_thinking,
         supports_fast_mode: model.supports_fast_mode,
+        supports_system_prompt_updates: match model.provider {
+            Anthropic => anthropic::supports_mid_conversation_system_messages(&model.id.0),
+            OpenAi => true,
+            Google | XAi => false,
+        },
         supports_server_side_compaction: model.supports_server_side_compaction,
         supports_explicit_compaction,
         supports_explicit_compaction_output_limit: model.provider == Anthropic
