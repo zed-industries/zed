@@ -178,6 +178,9 @@ impl GitPanel {
     }
 
     pub(super) fn enter_uncommitted_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A request waiting on the lookup usually leaves the panel in
+        // uncommitted mode, so this drops it before the early return.
+        self.cancel_pending_branch_changes();
         if !self.is_branch_mode() {
             return;
         }
@@ -256,7 +259,11 @@ impl GitPanel {
         if !request.from_empty_state {
             self.adopt_followed_branch_diff_base(window, cx);
         }
-        if self.branch_base.needs_lookup_to_decide() {
+        // A pending request means a lookup is already running, so this one
+        // replaces it rather than acting on a default that's being refreshed
+        // and then having the stale request run on top of it.
+        if self.branch_base.show_after_lookup.is_some() || self.branch_base.needs_lookup_to_decide()
+        {
             self.branch_base.show_after_lookup = Some(request);
             self.ensure_default_branch(window, cx);
             return;
@@ -277,6 +284,7 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_pending_branch_changes();
         self.set_active_tab(GitPanelTab::Changes, window, cx);
         let was_branch_mode = self.is_branch_mode();
         self.set_branch_base(base_ref, window, cx);
@@ -307,6 +315,9 @@ impl GitPanel {
     }
 
     pub(super) fn choose_branch_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Otherwise the pending request could open its own picker once the
+        // lookup finishes, which toggles this one closed.
+        self.cancel_pending_branch_changes();
         self.choose_branch_base_for(
             ShowBranchChangesRequest {
                 from_empty_state: false,
@@ -348,6 +359,13 @@ impl GitPanel {
                 })
                 .ok();
         });
+    }
+
+    /// A request waiting on the default branch lookup runs once the lookup
+    /// finishes, so anything the user does in the meantime that it would undo
+    /// has to drop it. The lookup itself keeps running.
+    pub(super) fn cancel_pending_branch_changes(&mut self) {
+        self.branch_base.show_after_lookup = None;
     }
 
     pub(super) fn show_uncommitted_changes(

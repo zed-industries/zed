@@ -7944,6 +7944,7 @@ impl GitPanel {
         self.activation_focus_handle(cx).focus(window, cx);
         match tab {
             GitPanelTab::History => {
+                self.cancel_pending_branch_changes();
                 self.load_commit_history(cx);
             }
             GitPanelTab::Changes => {
@@ -18136,5 +18137,98 @@ mod tests {
         });
         settle_branch_mode(cx);
         assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
+    }
+
+    fn base_picker_open(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> bool {
+        workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_modal::<branch_picker::BranchList>(cx)
+                .is_some()
+        })
+    }
+
+    // Without a default branch, a request still pending when the lookup
+    // finishes opens the base picker, so each case would end with one open.
+    // Marking the default stale makes the next request wait on a new lookup.
+    #[gpui::test]
+    async fn test_newer_navigation_drops_pending_branch_changes(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, None).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+        test.fs
+            .insert_branches(Path::new(path!("/project/.git")), &["develop"]);
+        settle_branch_mode(cx);
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+            panel.show_uncommitted_changes(&ShowUncommittedChanges, window, cx);
+        });
+        settle_branch_mode(cx);
+        assert!(!base_picker_open(&test.workspace, cx));
+        panel.read_with(cx, |panel, _| assert!(!panel.is_branch_mode()));
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.default_branch_may_have_changed(window, cx);
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+            panel.activate_history_tab(&ActivateHistoryTab, window, cx);
+        });
+        settle_branch_mode(cx);
+        assert!(!base_picker_open(&test.workspace, cx));
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.active_tab, GitPanelTab::History);
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.default_branch_may_have_changed(window, cx);
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+            panel.choose_branch_base(window, cx);
+        });
+        settle_branch_mode(cx);
+        assert!(
+            base_picker_open(&test.workspace, cx),
+            "the pending request must not toggle the picker closed"
+        );
+        cx.dispatch_action(menu::Cancel);
+        cx.run_until_parked();
+        assert!(!base_picker_open(&test.workspace, cx));
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.default_branch_may_have_changed(window, cx);
+            panel.show_branch_changes_and_open_diff(window, cx);
+            panel.show_branch_changes_since("develop".into(), window, cx);
+        });
+        settle_branch_mode(cx);
+        assert!(!base_picker_open(&test.workspace, cx));
+        assert!(branch_diff_bases(&test.workspace, cx).is_empty());
+        panel.read_with(cx, |panel, _| {
+            assert!(panel.is_branch_mode());
+            assert_eq!(panel.branch_base.effective().as_deref(), Some("develop"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_newer_branch_changes_request_replaces_pending_one(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, None).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+        });
+        settle_branch_mode(cx);
+        cx.dispatch_action(menu::Cancel);
+        cx.run_until_parked();
+        assert!(!base_picker_open(&test.workspace, cx));
+
+        // The first request starts a refresh of the missing default. The second
+        // must wait on it too, or it opens the picker now and the first one
+        // toggles it closed when the refresh finishes.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.default_branch_may_have_changed(window, cx);
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+        });
+        settle_branch_mode(cx);
+        assert!(base_picker_open(&test.workspace, cx));
     }
 }
