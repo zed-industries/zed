@@ -775,10 +775,10 @@ mod tests {
         );
         // Dotfiles have no `Path::extension`, so they match by name.
         assert_eq!(
-            suggest_extension(rel_path(".envrc")),
+            suggest_extension(rel_path(".helmignore")),
             Some(SuggestedExtension {
-                extension_id: "env".into(),
-                file_name_or_extension: ".envrc".into()
+                extension_id: "helm".into(),
+                file_name_or_extension: ".helmignore".into()
             })
         );
         assert_eq!(
