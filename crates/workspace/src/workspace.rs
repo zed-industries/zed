@@ -17284,6 +17284,67 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_dock_panel_activation(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+            multi_workspace.workspace().clone()
+        });
+
+        // Create two test panels, adding them both to the same dock so that we
+        // can later assert that emitting a `PanelEvent::Activate` on one panel
+        // does not end up transitively activating the other when the dock is
+        // re-opened.
+        let (panel_a, panel_b) = workspace.update_in(cx, |workspace, window, cx| {
+            let panel_a = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 0, cx));
+            let panel_b = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 1, cx));
+            workspace.add_panel(panel_a.clone(), window, cx);
+            workspace.add_panel(panel_b.clone(), window, cx);
+            (panel_a, panel_b)
+        });
+
+        panel_a.update(cx, |_, cx| cx.emit(PanelEvent::Activate));
+        workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(dock.is_open(),);
+            assert_eq!(dock.visible_panel().unwrap().panel_id(), panel_a.panel_id(),);
+        });
+
+        panel_a.update(cx, |_, cx| cx.emit(PanelEvent::Close));
+        workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(!dock.is_open(),);
+            assert_eq!(dock.active_panel().unwrap().panel_id(), panel_a.panel_id(),);
+        });
+
+        // Ensure that [`TestPanel::activation_history`] is cleared before we
+        // emit events from Panel B, so we can ensure it's still empty
+        // afterwards.
+        panel_a.update(cx, |panel, _| {
+            assert!(!panel.active);
+            panel.activation_history.clear();
+        });
+
+        panel_b.update(cx, |_, cx| cx.emit(PanelEvent::Activate));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(dock.is_open());
+            assert!(panel_b.read(cx).active);
+            assert!(panel_b.focus_handle(cx).is_focused(window));
+            assert!(!panel_a.read(cx).active);
+            assert_eq!(dock.visible_panel().unwrap().panel_id(), panel_b.panel_id());
+
+            assert!(
+                !panel_a.read(cx).activation_history.contains(&true),
+                "activating Panel B should not transiently activate Panel A"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_zoomed_panel_stays_open_when_focus_is_lost(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
