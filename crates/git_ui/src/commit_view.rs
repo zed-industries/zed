@@ -361,6 +361,8 @@ impl CommitView {
         let reveal_file_clone = reveal_file.clone();
         let mut files = commit_diff.files;
         let commit_view_settings = EditorSettings::get_global(cx).commit_view;
+        // A view filtered to a single file is opened to look at that file, so keep it expanded.
+        let collapse_files = !commit_view_settings.expand_files && file_filter.is_none();
 
         let load_diff_task = cx.spawn_in(window, async move |this, cx| {
             let mut folded_buffer_ids: HashSet<language::BufferId> = HashSet::default();
@@ -417,7 +419,7 @@ impl CommitView {
 
                 file_statuses.insert(buffer_id, file_status);
 
-                if is_binary || !commit_view_settings.expand_files {
+                if is_binary || collapse_files {
                     folded_buffer_ids.insert(buffer_id);
                 }
             }
@@ -1699,6 +1701,7 @@ mod tests {
 
     /// Opens a commit view for a commit that modifies `a.txt` and `b.txt`.
     async fn open_test_commit_view(
+        file_filter: Option<RepoPath>,
         cx: &mut TestAppContext,
     ) -> (Entity<CommitView>, &mut VisualTestContext) {
         let fs = FakeFs::new(cx.executor());
@@ -1744,7 +1747,10 @@ mod tests {
                     repository,
                     project.clone(),
                     workspace_entity,
-                    CommitViewOptions::default(),
+                    CommitViewOptions {
+                        file_filter,
+                        ..Default::default()
+                    },
                     window,
                     cx,
                 )
@@ -1776,7 +1782,7 @@ mod tests {
     #[gpui::test]
     async fn test_commit_view_opens_with_defaults(cx: &mut TestAppContext) {
         init_test(cx);
-        let (commit_view, cx) = open_test_commit_view(cx).await;
+        let (commit_view, cx) = open_test_commit_view(None, cx).await;
 
         commit_view.read_with(cx, |commit_view, cx| {
             assert!(!commit_view.message_expanded);
@@ -1802,11 +1808,34 @@ mod tests {
                 })
             });
         });
-        let (commit_view, cx) = open_test_commit_view(cx).await;
+        let (commit_view, cx) = open_test_commit_view(None, cx).await;
 
         commit_view.read_with(cx, |commit_view, cx| {
             assert!(commit_view.message_expanded);
             assert_eq!(folded_files(commit_view, cx), 2);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_commit_view_filtered_to_file_ignores_collapse_files(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .git
+                        .get_or_insert_default()
+                        .commit_view
+                        .get_or_insert_default()
+                        .expand_files = Some(false);
+                })
+            });
+        });
+        let file_filter = RepoPath::new("a.txt").expect("valid repository path");
+        let (commit_view, cx) = open_test_commit_view(Some(file_filter), cx).await;
+
+        commit_view.read_with(cx, |commit_view, cx| {
+            assert_eq!(folded_files(commit_view, cx), 0);
         });
     }
 
