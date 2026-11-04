@@ -4099,6 +4099,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "crates_io_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "derive_more",
+ "futures 0.3.34",
+ "http_client",
+ "itertools 0.14.0",
+ "parking_lot",
+ "semver",
+ "serde",
+ "serde_json",
+ "smol",
+ "thiserror 2.0.17",
+ "url",
+]
+
+[[package]]
 name = "crc"
 version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22380,7 +22400,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.28.0"
+version = "1.29.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
