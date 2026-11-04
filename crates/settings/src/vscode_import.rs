@@ -193,6 +193,7 @@ impl VsCodeSettings {
                 .map(|history| CommandPaletteSettingsContent {
                     use_command_history: Some(history > 0),
                 }),
+            copilot: None,
             credentials_url: None,
             debugger: None,
             diagnostics: None,
@@ -232,6 +233,7 @@ impl VsCodeSettings {
             session: None,
             status_bar: self.status_bar_settings_content(),
             tab_bar: self.tab_bar_settings_content(),
+            tab_switcher: None,
             tabs: self.item_settings_content(),
             telemetry: self.telemetry_settings_content(),
             terminal: self.terminal_settings_content(),
@@ -1036,6 +1038,7 @@ impl VsCodeSettings {
             agent_buffer_font_family: None,
             agent_buffer_font_size: None,
             git_commit_buffer_font_size: None,
+            mermaid_font_family: None,
             theme: None,
             icon_theme: None,
             ui_density: None,
@@ -1050,6 +1053,7 @@ impl VsCodeSettings {
             active_pane_modifiers: self.active_pane_modifiers(),
             accessible_mode: None,
             text_rendering_mode: None,
+            use_display_p3: None,
             autosave: self.read_enum("files.autoSave", |s| match s {
                 "off" => Some(AutosaveSetting::Off),
                 "afterDelay" => Some(AutosaveSetting::AfterDelay {

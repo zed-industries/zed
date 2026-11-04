@@ -4,7 +4,7 @@
   lib,
   stdenv,
 
-  apple-sdk_15,
+  apple-sdk_26,
   darwin,
   darwinMinVersionHook,
 
@@ -117,6 +117,10 @@ let
           new: old: rec {
             version = "0.8.2";
 
+            # nixpkgs' newer cargo-about enables a CLI feature absent in 0.8.2.
+            cargoBuildFeatures = [ ];
+            cargoCheckFeatures = [ ];
+
             src = fetchFromGitHub {
               owner = "EmbarkStudios";
               repo = "cargo-about";
@@ -202,8 +206,8 @@ let
         libxrandr
       ]
       ++ lib.optionals stdenv'.hostPlatform.isDarwin [
-        apple-sdk_15
-        (darwinMinVersionHook "10.15")
+        apple-sdk_26
+        (darwinMinVersionHook "12.0")
       ];
 
       cargoExtraArgs = "-p zed -p cli --locked --features=gpui_platform/runtime_shaders";
@@ -235,7 +239,14 @@ let
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
         ZED_COMMIT_SHA = lib.optionalString (commitSha != null) "${commitSha}";
-        LK_CUSTOM_WEBRTC = pkgs.callPackage ./livekit-libwebrtc/package.nix { };
+        LK_CUSTOM_WEBRTC = pkgs.livekit-libwebrtc.overrideAttrs (
+          old:
+          lib.optionalAttrs stdenv'.hostPlatform.isLinux {
+            # Wayland capture dlopens EGL/GL, so fixup would otherwise remove their search path.
+            NIX_LDFLAGS = (old.NIX_LDFLAGS or "") + " -rpath ${lib.makeLibraryPath [ libglvnd ]}";
+            dontPatchELF = true;
+          }
+        );
         PROTOC = "${protobuf}/bin/protoc";
 
         CARGO_PROFILE = profile;

@@ -497,6 +497,8 @@ impl InlayHintSettings {
 /// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot).
 #[derive(Clone, Debug, Default)]
 pub struct EditPredictionSettings {
+    /// Whether to show the edit prediction button in the status bar.
+    pub button: bool,
     /// The provider that supplies edit predictions.
     pub provider: settings::EditPredictionProvider,
     /// Disable edit predictions for files matching these glob patterns.
@@ -525,7 +527,7 @@ pub struct EditPredictionSettings {
     /// Configures how edit predictions are displayed in the buffer.
     pub mode: settings::EditPredictionsMode,
     /// Settings specific to GitHub Copilot.
-    pub copilot: CopilotSettings,
+    pub copilot: CopilotEditPredictionSettings,
     /// Settings specific to Codestral.
     pub codestral: CodestralSettings,
     /// Settings specific to Ollama.
@@ -598,13 +600,11 @@ pub struct DisabledGlob {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct CopilotSettings {
+pub struct CopilotEditPredictionSettings {
     /// HTTP/HTTPS proxy to use for Copilot.
     pub proxy: Option<String>,
     /// Disable certificate verification for proxy (not recommended).
     pub proxy_no_verify: Option<bool>,
-    /// Enterprise URI for Copilot.
-    pub enterprise_uri: Option<String>,
     /// Whether the Copilot Next Edit Suggestions feature is enabled.
     pub enable_next_edit_suggestions: Option<bool>,
     /// Automatic prediction debounce delay.
@@ -955,10 +955,9 @@ impl settings::Settings for AllLanguageSettings {
             .collect();
 
         let copilot = edit_predictions.copilot.unwrap();
-        let copilot_settings = CopilotSettings {
+        let copilot_settings = CopilotEditPredictionSettings {
             proxy: copilot.proxy,
             proxy_no_verify: copilot.proxy_no_verify,
-            enterprise_uri: copilot.enterprise_uri,
             enable_next_edit_suggestions: copilot.enable_next_edit_suggestions,
             prediction_debounce: copilot.prediction_debounce.unwrap(),
         };
@@ -1033,6 +1032,7 @@ impl settings::Settings for AllLanguageSettings {
 
         Self {
             edit_predictions: EditPredictionSettings {
+                button: edit_predictions.button.unwrap(),
                 provider: if let Some(provider) = edit_prediction_provider {
                     provider
                 } else {

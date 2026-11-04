@@ -62,20 +62,23 @@ See [CLI Reference](./reference/cli.md) for full details.
 
 ### Via Settings
 
-You can change the default CLI behavior with the `cli_default_open_behavior` setting:
+You can change the default behavior by setting `cli_default_open_behavior`, which controls CLI opens, and `default_open_behavior`, which controls UI project opens and external open requests, such as macOS Finder's `Open With > Zed`.
+
+To use separate windows, open the Settings Editor and search for `CLI Default Open Behavior` or `Default Open Behavior`, setting either or both to `new_window`. Or add this to your settings.json:
 
 ```json [settings]
 {
+  "default_open_behavior": "new_window",
   "cli_default_open_behavior": "new_window"
 }
 ```
 
-Options:
+Both settings accept the same values:
 
-- `existing_window` (default): Open folders in the current window's threads sidebar
-- `new_window`: Open folders in a new window
+- `existing_window` (default): Open folders in the current window's threads sidebar. Files outside any open project can also open in an existing window.
+- `new_window`: Prefer a new window. For external or CLI file opens, a non-ignored file inside an already-open project opens in that project's window while an unrelated file opens in a new window.
 
-This setting affects CLI and double-click behavior, not the File > Open menu.
+It's worth noting that explicit flags provided to the CLI will override the CLI setting. In particular, `-n` forces a new window even when a path matches an open project. See [CLI Reference](./reference/cli.md) for the available flags.
 
 ## Adding Folders to a Project
 

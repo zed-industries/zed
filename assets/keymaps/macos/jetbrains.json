@@ -93,7 +93,7 @@
     },
   },
   {
-    "context": "BufferSearchBar",
+    "context": "BufferSearchBar && !in_replace > Editor",
     "bindings": {
       "shift-enter": "search::SelectPreviousMatch",
     },

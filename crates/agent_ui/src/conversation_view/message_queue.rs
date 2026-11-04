@@ -7,7 +7,7 @@ pub struct QueueEntryId(usize);
 
 pub struct QueueEntry {
     pub id: QueueEntryId,
-    pub content: Vec<acp::ContentBlock>,
+    pub content: Vec<acp_v2::ContentBlock>,
     pub tracked_buffers: Vec<Entity<Buffer>>,
     /// When true, this message interrupts the agent at the next turn boundary
     /// instead of waiting for generation to fully complete. Only the front
@@ -118,6 +118,16 @@ impl MessageQueue {
         self.entries.remove(index)
     }
 
+    pub fn restore_after_failed_send(&mut self, entry: QueueEntry) {
+        let index = self
+            .entries
+            .iter()
+            .position(|queued| queued.id.0 > entry.id.0)
+            .unwrap_or(self.entries.len());
+        self.entries.insert(index, entry);
+        self.pause();
+    }
+
     pub fn clear(&mut self) {
         self.entries.clear();
         self.can_fast_track = false;
@@ -146,6 +156,15 @@ impl MessageQueue {
 
     /// Handles a generation Stopped event, returning the entry to auto-send,
     /// if any.
+    pub fn auto_send_candidate(&self, is_first_editor_focused: bool) -> Option<&QueueEntry> {
+        if matches!(self.processing_state, ProcessingState::AutoProcess) && !is_first_editor_focused
+        {
+            self.entries.front()
+        } else {
+            None
+        }
+    }
+
     pub fn on_generation_stopped(&mut self, is_first_editor_focused: bool) -> Option<QueueEntry> {
         match self.processing_state {
             ProcessingState::AbsorbingCancel => {
@@ -157,10 +176,10 @@ impl MessageQueue {
             ProcessingState::Paused => None,
             ProcessingState::AutoProcess => {
                 // Don't auto-send while the user is editing the next message.
-                if is_first_editor_focused {
-                    None
-                } else {
+                if self.auto_send_candidate(is_first_editor_focused).is_some() {
                     self.entries.pop_front()
+                } else {
+                    None
                 }
             }
         }

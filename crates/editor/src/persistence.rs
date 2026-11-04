@@ -223,6 +223,10 @@ impl Domain for EditorDb {
                 PRIMARY KEY(workspace_id, path, start)
             );
         ),
+        sql!(
+            CREATE INDEX editor_selections_editor_id_workspace_id
+            ON editor_selections (editor_id, workspace_id);
+        ),
     ];
 }
 
@@ -293,6 +297,7 @@ impl EditorDb {
             SELECT start, end
             FROM editor_selections
             WHERE editor_id = ?1 AND workspace_id = ?2
+            ORDER BY item_id
         }
     }
 

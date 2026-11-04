@@ -1409,7 +1409,8 @@ impl Editor {
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
         Some(cx.spawn_in(window, async move |editor, cx| {
-            let _cleanup = cx.on_drop(&editor, move |editor, _| {
+            let _cleanup = cx.on_drop(&editor, move |editor, cx| {
+                let multi_buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
                 if let Ok(i) = editor
                     .find_all_references_task_sources
                     .binary_search_by(|anchor| anchor.cmp(&head_anchor, &multi_buffer_snapshot))
@@ -1685,6 +1686,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(buffer_id) = position.buffer_id() {
+            self.unfold_buffer(buffer_id, cx);
+        }
+        self.unfold_ranges(&[position..position], false, false, cx);
         let snapshot = self.snapshot(window, cx).display_snapshot;
         let position = position.to_point(&snapshot.buffer_snapshot());
         let start = snapshot
@@ -1925,7 +1930,8 @@ impl Editor {
                                 editor.cursor_top_offset(cx),
                                 cx,
                             ))
-                            .nav_history(true),
+                            .nav_history(true)
+                            .unfold(),
                             window,
                             cx,
                             |s| s.select_anchor_ranges(target_ranges),
@@ -2012,7 +2018,8 @@ impl Editor {
                                     SelectionEffects::scroll(Autoscroll::for_go_to_definition(
                                         offset, cx,
                                     ))
-                                    .nav_history(true),
+                                    .nav_history(true)
+                                    .unfold(),
                                     window,
                                     cx,
                                     |s| s.select_anchor_ranges(target_ranges),
@@ -2068,17 +2075,12 @@ impl Editor {
         cx: &mut Context<Self>,
         offset: i8,
     ) -> Task<Result<()>> {
-        let editor_snapshot = self.snapshot(window, cx);
-
         // We don't care about multi-buffer symbols
-        if !editor_snapshot.is_singleton() {
+        if !self.buffer.read(cx).is_singleton() {
             return Task::ready(Ok(()));
         }
 
-        let cursor_offset = self
-            .selections
-            .newest::<MultiBufferOffset>(&editor_snapshot.display_snapshot)
-            .head();
+        let cursor = self.selections.newest_anchor().head();
 
         cx.spawn_in(window, async move |editor, wcx| -> Result<()> {
             let Ok(Some(remote_id)) = editor.update(wcx, |ed, cx| {
@@ -2091,12 +2093,14 @@ impl Editor {
             let task = editor.update(wcx, |ed, cx| ed.buffer_outline_items(remote_id, cx))?;
             let outline_items: Vec<OutlineItem<text::Anchor>> = task.await;
 
-            let multi_snapshot = editor_snapshot.buffer();
+            let multi_snapshot =
+                editor.read_with(wcx, |editor, cx| editor.buffer.read(cx).snapshot(cx))?;
+            let cursor_offset = cursor.to_offset(&multi_snapshot);
             let buffer_range = |range: &Range<_>| {
                 Some(
                     multi_snapshot
                         .buffer_anchor_range_to_anchor_range(range.clone())?
-                        .to_offset(multi_snapshot),
+                        .to_offset(&multi_snapshot),
                 )
             };
 
@@ -2139,7 +2143,7 @@ impl Editor {
                 editor
                     .update(acx, |editor, ecx| {
                         editor.change_selections(
-                            SelectionEffects::scroll(Autoscroll::newest()),
+                            SelectionEffects::scroll(Autoscroll::newest()).unfold(),
                             window,
                             ecx,
                             |s| s.select_ranges(selection),
@@ -2272,7 +2276,7 @@ impl Editor {
             MultibufferSelectionMode::First => {
                 if let Some(first_range) = ranges.first() {
                     editor.change_selections(
-                        SelectionEffects::no_scroll(),
+                        SelectionEffects::no_scroll().unfold(),
                         window,
                         cx,
                         |selections| {
@@ -2289,10 +2293,15 @@ impl Editor {
                 );
             }
             MultibufferSelectionMode::All => {
-                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                    selections.clear_disjoint();
-                    selections.select_anchor_ranges(ranges);
-                });
+                editor.change_selections(
+                    SelectionEffects::no_scroll().unfold(),
+                    window,
+                    cx,
+                    |selections| {
+                        selections.clear_disjoint();
+                        selections.select_anchor_ranges(ranges);
+                    },
+                );
             }
         });
 
@@ -2489,7 +2498,8 @@ impl Editor {
                 self.cursor_top_offset(cx),
                 cx,
             ))
-            .nav_history(record_nav_history),
+            .nav_history(record_nav_history)
+            .unfold(),
             window,
             cx,
             |s| s.select_anchor_ranges([start..end]),

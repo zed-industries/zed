@@ -132,9 +132,19 @@ The attribute supports options such as:
 
 Inspect the current macro before depending on an option because the API is evolving.
 
-Register benchmark functions with `gpui::bench_group!` and `gpui::bench_main!` (drop-in for Criterion's `criterion_group!`/`criterion_main!`, including the `name = ...; config = ...; targets = ...` form). The generated functions take `&mut criterion::Criterion<gpui::BenchMeasurement>`; `bench_group!` supplies that measurement from the environment.
+For randomized workloads, take a `StdRng` parameter (by value) and draw the workload from it instead of hand-rolling seeds. The macro then runs one Criterion benchmark per seed, named `<input>/seed-<n>`, with `seed = N`, `seeds(...)`, `iterations = N`, `SEED`, and `ITERATIONS` meaning exactly what they do for `#[gpui::test]`, so `SEED=3` reproduces the same workload in a test and a benchmark. The RNG is rebuilt for every Criterion routine call, so warm-up and every sample see the same workload.
 
-### Measurements: wall time, hardware counters, and rusage
+```rust
+#[gpui::bench(inputs = tree_families(), input_name = "tree", iterations = 6)]
+fn full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut gpui::BenchAppContext) {
+    let tree = family.sample(&mut rng);
+    // ...
+}
+```
+
+Register benchmark functions with `gpui::bench_group!` and `gpui::bench_main!` (drop-in for Criterion's `criterion_group!`/`criterion_main!`, including the `name = ...; config = ...; targets = ...` form). The generated functions take `&mut criterion::Criterion<gpui::BenchMeasurement>`; `bench_group!` supplies that measurement from the environment. `bench_main!` also installs `gpui::CountingAllocator` as the binary's global allocator, so a GPUI bench file must not declare its own `#[global_allocator]`; to measure with another allocator, write `gpui::bench_main!(allocator = mimalloc::MiMalloc; benches)`, which wraps it. `allocator = none;` installs no allocator and drops the allocation metrics.
+
+### Measurements: wall time, hardware counters, rusage, and allocations
 
 `gpui::BenchMeasurement` (from the gpui-independent `bench_metrics` crate) records several metrics per Criterion sample. Criterion analyzes one of them (the *primary*, shown on its `time:` line with confidence intervals and baseline comparison); the rest are *secondaries*, printed per iteration in the GPUI bench report as median/min/max. `BENCH_MEASUREMENT` selects the arrangement:
 
@@ -143,6 +153,8 @@ Register benchmark functions with `gpui::bench_group!` and `gpui::bench_main!` (
 | unset (default) | wall time | every counter the machine supports (below) |
 | `instructions` | process-wide retired instructions; fails fast if counters are unavailable | the rest, plus wall time |
 | `foreground-instructions` | the benchmark thread's retired instructions; fails fast if unavailable | the rest, plus wall time |
+| `allocations` | process-wide heap allocations; fails fast without `CountingAllocator` | the rest, plus wall time |
+| `foreground-allocations` | the benchmark thread's heap allocations, without background workers' timing noise; fails fast without `CountingAllocator` | the rest, plus wall time |
 | `wall-time` | wall time | nothing; no counters are opened |
 
 For a CI gate on frame cost prefer `foreground-instructions`: it excludes background parsing and GPU-driver submission threads, whose work varies run to run, and on Apple Silicon the process-wide count includes driver jitter that widens the interval (about ±0.6% versus ±0.01% for the foreground thread).
@@ -154,6 +166,7 @@ Default secondaries, each skipped with a one-time note when unavailable:
 - **branch misses** and **cache misses** (last-level), for diagnosing an IPC drop. Linux only.
 - **foreground context switches**: voluntary switches on the benchmark thread per iteration, i.e. how many times a frame blocked on a lock, channel, or fence. This is the metric that catches the waits instructions cannot see. Linux only.
 - **page faults**: minor faults per iteration, a privilege-free proxy for fresh memory touched.
+- **allocations**, **foreground allocations**, and **allocated bytes**: heap allocations (reallocations count as one each) across every thread and on the benchmark thread alone, and the bytes requested across every thread, per iteration. Background workers allocate on their own schedule, so the foreground count excludes that noise. It can still vary between samples when the workload does, e.g. frames coalescing or caches growing in early samples, so a CI gate needs a small tolerance. Arena placements (GPUI's element arena) are not heap allocations and are not counted once the arena is warm. Needs `bench_metrics::CountingAllocator` as the global allocator, which `gpui::bench_main!` installs; it wraps any allocator (`CountingAllocator<MiMalloc>`) and costs a few relaxed atomics per allocation. For heap held between iterations, read `bench_metrics::allocation_stats()` before and after setup; `live_bytes()` is allocated minus freed.
 
 Run one benchmark process per machine at a time. Hardware counters are per task, so instruction counts stay correct next to a concurrent `cargo bench`, but wall time, IPC, and cache misses share the hardware and degrade, and two processes requesting counters can exceed a core's counter slots, at which point the kernel multiplexes and the counts become scaled estimates (a warning is printed once). Within one process, benchmarks already run sequentially; process-wide counters can still attribute a previous benchmark's trailing background work to the next benchmark's first sample, which the foreground-thread metrics are immune to.
 
@@ -182,7 +195,7 @@ group.bench_function("append", |b| report.iter(b, || rope.append(small.clone()))
 report.print("  ");
 ```
 
-Criterion's `Throughput` lines keep working alongside. Page faults per iteration are a useful allocation-pressure signal for data-structure crates even without a counting allocator.
+Criterion's `Throughput` lines keep working alongside. Page faults per iteration are a useful allocation-pressure signal even without a counting allocator; for exact counts, install `bench_metrics::CountingAllocator` as the binary's `#[global_allocator]`.
 
 ### `bench_iter`: synchronous functions and compute work
 

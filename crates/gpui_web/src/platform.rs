@@ -31,7 +31,7 @@ use wasm_bindgen::prelude::*;
 /// through [`gpui::App::text_system`] before opening a window.
 pub struct WebPlatform {
     browser_window: web_sys::Window,
-    dispatcher: Arc<WebDispatcher>,
+    platform_info: gpui::PlatformInfo,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
@@ -170,6 +170,7 @@ impl WebPlatform {
     ) -> Self {
         let browser_window =
             web_sys::window().expect("must be running in a browser window context");
+        let platform_info = crate::events::platform_info(&browser_window);
         let dispatcher = Arc::new(WebDispatcher::new(
             browser_window.clone(),
             allow_multi_threading,
@@ -194,7 +195,7 @@ impl WebPlatform {
 
         Self {
             browser_window,
-            dispatcher,
+            platform_info,
             background_executor,
             foreground_executor,
             text_system,
@@ -214,7 +215,7 @@ impl WebPlatform {
 
     /// Returns an HTTP client that runs browser Fetch operations on this platform's main thread.
     pub fn fetch_http_client(&self) -> FetchHttpClient {
-        FetchHttpClient::new(self.dispatcher.clone())
+        FetchHttpClient::new(self.foreground_executor.to_send())
     }
 
     /// Returns a browser Fetch HTTP client with the given reported user agent.
@@ -222,7 +223,7 @@ impl WebPlatform {
         &self,
         user_agent: &str,
     ) -> anyhow::Result<FetchHttpClient> {
-        FetchHttpClient::with_user_agent(self.dispatcher.clone(), user_agent)
+        FetchHttpClient::with_user_agent(self.foreground_executor.to_send(), user_agent)
     }
 }
 
@@ -304,6 +305,10 @@ async fn initialize_graphics(
 }
 
 impl Platform for WebPlatform {
+    fn platform_info(&self) -> gpui::PlatformInfo {
+        self.platform_info
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }
@@ -367,6 +372,9 @@ impl Platform for WebPlatform {
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         Some(self.active_display.clone())
     }
+
+    // The browser is the only display, and it never changes.
+    fn on_displays_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         *self.active_window.borrow()

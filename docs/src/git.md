@@ -119,6 +119,10 @@ To view File History:
 - Right-click on an editor tab and select "View File History"
 - Use the Command Palette and search for "file history"
 
+## Tags
+
+To create a lightweight tag at `HEAD`, use {#action git::CreateTagAtHead} from the Command Palette. Tags are created locally and are not pushed automatically.
+
 ## Fetch, Push, and Pull
 
 Fetch, push, or pull from your Git repository in Zed via the buttons available on the Git Panel or via the Command Palette by looking at the respective actions: {#action git::Fetch}, {#action git::Push}, and {#action git::Pull}.
@@ -361,7 +365,7 @@ However, if your self-hosted Git instance URL doesn't contain identifying keywor
 }
 ```
 
-The `provider` field specifies which type of hosting service you're using. Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, `sourcehut`, and `tangled`. The `name` is optional and used as a display name for your instance, and `base_url` is the root URL of your self-hosted server.
+The `provider` field specifies which type of hosting service you're using. Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, `sourcehut`, `tangled`, and `gitiles`. The `name` is optional and used as a display name for your instance, and `base_url` is the root URL of your self-hosted server. For the `gitiles` provider, set `base_url` to the Gitiles browse root (e.g. `https://android.googlesource.com` or `https://git.example.com/plugins/gitiles`).
 
 You can configure multiple custom providers if you work with several self-hosted instances.
 
@@ -371,8 +375,8 @@ Zed can open or copy a permanent link to a file or code selection on your Git ho
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
 
 For the current selection in the editor, use {#action editor::CopyPermalinkToLine} or
-{#action editor::OpenPermalinkToLine} from the [Command Palette](./getting-started.md#command-palette)
-(search for `permalink`), via [custom key bindings](./key-bindings.md#custom-key-bindings),
+{#action editor::OpenPermalinkToLine} from the [Command Palette](./command-palette.md)
+(search for `permalink`), via [custom key bindings](./key-bindings.md#keymap-editor),
 or by right-clicking and selecting **Copy Permalink to Line**.
 
 From a file tab or the Project Panel, you can also **Open File Permalink** or **Copy File Permalink**

@@ -1,3 +1,8 @@
+//! Provides a thread-safe queue with weighted random selection between priorities.
+//!
+//! Items within each priority are received in FIFO order. Receivers can be cloned
+//! to share work, and queued items remain available after the sender is dropped.
+
 use std::{
     collections::VecDeque,
     fmt,
@@ -83,12 +88,12 @@ impl<T> PriorityQueueState<T> {
     fn recv<'a>(&'a self) -> Result<MutexGuard<'a, PriorityQueues<T>>, RecvError> {
         let mut queues = self.queues.lock().unwrap_or_else(PoisonError::into_inner);
 
-        let sender_count = self.sender_count.load(std::sync::atomic::Ordering::Relaxed);
-        if queues.is_empty() && sender_count == 0 {
-            return Err(crate::queue::RecvError);
-        }
-
+        // Re-checked after every wake: dropping the last sender wakes waiting receivers
+        // so they can end instead of blocking forever on a queue nothing can fill.
         while queues.is_empty() {
+            if self.sender_count.load(std::sync::atomic::Ordering::Acquire) == 0 {
+                return Err(crate::queue::RecvError);
+            }
             queues = self
                 .condvar
                 .wait(queues)
@@ -145,11 +150,29 @@ impl<T> PriorityQueueSender<T> {
         Self { state }
     }
 
+    /// Enqueues an item at the given priority, waiting for the queue lock if necessary.
+    ///
+    /// # Errors
+    ///
+    /// Returns the item in a [`SendError<T>`] if all receivers have been dropped.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `priority` is [`Priority::RealtimeAudio`] and a receiver still exists.
     pub fn send(&self, priority: Priority, item: T) -> Result<(), SendError<T>> {
         self.state.send(priority, item)?;
         Ok(())
     }
 
+    /// Enqueues an item at the given priority, spinning until the queue lock is acquired.
+    ///
+    /// # Errors
+    ///
+    /// Returns the item in a [`SendError<T>`] if all receivers have been dropped.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `priority` is [`Priority::RealtimeAudio`] and a receiver still exists.
     pub fn spin_send(&self, priority: Priority, item: T) -> Result<(), SendError<T>> {
         self.state.spin_send(priority, item)?;
         Ok(())
@@ -158,9 +181,24 @@ impl<T> PriorityQueueSender<T> {
 
 impl<T> Drop for PriorityQueueSender<T> {
     fn drop(&mut self) {
-        self.state
+        let previous = self
+            .state
             .sender_count
             .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        if previous == 1 {
+            // A receiver checks the sender count and starts waiting under the queue lock,
+            // atomically. Acquiring that lock once, even with nothing to do under it,
+            // means any receiver that saw a live sender is already waiting, so the
+            // notification below reaches it; without this, a receiver between its check
+            // and its wait would miss the wake-up and block forever.
+            drop(
+                self.state
+                    .queues
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner),
+            );
+            self.state.condvar.notify_all();
+        }
     }
 }
 
@@ -199,6 +237,17 @@ pub struct RecvError;
 
 #[allow(dead_code)]
 impl<T> PriorityQueueReceiver<T> {
+    /// Creates an empty priority queue and returns its sender and receiver.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gpui::{Priority, queue::PriorityQueueReceiver};
+    ///
+    /// let (sender, mut receiver) = PriorityQueueReceiver::new();
+    /// sender.send(Priority::Medium, 42).unwrap();
+    /// assert_eq!(receiver.pop().unwrap(), 42);
+    /// ```
     pub fn new() -> (PriorityQueueSender<T>, Self) {
         let state = PriorityQueueState {
             queues: Mutex::new(PriorityQueues {
@@ -256,6 +305,14 @@ impl<T> PriorityQueueReceiver<T> {
         self.pop_inner(false)
     }
 
+    /// Pops an item if available, spinning until the queue lock is acquired.
+    ///
+    /// Returns `Ok(None)` if the queue is empty and the sender still exists.
+    /// Does not wait for new items to arrive.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RecvError`] if the queue is empty and the sender has been dropped.
     pub fn spin_try_pop(&mut self) -> Result<Option<T>, RecvError> {
         use Priority as P;
 
@@ -297,7 +354,7 @@ impl<T> PriorityQueueReceiver<T> {
     /// Pops an element from the priority queue blocking if necessary.
     ///
     /// This method is best suited if you only intend to pop one element, for better performance
-    /// on large queues see [`Self::iter``]
+    /// on large queues see [`Self::iter`].
     ///
     /// # Errors
     ///
@@ -415,8 +472,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn blocked_receivers_end_when_the_sender_drops() {
+        let (sender, receiver) = PriorityQueueReceiver::<u32>::new();
+        let (done_sender, done_receiver) = std::sync::mpsc::channel();
+        let workers = (0..2)
+            .map(|_| {
+                let receiver = receiver.clone();
+                let done_sender = done_sender.clone();
+                std::thread::spawn(move || {
+                    let received: Vec<u32> = receiver.iter().collect();
+                    done_sender.send(received).ok();
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(receiver);
+
+        sender.send(Priority::Medium, 7).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            done_receiver.try_recv().is_err(),
+            "receivers keep waiting while the sender is alive"
+        );
+
+        drop(sender);
+        let mut received = Vec::new();
+        for _ in 0..2 {
+            received.extend(
+                done_receiver
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .expect("a waiting receiver should end once the sender is dropped"),
+            );
+        }
+        assert_eq!(received, [7]);
+        for worker in workers {
+            worker.join().expect("worker should exit cleanly");
+        }
+    }
+
+    #[test]
     fn all_tasks_get_yielded() {
-        let (tx, mut rx) = PriorityQueueReceiver::new();
+        let (tx, rx) = PriorityQueueReceiver::new();
         tx.send(Priority::Medium, 20).unwrap();
         tx.send(Priority::High, 30).unwrap();
         tx.send(Priority::Low, 10).unwrap();
