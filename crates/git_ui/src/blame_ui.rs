@@ -1,6 +1,8 @@
 use crate::{
     commit_tooltip::{CommitAvatar, CommitTooltip, commit_tag_chips, shallow_boundary_notice},
-    commit_view::{CommitView, GitBlob, build_buffer, worktree_id_for_repo_path},
+    commit_view::{
+        CommitView, CommitViewOptions, GitBlob, build_buffer, worktree_id_for_repo_path,
+    },
 };
 use anyhow::Context as _;
 use editor::{BlameRenderer, Editor, GitBlame, MultiBuffer, hover_markdown_style};
@@ -250,8 +252,10 @@ impl BlameRenderer for GitBlameRenderer {
                                     blame_entry.sha.to_string(),
                                     repository.downgrade(),
                                     workspace.clone(),
-                                    None,
-                                    None,
+                                    CommitViewOptions {
+                                        scroll_to: blame_entry.commit_line(),
+                                        ..Default::default()
+                                    },
                                     window,
                                     cx,
                                 )
@@ -317,6 +321,7 @@ impl BlameRenderer for GitBlameRenderer {
             .unwrap_or(OffsetDateTime::now_utc());
 
         let sha = blame.sha.to_string().into();
+        let scroll_to = blame.commit_line();
         let author: SharedString = blame
             .author
             .clone()
@@ -491,8 +496,10 @@ impl BlameRenderer for GitBlameRenderer {
                                                         commit_summary.sha.clone().into(),
                                                         repository.downgrade(),
                                                         workspace.clone(),
-                                                        None,
-                                                        None,
+                                                        CommitViewOptions {
+                                                            scroll_to: scroll_to.clone(),
+                                                            ..Default::default()
+                                                        },
                                                         window,
                                                         cx,
                                                     );
@@ -524,8 +531,10 @@ impl BlameRenderer for GitBlameRenderer {
             blame_entry.sha.to_string(),
             repository.downgrade(),
             workspace,
-            None,
-            None,
+            CommitViewOptions {
+                scroll_to: blame_entry.commit_line(),
+                ..Default::default()
+            },
             window,
             cx,
         )

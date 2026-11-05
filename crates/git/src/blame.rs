@@ -281,6 +281,14 @@ impl BlameEntry {
         Some((self.sha, RepoPath::new(&self.filename).ok()?))
     }
 
+    /// The file and zero-based row of this entry's first line, in the contents of the file at this entry's commit.
+    pub fn commit_line(&self) -> Option<(RepoPath, u32)> {
+        Some((
+            RepoPath::new(&self.filename).ok()?,
+            self.original_line_number.saturating_sub(1),
+        ))
+    }
+
     pub fn previous_revision_target(&self) -> Option<(Oid, RepoPath)> {
         let (sha, filename) = self.previous_sha_and_filename()?;
         Some((sha, RepoPath::new(filename).ok()?))
