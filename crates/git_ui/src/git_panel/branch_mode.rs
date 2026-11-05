@@ -668,33 +668,46 @@ impl GitPanel {
         entry: &GitStatusEntry,
         cx: &App,
     ) -> Option<Entity<BranchDiff>> {
-        let repo = self.active_repository.as_ref()?.read(cx);
-        let tab = self.branch_diff_tab(&self.branch_base.effective()?, cx)?;
+        let base_ref = self.branch_base.effective()?;
         let active = self
             .workspace
             .upgrade()?
             .read(cx)
             .active_item_as::<BranchDiff>(cx)?;
         let project_path = active.read(cx).active_project_path(cx)?;
-        (active == tab && repo.project_path_to_repo_path(&project_path, cx)? == entry.repo_path)
+        let repo_path = self
+            .active_repository
+            .as_ref()?
+            .read(cx)
+            .project_path_to_repo_path(&project_path, cx)?;
+        (self.is_branch_diff_at(&active, &base_ref, cx) && repo_path == entry.repo_path)
             .then_some(active)
     }
 
     fn branch_diff_tab(&self, base_ref: &SharedString, cx: &App) -> Option<Entity<BranchDiff>> {
-        let repo_id = self.active_repository.as_ref()?.read(cx).id;
         self.workspace
             .upgrade()?
             .read(cx)
             .items_of_type::<BranchDiff>(cx)
-            .find(|branch_diff| {
-                let branch_diff = branch_diff.read(cx);
-                matches!(
-                    branch_diff.diff_base(cx),
-                    DiffBase::Merge { base_ref: existing } if existing == base_ref
-                ) && branch_diff
-                    .repo(cx)
-                    .is_some_and(|repo| repo.read(cx).id == repo_id)
-            })
+            .find(|branch_diff| self.is_branch_diff_at(branch_diff, base_ref, cx))
+    }
+
+    fn is_branch_diff_at(
+        &self,
+        branch_diff: &Entity<BranchDiff>,
+        base_ref: &SharedString,
+        cx: &App,
+    ) -> bool {
+        let Some(repo) = self.active_repository.as_ref() else {
+            return false;
+        };
+        let branch_diff = branch_diff.read(cx);
+        matches!(
+            branch_diff.diff_base(cx),
+            DiffBase::Merge { base_ref: existing } if existing == base_ref
+        ) && branch_diff
+            .repo(cx)
+            .is_some_and(|branch_diff_repo| branch_diff_repo.read(cx).id == repo.read(cx).id)
     }
 
     /// `DeployBranchDiff` only reuses a tab that holds the display diff's
