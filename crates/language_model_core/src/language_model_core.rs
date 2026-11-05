@@ -92,7 +92,9 @@ impl LanguageModelCompletionEvent {
                 Ok(Some(LanguageModelCompletionEvent::Queued { position }))
             }
             CompletionRequestStatus::Started => Ok(Some(LanguageModelCompletionEvent::Started)),
-            CompletionRequestStatus::Unknown | CompletionRequestStatus::StreamEnded => Ok(None),
+            CompletionRequestStatus::KeepAlive
+            | CompletionRequestStatus::Unknown
+            | CompletionRequestStatus::StreamEnded => Ok(None),
             CompletionRequestStatus::Failed {
                 code,
                 message,
