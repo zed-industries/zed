@@ -886,8 +886,6 @@ mod tests {
             );
             assert_ne!(row, tooltip);
         });
-        cx.update(|window, _| window.refresh());
-        cx.run_until_parked();
         let previous = status.read_with(cx, |status, _| status.text.clone().expect("status text"));
         cx.update(|_, cx| SettingsStore::update_global(cx, |store, cx| {
             store.set_user_settings(
@@ -901,7 +899,5 @@ mod tests {
             assert_eq!(row, &previous.0);
             assert_eq!(tooltip.as_ref(), "Author, 2024");
         });
-        cx.update(|window, _| window.refresh());
-        cx.run_until_parked();
     }
 }

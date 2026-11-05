@@ -61,7 +61,7 @@ impl Settings for GitPanelSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let git_panel = content.git_panel.clone().unwrap();
         Self {
-            date_style: git_panel.date_style.unwrap_or_default(),
+            date_style: git_panel.date_style.unwrap(),
             button: git_panel.button.unwrap(),
             dock: git_panel.dock.unwrap().into(),
             default_width: git_panel.default_width.unwrap().into_gpui(),

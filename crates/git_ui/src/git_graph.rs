@@ -626,11 +626,7 @@ pub(crate) struct GitGraphSettings {
 impl Settings for GitGraphSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         Self {
-            date_style: content
-                .git_graph
-                .as_ref()
-                .and_then(|graph| graph.date_style)
-                .unwrap_or(GitDateStyle::Absolute),
+            date_style: content.git_graph.as_ref().unwrap().date_style.unwrap(),
         }
     }
 }

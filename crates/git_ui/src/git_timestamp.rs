@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn try_parse_accepts_valid_and_rejects_invalid_formats() {
-        for format in ["locale", "", " ", "iso", "%Y-%m-%d"] {
+        for format in ["locale", "", " ", "iso", "%Y-%m-%d %H:%M", "%b %d, %Y"] {
             assert!(GitDateFormat::try_parse(format).is_ok(), "{format:?}");
         }
         for format in ["%Q", "%"] {

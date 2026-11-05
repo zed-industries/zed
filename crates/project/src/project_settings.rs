@@ -461,8 +461,6 @@ pub struct GitSettings {
     ///
     /// Default: locale
     pub date_format: GitDateFormat,
-    /// Stash picker configuration.
-    pub stash_picker: StashPickerSettings,
     /// Whether or not git integration is enabled.
     ///
     /// Default: true
@@ -486,6 +484,8 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: BranchPickerSettings,
+    /// Stash picker configuration.
+    pub stash_picker: StashPickerSettings,
     /// How hunks are displayed visually in the editor.
     ///
     /// Default: staged_hollow
@@ -766,20 +766,14 @@ impl Settings for ProjectSettings {
             }
         };
         let git_settings = GitSettings {
-            date_format: GitDateFormat::parse(git.date_format.as_deref().unwrap_or("locale")),
-            stash_picker: StashPickerSettings {
-                date_style: git
-                    .stash_picker
-                    .and_then(|picker| picker.date_style)
-                    .unwrap_or_default(),
-            },
+            date_format: GitDateFormat::parse(git.date_format.as_deref().unwrap()),
             enabled: git_enabled,
             git_gutter: git.git_gutter.unwrap(),
             gutter_debounce: git.gutter_debounce.unwrap_or_default(),
             inline_blame: {
                 let inline = git.inline_blame.unwrap();
                 InlineBlameSettings {
-                    date_style: inline.date_style.unwrap_or_default(),
+                    date_style: inline.date_style.unwrap(),
                     enabled: inline.enabled.unwrap(),
                     delay_ms: inline.delay_ms.unwrap(),
                     location: inline.location.unwrap().into(),
@@ -791,16 +785,19 @@ impl Settings for ProjectSettings {
             blame: {
                 let blame = git.blame.unwrap();
                 BlameSettings {
-                    date_style: blame.date_style.unwrap_or_default(),
+                    date_style: blame.date_style.unwrap(),
                     show_avatar: blame.show_avatar.unwrap(),
                 }
             },
             branch_picker: {
                 let branch_picker = git.branch_picker.unwrap();
                 BranchPickerSettings {
-                    date_style: branch_picker.date_style.unwrap_or_default(),
+                    date_style: branch_picker.date_style.unwrap(),
                     show_author_name: branch_picker.show_author_name.unwrap(),
                 }
+            },
+            stash_picker: StashPickerSettings {
+                date_style: git.stash_picker.unwrap().date_style.unwrap(),
             },
             hunk_style: git.hunk_style.unwrap(),
             diff_base: git.diff_base.unwrap_or_default(),

@@ -631,12 +631,12 @@ impl std::fmt::Debug for ContextServerCommand {
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
-    /// Format for absolute Git dates: "locale", "iso", or a strftime format.
+    /// Format for absolute Git dates: "locale", "iso", or a strftime format
+    /// such as "%Y-%m-%d %H:%M" or "%b %d, %Y". Invalid formats fall back to "locale".
     ///
     /// Default: locale
+    #[schemars(extend("examples" = ["locale", "iso", "%Y-%m-%d %H:%M", "%b %d, %Y"]))]
     pub date_format: Option<String>,
-    /// Stash picker settings.
-    pub stash_picker: Option<StashPickerSettings>,
     /// Whether or not to enable git integration.
     ///
     /// Default: true
@@ -661,6 +661,8 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: Option<BranchPickerSettingsContent>,
+    /// Stash picker settings.
+    pub stash_picker: Option<StashPickerSettings>,
     /// File diff settings.
     pub file_diff: Option<FileDiffSettingsContent>,
     /// How hunks are displayed visually in the editor.
@@ -1432,5 +1434,14 @@ mod tests {
             panic!("expected Stdio variant, got {settings:?}");
         };
         assert_eq!(command.args, vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn date_format_schema_lists_examples() {
+        let schema = serde_json::to_value(schemars::schema_for!(GitSettings)).unwrap();
+        assert_eq!(
+            schema["properties"]["date_format"]["examples"],
+            serde_json::json!(["locale", "iso", "%Y-%m-%d %H:%M", "%b %d, %Y"])
+        );
     }
 }
