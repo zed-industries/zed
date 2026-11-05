@@ -804,7 +804,9 @@ impl GitPanel {
         cx: &mut Context<ContextMenu>,
     ) -> ContextMenu {
         let Ok((workspace, repository, selected_branch, menu_handle)) =
-            panel.read_with(cx, |panel, _| {
+            panel.update(cx, |panel, _| {
+                // The user is choosing the base now, so a waiting request shouldn't.
+                panel.cancel_pending_branch_changes();
                 (
                     panel.workspace.clone(),
                     panel.active_repository.clone(),
