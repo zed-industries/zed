@@ -1,5 +1,5 @@
 use crate::ReceiptSessionSubmissions;
-use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::{v1::schema as acp_v1, v2::schema as acp_v2};
 use futures::{
     channel::oneshot,
     future::{BoxFuture, LocalBoxFuture},
