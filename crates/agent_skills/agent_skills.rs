@@ -584,7 +584,7 @@ pub async fn load_skills_from_directory(
 /// Discovery is intentionally one level deep: a skill is the immediate
 /// child directory of the skills root, and `SKILL.md` is the file that
 /// names it. See `crates/agent_skills/README.md` for why we don't recurse.
-pub async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
+async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
     let Ok(mut entries) = fs.read_dir(directory).await else {
         return Vec::new();
     };
@@ -630,33 +630,21 @@ pub async fn load_skill_frontmatter(
     skill_file_path: PathBuf,
     source: SkillSource,
 ) -> Result<Skill, SkillLoadError> {
-    let content = read_skill_file(fs.as_ref(), &skill_file_path).await?;
-    parse_skill_frontmatter(&skill_file_path, &content, source).map_err(|e| SkillLoadError {
-        path: skill_file_path.clone(),
-        message: e.to_string(),
-    })
-}
-
-/// Reads a whole SKILL.md, refusing files over `MAX_SKILL_FILE_SIZE`.
-pub async fn read_skill_file(
-    fs: &dyn Fs,
-    skill_file_path: &Path,
-) -> Result<String, SkillLoadError> {
     // Short-circuit on oversized files before reading any of their
     // contents, so a stray multi-GB file named `SKILL.md` can't OOM the
     // app. If metadata is unavailable, refuse to read.
     let metadata = fs
-        .metadata(skill_file_path)
+        .metadata(&skill_file_path)
         .await
         .map_err(|e| SkillLoadError {
-            path: skill_file_path.to_path_buf(),
+            path: skill_file_path.clone(),
             message: format!("Failed to read SKILL.md metadata: {}", e),
         })?;
     if let Some(metadata) = metadata
         && metadata.len > MAX_SKILL_FILE_SIZE as u64
     {
         return Err(SkillLoadError {
-            path: skill_file_path.to_path_buf(),
+            path: skill_file_path.clone(),
             message: format!(
                 "SKILL.md file exceeds maximum size of {}KB",
                 MAX_SKILL_FILE_SIZE / 1024
@@ -664,9 +652,17 @@ pub async fn read_skill_file(
         });
     }
 
-    fs.load(skill_file_path).await.map_err(|e| SkillLoadError {
-        path: skill_file_path.to_path_buf(),
-        message: format!("Failed to read file: {}", e),
+    let content = fs
+        .load(&skill_file_path)
+        .await
+        .map_err(|e| SkillLoadError {
+            path: skill_file_path.clone(),
+            message: format!("Failed to read file: {}", e),
+        })?;
+
+    parse_skill_frontmatter(&skill_file_path, &content, source).map_err(|e| SkillLoadError {
+        path: skill_file_path.clone(),
+        message: e.to_string(),
     })
 }
 

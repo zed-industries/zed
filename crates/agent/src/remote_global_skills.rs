@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use agent_skills::{Skill, SkillLoadError, SkillSource};
+use agent_skills::{Skill, SkillLoadError, SkillLoadWarning, SkillSource};
 use anyhow::{Context as _, Result, anyhow};
 use client::{AnyProtoClient, proto};
 use gpui::{App, AppContext as _, Entity, Task};
@@ -36,16 +36,23 @@ pub fn load_remote_global_skills(
             Ok(response) => response,
             Err(error) => return vec![Err(remote_skills_load_error(error))],
         };
-        let skills = response.files.into_iter().map(|file| {
-            let skill_file_path = PathBuf::from(file.path);
-            agent_skills::parse_skill_frontmatter(
-                &skill_file_path,
-                &file.content,
-                SkillSource::Global,
-            )
-            .map_err(|error| SkillLoadError {
-                path: skill_file_path,
-                message: error.to_string(),
+        let skills = response.skills.into_iter().map(|skill| {
+            Ok(Skill {
+                name: skill.name,
+                description: skill.description,
+                source: SkillSource::Global,
+                directory_path: PathBuf::from(skill.directory_path),
+                skill_file_path: PathBuf::from(skill.skill_file_path),
+                load_warnings: skill
+                    .description_too_long
+                    .map(|warning| SkillLoadWarning::DescriptionTooLong {
+                        actual_len: warning.actual_len as usize,
+                        max_len: warning.max_len as usize,
+                    })
+                    .into_iter()
+                    .collect(),
+                disable_model_invocation: skill.disable_model_invocation,
+                embedded_body: None,
             })
         });
         let errors = response.errors.into_iter().map(|error| {

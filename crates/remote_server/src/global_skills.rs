@@ -1,6 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
+use agent_skills::{Skill, SkillLoadWarning, SkillSource};
 use anyhow::{Result, anyhow};
 use fs::Fs;
 use gpui::{AppContext as _, AsyncApp, Context, Entity, Task};
@@ -45,15 +46,12 @@ impl GlobalSkills {
         }
         this.update(&mut cx, |this, cx| this.watch(skills_dir.clone(), cx));
 
-        // The client parses these, so remote skills load like local ones.
-        let mut skill_file_paths = agent_skills::find_skill_files(&fs, &skills_dir).await;
-        skill_file_paths.sort();
-        for skill_file_path in skill_file_paths {
-            match agent_skills::read_skill_file(fs.as_ref(), &skill_file_path).await {
-                Ok(content) => response.files.push(proto::GlobalSkillFile {
-                    path: skill_file_path.to_string_lossy().into_owned(),
-                    content,
-                }),
+        // Only the frontmatter is sent. The agent reads a skill's body when it's used.
+        let results =
+            agent_skills::load_skills_from_directory(&fs, &skills_dir, SkillSource::Global).await;
+        for result in results {
+            match result {
+                Ok(skill) => response.skills.push(global_skill_to_proto(skill)),
                 Err(error) => response.errors.push(proto::GlobalSkillLoadError {
                     path: error.path.to_string_lossy().into_owned(),
                     message: error.message,
@@ -132,5 +130,30 @@ impl GlobalSkills {
         )
         .await?;
         Ok(proto::Ack {})
+    }
+}
+
+fn global_skill_to_proto(skill: Skill) -> proto::GlobalSkill {
+    let mut description_too_long = None;
+    for warning in skill.load_warnings {
+        match warning {
+            SkillLoadWarning::DescriptionTooLong {
+                actual_len,
+                max_len,
+            } => {
+                description_too_long = Some(proto::SkillDescriptionTooLong {
+                    actual_len: actual_len as u64,
+                    max_len: max_len as u64,
+                });
+            }
+        }
+    }
+    proto::GlobalSkill {
+        name: skill.name,
+        description: skill.description,
+        skill_file_path: skill.skill_file_path.to_string_lossy().into_owned(),
+        directory_path: skill.directory_path.to_string_lossy().into_owned(),
+        disable_model_invocation: skill.disable_model_invocation,
+        description_too_long,
     }
 }
