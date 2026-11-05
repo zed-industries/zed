@@ -102,9 +102,13 @@ fn labels(
                     format!("file:{}", path_match.path.as_unix_str())
                 }
                 SearchMatch::Symbol { symbol, .. } => format!("symbol:{}", symbol.name),
-                SearchMatch::Action { action_ix, .. } => {
-                    format!("action:{}", delegate.actions[*action_ix].name)
-                }
+                SearchMatch::Action { action_index, .. } => format!(
+                    "action:{}",
+                    delegate
+                        .actions
+                        .get(*action_index)
+                        .map_or("", |entry| entry.name.as_ref())
+                ),
                 SearchMatch::Text(text_match) => format!(
                     "text:{}:{}",
                     text_match.project_path.path.as_unix_str(),

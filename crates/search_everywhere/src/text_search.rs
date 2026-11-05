@@ -1,5 +1,3 @@
-//! Full-text search for the "Text" tab, built directly on `Project::search`.
-
 use std::{
     ops::Range,
     sync::atomic::{AtomicBool, Ordering},
@@ -14,21 +12,16 @@ use project::{
 };
 use util::paths::PathMatcher;
 
-/// Longest line excerpt we render for a single text match.
 const MAX_LINE_CHARS: usize = 160;
 
 #[derive(Clone)]
 pub struct TextMatch {
     pub project_path: ProjectPath,
     pub range: Range<Point>,
-    /// The (trimmed) line containing the match.
     pub line: SharedString,
-    /// Byte offsets into `line` to highlight.
     pub positions: Vec<usize>,
 }
 
-/// Runs a plain-text, case-insensitive project search and returns at most
-/// `limit` matches (one entry per occurrence, like IntelliJ's Text tab).
 pub async fn search(
     project: Entity<Project>,
     query: String,
@@ -117,8 +110,6 @@ fn matches_in_buffer(
         .collect()
 }
 
-/// Trims the line's indentation, caps its length and returns the byte
-/// offsets (into the returned excerpt) of every char inside `matched`.
 fn excerpt(line: &str, matched: Range<usize>) -> (String, Vec<usize>) {
     let indent = line.len() - line.trim_start().len();
     let line = &line[indent..];
