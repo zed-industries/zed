@@ -76,11 +76,13 @@ use workspace::Workspace;
 
 use crate::agent_configuration::ManageProfilesModal;
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
+pub use crate::agent_model_selector::language_model_selector_for;
 pub use crate::agent_panel::{
     AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, TerminalId, ThreadTitleRegenerationResult,
 };
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
+pub use crate::language_model_selector::LanguageModelSelector;
 pub use crate::message_editor::MessageEditorEvent;
 pub use crate::thread_metadata_store::ThreadId;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
@@ -629,8 +631,9 @@ impl ManageProfiles {
 }
 
 #[derive(Clone)]
-pub(crate) enum ModelUsageContext {
+pub enum ModelUsageContext {
     InlineAssistant,
+    CommitMessage,
 }
 
 impl ModelUsageContext {
@@ -639,6 +642,7 @@ impl ModelUsageContext {
             Self::InlineAssistant => {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
             }
+            Self::CommitMessage => LanguageModelRegistry::read_global(cx).commit_message_model(cx),
         }
     }
 }
@@ -1052,6 +1056,23 @@ mod tests {
     use settings::{
         DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings, SettingsStore,
     };
+
+    #[gpui::test]
+    fn test_commit_message_usage_context_reads_commit_message_model(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let provider = LanguageModelRegistry::test(cx);
+            let commit_model = provider.model("commit");
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.set_commit_message_model(Some(commit_model.clone()), cx);
+            });
+
+            let selected = ModelUsageContext::CommitMessage.model(cx);
+            assert!(selected.is_some_and(|model| model.is_same_as(&commit_model)));
+
+            let inline = ModelUsageContext::InlineAssistant.model(cx);
+            assert!(inline.is_none_or(|model| !model.is_same_as(&commit_model)));
+        });
+    }
 
     #[gpui::test]
     fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {

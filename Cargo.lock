@@ -7054,6 +7054,7 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "agent_settings",
+ "agent_ui",
  "anyhow",
  "askpass",
  "async-channel 2.5.0",

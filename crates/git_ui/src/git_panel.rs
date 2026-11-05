@@ -1276,6 +1276,8 @@ pub struct GitPanel {
     git_access: Option<GitAccess>,
     commit_menu_handle: PopoverMenuHandle<ContextMenu>,
     changes_actions_menu_handle: PopoverMenuHandle<ContextMenu>,
+    commit_message_model_selector: Entity<agent_ui::LanguageModelSelector>,
+    commit_message_model_menu_handle: PopoverMenuHandle<agent_ui::LanguageModelSelector>,
     remote_action_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
@@ -1557,6 +1559,16 @@ impl GitPanel {
             )
             .detach();
 
+            let commit_message_model_selector = cx.new(|cx| {
+                agent_ui::language_model_selector_for(
+                    fs.clone(),
+                    agent_ui::ModelUsageContext::CommitMessage,
+                    commit_editor.focus_handle(cx),
+                    window,
+                    cx,
+                )
+            });
+
             let mut this = Self {
                 active_repository,
                 commit_editor,
@@ -1622,6 +1634,8 @@ impl GitPanel {
                 git_access: None,
                 commit_menu_handle: PopoverMenuHandle::default(),
                 changes_actions_menu_handle: PopoverMenuHandle::default(),
+                commit_message_model_selector,
+                commit_message_model_menu_handle: PopoverMenuHandle::default(),
                 remote_action_menu_handle: PopoverMenuHandle::default(),
             };
 
@@ -6694,7 +6708,25 @@ impl GitPanel {
             })
         };
 
-        Some(button.into_any_element())
+        let menu_open = self.commit_message_model_menu_handle.is_deployed();
+        let selector = self.commit_message_model_selector.clone();
+        let model_picker = PopoverMenu::new("commit-message-model-picker")
+            .trigger_with_tooltip(
+                crate::render_split_button_chevron_trigger(
+                    "commit-message-model-picker-trigger",
+                    menu_open,
+                ),
+                Tooltip::text("Select Commit Message Model"),
+            )
+            .with_handle(self.commit_message_model_menu_handle.clone())
+            .menu(move |_window, _cx| Some(selector.clone()))
+            .anchor(Anchor::TopRight)
+            .offset(gpui::Point {
+                x: px(0.),
+                y: px(2.),
+            });
+
+        Some(SplitButton::new(button, model_picker.into_any_element()).into_any_element())
     }
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
