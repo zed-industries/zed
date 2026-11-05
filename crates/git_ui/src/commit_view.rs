@@ -2,9 +2,11 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, HiddenDiffHunkRenderer, MultiBuffer,
-    SelectionEffects, SplittableEditor, hover_markdown_style, multibuffer_context_lines,
-    scroll::Autoscroll,
+    Addon, Editor, EditorEvent, EditorSettings, HiddenDiffHunkRenderer, MultiBuffer, RowExt,
+    SplittableEditor,
+    display_map::{Block, DisplayRow, ToDisplayPoint},
+    hover_markdown_style, multibuffer_context_lines,
+    scroll::ScrollAnchor,
 };
 use futures_lite::future::yield_now;
 use git::repository::{CommitDetails, RepoPath};
@@ -348,7 +350,7 @@ impl CommitView {
         let load_diff_task = cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
-            let mut scroll_target = None;
+            let mut target_buffer_id = None;
 
             // TODO!: Update this such that, if `reveal_file` is set, we handle
             // that first instead of doing the regular ordering.
@@ -400,6 +402,9 @@ impl CommitView {
 
                 let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
                 let buffer_id = cx.update(|_, cx| buffer.read(cx).remote_id())?;
+                if should_reveal_file {
+                    target_buffer_id = Some(buffer_id);
+                };
 
                 let status_code = if is_created {
                     StatusCode::Added
@@ -436,13 +441,13 @@ impl CommitView {
                     build_buffer_diff(old_text, &buffer, &language_registry, cx).await?
                 };
 
-                let (excerpt_ranges, path, scroll_point) = cx.update(|_, cx| {
+                let (excerpt_ranges, path) = cx.update(|_, cx| {
                     let snapshot = buffer.read(cx).snapshot();
                     let path = PathKey::with_sort_prefix(
                         FILE_NAMESPACE_SORT_PREFIX,
                         snapshot.file().unwrap().path().clone(),
                     );
-                    let mut ranges = if is_binary {
+                    let ranges = if is_binary {
                         vec![language::Point::zero()..snapshot.max_point()]
                     } else {
                         let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
@@ -455,20 +460,8 @@ impl CommitView {
                                 .collect::<Vec<_>>()
                         }
                     };
-                    // TODO!: We need to update this to actually be the file header point.
-                    let scroll_point = match should_reveal_file {
-                        true => Some(language::Point::new(snapshot.max_point().row, 0)),
-                        false => None,
-                    };
-                    // The target row may be outside every hunk, so give it an excerpt of its own.
-                    if let Some(point) = scroll_point {
-                        ranges.push(point..point);
-                    }
-                    (ranges, path, scroll_point)
+                    (ranges, path)
                 })?;
-                if let Some(point) = scroll_point {
-                    scroll_target = Some((buffer.clone(), point));
-                }
 
                 // Batch the insertion of excerpts and yield between batches, to avoid blocking the main thread when a single file has many hunks.
                 const EXCERPT_BATCH_SIZE: usize = 10;
@@ -516,22 +509,52 @@ impl CommitView {
                         });
                     });
                 }
-                if let Some((buffer, point)) = scroll_target
-                    && let Some(anchor) = this
-                        .multibuffer
-                        .read(cx)
-                        .buffer_point_to_anchor(&buffer, point, cx)
-                {
+                if let Some(buffer_id) = target_buffer_id {
                     this.editor.update(cx, |editor, cx| {
                         editor.rhs_editor().update(cx, |editor, cx| {
-                            // Leave navigation history alone so that going back returns to where the commit was opened from.
-                            // TODO!: Update this to use `Autoscroll::top` instead.
-                            editor.change_selections(
-                                SelectionEffects::scroll(Autoscroll::center()).nav_history(false),
-                                window,
-                                cx,
-                                |selections| selections.select_ranges([anchor..anchor]),
-                            );
+                            let display_snapshot = editor.display_snapshot(cx);
+                            let max_display_row = display_snapshot.max_point().row();
+                            // TODO!: Once we're sure this is first run for the
+                            // file in `reveal_file`, we can probably constrain
+                            // the range to `0..2`, knowing that the buffer
+                            // header is always at the top and should take 2
+                            // display rows.
+                            display_snapshot
+                                .blocks_in_range(DisplayRow(0)..max_display_row)
+                                .find(|(_row, block)| match block {
+                                    Block::BufferHeader { excerpt, .. } => {
+                                        excerpt.buffer_id() == buffer_id
+                                    }
+                                    _ => false,
+                                })
+                                .inspect(|(row, block)| match block {
+                                    Block::BufferHeader { excerpt, .. } => {
+                                        target_buffer_id = None;
+                                        let anchor = excerpt.start_anchor;
+                                        let header_row = row.as_f64();
+                                        let anchor_row = anchor
+                                            .to_display_point(&display_snapshot)
+                                            .row()
+                                            .as_f64();
+                                        let offset = gpui::point(0.0, header_row - anchor_row);
+
+                                        editor.set_scroll_anchor(
+                                            ScrollAnchor { anchor, offset },
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                    _ => {}
+                                });
+
+                            // // Leave navigation history alone so that going back returns to where the commit was opened from.
+                            // // TODO!: Update this to use `Autoscroll::top` instead.
+                            // editor.change_selections(
+                            //     SelectionEffects::scroll(Autoscroll::center()).nav_history(false),
+                            //     window,
+                            //     cx,
+                            //     |selections| selections.select_ranges([anchor..anchor]),
+                            // );
                         });
                     });
                 }
