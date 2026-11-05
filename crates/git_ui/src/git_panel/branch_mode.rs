@@ -818,8 +818,10 @@ impl GitPanel {
         .detach();
 
         let picker_focus_handle = branch_list.focus_handle(cx);
+        let picker = branch_list.read(cx).picker.clone();
         menu.embedded_view(branch_list)
             .focus_content(picker_focus_handle)
+            .keep_open_while(move |cx| !picker.read(cx).query(cx).is_empty())
     }
 
     pub(super) fn render_no_branch_changes_ui(&self, cx: &Context<Self>) -> AnyElement {
