@@ -81,6 +81,9 @@ pub struct TerminalPanel {
     fs: Arc<dyn Fs>,
     workspace: WeakEntity<Workspace>,
     pending_serialization: Task<Option<()>>,
+    /// The terminal items in the last serialized state of the panel, used to delete the database
+    /// rows of terminals that are closed while the panel is alive.
+    serialized_item_ids: HashSet<ItemId>,
     pending_terminals_to_add: usize,
     restoring: bool,
     _restoration: Task<()>,
@@ -101,6 +104,7 @@ impl TerminalPanel {
             fs: workspace.app_state().fs.clone(),
             workspace: workspace.weak_handle(),
             pending_serialization: Task::ready(None),
+            serialized_item_ids: HashSet::default(),
             pending_terminals_to_add: 0,
             restoring: false,
             _restoration: Task::ready(()),
@@ -1052,23 +1056,53 @@ impl TerminalPanel {
                 .timer(Duration::from_millis(50))
                 .await;
             let terminal_panel = terminal_panel.upgrade()?;
-            let items = terminal_panel.update(cx, |terminal_panel, cx| {
-                SerializedItems::WithSplits(serialize_pane_group(
-                    &terminal_panel.center,
-                    &terminal_panel.active_pane,
-                    cx,
-                ))
-            });
+            let (serialized_panel, removed_item_ids, workspace_id) =
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    let serialized_panel = SerializedTerminalPanel {
+                        items: SerializedItems::WithSplits(serialize_pane_group(
+                            &terminal_panel.center,
+                            &terminal_panel.active_pane,
+                            cx,
+                        )),
+                        active_item_id: None,
+                    };
+                    let serialized_item_ids = serialized_panel
+                        .item_ids()
+                        .into_iter()
+                        .collect::<HashSet<_>>();
+                    let previous_item_ids = std::mem::replace(
+                        &mut terminal_panel.serialized_item_ids,
+                        serialized_item_ids,
+                    );
+                    // Terminals that left the panel either were closed, or were moved into the
+                    // workspace panes, which own their rows from then on.
+                    let (workspace_item_ids, workspace_id) = terminal_panel
+                        .workspace
+                        .read_with(cx, |workspace, cx| {
+                            let workspace_item_ids = workspace
+                                .items(cx)
+                                .map(|item| item.item_id().as_u64() as ItemId)
+                                .collect::<HashSet<_>>();
+                            (workspace_item_ids, workspace.database_id())
+                        })
+                        .unwrap_or_default();
+                    let removed_item_ids = previous_item_ids
+                        .into_iter()
+                        .filter(|item_id| {
+                            !terminal_panel.serialized_item_ids.contains(item_id)
+                                && !workspace_item_ids.contains(item_id)
+                        })
+                        .collect::<Vec<_>>();
+                    (serialized_panel, removed_item_ids, workspace_id)
+                });
+            let db = cx.update(|cx| TerminalDb::global(cx));
             cx.background_spawn(
                 async move {
-                    kvp.write_kvp(
-                        serialization_key,
-                        serde_json::to_string(&SerializedTerminalPanel {
-                            items,
-                            active_item_id: None,
-                        })?,
-                    )
-                    .await?;
+                    kvp.write_kvp(serialization_key, serde_json::to_string(&serialized_panel)?)
+                        .await?;
+                    if let Some(workspace_id) = workspace_id {
+                        db.delete_items(workspace_id, removed_item_ids).await?;
+                    }
                     anyhow::Ok(())
                 }
                 .log_err(),
@@ -1985,6 +2019,77 @@ mod tests {
                 .expect("Failed to read panel terminal title"),
             None,
             "the row of the stale panel terminal id should be cleaned up"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_closing_panel_terminal_deletes_its_row(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        let workspace = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, _| workspace.set_random_database_id());
+                workspace
+            })
+            .expect("Failed to read workspace");
+        let serialization_tasks = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.flush_all_serialization(window, cx)
+            })
+            .expect("Failed to flush workspace serialization");
+        for task in serialization_tasks {
+            task.await;
+        }
+        let (workspace_id, db) = workspace.read_with(cx, |workspace, cx| {
+            (
+                workspace
+                    .database_id()
+                    .expect("workspace should have a database id"),
+                TerminalDb::global(cx),
+            )
+        });
+
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        terminal_panel
+            .update_in(cx, |terminal_panel, window, cx| {
+                terminal_panel.add_terminal_shell(false, None, RevealStrategy::Never, window, cx)
+            })
+            .await
+            .expect("Failed to spawn a panel terminal");
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let terminal_view_id = terminal_panel.read_with(cx, |terminal_panel, cx| {
+            terminal_panel
+                .active_pane
+                .read(cx)
+                .active_item()
+                .expect("the panel should have a terminal")
+                .item_id()
+        });
+        let item_id = terminal_view_id.as_u64() as ItemId;
+        db.save_custom_title(item_id, workspace_id, Some("panel".to_string()))
+            .await
+            .expect("Failed to save panel terminal title");
+
+        terminal_panel.update_in(cx, |terminal_panel, window, cx| {
+            terminal_panel.active_pane.update(cx, |pane, cx| {
+                pane.remove_item(terminal_view_id, false, false, window, cx)
+            })
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+
+        assert_eq!(
+            db.get_custom_title(item_id, workspace_id)
+                .expect("Failed to read panel terminal title"),
+            None,
+            "closing a panel terminal should delete its row"
         );
     }
 
