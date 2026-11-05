@@ -40,6 +40,8 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
     let code = match key {
         "space" => SPACE_KEY,
         "backspace" => BACKSPACE_KEY,
+        "enter" => ENTER_KEY,
+        "tab" => TAB_KEY,
         "escape" => u32::from(ESCAPE_KEY),
         "up" => NSUpArrowFunctionKey,
         "down" => NSDownArrowFunctionKey,
@@ -569,4 +571,14 @@ fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
         let _: () = msg_send![keyboard, release];
     }
     String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_key_to_native_enter_and_tab() {
+        assert_eq!(key_to_native("enter"), "\r");
+        assert_eq!(key_to_native("tab"), "\t");
+    }
 }
