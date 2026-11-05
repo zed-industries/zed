@@ -1525,29 +1525,18 @@ impl NativeAgent {
         &mut self,
         project: Entity<Project>,
         event: &project::Event,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
         let project_id = project.entity_id();
         let Some(state) = self.projects.get_mut(&project_id) else {
             return;
         };
         match event {
-            project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
-                // Opening a file outside the project adds and removes an
-                // invisible worktree, which the context doesn't include.
-                let context_paths = state
-                    .project_context
-                    .read(cx)
-                    .worktrees
-                    .iter()
-                    .map(|worktree| worktree.abs_path.clone());
-                let visible_paths = project
-                    .read(cx)
-                    .visible_worktrees(cx)
-                    .map(|worktree| worktree.read(cx).abs_path());
-                if !context_paths.eq(visible_paths) {
-                    state.project_context_needs_refresh.send(()).ok();
-                }
+            // Only visible worktrees change these paths. Opening a file outside
+            // the project adds and removes an invisible worktree, which the
+            // context doesn't include.
+            project::Event::WorktreePathsChanged { .. } => {
+                state.project_context_needs_refresh.send(()).ok();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
                 if items.iter().any(|(path, _, _)| {
@@ -8123,6 +8112,116 @@ mod internal_tests {
                 "deploy should be excluded from catalog: {catalog:?}"
             );
         });
+    }
+
+    async fn agent_with_project_session(
+        fs: Arc<FakeFs>,
+        project: &Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> (Entity<NativeAgent>, Entity<acp_thread::AcpThread>) {
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+        let connection = NativeAgentConnection(agent.clone());
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        (agent, acp_thread)
+    }
+
+    fn context_worktree_paths(
+        agent: &Entity<NativeAgent>,
+        project: &Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> Vec<Arc<Path>> {
+        agent.read_with(cx, |agent, cx| {
+            agent.projects[&project.entity_id()]
+                .project_context
+                .read(cx)
+                .worktrees
+                .iter()
+                .map(|worktree| worktree.abs_path.clone())
+                .collect()
+        })
+    }
+
+    #[gpui::test]
+    async fn test_project_context_keeps_worktree_readded_during_rebuild(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/a", json!({})).await;
+        // Enough skills that the rebuild from the removal is still loading
+        // them when the re-added worktree arrives.
+        for index in 0..20 {
+            let name = format!("skill-{index}");
+            fs.insert_tree(
+                agent_skills::global_skills_dir().join(&name),
+                json!({ "SKILL.md": format!("---\nname: {name}\ndescription: test\n---\n") }),
+            )
+            .await;
+        }
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let (agent, _acp_thread) = agent_with_project_session(fs, &project, cx).await;
+        assert_eq!(
+            context_worktree_paths(&agent, &project, cx),
+            [Arc::from(Path::new("/a"))]
+        );
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.visible_worktrees(cx).next().unwrap().read(cx).id()
+        });
+        project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+        project
+            .update(cx, |project, cx| project.create_worktree("/a", true, cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            context_worktree_paths(&agent, &project, cx),
+            [Arc::from(Path::new("/a"))]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_invisible_worktrees_dont_rebuild_project_context(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/a", json!({})).await;
+        fs.insert_tree("/outside", json!({ "file.txt": "text" }))
+            .await;
+        // Each rebuild lists the global skills dir.
+        fs.insert_tree(agent_skills::global_skills_dir(), json!({}))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let (_agent, _acp_thread) = agent_with_project_session(fs.clone(), &project, cx).await;
+        let worktree_count =
+            |cx: &mut TestAppContext| project.read_with(cx, |project, cx| project.worktrees(cx).count());
+        let read_dir_count = fs.read_dir_call_count();
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/outside/file.txt", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(worktree_count(cx), 2);
+        drop(buffer);
+        // Dropped entities are only freed when effects are next flushed.
+        cx.update(|_| {});
+        cx.run_until_parked();
+        assert_eq!(worktree_count(cx), 1);
+
+        assert_eq!(fs.read_dir_call_count(), read_dir_count);
     }
 
     #[gpui::test]
