@@ -40,11 +40,12 @@ use crate::linux::{
     select_backend,
 };
 use gpui::{
-    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    ForegroundExecutor, GraphicalEnvironment, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, PowerMode, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
-    WindowButtonLayout, WindowParams, WindowingModes, WindowingRequest,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardContentTypes,
+    ClipboardItem, ClipboardReadError, CursorStyle, ForegroundExecutor, GraphicalEnvironment,
+    Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, PowerMode,
+    Result, RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout,
+    WindowParams, WindowingModes, WindowingRequest,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -1175,6 +1176,10 @@ impl Platform for LinuxPlatform {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.connection.borrow().read_from_clipboard()
+    }
+
+    fn clipboard_content_types(&self) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        self.connection.borrow().clipboard_content_types()
     }
 
     fn add_recent_document(&self, _path: &Path) {}

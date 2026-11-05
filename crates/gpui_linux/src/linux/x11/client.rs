@@ -56,11 +56,11 @@ use crate::linux::{
 use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
 
 use gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, FileDropEvent, FrameRequestSource,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay,
-    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
-    RequestFrameOptions, ScrollDelta, Size, TouchPhase, WindowButtonLayout, WindowParams,
-    WindowVisibility, point, px,
+    AnyWindowHandle, Bounds, ClipboardContentTypes, ClipboardItem, ClipboardReadError, CursorStyle,
+    FileDropEvent, FrameRequestSource, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    Pixels, PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout,
+    PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size, Task, TouchPhase,
+    WindowButtonLayout, WindowParams, WindowVisibility, point, px,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -1861,6 +1861,12 @@ impl X11Client {
             .get_any(clipboard::ClipboardKind::Clipboard)
             .context("X11: Failed to read from clipboard (clipboard)")
             .log_with_level(log::Level::Debug)
+    }
+
+    pub(crate) fn clipboard_content_types(
+        &self,
+    ) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        Task::ready(Err(ClipboardReadError::Unavailable))
     }
 
     pub(crate) fn active_window(&self) -> Option<AnyWindowHandle> {
