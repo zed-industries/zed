@@ -442,28 +442,22 @@ impl LanguageRegistry {
         grammar_name: Option<Arc<str>>,
         matcher: Arc<LanguageMatcher>,
         hidden: bool,
-        manifest_name: Option<ManifestName>,
+        _manifest_name: Option<ManifestName>,
         load: LanguageLoader,
     ) {
-        let state = &mut *self.state.write();
-
-        // Native registrations are never rejected, so this is only `None` for extensions.
-        let was_loaded = state.available_languages.register(
-            name.clone(),
+        self.register_languages(vec![LanguageRegistration {
+            name,
             grammar_name,
             matcher,
             hidden,
-            manifest_name,
             load,
-            LanguageOrigin::Native,
-        );
-        if was_loaded == Some(true) {
-            state.languages.retain(|language| language.name() != name);
-        }
+        }]);
+    }
 
-        state.version += 1;
-        state.reload_count += 1;
-        *state.subscription.0.borrow_mut() = ();
+    /// Adds several languages to the registry as a single update, so that the
+    /// language detection index is only rebuilt once.
+    pub fn register_languages(&self, registrations: Vec<LanguageRegistration>) {
+        self.update_languages(&[], &[], registrations, LanguageOrigin::Native);
     }
 
     /// Removes and registers extension languages and removes grammars as a single
@@ -477,45 +471,42 @@ impl LanguageRegistry {
         grammars_to_remove: &[Arc<str>],
         registrations: Vec<LanguageRegistration>,
     ) -> ExtensionLanguagesUpdateOutcome {
-        let state = &mut *self.state.write();
+        self.update_languages(
+            languages_to_remove,
+            grammars_to_remove,
+            registrations,
+            LanguageOrigin::Extension,
+        )
+    }
 
-        let removed = state
-            .available_languages
-            .remove_extension_languages(languages_to_remove);
-        let mut reloaded = SmallVec::<[LanguageName; 4]>::new();
+    fn update_languages(
+        &self,
+        languages_to_remove: &[LanguageName],
+        grammars_to_remove: &[Arc<str>],
+        registrations: Vec<LanguageRegistration>,
+        origin: LanguageOrigin,
+    ) -> ExtensionLanguagesUpdateOutcome {
+        let state = &mut *self.state.write();
         let registrations = registrations
             .into_iter()
-            .map(|registration| {
-                let name = registration.name;
-                match state.available_languages.register(
-                    name.clone(),
-                    registration.grammar_name,
-                    registration.matcher,
-                    registration.hidden,
-                    None,
-                    registration.load,
-                    LanguageOrigin::Extension,
-                ) {
-                    Some(was_loaded) => {
-                        if was_loaded {
-                            reloaded.push(name);
-                        }
-                        LanguageRegistrationStatus::Registered
-                    }
-                    None => {
-                        log::warn!(
-                            "not registering extension language {name}: \
-                            a language with this name is already registered outside of extensions"
-                        );
-                        LanguageRegistrationStatus::Rejected
-                    }
-                }
+            .map(|registration| AvailableLanguage {
+                id: LanguageId::new(),
+                name: registration.name,
+                grammar: registration.grammar_name,
+                matcher: registration.matcher,
+                hidden: registration.hidden,
+                load: registration.load,
+                loaded: false,
+                origin,
             })
-            .collect::<SmallVec<[LanguageRegistrationStatus; 8]>>();
+            .collect();
+        let update = state
+            .available_languages
+            .update(languages_to_remove, registrations);
 
         state.languages.retain(|language| {
             let name = language.name();
-            !removed.contains(&name) && !reloaded.contains(&name)
+            !update.removed.contains(&name) && !update.reloaded.contains(&name)
         });
         state.grammars.retain(|name, grammar| {
             matches!(grammar, AvailableGrammar::Native(_)) || !grammars_to_remove.contains(name)
@@ -523,15 +514,18 @@ impl LanguageRegistry {
 
         let changed = !languages_to_remove.is_empty()
             || !grammars_to_remove.is_empty()
-            || registrations.iter().any(|status| status.is_registered());
+            || update
+                .registrations
+                .iter()
+                .any(|status| status.is_registered());
         if changed {
             state.version += 1;
             state.reload_count += 1;
             *state.subscription.0.borrow_mut() = ();
         }
         ExtensionLanguagesUpdateOutcome {
-            removed,
-            registrations,
+            removed: update.removed,
+            registrations: update.registrations,
         }
     }
 
@@ -604,7 +598,6 @@ impl LanguageRegistry {
             grammar: language.config.grammar.clone(),
             matcher: language.config.matcher.clone(),
             hidden: language.config.hidden,
-            manifest_name: None,
             load: Arc::new(|| async { Err(anyhow!("already loaded")) }.boxed()),
             loaded: true,
             origin: LanguageOrigin::Native,

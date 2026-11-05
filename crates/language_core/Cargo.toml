@@ -12,6 +12,7 @@ doctest = false
 anyhow.workspace = true
 bitflags.workspace = true
 collections.workspace = true
+globset.workspace = true
 gpui_shared_string.workspace = true
 gpui_util.workspace = true
 log.workspace = true
