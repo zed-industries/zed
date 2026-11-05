@@ -1,10 +1,3 @@
-//! Nested "type declaration" popover for the hover popover.
-//!
-//! When the mouse rests on an identifier inside a hover popover (e.g. the
-//! `Foo` in `let x: Foo<Bar>`), we look the name up among the project's
-//! workspace symbols (LSP). If it names a type, a second popover shows that
-//! type's declaration source; clicking it jumps to the declaration.
-
 use std::{ops::Range, time::Duration};
 
 use gpui::{
@@ -22,21 +15,16 @@ use crate::{
     hover_popover::{hide_hover, hover_markdown_style},
 };
 
-/// How long the mouse has to rest on a word before we look it up.
 const RESOLVE_DELAY: Duration = Duration::from_millis(350);
-/// Grace period for moving the mouse from the word into the nested popover.
+// Gives the mouse time to travel from the word into the nested popover.
 const HIDE_DELAY: Duration = Duration::from_millis(300);
-/// Longer declarations are cut off (the popover is a preview, not an editor).
 const MAX_DECLARATION_LINES: u32 = 25;
-/// At most this many doc-comment / attribute lines are pulled in above an item.
 const MAX_LEADING_LINES: u32 = 30;
-/// Lines shown when the language has no outline query to find the item's extent.
 const FALLBACK_DECLARATION_LINES: u32 = 10;
 
 pub struct TypeDeclarationPreview {
     editor: WeakEntity<Editor>,
     project: Entity<Project>,
-    /// Word currently under the mouse in the parent hover popover.
     hovered_word: Option<SharedString>,
     declaration: Option<Declaration>,
     popover_hovered: bool,
@@ -50,11 +38,10 @@ struct Declaration {
     buffer: Entity<Buffer>,
     point: Point,
     location: SharedString,
-    /// Where to show the popover, in window coordinates.
+    // In window coordinates.
     position: gpui::Point<Pixels>,
 }
 
-/// What we learn about a type, before it's turned into UI.
 struct ResolvedDeclaration {
     buffer: Entity<Buffer>,
     point: Point,
@@ -76,7 +63,6 @@ impl TypeDeclarationPreview {
         }
     }
 
-    /// Called from the hover popover's markdown on every mouse move.
     pub fn hover_word(
         &mut self,
         word: Option<HoveredWord>,
@@ -270,8 +256,6 @@ fn is_type_kind(kind: SymbolKind) -> bool {
     )
 }
 
-/// Picks the declaration of the type called exactly `name`, preferring
-/// declarations inside the project over dependencies.
 fn pick_type_symbol(symbols: Vec<Symbol>, name: &str) -> Option<Symbol> {
     symbols
         .into_iter()
@@ -301,8 +285,8 @@ async fn resolve_declaration(
         let position = snapshot.clip_point_utf16(symbol.range.start, Bias::Left);
         let point = snapshot.point_utf16_to_point(position);
 
-        // Use the language's outline to find the full extent of the item
-        // (including doc comments / attributes), else show a few lines.
+        // The outline knows the item's full extent; without one (e.g. no outline
+        // query for the language) we fall back to a fixed number of lines.
         let items = snapshot.symbols_containing(point, None);
         let item = items
             .iter()
@@ -361,8 +345,8 @@ async fn resolve_declaration(
     })))
 }
 
-/// Walks up from `item_start` over the doc comments, attributes and
-/// decorators directly attached to the item (no blank line in between).
+// Outline items don't include the doc comments, attributes and decorators
+// attached to them, so walk up over those lines too.
 fn leading_annotation_start(item_start: u32, line: impl Fn(u32) -> String) -> u32 {
     let is_annotation = |text: &str| {
         let text = text.trim_start();
@@ -377,7 +361,6 @@ fn leading_annotation_start(item_start: u32, line: impl Fn(u32) -> String) -> u3
     start
 }
 
-/// Inclusive row range to show, and whether it was cut short.
 fn snippet_rows(
     item_rows: Option<Range<u32>>,
     symbol_row: u32,
@@ -393,7 +376,6 @@ fn snippet_rows(
     }
 }
 
-/// Removes the indentation shared by all non-blank lines.
 fn dedent(code: &str) -> String {
     let indent = code
         .lines()
@@ -407,7 +389,8 @@ fn dedent(code: &str) -> String {
         .join("\n")
 }
 
-/// Wraps code in a fence that can't be closed by backticks inside the code.
+// The fence must be longer than any backtick run in the code, or the code
+// could close it early.
 fn fenced_code_block(code: &str) -> String {
     let longest_run = code.split(|c| c != '`').map(str::len).max().unwrap_or(0);
     let fence = "`".repeat((longest_run + 1).max(3));
