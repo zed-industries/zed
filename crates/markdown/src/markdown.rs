@@ -67,6 +67,38 @@ const MERMAID_ZOOM_DEBOUNCE: Duration = Duration::from_millis(300);
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
 pub type CodeSpanLinkCallback = Arc<dyn Fn(&str, &App) -> Option<SharedString> + 'static>;
 type UrlHoverCallback = Rc<dyn Fn(Option<SharedString>, &mut Window, &mut App)>;
+type WordHoverCallback = Rc<dyn Fn(Option<HoveredWord>, &mut Window, &mut App)>;
+
+/// An identifier under the mouse cursor, reported by [`MarkdownElement::on_word_hover`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HoveredWord {
+    pub text: SharedString,
+    /// Byte range of the identifier in the markdown source.
+    pub source_range: Range<usize>,
+    /// Mouse position in window coordinates.
+    pub position: Point<Pixels>,
+}
+
+/// Returns the byte range of the identifier (`[A-Za-z_][A-Za-z0-9_]*`, plus
+/// non-ASCII letters) touching `ix` in `source`, if any.
+pub fn identifier_at(source: &str, ix: usize) -> Option<Range<usize>> {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    if ix > source.len() || !source.is_char_boundary(ix) {
+        return None;
+    }
+    let start = source[..ix]
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| is_ident(*c))
+        .last()
+        .map_or(ix, |(i, _)| i);
+    let end = source[ix..]
+        .char_indices()
+        .find(|(_, c)| !is_ident(*c))
+        .map_or(source.len(), |(i, _)| ix + i);
+    let first = source[start..end].chars().next()?;
+    (first.is_alphabetic() || first == '_').then_some(start..end)
+}
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
 /// Invoked when a mermaid diagram's zoom level changes (via scroll gesture or
@@ -1784,6 +1816,7 @@ pub struct MarkdownElement {
     input_focus_handle: Option<FocusHandle>,
     on_url_click: Option<Rc<dyn Fn(SharedString, &mut Window, &mut App)>>,
     on_url_hover: Option<UrlHoverCallback>,
+    on_word_hover: Option<WordHoverCallback>,
     code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
@@ -1811,6 +1844,7 @@ impl MarkdownElement {
             input_focus_handle: None,
             on_url_click: None,
             on_url_hover: None,
+            on_word_hover: None,
             code_span_link: None,
             on_source_click: None,
             on_checkbox_toggle: None,
@@ -1875,6 +1909,16 @@ impl MarkdownElement {
         handler: impl Fn(Option<SharedString>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_url_hover = Some(Rc::new(handler));
+        self
+    }
+
+    /// Called on mouse move with the identifier under the cursor (or `None`
+    /// when the cursor isn't over one, or has left the element).
+    pub fn on_word_hover(
+        mut self,
+        handler: impl Fn(Option<HoveredWord>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_word_hover = Some(Rc::new(handler));
         self
     }
 
@@ -2357,6 +2401,7 @@ impl MarkdownElement {
 
         let on_open_url = self.on_url_click.take();
         let on_url_hover = self.on_url_hover.take();
+        let on_word_hover = self.on_word_hover.take();
         let on_source_click = self.on_source_click.take();
 
         self.on_mouse_event(window, cx, {
@@ -2506,6 +2551,17 @@ impl MarkdownElement {
                                 .footnote_ref_for_source_index(source_index)
                                 .is_some()
                         });
+                    if let Some(on_word_hover) = on_word_hover.as_ref() {
+                        let word = source_index.and_then(|source_index| {
+                            let range = identifier_at(&markdown.source, source_index)?;
+                            Some(HoveredWord {
+                                text: markdown.source[range.clone()].to_string().into(),
+                                source_range: range,
+                                position: event.position,
+                            })
+                        });
+                        on_word_hover(word, window, cx);
+                    }
                     if let Some(on_url_hover) = on_url_hover.as_ref() {
                         on_url_hover(hovered_url, window, cx);
                     }
@@ -9491,4 +9547,33 @@ mod tests {
         (321, "- a\n  > b\n  ```\n  c\n  ```\n- d\n", &["c\n"]),
         (324, "1. ```\n   foo\n   ```\n\n   bar\n", &["foo\n"]),
     ];
+}
+
+#[cfg(test)]
+mod identifier_at_tests {
+    use super::identifier_at;
+
+    #[test]
+    fn finds_identifier_around_index() {
+        let source = "let x: HashMap<String, u32>";
+        let at = |ix| identifier_at(source, ix).map(|range| &source[range]);
+        assert_eq!(at(7), Some("HashMap"));
+        assert_eq!(at(10), Some("HashMap"));
+        // Right after the identifier still counts as touching it.
+        assert_eq!(at(14), Some("HashMap"));
+        assert_eq!(at(15), Some("String"));
+        assert_eq!(at(25), Some("u32"));
+        assert_eq!(at(5), Some("x"));
+        assert_eq!(at(6), None);
+    }
+
+    #[test]
+    fn rejects_numbers_and_handles_unicode() {
+        assert_eq!(identifier_at("size = 42", 8), None);
+        let source = "typ Žluťoučký";
+        let range = identifier_at(source, 6).unwrap();
+        assert_eq!(&source[range], "Žluťoučký");
+        // Not on a char boundary.
+        assert_eq!(identifier_at(source, 5), None);
+    }
 }

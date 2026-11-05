@@ -18,7 +18,7 @@ use language::{CharKind, DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{MultiBufferOffset, MultiBufferSnapshot, ToOffset, ToPoint};
-use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
+use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use settings::Settings;
 use std::{
     borrow::Cow,
@@ -35,6 +35,7 @@ use workspace::{OpenOptions, OpenVisible, Workspace};
 use crate::debugger_hover::{
     DEBUGGER_HOVER_MIN_WIDTH, DebuggerHoverView, build_debugger_hover_view,
 };
+use crate::hover_type_declaration::TypeDeclarationPreview;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
@@ -208,6 +209,7 @@ pub fn hover_at_inlay(
                 editor.hover_state.info_popovers = vec![InfoPopover {
                     symbol_range,
                     fallback_state: None,
+                    type_declaration: None,
                     parsed_content,
                     debugger_hover: None,
                     scroll_handle: ScrollHandle::new(),
@@ -473,6 +475,7 @@ fn show_hover(
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
                     fallback_state: None,
+                    type_declaration: None,
                     parsed_content,
                     debugger_hover: None,
                     scroll_handle,
@@ -527,6 +530,7 @@ fn show_hover(
                     info_popovers.push(InfoPopover {
                         symbol_range: RangeInEditor::Text(range),
                         fallback_state: None,
+                        type_declaration: None,
                         parsed_content: None,
                         debugger_hover: Some(view),
                         scroll_handle: ScrollHandle::new(),
@@ -576,6 +580,7 @@ fn show_hover(
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
                     fallback_state,
+                    type_declaration: None,
                     parsed_content,
                     debugger_hover: None,
                     scroll_handle,
@@ -606,6 +611,7 @@ fn show_hover(
                     info_popovers.push(InfoPopover {
                         symbol_range: RangeInEditor::Text(multi_buffer_range),
                         fallback_state: None,
+                        type_declaration: None,
                         parsed_content,
                         debugger_hover: None,
                         scroll_handle,
@@ -671,6 +677,7 @@ fn show_hover(
                                 anchor,
                                 last_bounds: Rc::new(Cell::new(None)),
                                 fallback_state: None,
+                                type_declaration: None,
                                 _subscriptions: vec![subscription],
                             });
                             cx.notify();
@@ -1328,6 +1335,7 @@ impl HoverState {
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
         text_layout_details: &TextLayoutDetails,
+        project: Option<&Entity<Project>>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
@@ -1391,7 +1399,7 @@ impl HoverState {
             elements.push(diagnostic_popover.render(max_size, window, cx));
         }
         for info_popover in &mut self.info_popovers {
-            elements.push(info_popover.render(max_size, window, cx));
+            elements.push(info_popover.render(max_size, project, window, cx));
         }
 
         Some((point, elements))
@@ -1521,6 +1529,8 @@ pub struct InfoPopover {
     pub anchor: Option<Anchor>,
     pub last_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     fallback_state: Option<FallbackHoverState>,
+    /// Nested popover showing the declaration of a type hovered inside this one.
+    type_declaration: Option<Entity<TypeDeclarationPreview>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1548,11 +1558,24 @@ impl InfoPopover {
     pub(crate) fn render(
         &mut self,
         max_size: Size<Pixels>,
+        project: Option<&Entity<Project>>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let this = cx.entity().downgrade();
+        let type_declaration = match (&self.parsed_content, project) {
+            (Some(_), Some(project)) => Some(
+                self.type_declaration
+                    .get_or_insert_with(|| {
+                        let editor = this.clone();
+                        let project = project.clone();
+                        cx.new(|_| TypeDeclarationPreview::new(editor, project))
+                    })
+                    .clone(),
+            ),
+            _ => None,
+        };
         let this2 = this.clone();
         let bounds_cell = self.last_bounds.clone();
         let parsed_content = self.parsed_content.clone();
@@ -1656,6 +1679,20 @@ impl InfoPopover {
                                                         border: false,
                                                     },
                                                 )
+                                                .when_some(
+                                                    type_declaration.clone(),
+                                                    |element, preview| {
+                                                        element.on_word_hover(
+                                                            move |word, window, cx| {
+                                                                preview.update(cx, |preview, cx| {
+                                                                    preview.hover_word(
+                                                                        word, window, cx,
+                                                                    )
+                                                                })
+                                                            },
+                                                        )
+                                                    },
+                                                )
                                                 .on_url_click(move |link, window, cx| {
                                                     open_markdown_url(
                                                         this2
@@ -1682,6 +1719,7 @@ impl InfoPopover {
                     )
                 },
             )
+            .children(type_declaration)
             .into_any_element()
     }
 

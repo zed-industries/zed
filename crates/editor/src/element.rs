@@ -4500,11 +4500,13 @@ impl EditorElement {
         }
 
         let hover_popovers = self.editor.update(cx, |editor, cx| {
+            let project = editor.project.clone();
             editor.hover_state.render(
                 snapshot,
                 visible_display_row_range.clone(),
                 max_size,
                 &editor.text_layout_details(window, cx),
+                project.as_ref(),
                 window,
                 cx,
             )
