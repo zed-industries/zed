@@ -566,9 +566,6 @@ impl SplittableEditor {
     /// Split panes share a scroll position, but only the scrolled pane emits
     /// `ScrollPositionChanged`, so the other pane's sticky headers are refreshed here.
     fn refresh_sticky_headers(editor: &Entity<Editor>, cx: &mut App) {
-        if !EditorSettings::get_global(cx).sticky_scroll.enabled {
-            return;
-        }
         editor.update(cx, |editor, cx| {
             let snapshot = editor.display_snapshot(cx);
             editor.refresh_sticky_headers(&snapshot, cx);
@@ -638,6 +635,7 @@ impl SplittableEditor {
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_runnables();
             editor.enable_single_excerpt_sticky_headers();
+            editor.enable_excerpt_contexts(cx);
             editor.disable_code_lens(cx);
             editor.disable_inline_diagnostics();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
@@ -765,6 +763,7 @@ impl SplittableEditor {
             editor.disable_lsp_data();
             editor.disable_runnables();
             editor.enable_single_excerpt_sticky_headers();
+            editor.enable_excerpt_contexts(cx);
             editor.disable_diagnostics(cx);
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
 
@@ -1348,7 +1347,8 @@ impl SplittableEditor {
                 let diff_snapshot = diff.read(cx).snapshot(cx);
                 let base_text_buffer_snapshot = base_text_buffer.read(cx).snapshot();
 
-                let mut paired_ranges: Vec<(Range<Point>, ExcerptRange<text::Anchor>)> = Vec::new();
+                let mut paired_ranges: Vec<(ExcerptRange<Point>, ExcerptRange<text::Anchor>)> =
+                    Vec::new();
 
                 let mut have_excerpt = false;
                 let mut did_merge = false;
@@ -1361,24 +1361,42 @@ impl SplittableEditor {
                         &diff_snapshot,
                         &main_buffer_snapshot,
                     );
+                    // Keep the primary range, which locates the excerpt's change, e.g. for
+                    // excerpt contexts.
+                    let lhs_primary = buffer_range_to_base_text_range(
+                        &info.primary.to_point(&main_buffer_snapshot),
+                        &diff_snapshot,
+                        &main_buffer_snapshot,
+                    );
+                    let lhs_primary = lhs_primary.start.max(lhs_context.start)
+                        ..lhs_primary.end.min(lhs_context.end);
 
-                    if let Some((prev_lhs_context, prev_rhs_range)) = paired_ranges.last_mut()
-                        && prev_lhs_context.end >= lhs_context.start
+                    if let Some((prev_lhs_range, prev_rhs_range)) = paired_ranges.last_mut()
+                        && prev_lhs_range.context.end >= lhs_context.start
                     {
                         did_merge = true;
-                        prev_lhs_context.end = lhs_context.end;
+                        prev_lhs_range.context.end = lhs_context.end;
+                        prev_lhs_range.primary.end = lhs_primary.end;
                         prev_rhs_range.context.end = info.context.end;
+                        prev_rhs_range.primary.end = info.primary.end;
                         continue;
                     }
 
-                    paired_ranges.push((lhs_context, info));
+                    paired_ranges.push((
+                        ExcerptRange {
+                            context: lhs_context,
+                            primary: lhs_primary,
+                        },
+                        info,
+                    ));
                 }
 
                 let (lhs_ranges, rhs_ranges): (Vec<_>, Vec<_>) = paired_ranges.into_iter().unzip();
                 let lhs_ranges = lhs_ranges
                     .into_iter()
-                    .map(|range| {
-                        ExcerptRange::new(base_text_buffer_snapshot.anchor_range_outside(range))
+                    .map(|range| ExcerptRange {
+                        context: base_text_buffer_snapshot.anchor_range_outside(range.context),
+                        primary: base_text_buffer_snapshot.anchor_range_outside(range.primary),
                     })
                     .collect::<Vec<_>>();
 
@@ -2866,6 +2884,66 @@ mod tests {
                 cx,
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_lhs_excerpts_keep_primary_range(cx: &mut gpui::TestAppContext) {
+        use text::ToPoint as _;
+
+        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+
+        let base_text = "one\ntwo\nthree\nfour\nfive\n";
+        let current_text = "one\ntwo\nTHREE\nfour\nfive\n";
+        let (buffer, diff) = buffer_with_diff(base_text, current_text, cx);
+        let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        });
+        cx.run_until_parked();
+
+        let ranges = diff
+            .read_with(cx, |diff, cx| diff.snapshot(cx))
+            .hunks(&buffer_snapshot)
+            .map(|hunk| hunk.range)
+            .collect::<Vec<_>>();
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                ranges,
+                1,
+                diff,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // With one context line, the excerpt starts a row above its change on both sides.
+        let rows = |multibuffer: &Entity<MultiBuffer>, cx: &mut VisualTestContext| {
+            multibuffer.read_with(cx, |multibuffer, cx| {
+                let snapshot = multibuffer.snapshot(cx);
+                snapshot
+                    .excerpts()
+                    .map(|excerpt| {
+                        let buffer = snapshot
+                            .buffer_for_id(excerpt.context.start.buffer_id)
+                            .unwrap();
+                        (
+                            excerpt.context.start.to_point(buffer).row,
+                            excerpt.primary.start.to_point(buffer).row,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+        };
+        let (rhs_multibuffer, lhs_multibuffer) = editor.read_with(cx, |editor, _| {
+            (
+                editor.rhs_multibuffer.clone(),
+                editor.lhs.as_ref().unwrap().multibuffer.clone(),
+            )
+        });
+        assert_eq!(rows(&rhs_multibuffer, cx), vec![(1, 2)]);
+        assert_eq!(rows(&lhs_multibuffer, cx), vec![(1, 2)]);
     }
 
     #[gpui::test]
