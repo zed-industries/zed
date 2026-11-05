@@ -2460,18 +2460,18 @@ impl GitStore {
                 }
 
                 if is_active_repo_removed {
-                    if let Some((&repo_id, _)) = self.repositories.iter().next() {
-                        self.active_repo_id = Some(repo_id);
-                        cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(repo_id)));
-                    } else {
-                        self.active_repo_id = None;
-                        cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
-                    }
+                    self.select_fallback_active_repository(cx);
                 }
             }
             _ => {}
         }
     }
+
+    fn select_fallback_active_repository(&mut self, cx: &mut Context<Self>) {
+        self.active_repo_id = self.repositories.keys().next().copied();
+        cx.emit(GitStoreEvent::ActiveRepositoryChanged(self.active_repo_id));
+    }
+
     fn on_repository_event(
         &mut self,
         repo: Entity<Repository>,
@@ -3396,8 +3396,8 @@ impl GitStore {
                 client.send(update).log_err();
             }
             if this.active_repo_id == Some(id) {
-                this.active_repo_id = None;
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
+                this.active_repo_id = this.repositories.keys().next().copied();
+                cx.emit(GitStoreEvent::ActiveRepositoryChanged(this.active_repo_id));
             }
             cx.emit(GitStoreEvent::RepositoryRemoved(id));
         });
@@ -11902,6 +11902,71 @@ mod tests {
                 "regular file should have a git diff base"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_merge_base_list_announces_a_repeated_reload_failure_once(
+        cx: &mut TestAppContext,
+    ) {
+        use diff_buffer_list::{BranchDiffEvent, DiffBase, DiffBufferList};
+        use std::{cell::Cell, rc::Rc};
+        use util::path;
+
+        init_test(cx);
+
+        let project_root = Path::new(path!("/project"));
+        let dot_git = project_root.join(".git");
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(project_root, json!({ ".git": {}, "file.txt": "head\n" }))
+            .await;
+        fs.set_head_and_index_for_repo(&dot_git, &[("file.txt", "head\n".into())]);
+        // A merge base blob that can't be read makes every tree diff fail.
+        fs.with_git_state(&dot_git, false, |state| {
+            state
+                .merge_base_contents
+                .insert(repo_path("file.txt"), Oid::from_bytes(&[1; 20]).unwrap());
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [project_root], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        let list = cx.new(|cx| {
+            DiffBufferList::new(
+                DiffBase::Merge {
+                    base_ref: "origin/main".into(),
+                },
+                git_store,
+                None,
+                cx,
+            )
+        });
+        let file_list_changes = Rc::new(Cell::new(0));
+        cx.update(|cx| {
+            let file_list_changes = file_list_changes.clone();
+            cx.subscribe(&list, move |_, event, _| {
+                if matches!(event, BranchDiffEvent::FileListChanged) {
+                    file_list_changes.set(file_list_changes.get() + 1);
+                }
+            })
+            .detach();
+        });
+        cx.run_until_parked();
+        list.read_with(cx, |list, _| assert!(list.tree_diff_error().is_some()));
+        assert_eq!(file_list_changes.get(), 1);
+
+        for index_contents in ["staged\n", "head\n"] {
+            fs.set_index_for_repo(&dot_git, &[("file.txt", index_contents.into())]);
+            cx.run_until_parked();
+        }
+        list.read_with(cx, |list, _| assert!(list.tree_diff_error().is_some()));
+        assert_eq!(
+            file_list_changes.get(),
+            1,
+            "reloads that fail the same way again must not announce a new file list"
+        );
     }
 
     #[gpui::test]
