@@ -3506,66 +3506,64 @@ mod tests {
     }
 
     #[gpui::test]
+    fn submenu_closes_on_hover_elsewhere(cx: &mut TestAppContext) {
+        let (menu, mut visual, targets) = open_window_with_search_submenu(false, cx);
+        assert_eq!(hover(&menu, targets.search, &mut visual), Some(0));
+        assert_eq!(hover(&menu, targets.empty_space, &mut visual), None);
+        assert_eq!(hover(&menu, targets.search, &mut visual), Some(0));
+        assert_eq!(hover(&menu, targets.other, &mut visual), None);
+    }
+
+    #[gpui::test]
     fn kept_open_submenu_ignores_hover_elsewhere(cx: &mut TestAppContext) {
-        let keep_open = Rc::new(Cell::new(false));
-        let (menu, mut visual) = submenu_test_window(cx, {
-            let keep_open = keep_open.clone();
-            move |window, cx| {
-                ContextMenu::build(window, cx, move |menu, _, _| {
-                    menu.submenu("Search", move |menu, _, _| {
-                        let keep_open = keep_open.clone();
-                        menu.entry("Result", None, |_, _| {})
-                            .keep_open_while(move |_| keep_open.get())
-                    })
-                    .entry("Other", None, |_, _| {})
-                    .submenu("More", |menu, _, _| menu.entry("Inner", None, |_, _| {}))
+        let (menu, mut visual, targets) = open_window_with_search_submenu(true, cx);
+        assert_eq!(hover(&menu, targets.search, &mut visual), Some(0));
+        assert_eq!(hover(&menu, targets.other, &mut visual), Some(0));
+        assert_eq!(hover(&menu, targets.more, &mut visual), Some(0));
+        assert_eq!(hover(&menu, targets.empty_space, &mut visual), Some(0));
+    }
+
+    struct Targets {
+        search: Point<Pixels>,
+        other: Point<Pixels>,
+        more: Point<Pixels>,
+        empty_space: Point<Pixels>,
+    }
+
+    fn open_window_with_search_submenu(
+        keep_open: bool,
+        cx: &mut TestAppContext,
+    ) -> (Entity<ContextMenu>, VisualTestContext, Targets) {
+        let (menu, mut visual) = submenu_test_window(cx, move |window, cx| {
+            ContextMenu::build(window, cx, move |menu, _, _| {
+                menu.submenu("Search", move |menu, _, _| {
+                    menu.entry("Result", None, |_, _| {})
+                        .keep_open_while(move |_| keep_open)
                 })
-            }
+                .entry("Other", None, |_, _| {})
+                .submenu("More", |menu, _, _| menu.entry("Inner", None, |_, _| {}))
+            })
         });
         draw_frames(&mut visual);
         let search = submenu_trigger_bounds(&menu, 0, &mut visual).center();
         let more = submenu_trigger_bounds(&menu, 2, &mut visual).center();
-        let other = point(search.x, (search.y + more.y) / 2.);
-        let empty_space = point(px(680.), px(380.));
-        let hover = |position, visual: &mut VisualTestContext| {
-            visual.simulate_mouse_move(position, None, Modifiers::default());
-            draw_frames(visual);
-            open_submenu_index(&menu, visual)
+        let targets = Targets {
+            search,
+            other: point(search.x, (search.y + more.y) / 2.),
+            more,
+            empty_space: point(px(680.), px(380.)),
         };
+        (menu, visual, targets)
+    }
 
-        assert_eq!(hover(search, &mut visual), Some(0));
-        assert_eq!(
-            hover(empty_space, &mut visual),
-            None,
-            "leaving closes it by default"
-        );
-        assert_eq!(hover(search, &mut visual), Some(0));
-        assert_eq!(
-            hover(other, &mut visual),
-            None,
-            "a sibling closes it by default"
-        );
-
-        assert_eq!(hover(search, &mut visual), Some(0));
-        keep_open.set(true);
-        assert_eq!(
-            hover(other, &mut visual),
-            Some(0),
-            "a sibling leaves it open"
-        );
-        assert_eq!(
-            hover(more, &mut visual),
-            Some(0),
-            "another trigger doesn't replace it"
-        );
-        assert_eq!(
-            hover(empty_space, &mut visual),
-            Some(0),
-            "leaving leaves it open"
-        );
-
-        keep_open.set(false);
-        assert_eq!(hover(other, &mut visual), None);
+    fn hover(
+        menu: &Entity<ContextMenu>,
+        position: Point<Pixels>,
+        cx: &mut VisualTestContext,
+    ) -> Option<usize> {
+        cx.simulate_mouse_move(position, None, Modifiers::default());
+        draw_frames(cx);
+        open_submenu_index(menu, cx)
     }
 
     fn submenu_trigger_bounds(
