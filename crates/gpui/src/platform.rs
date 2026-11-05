@@ -598,6 +598,19 @@ pub trait Platform: 'static {
         Task::ready(Ok(self.read_from_clipboard()))
     }
 
+    /// Reports the representations the clipboard offers without retrieving their contents.
+    ///
+    /// Implementations must not fetch payloads, decode images, trigger delayed rendering,
+    /// or show a permission prompt. Backends without a suitable metadata query return
+    /// [`ClipboardReadError::Unavailable`]. Backends with locally available metadata return
+    /// a ready task; implementations that must ask another process wait off the UI thread
+    /// with a bounded timeout.
+    ///
+    /// An error means availability is unknown, not that the clipboard is empty.
+    fn clipboard_content_types(&self) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        Task::ready(Err(ClipboardReadError::Unavailable))
+    }
+
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -3104,7 +3117,26 @@ pub struct ClipboardItem {
     pub entries: Vec<ClipboardEntry>,
 }
 
-/// An error produced by [`Platform::read_from_clipboard_async`].
+bitflags::bitflags! {
+    /// The representations the clipboard offers without retrieving their contents.
+    ///
+    /// Several flags can be set at once; the consuming application decides which ones
+    /// it accepts. An empty set means none of these representations are offered.
+    /// Availability does not guarantee a successful read or determine which representation
+    /// a general clipboard read will return.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct ClipboardContentTypes: u8 {
+        /// The clipboard offers text.
+        const TEXT = 1 << 0;
+        /// The clipboard offers an image.
+        const IMAGE = 1 << 1;
+        /// The clipboard offers paths to external files or directories.
+        const EXTERNAL_PATHS = 1 << 2;
+    }
+}
+
+/// An error produced by [`Platform::read_from_clipboard_async`] or
+/// [`Platform::clipboard_content_types`].
 ///
 /// Callers surface these failures to users, so the variants distinguish
 /// conditions that call for different user-facing guidance.
@@ -3120,6 +3152,8 @@ pub enum ClipboardReadError {
     /// The clipboard contents could not be converted into a
     /// [`ClipboardItem`].
     UnsupportedContent,
+    /// The clipboard owner did not respond in time.
+    TimedOut,
 }
 
 impl std::fmt::Display for ClipboardReadError {
@@ -3132,6 +3166,7 @@ impl std::fmt::Display for ClipboardReadError {
             Self::UnsupportedContent => {
                 formatter.write_str("the clipboard contents are unsupported")
             }
+            Self::TimedOut => formatter.write_str("the clipboard owner did not respond in time"),
         }
     }
 }
