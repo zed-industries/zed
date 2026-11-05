@@ -447,6 +447,7 @@ fn is_supported_diagram_type(source: &str) -> bool {
         "quadrantChart",
         "xychart-beta",
         "journey",
+        "swimlane-beta",
     ];
     let first_token = source
         .trim_start()

@@ -58,6 +58,10 @@ const DIAGRAMS: &[(&str, &str)] = &[
         "xychart",
         "xychart-beta\n    title Test\n    x-axis [\"A\", \"B\", \"C\"]\n    y-axis \"Val\" 0 --> 10\n    bar [3, 7, 5]",
     ),
+    (
+        "swimlane",
+        "swimlane-beta LR\n  subgraph Customer\n    request[Request service]\n  end\n  subgraph Support\n    triage[Triage request]\n    answer[Send answer]\n  end\n  request --> triage\n  triage -->|Needs code change| answer",
+    ),
 ];
 
 fn rgb_theme() -> MermaidTheme {
