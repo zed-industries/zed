@@ -9,13 +9,8 @@ pub(super) enum ChangesMode {
     Branch(Option<BranchList>),
 }
 
-/// How long the previous base's files stay while a new base loads. Most bases
-/// load sooner, so switching doesn't flash a loading state.
-const KEEP_PREVIOUS_FILES_FOR: Duration = Duration::from_millis(300);
-
 pub(super) struct BranchList {
     list: Entity<DiffBufferList>,
-    previous_files: Option<PreviousFiles>,
     _subscription: Subscription,
 }
 
@@ -27,46 +22,7 @@ impl BranchList {
         if list.tree_diff_error().is_some() {
             return None;
         }
-        listed_files(list).or_else(|| {
-            self.previous_files
-                .as_ref()
-                .map(|previous| previous.entries.clone())
-        })
-    }
-
-    fn drop_previous_files_once_loaded(&mut self, cx: &App) {
-        let list = self.list.read(cx);
-        if list.statuses_by_path().is_some() || list.tree_diff_error().is_some() {
-            self.previous_files = None;
-        }
-    }
-}
-
-/// Rebuilds keep using these until the new base loads, so view changes and
-/// folder toggles still apply while it does.
-struct PreviousFiles {
-    entries: Vec<GitStatusEntry>,
-    _expire: Task<()>,
-}
-
-impl PreviousFiles {
-    fn new(entries: Vec<GitStatusEntry>, window: &mut Window, cx: &mut Context<GitPanel>) -> Self {
-        let expire = cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor()
-                .timer(KEEP_PREVIOUS_FILES_FOR)
-                .await;
-            this.update_in(cx, |this, window, cx| {
-                if let ChangesMode::Branch(Some(branch_list)) = &mut this.changes_mode {
-                    branch_list.previous_files = None;
-                }
-                this.update_visible_entries(window, cx);
-            })
-            .ok();
-        });
-        Self {
-            entries,
-            _expire: expire,
-        }
+        listed_files(list)
     }
 }
 
@@ -502,37 +458,12 @@ impl GitPanel {
         let diff_base = DiffBase::Merge { base_ref };
 
         if let Some(branch_list) = branch_list {
-            let (repo_changed, base_changed) = {
-                let list = branch_list.list.read(cx);
-                let repo_id = repo.read(cx).id;
-                (
-                    list.repo()
-                        .is_none_or(|list_repo| list_repo.read(cx).id != repo_id),
-                    list.diff_base() != &diff_base,
-                )
-            };
-            // Read before the list moves to the new base and drops its files.
-            // A switch while the previous base still loads keeps its files.
-            let previous_entries = if base_changed && !repo_changed {
-                branch_list.shown_files(cx)
-            } else {
-                None
-            };
             branch_list.list.update(cx, |list, cx| {
                 list.set_repo(Some(repo), cx);
-                if base_changed {
+                if list.diff_base() != &diff_base {
                     list.set_diff_base(diff_base, cx);
                 }
             });
-            if repo_changed {
-                // Another repository's files would be wrong, not just stale.
-                branch_list.previous_files = None;
-            } else if base_changed {
-                branch_list.previous_files =
-                    previous_entries.map(|entries| PreviousFiles::new(entries, window, cx));
-            } else {
-                branch_list.drop_previous_files_once_loaded(cx);
-            }
             return;
         }
 
@@ -548,7 +479,6 @@ impl GitPanel {
         );
         *branch_list = Some(BranchList {
             list,
-            previous_files: None,
             _subscription: subscription,
         });
     }

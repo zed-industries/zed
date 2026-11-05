@@ -17822,11 +17822,6 @@ mod tests {
             })
             .unwrap();
         switch_base("develop", cx);
-        assert_eq!(
-            listed_paths(&panel, cx),
-            ["a.txt", "b.txt", "d.txt"],
-            "the previous base's rows stay while the new base loads",
-        );
         settle_branch_mode(cx);
         assert_eq!(
             listed_paths(&panel, cx),
