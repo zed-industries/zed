@@ -1312,6 +1312,13 @@
     },
   },
   {
+    "context": "SearchEverywhere > Picker > Editor",
+    "bindings": {
+      "tab": "search_everywhere::NextTab",
+      "shift-tab": "search_everywhere::PreviousTab",
+    },
+  },
+  {
     "context": "TabSwitcher",
     "use_key_equivalents": true,
     "bindings": {
