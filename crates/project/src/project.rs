@@ -50,7 +50,7 @@ pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
     is_submodule_git_dir, linked_worktree_short_name, repo_identity_path,
-    repo_identity_path_if_local, worktrees_directory_for_repo,
+    worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
@@ -5272,6 +5272,40 @@ impl Project {
             })
         } else {
             Task::ready(None)
+        }
+    }
+
+    /// Like [`Self::resolve_abs_path`], but reports errors. Returns `None` for collab guests,
+    /// who can't check the host.
+    pub fn host_path_is_dir(
+        &self,
+        abs_path: &Path,
+        cx: &App,
+    ) -> Option<Task<Result<Option<bool>>>> {
+        if self.is_local() {
+            let fs = self.fs.clone();
+            let abs_path = abs_path.to_path_buf();
+            Some(cx.background_spawn(async move {
+                Ok(fs
+                    .metadata(&abs_path)
+                    .await?
+                    .map(|metadata| metadata.is_dir))
+            }))
+        } else if let Some(remote_client) = self.remote_client.as_ref() {
+            let request = remote_client
+                .read(cx)
+                .proto_client()
+                .request(proto::GetPathMetadata {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    path: abs_path.to_string_lossy().into_owned(),
+                    canonicalize: false,
+                });
+            Some(cx.background_spawn(async move {
+                let response = request.await?;
+                Ok(response.exists.then_some(response.is_dir))
+            }))
+        } else {
+            None
         }
     }
 

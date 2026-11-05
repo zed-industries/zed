@@ -160,7 +160,7 @@ pub fn is_forbidden_ip(ip: IpAddr) -> bool {
     // servers live on the VM's private network, which this filter would
     // otherwise reject. It is compiled in ONLY under the
     // `nixos-integration-tests` feature (enabled via `sandbox/nixos-test` when
-    // building `bwrap_test_helper`), so in a real Zed build the env var has no
+    // building `bwrap-test-helper`), so in a real Zed build the env var has no
     // effect and cannot disable DNS-rebinding/SSRF protection.
     #[cfg(feature = "nixos-integration-tests")]
     if std::env::var_os("ZED_SANDBOX_PROXY_ALLOW_LOCAL_IPS").is_some() {

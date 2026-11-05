@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::{MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::{schema::MaybeUndefined, v1::schema as acp_v1, v2::schema as acp_v2};
 use anyhow::{Result, bail};
 use collections::HashMap;
 use futures::{FutureExt as _, future::Shared};
@@ -429,6 +429,8 @@ pub struct DisplayTerminalState {
     command: DisplayCommand,
     pub meta: Option<acp_v2::Meta>,
     pub output_meta: Option<acp_v2::Meta>,
+    /// Whether the agent accepts `terminal/cancel` for this terminal.
+    can_cancel: bool,
     legacy_created: bool,
     legacy_exited: bool,
 }
@@ -459,6 +461,7 @@ pub struct DisplayTerminalPatch {
     pub cwd: MaybeUndefined<acp_v2::AbsolutePath>,
     pub output: MaybeUndefined<DisplayTerminalOutput>,
     pub exit_status: MaybeUndefined<acp_v2::TerminalExitStatus>,
+    pub capabilities: MaybeUndefined<acp_v2::TerminalCapabilities>,
     pub meta: MaybeUndefined<acp_v2::Meta>,
 }
 
@@ -711,6 +714,12 @@ impl Terminal {
         }
     }
 
+    /// Whether Zed may stop this agent-run terminal with `terminal/cancel`: the agent
+    /// advertises it and hasn't reported an exit status.
+    pub fn can_cancel(&self) -> bool {
+        self.output.is_none() && self.display_state().is_some_and(|state| state.can_cancel)
+    }
+
     pub(crate) fn initialize_legacy_display(
         &mut self,
         command: &str,
@@ -763,6 +772,7 @@ impl Terminal {
             cwd,
             output,
             exit_status,
+            capabilities,
             meta,
         } = patch;
         let output_changed = !output.is_undefined();
@@ -794,6 +804,10 @@ impl Terminal {
             crate::MetadataUpdate::V2(meta).apply(&mut state.meta);
             if let Some(meta) = output_meta {
                 state.output_meta = meta;
+            }
+            if let Some(capabilities) = capabilities.as_opt_ref() {
+                state.can_cancel =
+                    capabilities.is_some_and(|capabilities| capabilities.cancel.is_some());
             }
         }
         if !cwd.is_undefined() {

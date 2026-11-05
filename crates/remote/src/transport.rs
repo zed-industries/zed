@@ -484,7 +484,7 @@ async fn build_remote_server_from_source(
         .join("remote_server")
         .join(&triple)
         .join("debug")
-        .join("remote_server")
+        .join("remote-server")
         .with_extension(if platform.os.is_windows() { "exe" } else { "" });
 
     let path = if !build_remote_server.contains("nocompress") {
@@ -502,9 +502,16 @@ async fn build_remote_server_from_source(
             if smol::fs::metadata(&zip_path).await.is_ok() {
                 smol::fs::remove_file(&zip_path).await?;
             }
+            // SSH clients expect the underscore name inside the archive.
+            let archive_bin_path = bin_path.with_file_name(if platform.os.is_windows() {
+                "remote_server.exe"
+            } else {
+                "remote_server"
+            });
+            smol::fs::copy(&bin_path, &archive_bin_path).await?;
             let compress_command = format!(
                 "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
-                bin_path.display(),
+                archive_bin_path.display(),
                 zip_path.display(),
             );
             run_cmd(new_command("powershell.exe").args([
@@ -513,6 +520,7 @@ async fn build_remote_server_from_source(
                 &compress_command,
             ]))
             .await?;
+            smol::fs::remove_file(&archive_bin_path).await?;
             zip_path
         };
 

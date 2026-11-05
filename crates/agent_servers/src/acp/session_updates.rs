@@ -1,5 +1,5 @@
 use acp_thread::{AcpThread, MessageKind};
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::Result;
 use collections::HashMap;
 use gpui::Context;
@@ -233,8 +233,18 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
                 InboundSessionUpdate::ToolCallContentChunk(chunk)
             }
             acp_v2::SessionUpdate::PlanUpdate(mut update) => {
+                // Zed only renders item plans, but any plan type replaces the plan with that ID.
                 let plan = match update.plan {
                     acp_v2::PlanUpdateContent::Items(plan) => plan,
+                    acp_v2::PlanUpdateContent::File(plan) => {
+                        acp_v2::PlanItems::new(plan.plan_id, Vec::new())
+                    }
+                    acp_v2::PlanUpdateContent::Markdown(plan) => {
+                        acp_v2::PlanItems::new(plan.plan_id, Vec::new())
+                    }
+                    acp_v2::PlanUpdateContent::Other(plan) => {
+                        acp_v2::PlanItems::new(plan.plan_id, Vec::new())
+                    }
                     content => {
                         update.plan = content;
                         notification.update = acp_v2::SessionUpdate::PlanUpdate(update);

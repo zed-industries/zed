@@ -1,11 +1,11 @@
 use std::path::Path;
 
+use anyhow::anyhow;
 use fs::Fs;
 use gpui::AppContext;
 use gpui::Entity;
 use gpui::Task;
 use gpui::WeakEntity;
-use http_client::anyhow;
 use picker::Picker;
 use picker::PickerDelegate;
 use project::ProjectEnvironment;
@@ -1701,9 +1701,10 @@ async fn get_ghcr_features(
 mod tests {
     use std::{path::Path, sync::Arc};
 
+    use anyhow::anyhow;
     use fs::FakeFs;
     use gpui::{TestAppContext, WeakEntity};
-    use http_client::{FakeHttpClient, anyhow};
+    use http_client::FakeHttpClient;
 
     use crate::{
         DevContainerContext, DevContainerTemplatesResponse, devcontainer_templates_repository,
