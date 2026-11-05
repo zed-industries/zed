@@ -326,6 +326,16 @@ impl IosWindow {
 
         let layer = view.layer();
         layer.setContentsScale(scale);
+        let mut renderer = MetalRenderer::from_layer(
+            MetalContext::default(),
+            layer
+                .downcast_ref::<CAMetalLayer>()
+                .ok_or_else(|| anyhow::anyhow!("UIKit view must have a CAMetalLayer"))?,
+            false,
+        )?;
+        let pixel_w = (screen_bounds_cg.size.width * scale) as i32;
+        let pixel_h = (screen_bounds_cg.size.height * scale) as i32;
+        renderer.update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
 
         // Auto-resize the Metal view when the parent view changes size
         // (e.g. rotation). UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight
@@ -405,17 +415,6 @@ impl IosWindow {
         text_input_view.setAlpha(0.01);
         text_input_view.setUserInteractionEnabled(true);
         view.addSubview(&text_input_view);
-
-        let pixel_w = (screen_bounds_cg.size.width * scale) as i32;
-        let pixel_h = (screen_bounds_cg.size.height * scale) as i32;
-        let mut renderer = MetalRenderer::from_layer(
-            MetalContext::default(),
-            layer
-                .downcast_ref::<CAMetalLayer>()
-                .ok_or_else(|| anyhow::anyhow!("UIKit view must have a CAMetalLayer"))?,
-            false,
-        );
-        renderer.update_drawable_size(size(DevicePixels(pixel_w), DevicePixels(pixel_h)));
 
         let state = IosWindowState {
             platform: Rc::downgrade(platform),

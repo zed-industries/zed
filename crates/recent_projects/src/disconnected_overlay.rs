@@ -62,7 +62,8 @@ impl DisconnectedOverlay {
                 }
                 let handle = cx.entity().downgrade();
 
-                let remote_connection_options = project.read(cx).remote_connection_options(cx);
+                let remote_connection_options =
+                    project.read(cx).remote_connection_options(cx).cloned();
                 let host = if let Some(remote_connection_options) = remote_connection_options {
                     Host::RemoteServerProject(
                         remote_connection_options,

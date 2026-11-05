@@ -1580,11 +1580,16 @@ fn resolve_preview_image(
 
     let path = if let (Some(stripped), Some(root)) = (workspace_relative_path, workspace_directory)
     {
-        client_path_style.join_path(root, stripped).ok()?
+        // A second leading separator leaves a rooted path, which would replace
+        // the workspace root when joined.
+        if client_path_style.has_root(Path::new(stripped)) {
+            return None;
+        }
+        client_path_style.normalize_lexically(client_path_style.join(root, stripped))
     } else if client_path_style.has_root(Path::new(&decoded)) {
         PathBuf::from(decoded)
     } else {
-        client_path_style.join_path(base_directory?, decoded).ok()?
+        client_path_style.normalize_lexically(client_path_style.join(base_directory?, decoded))
     };
 
     path.exists()
@@ -1616,8 +1621,7 @@ fn resolve_project_path_for_preview_image(
             .into_owned()
     } else {
         let joined_path = path_style
-            .join_path(source_directory.as_std_path(), decoded_path)
-            .ok()?;
+            .normalize_lexically(path_style.join(source_directory.as_std_path(), decoded_path));
         RelPath::new(&joined_path, path_style).ok()?.into_owned()
     };
 
@@ -2590,6 +2594,21 @@ mod tests {
             cx,
         );
         assert!(missing.is_none());
+
+        let outside_tree = TempTree::new(json!({ "outside.svg": "mock data" }));
+        let outside_image = outside_tree.path().join("outside.svg");
+        for workspace_root_prefix in ["/", "\\"] {
+            let outside_workspace = resolve_preview_image(
+                &format!("{workspace_root_prefix}{}", outside_image.display()),
+                Some(&base_directory),
+                Some(workspace_directory),
+                None,
+                None,
+                PathStyle::local(),
+                cx,
+            );
+            assert!(outside_workspace.is_none());
+        }
     }
 
     #[gpui::test]
