@@ -374,7 +374,11 @@ impl GitPanel {
     /// finishes, so anything the user does in the meantime that it would undo
     /// has to drop it. The lookup itself keeps running.
     pub(super) fn cancel_pending_branch_changes(&mut self) {
-        self.branch_base.pending_show = None;
+        // A request can adopt the active tab's base before it waits, and
+        // outside branch mode that base would outlive it.
+        if self.branch_base.pending_show.take().is_some() && !self.is_branch_mode() {
+            self.branch_base.picked = None;
+        }
     }
 
     fn show_after_lookup(

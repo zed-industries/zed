@@ -18305,6 +18305,50 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_dropping_pending_branch_changes_drops_its_adopted_base(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, None).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+        let repo = test
+            .project
+            .read_with(cx, |project, cx| project.active_repository(cx))
+            .unwrap();
+
+        // Each step runs before the lookup the first request started can
+        // finish, so the second request adopts the tab's base and then waits.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+        });
+        let project = test.project.clone();
+        test.workspace.update_in(cx, |workspace, window, cx| {
+            BranchDiff::deploy_branch_diff_with_base_ref(
+                workspace,
+                project,
+                repo,
+                "release".into(),
+                None,
+                None,
+                window,
+                cx,
+            );
+        });
+        panel.update_in(cx, |panel, window, cx| {
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+            panel.show_uncommitted_changes(&ShowUncommittedChanges, window, cx);
+        });
+        settle_branch_mode(cx);
+
+        panel.read_with(cx, |panel, _| {
+            assert!(!panel.is_branch_mode());
+            assert_eq!(
+                panel.branch_base.effective(),
+                None,
+                "uncommitted mode keeps no base from the dropped request",
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_newer_branch_changes_request_replaces_pending_one(cx: &mut TestAppContext) {
         let (test, mut cx) = setup_branch_mode_test(cx, None).await;
         let cx = &mut cx;
