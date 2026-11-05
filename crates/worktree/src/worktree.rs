@@ -3588,6 +3588,9 @@ impl BackgroundScannerState {
         };
 
         let dot_git_abs_path = Arc::from(self.snapshot.absolutize(&dot_git_path).as_ref());
+        if !is_valid_dot_git(&dot_git_abs_path, fs).await {
+            return;
+        }
 
         self.insert_git_repository_for_path(
             WorkDirectory::InProject {
@@ -6359,13 +6362,7 @@ async fn discover_ancestor_git_repo(
 
         let ancestor_dot_git = ancestor.join(DOT_GIT);
         log::trace!("considering ancestor: {ancestor_dot_git:?}");
-        // Check whether the directory or file called `.git` exists (in the
-        // case of worktrees it's a file.)
-        if fs
-            .metadata(&ancestor_dot_git)
-            .await
-            .is_ok_and(|metadata| metadata.is_some())
-        {
+        if is_valid_dot_git(&ancestor_dot_git, fs.as_ref()).await {
             let dot_git_abs_path = if index != 0 {
                 // We canonicalize, since the FS events use the canonicalized path.
                 match fs.canonicalize(&ancestor_dot_git).await.log_err() {
@@ -7215,13 +7212,38 @@ async fn discover_root_repo_metadata(
     fs: &dyn Fs,
 ) -> Option<(Arc<Path>, bool)> {
     let root_dot_git = root_abs_path.join(DOT_GIT);
-    if !fs.metadata(&root_dot_git).await.is_ok_and(|m| m.is_some()) {
+    if !is_valid_dot_git(&root_dot_git, fs).await {
         return None;
     }
     let dot_git_path: Arc<Path> = root_dot_git.into();
     let (repository_dir, common_dir) = discover_git_paths(&dot_git_path, fs).await;
     let is_linked_worktree = repository_dir != common_dir;
     Some((common_dir, is_linked_worktree))
+}
+
+async fn is_valid_dot_git(dot_git_abs_path: &Path, fs: &dyn Fs) -> bool {
+    let Ok(Some(metadata)) = fs.metadata(dot_git_abs_path).await else {
+        return false;
+    };
+    // FakeFs models repository metadata in memory; its fixtures often have empty .git directories.
+    if fs.is_fake() {
+        return true;
+    }
+    let dot_git_abs_path: Arc<Path> = dot_git_abs_path.into();
+    if !metadata.is_dir
+        && !fs
+            .load(&dot_git_abs_path)
+            .await
+            .is_ok_and(|contents| parse_gitfile(&contents).is_ok())
+    {
+        return false;
+    }
+
+    let (repository_dir, common_dir) = discover_git_paths(&dot_git_abs_path, fs).await;
+    fs.is_file(&repository_dir.join("HEAD")).await
+        && fs.is_dir(&common_dir.join(OBJECTS_DIR)).await
+        && (fs.is_dir(&common_dir.join(REFS_DIR)).await
+            || fs.is_dir(&common_dir.join(REFTABLE_DIR)).await)
 }
 
 async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, Arc<Path>) {
@@ -7433,10 +7455,10 @@ mod tests {
     use super::{
         BackgroundScanner, BackgroundScannerPhase, BackgroundScannerState, IgnoreStack,
         NullWatcher, RemovedEntries, STREAM_BLOCK_BYTES, ScanRequest, UpdateIgnoreStatusJob,
-        Worktree, stream_utf8_into_rope,
+        Worktree, discover_root_repo_common_dir, is_valid_dot_git, stream_utf8_into_rope,
     };
     use collections::{HashMap, HashSet};
-    use fs::{FakeFs, Fs, RemoveOptions, RenameOptions};
+    use fs::{FakeFs, Fs, RealFs, RemoveOptions, RenameOptions};
     use futures::{FutureExt as _, channel::mpsc};
     use gpui::TestAppContext;
     use serde_json::json;
@@ -7444,7 +7466,83 @@ mod tests {
     use smallvec::SmallVec;
     use std::{path::Path, sync::Arc};
     use text::LineEnding;
-    use util::{path, rel_path::rel_path};
+    use util::{path, rel_path::rel_path, test::TempTree};
+
+    #[gpui::test]
+    async fn test_valid_dot_git_metadata(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let root = TempTree::new(json!({
+            "repo": {
+                "metadata": {
+                    "HEAD": "ref: refs/heads/main\n",
+                    "objects": {},
+                    "refs": {},
+                    "worktrees": {
+                        "linked": {
+                            "HEAD": "ref: refs/heads/linked\n",
+                            "commondir": "../..\n"
+                        }
+                    },
+                    "modules": {
+                        "submodule": {
+                            "HEAD": "ref: refs/heads/main\n",
+                            "objects": {},
+                            "refs": {}
+                        }
+                    }
+                }
+            },
+            "linked": { ".git": "gitdir: ../repo/.git/worktrees/linked\n" },
+            "submodule": { ".git": "gitdir: ../repo/.git/modules/submodule\n" },
+            "reftable": {
+                "metadata": {
+                    "HEAD": "ref: refs/heads/main\n",
+                    "objects": {},
+                    "reftable": {}
+                }
+            },
+            "invalid": { "metadata": { "index-test.tmp": "temporary index" } },
+            "empty": { "metadata": {} },
+            "invalid-gitfile": { ".git": "not a gitfile" },
+            "missing-target": { ".git": "gitdir: ../missing\n" }
+        }));
+        for name in ["repo", "reftable", "invalid", "empty"] {
+            std::fs::rename(
+                root.path().join(name).join("metadata"),
+                root.path().join(name).join(".git"),
+            )
+            .expect("prepare repository metadata without running git init");
+        }
+        let fs = RealFs::new(None, cx.executor());
+        for name in ["repo", "linked", "submodule", "reftable"] {
+            assert!(
+                is_valid_dot_git(&root.path().join(name).join(".git"), fs.as_ref()).await,
+                "{name} must be recognized as a repository"
+            );
+        }
+        for name in ["invalid", "empty", "invalid-gitfile", "missing-target"] {
+            assert!(
+                !is_valid_dot_git(&root.path().join(name).join(".git"), fs.as_ref()).await,
+                "{name} must not be recognized as a repository"
+            );
+            assert!(
+                discover_root_repo_common_dir(&root.path().join(name), fs.as_ref())
+                    .await
+                    .is_none()
+            );
+        }
+        let common_dir = discover_root_repo_common_dir(&root.path().join("linked"), fs.as_ref())
+            .await
+            .expect("linked worktree common directory");
+        assert_eq!(
+            fs.canonicalize(common_dir.as_ref())
+                .await
+                .expect("canonical common directory"),
+            fs.canonicalize(&root.path().join("repo/.git"))
+                .await
+                .expect("canonical repository directory")
+        );
+    }
 
     /// Streams `bytes` the way `decode_file_text_to_rope` would, returning the
     /// decoded text and detected line ending, or `None` if the fast path bailed.
