@@ -3319,11 +3319,23 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         session_id: acp_v2::SessionId,
         project: Entity<Project>,
         _work_dirs: PathList,
-        _title: Option<SharedString>,
+        title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
-        self.0
-            .update(cx, |agent, cx| agent.open_thread(session_id, project, cx))
+        let load = self
+            .0
+            .update(cx, |agent, cx| agent.open_thread(session_id, project, cx));
+        cx.spawn(async move |cx| {
+            let thread = load.await?;
+            if let Some(title) = title {
+                thread.update(cx, |thread, cx| {
+                    if thread.title().is_none() {
+                        thread.set_provisional_title(title, cx);
+                    }
+                })
+            }
+            Ok(thread)
+        })
     }
 
     fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
