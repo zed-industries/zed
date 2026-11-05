@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::HashSet,
     ffi::{OsStr, OsString},
     os::windows::ffi::{OsStrExt as _, OsStringExt as _},
     path::{Path, PathBuf},
@@ -14,7 +15,7 @@ use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot::Receiver;
 use gpui_util::{ResultExt, get_powershell, new_std_command};
 use itertools::Itertools;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use smallvec::SmallVec;
 use windows::{
     UI::ViewManagement::UISettings,
@@ -459,6 +460,56 @@ impl WindowsPlatform {
         let text_system = Arc::downgrade(direct_write_text_system);
         let invalidate_devices = self.invalidate_devices.clone();
 
+        // Monitors whose own vblank thread ticks the windows on them; the compositor-clock thread
+        // below ticks the rest (no DXGI output, a monitor plugged in later, a clock that failed).
+        let clocked: Arc<RwLock<HashSet<isize>>> = Arc::default();
+        // Shared by every clock thread, so a window crossing monitors moves from one clock to the
+        // other at once instead of falling between two caches that disagree.
+        let monitors: Arc<Mutex<WindowMonitors>> = Arc::default();
+        for clock in MonitorClock::all() {
+            let monitor = clock.monitor;
+            clocked.write().insert(monitor);
+            let spawned = std::thread::Builder::new()
+                .name("MonitorVBlank".to_owned())
+                .spawn({
+                    let (stop, all_windows, clocked, monitors) = (
+                        stop.clone(),
+                        all_windows.clone(),
+                        clocked.clone(),
+                        monitors.clone(),
+                    );
+                    move || {
+                        while clock.wait() && !stop.load(Ordering::Acquire) {
+                            let signal_at = PlatformFrameSignal::capture(scheduler::Instant::now);
+                            let Some(all_windows) = all_windows.upgrade() else {
+                                break;
+                            };
+                            let windows = all_windows.read();
+                            let now = std::time::Instant::now();
+                            let mut monitors = monitors.lock();
+                            monitors
+                                .retain(|raw| windows.iter().any(|w| w.as_raw().0 as isize == raw));
+                            for window in windows.iter() {
+                                if monitors.of(window.as_raw(), now) == clock.monitor {
+                                    invalidate(
+                                        window,
+                                        signal_at,
+                                        FrameRequestSource::NativeCallback,
+                                    );
+                                }
+                            }
+                        }
+                        clocked.write().remove(&clock.monitor);
+                    }
+                });
+            if let Err(error) = spawned {
+                log::error!(
+                    "failed to spawn a vblank thread, falling back to the compositor clock: {error}"
+                );
+                clocked.write().remove(&monitor);
+            }
+        }
+
         std::thread::Builder::new()
             .name("VSyncProvider".to_owned())
             .spawn(move || {
@@ -485,26 +536,40 @@ impl WindowsPlatform {
                     let Some(all_windows) = all_windows.upgrade() else {
                         break;
                     };
-                    for hwnd in all_windows.read().iter() {
-                        unsafe {
-                            if let Some(signal_at) = signal_at {
-                                if IsWindowVisible(hwnd.as_raw()).as_bool()
-                                    && !IsIconic(hwnd.as_raw()).as_bool()
-                                {
-                                    hwnd.frame_signal.record(signal_at, signal_source);
-                                } else {
-                                    // Hidden windows may not consume WM_PAINT until shown again.
-                                    hwnd.frame_signal.take();
-                                }
-                            }
-                            RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE)
-                                .ok()
-                                .log_err();
+                    let windows = all_windows.read();
+                    let now = std::time::Instant::now();
+                    let mut monitors = monitors.lock();
+                    monitors.retain(|raw| windows.iter().any(|w| w.as_raw().0 as isize == raw));
+                    for window in windows.iter() {
+                        if clocked.read().contains(&monitors.of(window.as_raw(), now)) {
+                            continue;
                         }
+                        invalidate(window, signal_at, signal_source);
                     }
                 }
             })
             .unwrap();
+    }
+}
+
+/// Asks `window` for its next frame, recording when the platform signalled it.
+fn invalidate(
+    window: &TrackedWindow,
+    signal_at: Option<scheduler::Instant>,
+    source: FrameRequestSource,
+) {
+    unsafe {
+        if let Some(signal_at) = signal_at {
+            if IsWindowVisible(window.as_raw()).as_bool() && !IsIconic(window.as_raw()).as_bool() {
+                window.frame_signal.record(signal_at, source);
+            } else {
+                // Hidden windows may not consume WM_PAINT until shown again.
+                window.frame_signal.take();
+            }
+        }
+        RedrawWindow(Some(window.as_raw()), None, None, RDW_INVALIDATE)
+            .ok()
+            .log_err();
     }
 }
 
