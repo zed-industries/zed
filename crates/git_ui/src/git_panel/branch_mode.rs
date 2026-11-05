@@ -185,6 +185,19 @@ impl GitPanel {
         cx.notify();
     }
 
+    /// Rows from the previous base would open the new base's diff with their
+    /// old statuses, so they can't wait for the update debounce.
+    pub(super) fn update_entries_if_base_changed(
+        &mut self,
+        previous_base: Option<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_branch_mode() && self.branch_base.effective() != previous_base {
+            self.update_visible_entries(window, cx);
+        }
+    }
+
     pub(super) fn show_branch_changes(
         &mut self,
         _: &ShowBranchChanges,
@@ -227,7 +240,9 @@ impl GitPanel {
         // The empty state's button opens the default branch's diff, as it
         // did before branch mode existed.
         if !request.from_empty_state {
+            let previous_base = self.branch_base.effective();
             self.adopt_followed_branch_diff_base(window, cx);
+            self.update_entries_if_base_changed(previous_base, window, cx);
         }
         // A pending request means a lookup is already running, so this one
         // replaces it rather than acting on a default that's being refreshed
@@ -426,8 +441,10 @@ impl GitPanel {
                     return;
                 }
                 if this.branch_base.default != default_branch {
+                    let previous_base = this.branch_base.effective();
                     this.branch_base.default = default_branch;
                     this.schedule_visible_entries_update(window, cx);
+                    this.update_entries_if_base_changed(previous_base, window, cx);
                     cx.notify();
                 }
             })
@@ -519,7 +536,9 @@ impl GitPanel {
             window,
             |this, list, event: &BranchDiffEvent, window, cx| {
                 if matches!(event, BranchDiffEvent::DiffBaseChanged) && this.is_branch_mode() {
+                    let previous_base = this.branch_base.effective();
                     this.adopt_branch_diff_base(list, window, cx);
+                    this.update_entries_if_base_changed(previous_base, window, cx);
                 }
             },
         );

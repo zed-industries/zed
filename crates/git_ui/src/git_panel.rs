@@ -1497,7 +1497,9 @@ impl GitPanel {
             cx.subscribe_in(&workspace_entity, window, |this, _, event, window, cx| {
                 if let workspace::Event::ActiveItemChanged = event {
                     this.update_active_history_sha(cx);
+                    let previous_base = this.branch_base.effective();
                     this.follow_active_branch_diff(window, cx);
+                    this.update_entries_if_base_changed(previous_base, window, cx);
                 }
             })
             .detach();
@@ -17677,6 +17679,12 @@ mod tests {
         cx.run_until_parked();
     }
 
+    fn branch_base(panel: &Entity<GitPanel>, cx: &mut VisualTestContext) -> Option<String> {
+        panel.read_with(cx, |panel, _| {
+            panel.branch_base.effective().map(|base| base.to_string())
+        })
+    }
+
     fn listed_paths(panel: &Entity<GitPanel>, cx: &mut VisualTestContext) -> Vec<String> {
         panel.read_with(cx, |panel, _| {
             panel
@@ -17976,6 +17984,120 @@ mod tests {
         });
         settle_branch_mode(cx);
         assert_eq!(base(cx).as_deref(), Some("hotfix"));
+    }
+
+    #[gpui::test]
+    async fn test_following_another_branch_diff_drops_previous_rows(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+
+        open_branch_diff_tab(&test, "release", cx);
+        open_branch_diff_tab(&test, "develop", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+        });
+        settle_branch_mode(cx);
+        assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
+
+        let release_tab = test.workspace.read_with(cx, |workspace, cx| {
+            workspace.items_of_type::<BranchDiff>(cx).next().unwrap()
+        });
+        test.workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&release_tab, true, true, window, cx);
+        });
+        assert_eq!(branch_base(&panel, cx).as_deref(), Some("release"));
+        assert!(
+            listed_paths(&panel, cx).is_empty(),
+            "rows from the previous base are dropped without waiting for the debounce",
+        );
+
+        settle_branch_mode(cx);
+        assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
+    }
+
+    #[gpui::test]
+    async fn test_followed_tab_base_change_drops_previous_rows(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+
+        open_branch_diff_tab(&test, "develop", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+        });
+        settle_branch_mode(cx);
+        assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
+
+        let tab_list = test.workspace.read_with(cx, |workspace, cx| {
+            let tab = workspace.items_of_type::<BranchDiff>(cx).next().unwrap();
+            tab.read(cx).branch_diff_list(cx)
+        });
+        tab_list.update(cx, |list, cx| {
+            list.set_diff_base(
+                DiffBase::Merge {
+                    base_ref: "hotfix".into(),
+                },
+                cx,
+            );
+        });
+        assert_eq!(branch_base(&panel, cx).as_deref(), Some("hotfix"));
+        assert!(
+            listed_paths(&panel, cx).is_empty(),
+            "rows from the previous base are dropped without waiting for the debounce",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_new_default_branch_drops_previous_rows(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.enter_branch_mode(window, cx);
+        });
+        settle_branch_mode(cx);
+        assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
+
+        test.fs
+            .with_git_state(Path::new(path!("/project/.git")), false, |state| {
+                state.default_branch_ref = Some("refs/remotes/origin/develop".to_owned());
+            })
+            .unwrap();
+        panel.update_in(cx, |panel, window, cx| {
+            panel.default_branch_may_have_changed(window, cx);
+        });
+        // Runs the lookup without advancing the clock to the debounce.
+        while cx.executor().tick() {}
+        assert_eq!(branch_base(&panel, cx).as_deref(), Some("origin/develop"));
+        assert!(
+            listed_paths(&panel, cx).is_empty(),
+            "rows from the previous base are dropped without waiting for the debounce",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_show_branch_changes_drops_rows_of_previous_base(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+
+        open_branch_diff_tab(&test, "develop", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.show_branch_changes_since("feature".into(), window, cx);
+        });
+        settle_branch_mode(cx);
+        assert_eq!(listed_paths(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.show_branch_changes(&ShowBranchChanges, window, cx);
+        });
+        assert_eq!(branch_base(&panel, cx).as_deref(), Some("develop"));
+        assert!(
+            listed_paths(&panel, cx).is_empty(),
+            "rows from the previous base are dropped without waiting for the debounce",
+        );
     }
 
     #[gpui::test]
