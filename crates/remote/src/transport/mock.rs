@@ -212,10 +212,14 @@ impl RemoteConnection for MockRemoteConnection {
         env: &HashMap<String, String>,
         _working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
-        _interactive: Interactive,
+        interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let shell_program = program.unwrap_or_else(|| "sh".to_string());
         let mut shell_args = Vec::new();
+        match interactive {
+            Interactive::Yes => shell_args.push("-t".to_string()),
+            Interactive::No => shell_args.push("-T".to_string()),
+        }
         shell_args.push(shell_program);
         shell_args.extend(args.iter().cloned());
         Ok(CommandTemplate {

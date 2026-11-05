@@ -564,10 +564,10 @@ impl State {
             }
 
             // Try keychain
-            let (_, credentials_bytes) = credentials_provider
-                .read_credentials(AMAZON_AWS_URL, cx)
-                .await?
-                .ok_or(AuthenticateError::CredentialsNotFound)?;
+            let (_, credentials_bytes) =
+                language_model::read_credentials(credentials_provider.as_ref(), AMAZON_AWS_URL, cx)
+                    .await?
+                    .ok_or(AuthenticateError::CredentialsNotFound)?;
 
             let credentials_str = String::from_utf8(credentials_bytes)
                 .with_context(|| format!("invalid {PROVIDER_NAME} credentials"))?;

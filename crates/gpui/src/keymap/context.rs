@@ -27,22 +27,20 @@ impl<'a> TryFrom<&'a str> for KeyContext {
 }
 
 impl KeyContext {
-    /// Initialize a new [`KeyContext`] that contains an `os` key set to either `macos`, `linux`, `windows` or `unknown`.
-    pub fn new_with_defaults() -> Self {
+    /// Initializes a key context with the supplied host operating system.
+    pub fn new_with_defaults(os: crate::OperatingSystem) -> Self {
         let mut context = Self::default();
-        #[cfg(target_os = "macos")]
-        context.set("os", "macos");
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        context.set("os", "linux");
-        #[cfg(target_os = "windows")]
-        context.set("os", "windows");
-        #[cfg(not(any(
-            target_os = "macos",
-            target_os = "linux",
-            target_os = "freebsd",
-            target_os = "windows"
-        )))]
-        context.set("os", "unknown");
+        context.set(
+            "os",
+            match os {
+                crate::OperatingSystem::Mac => "macos",
+                crate::OperatingSystem::Linux | crate::OperatingSystem::FreeBsd => "linux",
+                crate::OperatingSystem::Windows => "windows",
+                crate::OperatingSystem::Ios => "ios",
+                crate::OperatingSystem::Android => "android",
+                crate::OperatingSystem::Unknown => "unknown",
+            },
+        );
         context
     }
 

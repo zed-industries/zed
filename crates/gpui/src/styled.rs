@@ -120,30 +120,30 @@ pub trait Styled: Sized {
     }
 
     /// Sets the text alignment to left
-    fn text_left(mut self) -> Self {
+    fn text_left(self) -> Self {
         self.text_align(TextAlign::Left)
     }
 
     /// Sets the text alignment to center
-    fn text_center(mut self) -> Self {
+    fn text_center(self) -> Self {
         self.text_align(TextAlign::Center)
     }
 
     /// Sets the text alignment to right
-    fn text_right(mut self) -> Self {
+    fn text_right(self) -> Self {
         self.text_align(TextAlign::Right)
     }
 
     /// Sets the truncate to prevent text from wrapping and truncate overflowing text with an ellipsis (…) if needed.
     /// [Docs](https://tailwindcss.com/docs/text-overflow#truncate)
-    fn truncate(mut self) -> Self {
+    fn truncate(self) -> Self {
         self.overflow_hidden().whitespace_nowrap().text_ellipsis()
     }
 
     /// Sets number of lines to show before truncating the text.
     /// [Docs](https://tailwindcss.com/docs/line-clamp)
     fn line_clamp(mut self, lines: usize) -> Self {
-        let mut text_style = self.text_style();
+        let text_style = self.text_style();
         text_style.line_clamp = Some(lines);
         self.overflow_hidden()
     }
