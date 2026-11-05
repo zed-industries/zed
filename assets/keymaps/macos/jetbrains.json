@@ -1,5 +1,12 @@
 [
   {
+    "context": "Workspace",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-o": null,
+    },
+  },
+  {
     "bindings": {
       "cmd-{": "pane::ActivatePreviousItem",
       "cmd-}": "pane::ActivateNextItem",
