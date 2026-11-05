@@ -111,7 +111,7 @@ pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
 };
-pub use git::blame::{BlameRenderer, BlameTimestampCacheKey, GitBlame};
+pub use git::blame::{BlameRenderer, GitBlame, MAX_RELATIVE_TIMESTAMP};
 pub use git::{
     DefaultDiffHunkRenderer, DiffHunkRenderer, HiddenDiffHunkRenderer,
     HiddenUnstagedDiffHunkRenderer, render_diff_hunk_controls, set_blame_renderer,
@@ -1277,7 +1277,7 @@ pub struct EditorSnapshot {
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
     show_bookmarks: Option<bool>,
-    git_blame_gutter_max_text_lengths: Option<(usize, usize)>,
+    git_blame_gutter_max_author_length: Option<usize>,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_display_snapshot: Option<DisplaySnapshot>,
     is_focused: bool,
@@ -3147,11 +3147,13 @@ impl Editor {
     }
 
     pub fn snapshot(&self, window: &Window, cx: &mut App) -> EditorSnapshot {
-        let git_blame_gutter_max_text_lengths = self
+        let git_blame_gutter_max_author_length = self
             .render_git_blame_gutter(cx)
             .then(|| {
                 if let Some(blame) = self.blame.as_ref() {
-                    Some(blame.update(cx, |blame, cx| blame.max_text_lengths(cx)))
+                    let max_author_length =
+                        blame.update(cx, |blame, cx| blame.max_author_length(cx));
+                    Some(max_author_length)
                 } else {
                     None
                 }
@@ -3175,7 +3177,7 @@ impl Editor {
             show_runnables: self.show_runnables,
             show_bookmarks: self.show_bookmarks,
             show_breakpoints: self.show_breakpoints,
-            git_blame_gutter_max_text_lengths,
+            git_blame_gutter_max_author_length,
             scroll_anchor: self.scroll_manager.shared_scroll_anchor(cx),
             display_snapshot,
             placeholder_display_snapshot: self
@@ -12541,16 +12543,18 @@ impl EditorSnapshot {
             let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
             let show_bookmarks = self.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
 
-            let git_blame_entries_width = self.git_blame_gutter_max_text_lengths.map(
-                |(max_author_length, max_timestamp_length)| {
-                    let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-                    let max_char_count = max_author_length.min(renderer.max_author_length())
-                        + ::git::SHORT_SHA_LENGTH
-                        + max_timestamp_length;
+            let git_blame_entries_width =
+                self.git_blame_gutter_max_author_length
+                    .map(|max_author_length| {
+                        let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
 
-                    ch_advance * max_char_count + renderer.blame_entry_non_text_width(window, cx)
-                },
-            );
+                        let max_char_count = max_author_length.min(renderer.max_author_length())
+                            + ::git::SHORT_SHA_LENGTH
+                            + renderer.max_timestamp_width(cx);
+
+                        ch_advance * max_char_count
+                            + renderer.blame_entry_non_text_width(window, cx)
+                    });
 
             let is_singleton = self.buffer_snapshot().is_singleton();
 

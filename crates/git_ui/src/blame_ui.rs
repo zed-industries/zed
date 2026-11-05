@@ -146,28 +146,16 @@ impl BlameRenderer for GitBlameRenderer {
         GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED
     }
 
-    fn timestamp_cache_key(&self, cx: &App) -> Option<editor::BlameTimestampCacheKey> {
-        let git = &ProjectSettings::get_global(cx).git;
-        (git.blame.date_style == settings::GitDateStyle::Absolute).then(|| {
-            let offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-            editor::BlameTimestampCacheKey {
-                date_format: git.date_format.clone(),
-                utc_offset: offset,
-                // Locale dates read "Today" or "Yesterday", so their width changes with the date.
-                local_date: time::OffsetDateTime::now_utc().to_offset(offset).date(),
-            }
-        })
-    }
-
-    fn timestamp_length(&self, entry: &BlameEntry, cx: &App) -> usize {
-        unicode_width::UnicodeWidthStr::width(
-            blame_entry_timestamp(
-                entry,
-                ProjectSettings::get_global(cx).git.blame.date_style,
-                cx,
-            )
-            .as_str(),
-        )
+    fn max_timestamp_width(&self, cx: &App) -> usize {
+        if ProjectSettings::get_global(cx).git.blame.date_style == settings::GitDateStyle::Relative
+        {
+            return editor::MAX_RELATIVE_TIMESTAMP.len();
+        }
+        crate::git_timestamp::longest_git_dates(cx)
+            .iter()
+            .map(|date| unicode_width::UnicodeWidthStr::width(date.as_str()))
+            .max()
+            .unwrap_or_default()
     }
 
     fn blame_entry_non_text_width(&self, window: &Window, cx: &App) -> Pixels {

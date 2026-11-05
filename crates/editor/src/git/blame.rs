@@ -1,6 +1,6 @@
 use crate::Editor;
 use anyhow::{Context as _, Result};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 
 use git::{
     GitHostingProviderRegistry, Oid,
@@ -19,13 +19,11 @@ use multi_buffer::{MultiBuffer, RowInfo};
 use project::{
     Project, ProjectItem as _,
     git_store::{GitStoreEvent, Repository},
-    project_settings::GitDateFormat,
 };
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
 use text::BufferId;
-use time::{Date, UtcOffset};
 use workspace::Workspace;
 
 #[derive(Clone, Debug, Default)]
@@ -73,50 +71,6 @@ struct GitBlameBuffer {
     buffer_edits: text::Subscription<usize>,
     commit_details: HashMap<Oid, ParsedCommitMessage>,
     commit_tag_names: HashMap<Oid, Vec<SharedString>>,
-    text_lengths: Option<BlameTextLengths>,
-}
-
-const MAX_RELATIVE_TIMESTAMP: &str = "2 years, 11 months ago";
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BlameTimestampCacheKey {
-    pub date_format: GitDateFormat,
-    pub utc_offset: UtcOffset,
-    pub local_date: Date,
-}
-
-struct BlameTextLengths {
-    date_format: Option<BlameTimestampCacheKey>,
-    lengths: (usize, usize),
-}
-
-impl GitBlameBuffer {
-    fn max_text_lengths(
-        &mut self,
-        date_format: &Option<BlameTimestampCacheKey>,
-        measure_timestamp: impl Fn(&BlameEntry) -> usize,
-    ) -> (usize, usize) {
-        if let Some(cached) = &self.text_lengths
-            && &cached.date_format == date_format
-        {
-            return cached.lengths;
-        }
-        let mut lengths = (0, 0);
-        let mut measured_commits = HashSet::default();
-        for entry in self.entries.iter().filter_map(|entry| entry.blame.as_ref()) {
-            lengths.0 = lengths
-                .0
-                .max(entry.author.as_ref().map_or(0, |author| author.len()));
-            if date_format.is_some() && measured_commits.insert(entry.sha) {
-                lengths.1 = lengths.1.max(measure_timestamp(entry));
-            }
-        }
-        self.text_lengths = Some(BlameTextLengths {
-            date_format: date_format.clone(),
-            lengths,
-        });
-        lengths
-    }
 }
 
 /// Determines where the blame data comes from and whether it is kept up to date.
@@ -152,14 +106,12 @@ pub struct GitBlame {
     kind: GitBlameKind,
 }
 
+pub const MAX_RELATIVE_TIMESTAMP: &str = "2 years, 11 months ago";
+
 pub trait BlameRenderer {
     fn max_author_length(&self) -> usize;
 
-    fn timestamp_cache_key(&self, _: &App) -> Option<BlameTimestampCacheKey> {
-        None
-    }
-
-    fn timestamp_length(&self, _: &BlameEntry, _: &App) -> usize {
+    fn max_timestamp_width(&self, _: &App) -> usize {
         MAX_RELATIVE_TIMESTAMP.len()
     }
 
@@ -391,7 +343,6 @@ impl GitBlame {
                     buffer_edits,
                     commit_details,
                     commit_tag_names,
-                    text_lengths: None,
                 },
             );
         }
@@ -478,23 +429,26 @@ impl GitBlame {
         })
     }
 
-    pub fn max_text_lengths(&mut self, cx: &mut App) -> (usize, usize) {
+    pub fn max_author_length(&mut self, cx: &mut App) -> usize {
+        let mut max_author_length = 0;
         self.sync_all(cx);
-        let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-        let date_format = renderer.timestamp_cache_key(cx);
-        self.buffers.values_mut().fold(
-            (
-                0,
-                date_format
+
+        for buffer in self.buffers.values() {
+            for entry in buffer.entries.iter() {
+                let author_len = entry
+                    .blame
                     .as_ref()
-                    .map_or(MAX_RELATIVE_TIMESTAMP.len(), |_| 0),
-            ),
-            |maximum, buffer| {
-                let lengths = buffer
-                    .max_text_lengths(&date_format, |entry| renderer.timestamp_length(entry, cx));
-                (maximum.0.max(lengths.0), maximum.1.max(lengths.1))
-            },
-        )
+                    .and_then(|entry| entry.author.as_ref())
+                    .map(|author| author.len());
+                if let Some(author_len) = author_len
+                    && author_len > max_author_length
+                {
+                    max_author_length = author_len;
+                }
+            }
+        }
+
+        max_author_length
     }
 
     pub fn blur(&mut self, _: &mut Context<Self>) {
@@ -790,7 +744,6 @@ impl GitBlame {
                             entries,
                             commit_details,
                             commit_tag_names,
-                            text_lengths: None,
                         },
                     );
                 }
@@ -922,7 +875,6 @@ mod tests {
     use settings::SettingsStore;
     use std::{cmp, env, ops::Range, path::Path, sync::Mutex};
     use text::BufferId;
-    use time::macros::{date, offset};
     use unindent::Unindent as _;
     use util::{RandomCharIter, path};
 
@@ -974,95 +926,6 @@ mod tests {
 
             crate::init(cx);
         });
-    }
-
-    #[gpui::test]
-    fn test_blame_text_lengths_cache(cx: &mut gpui::TestAppContext) {
-        use std::cell::Cell;
-
-        init_test(cx);
-        let buffer = cx.new(|cx| Buffer::local("line\n", cx));
-        let mut blame_buffer = buffer.update(cx, |buffer, _| GitBlameBuffer {
-            entries: SumTree::from_iter(
-                (0..10_000).map(|index| GitBlameEntry {
-                    rows: 1,
-                    blame: Some(blame_entry(&format!("{index:040x}"), index..index + 1)),
-                }),
-                (),
-            ),
-            buffer_snapshot: buffer.snapshot(),
-            buffer_edits: buffer.subscribe(),
-            commit_details: HashMap::default(),
-            commit_tag_names: HashMap::default(),
-            text_lengths: None,
-        });
-        blame_buffer.entries.push(
-            GitBlameEntry {
-                rows: 1,
-                blame: Some(blame_entry(&format!("{:040x}", 0), 10_000..10_001)),
-            },
-            (),
-        );
-        let measurements = Cell::new(0);
-        let measure = |_: &BlameEntry| {
-            measurements.set(measurements.get() + 1);
-            40
-        };
-        let format = Some(BlameTimestampCacheKey {
-            date_format: GitDateFormat::Iso,
-            utc_offset: UtcOffset::UTC,
-            local_date: date!(2024 - 160),
-        });
-        assert_eq!(blame_buffer.max_text_lengths(&format, measure).1, 40);
-        assert_eq!(measurements.get(), 10_000);
-        for _ in 0..100 {
-            assert_eq!(blame_buffer.max_text_lengths(&format, measure).1, 40);
-        }
-        assert_eq!(measurements.get(), 10_000);
-        blame_buffer.max_text_lengths(
-            &Some(BlameTimestampCacheKey {
-                date_format: GitDateFormat::parse("%Y"),
-                utc_offset: UtcOffset::UTC,
-                local_date: date!(2024 - 160),
-            }),
-            measure,
-        );
-        assert_eq!(measurements.get(), 20_000);
-        blame_buffer.max_text_lengths(
-            &Some(BlameTimestampCacheKey {
-                date_format: GitDateFormat::parse("%Y"),
-                utc_offset: offset!(+1),
-                local_date: date!(2024 - 160),
-            }),
-            measure,
-        );
-        assert_eq!(measurements.get(), 30_000);
-        blame_buffer.max_text_lengths(&None, measure);
-        assert_eq!(measurements.get(), 30_000);
-        let today = BlameTimestampCacheKey {
-            date_format: GitDateFormat::Locale,
-            utc_offset: UtcOffset::UTC,
-            local_date: date!(2024 - 160),
-        };
-        assert_eq!(
-            blame_buffer.max_text_lengths(&Some(today.clone()), |_| 8).1,
-            8
-        );
-        assert_eq!(
-            blame_buffer
-                .max_text_lengths(&Some(today.clone()), |_| 40)
-                .1,
-            8
-        );
-        let later = BlameTimestampCacheKey {
-            local_date: date!(2024 - 162),
-            ..today
-        };
-        assert_eq!(blame_buffer.max_text_lengths(&Some(later), |_| 40).1, 40);
-        blame_buffer.entries = SumTree::default();
-        blame_buffer.text_lengths = None;
-        assert_eq!(blame_buffer.max_text_lengths(&format, measure).0, 0);
-        assert_eq!(measurements.get(), 30_000);
     }
 
     #[gpui::test]
@@ -1311,10 +1174,6 @@ mod tests {
                     .collect::<Vec<_>>(),
                 vec![Some((buffer_id, blame_entry("0d0d0d", 1..2))), None, None]
             );
-            assert_eq!(
-                blame.max_text_lengths(cx),
-                (0, MAX_RELATIVE_TIMESTAMP.len())
-            );
         });
     }
 
@@ -1400,7 +1259,7 @@ mod tests {
 
         let git_blame = cx.new(|cx| {
             GitBlame::new_static(
-                multi_buffer.clone(),
+                multi_buffer,
                 project.clone(),
                 repository.clone(),
                 [
@@ -1465,29 +1324,6 @@ mod tests {
             assert_eq!(
                 blame.tag_names_for_entry(buffer_two_id, &blame_entry("0d0d0d", 0..2)),
                 Vec::<SharedString>::new()
-            );
-            let format = Some(BlameTimestampCacheKey {
-                date_format: GitDateFormat::Iso,
-                utc_offset: UtcOffset::UTC,
-                local_date: date!(2024 - 160),
-            });
-            blame
-                .buffers
-                .get_mut(&buffer_one_id)
-                .expect("blame buffer")
-                .max_text_lengths(&format, |_| 40);
-            buffer_one.update(cx, |buffer, cx| {
-                buffer.edit([(0..7, "changed\n")], None, cx)
-            });
-            blame.sync_all(cx);
-            assert_eq!(
-                blame
-                    .buffers
-                    .get_mut(&buffer_one_id)
-                    .expect("blame buffer")
-                    .max_text_lengths(&format, |_| 0)
-                    .1,
-                40
             );
         });
     }
