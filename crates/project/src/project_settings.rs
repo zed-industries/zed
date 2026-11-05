@@ -503,6 +503,21 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: String,
+    /// Settings for automatically fetching the default branch's remote and the current branch's upstream remote.
+    pub auto_fetch: AutoFetchSettings,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutoFetchSettings {
+    /// Whether to automatically fetch in the background.
+    ///
+    /// Default: false
+    pub enabled: bool,
+    /// How long to wait between automatic fetches, in seconds.
+    /// Only applies when `enabled` is true. (min: 15)
+    ///
+    /// Default: 60
+    pub interval_secs: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -719,6 +734,13 @@ impl Settings for ProjectSettings {
                 .worktree_directory
                 .clone()
                 .unwrap_or_else(|| DEFAULT_WORKTREE_DIRECTORY.to_string()),
+            auto_fetch: {
+                let auto_fetch = git.auto_fetch.unwrap_or_default();
+                AutoFetchSettings {
+                    enabled: auto_fetch.enabled.unwrap_or(false),
+                    interval_secs: auto_fetch.interval_secs.unwrap_or(60).max(15),
+                }
+            },
         };
         Self {
             context_servers: project
@@ -826,8 +848,10 @@ pub struct SettingsObserver {
     worktree_store: Entity<WorktreeStore>,
     project_id: u64,
     task_store: Entity<TaskStore>,
-    pending_local_settings:
-        HashMap<PathTrust, BTreeMap<(WorktreeId, Arc<RelPath>), Option<String>>>,
+    pending_local_settings: HashMap<
+        PathTrust,
+        BTreeMap<(WorktreeId, Arc<RelPath>), HashMap<LocalSettingsKind, Option<String>>>,
+    >,
     _trusted_worktrees_watcher: Option<Subscription>,
     _user_settings_watcher: Option<Subscription>,
     _editorconfig_watcher: Option<Subscription>,
@@ -870,34 +894,27 @@ impl SettingsObserver {
                                     for ((worktree_id, directory_path), settings_contents) in
                                         pending_local_settings
                                     {
-                                        let path =
-                                            LocalSettingsPath::InWorktree(directory_path.clone());
-                                        apply_local_settings(
-                                            worktree_id,
-                                            path.clone(),
-                                            LocalSettingsKind::Settings,
-                                            &settings_contents,
+                                        let Some(worktree) = settings_observer
+                                            .worktree_store
+                                            .read(cx)
+                                            .worktree_for_id(worktree_id, cx)
+                                        else {
+                                            continue;
+                                        };
+                                        settings_observer.update_settings(
+                                            worktree,
+                                            settings_contents.into_iter().map(|(kind, content)| {
+                                                (
+                                                    LocalSettingsPath::InWorktree(
+                                                        directory_path.clone(),
+                                                    ),
+                                                    kind,
+                                                    content,
+                                                )
+                                            }),
+                                            false,
                                             cx,
                                         );
-                                        if let Some(downstream_client) =
-                                            &settings_observer.downstream_client
-                                        {
-                                            downstream_client
-                                                .send(proto::UpdateWorktreeSettings {
-                                                    project_id: settings_observer.project_id,
-                                                    worktree_id: worktree_id.to_proto(),
-                                                    path: path.to_proto(),
-                                                    content: settings_contents,
-                                                    kind: Some(
-                                                        local_settings_kind_to_proto(
-                                                            LocalSettingsKind::Settings,
-                                                        )
-                                                        .into(),
-                                                    ),
-                                                    outside_worktree: Some(false),
-                                                })
-                                                .log_err();
-                                        }
                                     }
                                 }
                             }
@@ -1355,32 +1372,37 @@ impl SettingsObserver {
             OnceCell::new()
         };
         for (directory_path, kind, file_content) in settings_contents {
-            let mut applied = true;
+            if kind != LocalSettingsKind::Editorconfig
+                && !*can_trust_worktree.get_or_init(|| {
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
+                        })
+                    } else {
+                        true
+                    }
+                })
+            {
+                if let LocalSettingsPath::InWorktree(directory) = directory_path {
+                    self.pending_local_settings
+                        .entry(PathTrust::Worktree(worktree_id))
+                        .or_default()
+                        .entry((worktree_id, directory))
+                        .or_default()
+                        .insert(kind, file_content);
+                }
+                continue;
+            }
+
             match (&directory_path, kind) {
                 (LocalSettingsPath::InWorktree(directory), LocalSettingsKind::Settings) => {
-                    if *can_trust_worktree.get_or_init(|| {
-                        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-                            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                                trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
-                            })
-                        } else {
-                            true
-                        }
-                    }) {
-                        apply_local_settings(
-                            worktree_id,
-                            LocalSettingsPath::InWorktree(directory.clone()),
-                            kind,
-                            &file_content,
-                            cx,
-                        )
-                    } else {
-                        applied = false;
-                        self.pending_local_settings
-                            .entry(PathTrust::Worktree(worktree_id))
-                            .or_default()
-                            .insert((worktree_id, directory.clone()), file_content.clone());
-                    }
+                    apply_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(directory.clone()),
+                        kind,
+                        &file_content,
+                        cx,
+                    )
                 }
                 (LocalSettingsPath::InWorktree(directory), LocalSettingsKind::Tasks) => {
                     let result = task_store.update(cx, |task_store, cx| {
@@ -1455,19 +1477,17 @@ impl SettingsObserver {
                 }
             };
 
-            if applied {
-                if let Some(downstream_client) = &self.downstream_client {
-                    downstream_client
-                        .send(proto::UpdateWorktreeSettings {
-                            project_id: self.project_id,
-                            worktree_id: remote_worktree_id.to_proto(),
-                            path: directory_path.to_proto(),
-                            content: file_content.clone(),
-                            kind: Some(local_settings_kind_to_proto(kind).into()),
-                            outside_worktree: Some(directory_path.is_outside_worktree()),
-                        })
-                        .log_err();
-                }
+            if let Some(downstream_client) = &self.downstream_client {
+                downstream_client
+                    .send(proto::UpdateWorktreeSettings {
+                        project_id: self.project_id,
+                        worktree_id: remote_worktree_id.to_proto(),
+                        path: directory_path.to_proto(),
+                        content: file_content.clone(),
+                        kind: Some(local_settings_kind_to_proto(kind).into()),
+                        outside_worktree: Some(directory_path.is_outside_worktree()),
+                    })
+                    .log_err();
             }
         }
     }
