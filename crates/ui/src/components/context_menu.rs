@@ -306,6 +306,7 @@ pub struct ContextMenu {
     submenu_depth: usize,
     submenu_trigger_mouse_down: bool,
     content_focus_handle: Option<FocusHandle>,
+    keep_open_while: Option<Rc<dyn Fn(&App) -> bool>>,
     ignore_blur_until: Option<Instant>,
     /// When set to true, the next on_focus_in callback will not automatically
     /// select an item. This prevents a visual flash where a submenu close in
@@ -440,6 +441,7 @@ impl ContextMenu {
                     submenu_depth: 0,
                     submenu_trigger_mouse_down: false,
                     content_focus_handle: None,
+                    keep_open_while: None,
                     ignore_blur_until: None,
                     suppress_focus_selection: !window.is_a11y_enabled(),
                 },
@@ -483,6 +485,7 @@ impl ContextMenu {
                 submenu_depth: self.submenu_depth,
                 submenu_trigger_mouse_down: false,
                 content_focus_handle: None,
+                keep_open_while: None,
                 ignore_blur_until: None,
                 suppress_focus_selection: !window.is_a11y_enabled(),
             },
@@ -526,6 +529,7 @@ impl ContextMenu {
         self.documentation_aside = None;
         self.aside_trigger_bounds.borrow_mut().clear();
         self.content_focus_handle = new_menu.content_focus_handle;
+        self.keep_open_while = new_menu.keep_open_while;
 
         let selected_index = self.selected_index.take();
         if let Some(index) = selected_index {
@@ -998,6 +1002,24 @@ impl ContextMenu {
         self
     }
 
+    /// Keeps this submenu open while `condition` holds, wherever the pointer moves.
+    pub fn keep_open_while(mut self, condition: impl Fn(&App) -> bool + 'static) -> Self {
+        self.keep_open_while = Some(Rc::new(condition));
+        self
+    }
+
+    fn open_submenu_kept_open(&self, cx: &App) -> bool {
+        let SubmenuState::Open(open_submenu) = &self.submenu_state else {
+            return false;
+        };
+        open_submenu
+            .entity
+            .read(cx)
+            .keep_open_while
+            .as_ref()
+            .is_some_and(|condition| condition(cx))
+    }
+
     fn submenu_focus_target(&self) -> FocusHandle {
         self.content_focus_handle
             .clone()
@@ -1454,6 +1476,7 @@ impl ContextMenu {
                 submenu_depth: parent_depth + 1,
                 submenu_trigger_mouse_down: false,
                 content_focus_handle: None,
+                keep_open_while: None,
                 ignore_blur_until: None,
                 suppress_focus_selection: !window.is_a11y_enabled(),
             };
@@ -1759,7 +1782,7 @@ impl ContextMenu {
                     .aria_label(label.clone())
                     .toggle_state(toggle_state)
                     .on_hover(cx.listener(move |this, hovered, window, cx| {
-                        if disabled {
+                        if disabled || this.open_submenu_kept_open(cx) {
                             return;
                         }
                         if *hovered {
@@ -1781,7 +1804,8 @@ impl ContextMenu {
 
                             cx.notify();
                         } else {
-                            if this.submenu_trigger_mouse_down {
+                            // Keyboard input ends hover even though the pointer hasn't moved.
+                            if this.submenu_trigger_mouse_down || window.last_input_was_keyboard() {
                                 return;
                             }
 
@@ -2106,7 +2130,7 @@ impl ContextMenu {
                     .toggle_state(Some(ix) == self.selected_index)
                     .when(self.main_menu.is_none() && !*disabled, |item| {
                         item.on_hover(cx.listener(move |this, hovered, window, cx| {
-                            if *hovered {
+                            if *hovered && !this.open_submenu_kept_open(cx) {
                                 this.clear_selected();
                                 this.suppress_focus_selection = true;
                                 window.focus(&this.focus_handle.clone(), cx);
@@ -2149,13 +2173,17 @@ impl ContextMenu {
                                 if let Some(parent) = &this.main_menu {
                                     let mouse_pos = window.mouse_position();
                                     let parent_clone = parent.clone();
+                                    let kept_open = this
+                                        .keep_open_while
+                                        .as_ref()
+                                        .is_some_and(|condition| condition(cx));
 
                                     if *hovered {
                                         parent.update(cx, |parent, _| {
                                             parent.clear_selected();
                                             parent.hover_target = HoverTarget::Submenu;
                                         });
-                                    } else {
+                                    } else if !kept_open {
                                         parent_clone.update(cx, |parent, cx| {
                                             if matches!(
                                                 &parent.submenu_state,
@@ -2355,6 +2383,7 @@ impl ContextMenu {
             submenu_depth: 0,
             submenu_trigger_mouse_down: false,
             content_focus_handle: None,
+            keep_open_while: None,
             ignore_blur_until: None,
             suppress_focus_selection: !window.is_a11y_enabled(),
         }
@@ -3455,6 +3484,109 @@ mod tests {
             content_is_focused,
             "opening the submenu by hover must focus its content"
         );
+    }
+
+    #[gpui::test]
+    fn typing_with_pointer_on_submenu_trigger_keeps_submenu_open(cx: &mut TestAppContext) {
+        let content_focus = cx.update(|cx| cx.focus_handle());
+        let content_bounds = Rc::new(Cell::new(None));
+        let (menu, mut visual) =
+            open_window_with_embedded_view_submenu(&content_focus, &content_bounds, cx);
+        let trigger = submenu_trigger_bounds(&menu, 0, &mut visual);
+
+        visual.simulate_mouse_move(trigger.center(), None, Modifiers::default());
+        draw_frames(&mut visual);
+        visual.simulate_click(trigger.center(), Modifiers::default());
+        draw_frames(&mut visual);
+        visual.simulate_keystrokes("a");
+        draw_frames(&mut visual);
+
+        assert!(open_submenu_index(&menu, &mut visual).is_some());
+        assert!(visual.update(|window, _| content_focus.is_focused(window)));
+    }
+
+    #[gpui::test]
+    fn kept_open_submenu_ignores_hover_elsewhere(cx: &mut TestAppContext) {
+        let keep_open = Rc::new(Cell::new(false));
+        let (menu, mut visual) = submenu_test_window(cx, {
+            let keep_open = keep_open.clone();
+            move |window, cx| {
+                ContextMenu::build(window, cx, move |menu, _, _| {
+                    menu.submenu("Search", move |menu, _, _| {
+                        let keep_open = keep_open.clone();
+                        menu.entry("Result", None, |_, _| {})
+                            .keep_open_while(move |_| keep_open.get())
+                    })
+                    .entry("Other", None, |_, _| {})
+                    .submenu("More", |menu, _, _| menu.entry("Inner", None, |_, _| {}))
+                })
+            }
+        });
+        draw_frames(&mut visual);
+        let search = submenu_trigger_bounds(&menu, 0, &mut visual).center();
+        let more = submenu_trigger_bounds(&menu, 2, &mut visual).center();
+        let other = point(search.x, (search.y + more.y) / 2.);
+        let empty_space = point(px(680.), px(380.));
+        let hover = |position, visual: &mut VisualTestContext| {
+            visual.simulate_mouse_move(position, None, Modifiers::default());
+            draw_frames(visual);
+            open_submenu_index(&menu, visual)
+        };
+
+        assert_eq!(hover(search, &mut visual), Some(0));
+        assert_eq!(
+            hover(empty_space, &mut visual),
+            None,
+            "leaving closes it by default"
+        );
+        assert_eq!(hover(search, &mut visual), Some(0));
+        assert_eq!(
+            hover(other, &mut visual),
+            None,
+            "a sibling closes it by default"
+        );
+
+        assert_eq!(hover(search, &mut visual), Some(0));
+        keep_open.set(true);
+        assert_eq!(
+            hover(other, &mut visual),
+            Some(0),
+            "a sibling leaves it open"
+        );
+        assert_eq!(
+            hover(more, &mut visual),
+            Some(0),
+            "another trigger doesn't replace it"
+        );
+        assert_eq!(
+            hover(empty_space, &mut visual),
+            Some(0),
+            "leaving leaves it open"
+        );
+
+        keep_open.set(false);
+        assert_eq!(hover(other, &mut visual), None);
+    }
+
+    fn submenu_trigger_bounds(
+        menu: &Entity<ContextMenu>,
+        index: usize,
+        cx: &mut VisualTestContext,
+    ) -> Bounds<Pixels> {
+        menu.read_with(cx, |menu, _| {
+            menu.submenu_trigger_bounds
+                .borrow()
+                .get(&index)
+                .copied()
+                .expect("trigger bounds")
+        })
+    }
+
+    fn open_submenu_index(menu: &Entity<ContextMenu>, cx: &mut VisualTestContext) -> Option<usize> {
+        menu.read_with(cx, |menu, _| match &menu.submenu_state {
+            SubmenuState::Open(open_submenu) => Some(open_submenu.item_index),
+            SubmenuState::Closed => None,
+        })
     }
 
     fn focus_menu(menu: &Entity<ContextMenu>, cx: &mut VisualTestContext) {
