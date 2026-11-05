@@ -45003,6 +45003,59 @@ async fn test_sticky_scroll_in_headerless_single_excerpt_multibuffer(cx: &mut Te
 }
 
 #[gpui::test]
+async fn test_sticky_scroll_struct_in_headerless_single_excerpt_multibuffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let buffer = cx.new(|cx| {
+        language::Buffer::local(
+            indoc! {"
+                struct Foo {
+                    a: u32,
+                    b: u32,
+                    c: u32,
+                    d: u32,
+                    e: u32,
+                }
+                fn bar() {
+                }
+            "},
+            cx,
+        )
+        .with_language(rust_lang(), cx)
+    });
+    let max_point = buffer.read_with(cx, |buffer, _| buffer.max_point());
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::without_headers(language::Capability::ReadWrite);
+        multibuffer.set_excerpts_for_buffer(buffer.clone(), [Point::zero()..max_point], 0, cx);
+        multibuffer
+    });
+    let editor = cx.add_window(|window, cx| {
+        let mut editor = build_editor(multibuffer.clone(), window, cx);
+        editor.enable_single_excerpt_sticky_headers();
+        editor
+    });
+    cx.run_until_parked();
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.scroll(gpui::Point { x: 0., y: 2.5 }, window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let sticky_headers = editor
+        .update(cx, |editor, window, cx| {
+            EditorElement::sticky_headers(editor, &editor.snapshot(window, cx))
+                .into_iter()
+                .map(|StickyHeader { start_point, .. }| start_point)
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert_eq!(sticky_headers, vec![Point::new(0, 0)]);
+}
+
+#[gpui::test]
 async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
