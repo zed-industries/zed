@@ -1,5 +1,5 @@
 use acp_thread::{AcpThread, MessageKind};
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::Result;
 use collections::HashMap;
 use gpui::Context;
@@ -252,6 +252,12 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
                 },
                 acp_v2::PlanUpdateContent::File(plan) => InboundSessionUpdate::PlanFile {
                     plan,
+                    update_meta: update.meta,
+                },
+                // Zed can't render an unknown plan type, but it still replaces the plan with
+                // that ID.
+                acp_v2::PlanUpdateContent::Other(plan) => InboundSessionUpdate::PlanItems {
+                    plan: acp_v2::PlanItems::new(plan.plan_id, Vec::new()),
                     update_meta: update.meta,
                 },
                 content => {
