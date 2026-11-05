@@ -1009,8 +1009,12 @@ impl ContextMenu {
     }
 
     fn open_submenu_kept_open(&self, cx: &App) -> bool {
+        self.kept_open_submenu_index(cx).is_some()
+    }
+
+    fn kept_open_submenu_index(&self, cx: &App) -> Option<usize> {
         let SubmenuState::Open(open_submenu) = &self.submenu_state else {
-            return false;
+            return None;
         };
         open_submenu
             .entity
@@ -1018,6 +1022,7 @@ impl ContextMenu {
             .keep_open_while
             .as_ref()
             .is_some_and(|condition| condition(cx))
+            .then_some(open_submenu.item_index)
     }
 
     fn submenu_focus_target(&self) -> FocusHandle {
@@ -1781,6 +1786,7 @@ impl ContextMenu {
                     .when(is_active_descendant, |item| item.aria_active_descendant())
                     .aria_label(label.clone())
                     .toggle_state(toggle_state)
+                    .keep_selected_style_on_hover(self.kept_open_submenu_index(cx) == Some(ix))
                     .on_hover(cx.listener(move |this, hovered, window, cx| {
                         if disabled || this.open_submenu_kept_open(cx) {
                             return;

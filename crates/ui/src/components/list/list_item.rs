@@ -52,6 +52,7 @@ pub struct ListItem {
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
     selectable: bool,
+    keep_selected_style_on_hover: bool,
     always_show_disclosure_icon: bool,
     outlined: bool,
     rounded: bool,
@@ -88,6 +89,7 @@ impl ListItem {
             tooltip: None,
             children: SmallVec::new(),
             selectable: true,
+            keep_selected_style_on_hover: false,
             always_show_disclosure_icon: false,
             outlined: false,
             rounded: false,
@@ -161,6 +163,11 @@ impl ListItem {
 
     pub fn selectable(mut self, has_hover: bool) -> Self {
         self.selectable = has_hover;
+        self
+    }
+
+    pub fn keep_selected_style_on_hover(mut self, keep: bool) -> Self {
+        self.keep_selected_style_on_hover = keep;
         self
     }
 
@@ -297,6 +304,7 @@ impl ParentElement for ListItem {
 
 impl RenderOnce for ListItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let hover_keeps_selected_style = self.selected && self.keep_selected_style_on_hover;
         h_flex()
             .id(self.id)
             .when_some(self.group_name, |this, group| this.group(group))
@@ -320,12 +328,14 @@ impl RenderOnce for ListItem {
                         })
                 })
                 .when(self.selectable && !self.disabled, |this| {
-                    this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                        .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                        .when(self.outlined, |this| this.rounded_sm())
-                        .when(self.selected, |this| {
-                            this.bg(cx.theme().colors().ghost_element_selected)
-                        })
+                    this.when(!hover_keeps_selected_style, |this| {
+                        this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                    })
+                    .when(self.outlined, |this| this.rounded_sm())
+                    .when(self.selected, |this| {
+                        this.bg(cx.theme().colors().ghost_element_selected)
+                    })
                 })
             })
             .when(self.rounded, |this| this.rounded_sm())
@@ -377,11 +387,15 @@ impl RenderOnce for ListItem {
                             }
                         })
                         .when(self.selectable && !self.disabled, |this| {
-                            this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                                .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                                .when(self.selected, |this| {
-                                    this.bg(cx.theme().colors().ghost_element_selected)
+                            this.when(!hover_keeps_selected_style, |this| {
+                                this.hover(|style| {
+                                    style.bg(cx.theme().colors().ghost_element_hover)
                                 })
+                                .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                            })
+                            .when(self.selected, |this| {
+                                this.bg(cx.theme().colors().ghost_element_selected)
+                            })
                         })
                     })
                     .when_some(
