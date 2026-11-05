@@ -35,13 +35,22 @@ message GetGlobalSkills {
 }
 
 message GetGlobalSkillsResponse {
-  repeated GlobalSkillFile files = 1;
+  repeated GlobalSkill skills = 1;
   repeated GlobalSkillLoadError errors = 2;
 }
 
-message GlobalSkillFile {
-  string path = 1;
-  string content = 2;
+message GlobalSkill {
+  string name = 1;
+  string description = 2;
+  string skill_file_path = 3;
+  string directory_path = 4;
+  bool disable_model_invocation = 5;
+  optional SkillDescriptionTooLong description_too_long = 6;
+}
+
+message SkillDescriptionTooLong {
+  uint64 actual_len = 1;
+  uint64 max_len = 2;
 }
 
 message GlobalSkillLoadError {

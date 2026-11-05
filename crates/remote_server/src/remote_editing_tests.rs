@@ -5384,6 +5384,53 @@ async fn test_remote_global_skills_come_from_the_remote(
 }
 
 #[gpui::test]
+async fn test_remote_global_skill_frontmatter_comes_from_the_remote(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(
+        Path::new(path!("/project")),
+        &["remote-skill"],
+        cx,
+        server_cx,
+    )
+    .await;
+    let long_description = "a".repeat(agent_skills::MAX_SKILL_DESCRIPTION_LEN + 1);
+    test.server_fs
+        .insert_tree(
+            test.skills_dir.join("hidden-skill"),
+            json!({
+                "SKILL.md": format!(
+                    "---\nname: hidden-skill\ndescription: {long_description}\ndisable-model-invocation: true\n---\nbody"
+                )
+            }),
+        )
+        .await;
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        let index = cx.global::<SkillIndex>();
+        let skill = index.remote_global_skills[&test.project.entity_id()]
+            .iter()
+            .find(|skill| skill.name == "hidden-skill")
+            .expect("the remote's new skill should be listed");
+        assert!(skill.disable_model_invocation);
+        assert_eq!(skill.directory_path, test.skills_dir.join("hidden-skill"));
+        assert_eq!(
+            skill.skill_file_path,
+            test.skills_dir.join("hidden-skill").join("SKILL.md")
+        );
+        assert_eq!(
+            skill.load_warnings,
+            [agent_skills::SkillLoadWarning::DescriptionTooLong {
+                actual_len: agent_skills::MAX_SKILL_DESCRIPTION_LEN + 1,
+                max_len: agent_skills::MAX_SKILL_DESCRIPTION_LEN,
+            }]
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_remote_global_skills_dir_deleted_and_recreated(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
