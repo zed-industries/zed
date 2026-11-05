@@ -2074,6 +2074,7 @@ impl GitGraph {
 
                 let short_sha = commit.data.sha.display_short();
                 let mut formatted_time = String::new();
+                let mut commit_timestamp = None;
                 let subject: SharedString;
                 let author_name: SharedString;
                 let author_email: Option<SharedString>;
@@ -2083,6 +2084,7 @@ impl GitGraph {
                     author_name = data.author_name.clone();
                     author_email =
                         (!data.author_email.is_empty()).then(|| data.author_email.clone());
+                    commit_timestamp = Some(data.commit_timestamp);
                     formatted_time = format_timestamp(
                         data.commit_timestamp,
                         GitGraphSettings::get_global(cx).date_style,
@@ -2147,7 +2149,25 @@ impl GitGraph {
                         .overflow_hidden()
                         .child(h_flex().gap_2().overflow_hidden().child(subject_label))
                         .into_any_element(),
-                    column_label(formatted_time.into()),
+                    div()
+                        .id(ElementId::NamedInteger("commit-date".into(), idx as u64))
+                        .overflow_hidden()
+                        .child(column_label(formatted_time.into()))
+                        .when_some(commit_timestamp, |this, timestamp| {
+                            this.tooltip(move |_, cx| {
+                                let text = OffsetDateTime::from_unix_timestamp(timestamp)
+                                    .map(|datetime| {
+                                        format_git_timestamp(
+                                            datetime,
+                                            time_format::TimestampFormat::MediumAbsolute,
+                                            cx,
+                                        )
+                                    })
+                                    .unwrap_or_else(|_| "Unknown".to_string());
+                                Tooltip::simple(text, cx)
+                            })
+                        })
+                        .into_any_element(),
                     {
                         let avatar_sha: SharedString = commit.data.sha.to_string().into();
                         let avatar = CommitAvatar::new(&avatar_sha, author_email, remote.as_ref())
