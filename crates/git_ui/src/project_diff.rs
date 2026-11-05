@@ -370,7 +370,9 @@ impl ProjectDiff {
         let mut unstage_all = false;
         self.workspace
             .read_with(cx, |workspace, cx| {
-                if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+                if let Some(git_panel) =
+                    GitPanel::panel_for_repository(workspace, diff.repo(cx), cx)
+                {
                     let git_panel = git_panel.read(cx);
                     stage_all = git_panel.can_stage_all();
                     unstage_all = git_panel.can_unstage_all();
@@ -756,9 +758,12 @@ impl ProjectDiffToolbar {
     }
 
     fn stage_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let repo = self
+            .project_diff(cx)
+            .and_then(|item| item.read(cx).repo(cx));
         self.workspace
             .update(cx, |workspace, cx| {
-                if let Some(panel) = workspace.panel::<GitPanel>(cx) {
+                if let Some(panel) = GitPanel::panel_for_repository(workspace, repo, cx) {
                     panel.update(cx, |panel, cx| {
                         panel.stage_all(&Default::default(), window, cx);
                     });
@@ -768,9 +773,12 @@ impl ProjectDiffToolbar {
     }
 
     fn unstage_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let repo = self
+            .project_diff(cx)
+            .and_then(|item| item.read(cx).repo(cx));
         self.workspace
             .update(cx, |workspace, cx| {
-                let Some(panel) = workspace.panel::<GitPanel>(cx) else {
+                let Some(panel) = GitPanel::panel_for_repository(workspace, repo, cx) else {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
@@ -1034,6 +1042,116 @@ mod tests {
 
     use crate::branch_diff::BranchDiff;
     use crate::project_diff::{self, ProjectDiff};
+
+    #[gpui::test]
+    async fn test_toolbar_staging_targets_its_diff_repository(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(language_model::init);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "a": {".git": {}, "same.txt": "changed a\n"},
+                "b": {".git": {}, "same.txt": "changed b\n"}
+            }),
+        )
+        .await;
+        for name in ["a", "b"] {
+            fs.set_head_and_index_for_repo(
+                &Path::new(path!("/root")).join(name).join(".git"),
+                &[("same.txt", "original\n".into())],
+            );
+        }
+        let project = Project::test(
+            fs,
+            [Path::new(path!("/root/a")), Path::new(path!("/root/b"))],
+            cx,
+        )
+        .await;
+        project.read_with(cx, |project, _| {
+            project
+                .languages()
+                .add(std::sync::Arc::new(language::Language::new(
+                    language::LanguageConfig {
+                        name: "Git Commit".into(),
+                        ..Default::default()
+                    },
+                    None,
+                )));
+        });
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = GitPanel::new_test(workspace, window, cx);
+            workspace.add_panel(panel, window, cx);
+        });
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
+        cx.run_until_parked();
+        let repositories = project.read_with(cx, |project, cx| {
+            let store = project.git_store().read(cx);
+            ["a", "b"].map(|name| {
+                store
+                    .repositories()
+                    .values()
+                    .find(|repo| {
+                        repo.read(cx).work_directory_abs_path.as_ref()
+                            == Path::new(path!("/root")).join(name)
+                    })
+                    .unwrap()
+                    .clone()
+            })
+        });
+        let [repo_a, repo_b] = repositories;
+        repo_a.update(cx, |repo, cx| repo.set_as_active_repository(cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+        });
+        diff.update(cx, |diff, cx| diff.set_repo(Some(repo_a.clone()), cx));
+        let toolbar = workspace.update(cx, |workspace, cx| {
+            cx.new(|cx| ProjectDiffToolbar::new(workspace, cx))
+        });
+        toolbar.update(cx, |toolbar, _| {
+            toolbar.project_diff = Some(diff.downgrade())
+        });
+        repo_b.update(cx, |repo, cx| repo.set_as_active_repository(cx));
+        cx.run_until_parked();
+        let [panel_a, panel_b] = workspace.read_with(cx, |workspace, cx| {
+            [repo_a.clone(), repo_b.clone()]
+                .map(|repo| GitPanel::panel_for_repository(workspace, Some(repo), cx).unwrap())
+        });
+        cx.update(|window, cx| toolbar.update(cx, |toolbar, cx| toolbar.stage_all(window, cx)));
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
+        cx.run_until_parked();
+        assert_eq!(
+            panel_a.read_with(cx, |panel, _| panel.total_staged_count()),
+            1
+        );
+        assert_eq!(
+            panel_b.read_with(cx, |panel, _| panel.total_staged_count()),
+            0
+        );
+
+        cx.update(|window, cx| toolbar.update(cx, |toolbar, cx| toolbar.unstage_all(window, cx)));
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
+        cx.run_until_parked();
+        assert_eq!(
+            panel_a.read_with(cx, |panel, _| panel.total_staged_count()),
+            0
+        );
+        project.read_with(cx, |project, cx| {
+            assert_eq!(project.active_repository(cx), Some(repo_b));
+        });
+    }
 
     #[test]
     fn test_legacy_branch_diff_rows_migrate_to_their_own_kind() {

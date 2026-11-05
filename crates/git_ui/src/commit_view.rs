@@ -1042,8 +1042,7 @@ impl CommitView {
                 };
 
                 let repo = workspace.update(cx, |workspace, cx| {
-                    workspace
-                        .panel::<GitPanel>(cx)
+                    GitPanel::active_panel(workspace, cx)
                         .and_then(|p| p.read(cx).active_repository.clone())
                 });
 
