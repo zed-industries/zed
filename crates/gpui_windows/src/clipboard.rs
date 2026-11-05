@@ -8,8 +8,8 @@ use windows::Win32::{
     System::{
         DataExchange::{
             CloseClipboard, CountClipboardFormats, EmptyClipboard, EnumClipboardFormats,
-            GetClipboardData, GetClipboardFormatNameW, OpenClipboard, RegisterClipboardFormatW,
-            SetClipboardData,
+            GetClipboardData, GetClipboardFormatNameW, IsClipboardFormatAvailable, OpenClipboard,
+            RegisterClipboardFormatW, SetClipboardData,
         },
         Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
         Ole::{CF_DIB, CF_HDROP, CF_UNICODETEXT},
@@ -19,7 +19,8 @@ use windows::Win32::{
 use windows::core::{Owned, PCWSTR};
 
 use gpui::{
-    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
+    ClipboardContentTypes, ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image,
+    ImageFormat, hash,
 };
 
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
@@ -125,6 +126,22 @@ pub(crate) fn read_from_clipboard() -> Option<ClipboardItem> {
         return None;
     }
     Some(ClipboardItem { entries })
+}
+
+pub(crate) fn clipboard_content_types() -> ClipboardContentTypes {
+    let is_available = |format| unsafe { IsClipboardFormatAvailable(format).is_ok() };
+    let mut content_types = ClipboardContentTypes::empty();
+    if is_available(CF_UNICODETEXT.0 as u32) {
+        content_types |= ClipboardContentTypes::TEXT;
+    }
+    // Windows also synthesizes CF_DIB from CF_BITMAP and CF_DIBV5.
+    if is_available(CF_DIB.0 as u32) || IMAGE_FORMATS_MAP.keys().copied().any(is_available) {
+        content_types |= ClipboardContentTypes::IMAGE;
+    }
+    if is_available(CF_HDROP.0 as u32) {
+        content_types |= ClipboardContentTypes::EXTERNAL_PATHS;
+    }
+    content_types
 }
 
 pub(crate) fn with_file_names<F>(hdrop: HDROP, mut f: F)

@@ -101,13 +101,13 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, ExternalDragPayload,
-    FileDragPaths, FileDropEvent, ForegroundExecutor, GraphicalEnvironment, KeyDownEvent,
-    KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta,
-    ScrollEvent, ScrollSource, SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind,
-    WindowParams, point, px, size,
+    AnyWindowHandle, Bounds, Capslock, ClipboardContentTypes, ClipboardReadError, CursorStyle,
+    DevicePixels, ExternalDragPayload, FileDragPaths, FileDropEvent, ForegroundExecutor,
+    GraphicalEnvironment, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
+    Pixels, PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout,
+    PlatformWindow, Point, ScrollDelta, ScrollEvent, ScrollSource, SharedString, Size, Task,
+    TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -1490,6 +1490,12 @@ impl WaylandConnection {
 
     pub(crate) fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
         self.0.borrow_mut().clipboard.read()
+    }
+
+    pub(crate) fn clipboard_content_types(
+        &self,
+    ) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        Task::ready(Ok(self.0.borrow().clipboard.content_types()))
     }
 
     pub(crate) fn active_window(&self) -> Option<AnyWindowHandle> {
