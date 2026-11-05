@@ -1,3 +1,4 @@
+use crate::emoji_shortcode::expand_emoji_shortcodes;
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
@@ -1330,16 +1331,19 @@ impl Item for CommitView {
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         let short_sha = self.commit.sha.get(0..7).unwrap_or(&*self.commit.sha);
-        let subject = truncate_and_trailoff(self.commit.message.split('\n').next().unwrap(), 20);
+        let subject = truncate_and_trailoff(
+            &expand_emoji_shortcodes(self.commit.message.split('\n').next().unwrap()),
+            20,
+        );
         format!("{short_sha} — {subject}").into()
     }
 
     fn tab_tooltip_content(&self, _: &App) -> Option<TabTooltipContent> {
         let short_sha = self.commit.sha.get(0..16).unwrap_or(&*self.commit.sha);
-        let subject = self.commit.message.split('\n').next().unwrap();
+        let subject = expand_emoji_shortcodes(self.commit.message.split('\n').next().unwrap());
 
         Some(TabTooltipContent::Custom(Box::new(Tooltip::element({
-            let subject = subject.to_string();
+            let subject = subject.into_owned();
             let short_sha = short_sha.to_string();
 
             move |_, _| {

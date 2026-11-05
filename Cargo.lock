@@ -7065,6 +7065,7 @@ dependencies = [
  "ctor",
  "db",
  "editor",
+ "emojis",
  "file_icons",
  "fs",
  "futures 0.3.34",
