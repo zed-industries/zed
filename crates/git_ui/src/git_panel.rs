@@ -18349,6 +18349,66 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_lookup_woken_before_a_repository_switch_is_ignored(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel;
+        let repo = test
+            .project
+            .read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+
+        // A git job notifies right before sending its result, so a switch queued
+        // on that notify runs after the lookup wakes but before it runs.
+        let mut checked_switches = 0;
+        for switch_on_notify in 0.. {
+            let notifies = Rc::new(Cell::new(0));
+            let switched = Rc::new(Cell::new(None));
+            let _subscription = cx.update(|window, cx| {
+                let window_handle = window.window_handle();
+                let panel = panel.clone();
+                let notifies = notifies.clone();
+                let switched = switched.clone();
+                cx.observe(&repo, move |_, cx| {
+                    let notify = notifies.get();
+                    notifies.set(notify + 1);
+                    if notify != switch_on_notify {
+                        return;
+                    }
+                    let panel = panel.clone();
+                    let switched = switched.clone();
+                    cx.spawn(async move |cx| {
+                        cx.update_window(window_handle, |_, window, cx| {
+                            panel.update(cx, |panel, cx| {
+                                switched.set(Some(panel.is_branch_mode()));
+                                panel.reset_branch_state(window, cx);
+                            });
+                        })
+                        .ok();
+                    })
+                    .detach();
+                })
+            });
+            panel.update_in(cx, |panel, window, cx| {
+                panel.show_branch_changes(&ShowBranchChanges, window, cx);
+            });
+            settle_branch_mode(cx);
+            // Past the last notify, or the request finished before the switch.
+            let Some(false) = switched.get() else {
+                break;
+            };
+            checked_switches += 1;
+            panel.read_with(cx, |panel, _| {
+                assert_eq!(
+                    panel.branch_base.effective(),
+                    None,
+                    "a switch on notify {switch_on_notify} kept the previous repository's default",
+                );
+            });
+        }
+        assert!(checked_switches > 0);
+    }
+
+    #[gpui::test]
     async fn test_newer_branch_changes_request_replaces_pending_one(cx: &mut TestAppContext) {
         let (test, mut cx) = setup_branch_mode_test(cx, None).await;
         let cx = &mut cx;

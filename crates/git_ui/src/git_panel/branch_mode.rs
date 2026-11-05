@@ -89,6 +89,9 @@ pub(super) struct BranchBase {
     /// Requests waiting on the default branch await clones of this, so
     /// dropping one of them leaves the lookup running.
     default_lookup: Shared<Task<()>>,
+    /// Bumped by every lookup and reset. A lookup only writes while the count
+    /// is still its own, since a cancelled request's clone can keep it running.
+    default_lookup_count: usize,
     pending_show: Option<PendingShow>,
     followed: Option<FollowedBranchDiff>,
 }
@@ -121,6 +124,7 @@ impl BranchBase {
             default: DefaultBranch::NotLoaded,
             default_is_stale: false,
             default_lookup: Task::ready(()).shared(),
+            default_lookup_count: 0,
             pending_show: None,
             followed: None,
         }
@@ -416,7 +420,9 @@ impl GitPanel {
     /// Branch names don't carry over between repositories, so switching
     /// repositories starts again from the new one's default branch.
     pub(super) fn reset_branch_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let default_lookup_count = self.branch_base.default_lookup_count + 1;
         self.branch_base = BranchBase::new();
+        self.branch_base.default_lookup_count = default_lookup_count;
         // The active tab may have become active before the repository switch,
         // when it didn't belong to the active repository yet.
         self.follow_active_branch_diff(window, cx);
@@ -443,6 +449,8 @@ impl GitPanel {
     }
 
     fn resolve_default_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.branch_base.default_lookup_count += 1;
+        let lookup_id = self.branch_base.default_lookup_count;
         self.branch_base.default_is_stale = false;
         let Some(repo) = self.active_repository.clone() else {
             self.branch_base.default = DefaultBranch::Missing;
@@ -458,6 +466,9 @@ impl GitPanel {
                 Some(None) | None => DefaultBranch::Missing,
             };
             this.update_in(cx, |this, window, cx| {
+                if this.branch_base.default_lookup_count != lookup_id {
+                    return;
+                }
                 if this.branch_base.default != default_branch {
                     this.branch_base.default = default_branch;
                     this.schedule_visible_entries_update(window, cx);
@@ -467,9 +478,7 @@ impl GitPanel {
             .ok();
         });
         self.branch_base.default_lookup = lookup.shared();
-        // No caller restarts the lookup while a request waits today, but a
-        // request left on the old lookup would keep it running, and it could
-        // then overwrite the newer result.
+        // A request left on the old lookup would decide before this one answers.
         if let Some(pending) = self.branch_base.pending_show.take() {
             self.show_after_lookup(pending.request, window, cx);
         }
