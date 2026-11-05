@@ -43,7 +43,7 @@ const SHIFT_TAB_KEY: u32 = 0x19;
 const BACKSPACE_KEY_EQUIVALENT: u32 = 0x08;
 const DELETE_KEY_EQUIVALENT: u32 = 0x7f;
 
-pub fn key_to_native(key: &str) -> Cow<'_, str> {
+pub(crate) fn key_to_menu_equivalent(key: &str) -> Cow<'_, str> {
     let code = match key {
         "space" => SPACE_KEY,
         "backspace" => BACKSPACE_KEY_EQUIVALENT,
