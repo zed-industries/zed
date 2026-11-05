@@ -566,9 +566,6 @@ impl SplittableEditor {
     /// Split panes share a scroll position, but only the scrolled pane emits
     /// `ScrollPositionChanged`, so the other pane's sticky headers are refreshed here.
     fn refresh_sticky_headers(editor: &Entity<Editor>, cx: &mut App) {
-        if !EditorSettings::get_global(cx).sticky_scroll.enabled {
-            return;
-        }
         editor.update(cx, |editor, cx| {
             let snapshot = editor.display_snapshot(cx);
             editor.refresh_sticky_headers(&snapshot, cx);
@@ -638,6 +635,7 @@ impl SplittableEditor {
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_runnables();
             editor.enable_single_excerpt_sticky_headers();
+            editor.enable_excerpt_contexts(cx);
             editor.disable_code_lens(cx);
             editor.disable_inline_diagnostics();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
@@ -765,6 +763,7 @@ impl SplittableEditor {
             editor.disable_lsp_data();
             editor.disable_runnables();
             editor.enable_single_excerpt_sticky_headers();
+            editor.enable_excerpt_contexts(cx);
             editor.disable_diagnostics(cx);
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
 

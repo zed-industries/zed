@@ -631,10 +631,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let opened_first_time = self.scroll_manager.visible_line_count.is_none();
-        self.scroll_manager.visible_line_count = Some(lines);
-        if opened_first_time {
+        let previous_lines = self.scroll_manager.visible_line_count.replace(lines);
+        if previous_lines.is_none() {
             self.update_data_on_scroll(false, window, cx);
+        }
+        // Resizing can move the cursor in or out of view without scrolling.
+        if previous_lines != Some(lines) {
+            self.refresh_sticky_header_context(&self.display_snapshot(cx), cx);
         }
     }
 

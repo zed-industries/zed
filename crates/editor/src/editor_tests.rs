@@ -45056,6 +45056,149 @@ async fn test_sticky_scroll_struct_in_headerless_single_excerpt_multibuffer(
 }
 
 #[gpui::test]
+async fn test_excerpt_contexts(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer = cx.new(|cx| {
+        language::Buffer::local(
+            indoc! {"
+                fn foo() {
+                    let abc = 123;
+                }
+                impl Bar {
+                    fn new() -> Self {
+                        let a = 1;
+                        let b = 2;
+                        let c = 3;
+                        Self
+                    }
+                    fn added() {
+                    }
+                }
+            "},
+            cx,
+        )
+        .with_language(rust_lang(), cx)
+    });
+    let multibuffer = cx.new(|_| MultiBuffer::new(language::Capability::ReadWrite));
+    let editor = cx.add_window(|window, cx| {
+        let mut editor = build_editor(multibuffer.clone(), window, cx);
+        editor.enable_excerpt_contexts(cx);
+        editor
+    });
+    // With one context line, each excerpt starts a row above its primary range.
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_buffer(
+            buffer.clone(),
+            [
+                // Starts on `fn foo`, which is visible, so there is no context.
+                Point::new(0, 0)..Point::new(0, 3),
+                // Inside `fn new`.
+                Point::new(6, 0)..Point::new(6, 3),
+                // On `fn added`, starting on the closing brace of `fn new`, which must
+                // not be the context.
+                Point::new(10, 0)..Point::new(10, 3),
+            ],
+            1,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let contexts = editor
+        .update(cx, |editor, _, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .excerpts()
+                .map(|excerpt| {
+                    editor.excerpt_context(&excerpt.context.start).map(|context| {
+                        context
+                            .iter()
+                            .map(|symbol| symbol.text.to_string())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert_eq!(
+        contexts,
+        vec![
+            None,
+            Some(vec!["impl Bar".to_string(), "fn new".to_string()]),
+            Some(vec!["impl Bar".to_string()]),
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_sticky_header_context(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let text = format!(
+        "fn foo() {{\n{}}}\nfn bar() {{\n{}}}\n",
+        "    let a = 1;\n".repeat(9),
+        "    let b = 2;\n".repeat(9),
+    );
+    let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(rust_lang(), cx));
+    let max_point = buffer.read_with(cx, |buffer, _| buffer.max_point());
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+        multibuffer.set_excerpts_for_buffer(buffer.clone(), [Point::zero()..max_point], 0, cx);
+        multibuffer
+    });
+    let editor = cx.add_window(|window, cx| {
+        let mut editor = build_editor(multibuffer.clone(), window, cx);
+        editor.enable_excerpt_contexts(cx);
+        editor.set_visible_line_count(5., window, cx);
+        editor
+    });
+    cx.run_until_parked();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    let sticky_header_context = |cx: &mut TestAppContext| {
+        cx.run_until_parked();
+        editor
+            .update(cx, |editor, _, _| {
+                editor.sticky_header_context(buffer_id).map(|context| {
+                    context
+                        .iter()
+                        .map(|symbol| symbol.text.to_string())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap()
+    };
+
+    // The buffer header takes the first two display rows, so the first row below the
+    // sticky header is buffer row 12, inside `fn bar`, while the cursor is on row 0.
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.set_scroll_position(gpui::Point::new(0., 12.), window, cx);
+        })
+        .unwrap();
+    assert_eq!(
+        sticky_header_context(cx),
+        Some(vec!["fn bar".to_string()]),
+        "the first visible row gives the context when the cursor is scrolled out of view"
+    );
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([Point::new(13, 0)..Point::new(13, 0)])
+            });
+        })
+        .unwrap();
+    assert_eq!(
+        sticky_header_context(cx),
+        None,
+        "the cursor's breadcrumbs are used when the cursor is visible"
+    );
+}
+
+#[gpui::test]
 async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;

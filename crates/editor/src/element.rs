@@ -3425,19 +3425,45 @@ impl EditorElement {
                 result.into_any_element()
             }
 
-            Block::ExcerptBoundary { .. } => {
+            Block::ExcerptBoundary { excerpt, .. } => {
                 let color = cx.theme().colors().clone();
                 let mut result = v_flex().id(block_id).w_full();
+                let context = self
+                    .editor
+                    .read(cx)
+                    .excerpt_context(&excerpt.start_text_anchor())
+                    .map(|context| header::render_excerpt_context(context, window, cx));
 
                 result = result.child(
-                    h_flex().relative().child(
-                        div()
-                            .top(line_height / 2.)
-                            .absolute()
-                            .w_full()
-                            .h_px()
-                            .bg(color.border_variant),
-                    ),
+                    h_flex()
+                        .relative()
+                        .h(line_height)
+                        .child(
+                            div()
+                                .top(line_height / 2.)
+                                .absolute()
+                                .w_full()
+                                .h_px()
+                                .bg(color.border_variant),
+                        )
+                        .when_some(context, |this, context| {
+                            // Starts where the text starts, over the boundary line, and
+                            // shrinks to fit narrow panes.
+                            this.child(
+                                h_flex()
+                                    .absolute()
+                                    .left(editor_margins.gutter.full_width())
+                                    .right_0()
+                                    .h_full()
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .px_1()
+                                            .bg(color.editor_background)
+                                            .child(context),
+                                    ),
+                            )
+                        }),
                 );
 
                 result.into_any()
