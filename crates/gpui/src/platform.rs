@@ -3218,6 +3218,22 @@ impl ClipboardItem {
         }
     }
 
+    /// Returns the union of this item's entry types without cloning or decoding payloads.
+    ///
+    /// Types are reported even for empty payloads. An item with no entries returns an empty set.
+    pub fn content_types(&self) -> ClipboardContentTypes {
+        self.entries
+            .iter()
+            .fold(ClipboardContentTypes::empty(), |types, entry| {
+                types
+                    | match entry {
+                        ClipboardEntry::String(_) => ClipboardContentTypes::TEXT,
+                        ClipboardEntry::Image(_) => ClipboardContentTypes::IMAGE,
+                        ClipboardEntry::ExternalPaths(_) => ClipboardContentTypes::EXTERNAL_PATHS,
+                    }
+            })
+    }
+
     /// Concatenates together all the ClipboardString entries in the item.
     /// Returns None if there were no ClipboardString entries.
     pub fn text(&self) -> Option<String> {
@@ -3851,6 +3867,45 @@ mod frame_signal_tests {
         let signal = PlatformFrameSignal::new();
         signal.record(Instant::now(), FrameRequestSource::LocalSchedule);
         assert_eq!(signal.take(), None);
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+    use crate::ExternalPaths;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_clipboard_item_content_types() {
+        let text = ClipboardEntry::from("text".to_string());
+        let image = ClipboardEntry::Image(Image::empty());
+        let paths = ClipboardEntry::ExternalPaths(ExternalPaths(
+            [PathBuf::from("/example.txt")].into_iter().collect(),
+        ));
+
+        for (entries, expected) in [
+            (vec![text.clone()], ClipboardContentTypes::TEXT),
+            (vec![image.clone()], ClipboardContentTypes::IMAGE),
+            (vec![paths.clone()], ClipboardContentTypes::EXTERNAL_PATHS),
+            (
+                vec![text, image, paths],
+                ClipboardContentTypes::TEXT
+                    | ClipboardContentTypes::IMAGE
+                    | ClipboardContentTypes::EXTERNAL_PATHS,
+            ),
+            (vec![], ClipboardContentTypes::empty()),
+            (
+                vec![ClipboardEntry::from(String::new())],
+                ClipboardContentTypes::TEXT,
+            ),
+            (
+                vec![ClipboardEntry::ExternalPaths(ExternalPaths::default())],
+                ClipboardContentTypes::EXTERNAL_PATHS,
+            ),
+        ] {
+            assert_eq!(ClipboardItem { entries }.content_types(), expected);
+        }
     }
 }
 
