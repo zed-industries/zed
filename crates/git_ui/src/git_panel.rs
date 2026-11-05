@@ -542,6 +542,11 @@ pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
         workspace.toggle_panel_focus::<GitPanel>(window, cx);
     });
+    workspace.register_action(|workspace, _: &FocusEditor, window, cx| {
+        if let Some(panel) = workspace.focus_panel::<GitPanel>(window, cx) {
+            panel.update(cx, |panel, cx| panel.focus_editor(&FocusEditor, window, cx));
+        }
+    });
     workspace.register_action(|workspace, _: &Toggle, window, cx| {
         if !workspace.toggle_panel_focus::<GitPanel>(window, cx) {
             workspace.close_panel::<GitPanel>(window, cx);
@@ -2626,6 +2631,10 @@ impl GitPanel {
     }
 
     fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_active_tab(GitPanelTab::Changes, window, cx);
+        if self.commit_editor_collapsed {
+            self.toggle_commit_editor(&ToggleCommitEditor, window, cx);
+        }
         self.commit_editor.update(cx, |editor, cx| {
             window.focus(&editor.focus_handle(cx), cx);
         });
