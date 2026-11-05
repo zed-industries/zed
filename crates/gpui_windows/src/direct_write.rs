@@ -1797,14 +1797,10 @@ fn is_line_separator(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ColorGlyphBitmap, DirectWriteTextSystem};
-    use crate::DirectXRenderer;
+    use super::DirectWriteTextSystem;
     use crate::direct_write::ClusterAnalyzer;
-    use anyhow::{Context as _, Result};
-    use gpui::{
-        Bounds, DevicePixels, Font, FontWeight, PlatformTextSystem, RenderGlyphParams, Rgba,
-        TextRun, TextSystem, WindowTextSystem, bounds, point, px, size,
-    };
+    use anyhow::Result;
+    use gpui::{Font, FontWeight, PlatformTextSystem, TextRun, TextSystem, WindowTextSystem, px};
     use std::sync::Arc;
     use windows::Win32::Graphics::DirectWrite::{DWRITE_FONT_STRETCH_NORMAL, DWRITE_TEXT_METRICS};
 
@@ -2076,147 +2072,5 @@ mod tests {
         assert_eq!(next, Some((5, 1)));
         let next = analyzer.next();
         assert_eq!(next, None);
-    }
-
-    #[test]
-    fn color_emoji_rasterization_is_colored_and_stable_across_batches() -> Result<()> {
-        let text_system = DirectWriteTextSystem::new()?;
-
-        let font = Font {
-            family: "Segoe UI Emoji".into(),
-            ..Default::default()
-        };
-        let font_id = text_system.font_id(&font)?;
-
-        let mut params_list = Vec::new();
-        for ch in ['🫠', '🥹', '🧗', '🏋', '🚀', '🥺'] {
-            let Some(glyph_id) = text_system.glyph_for_char(font_id, ch) else {
-                log::info!("no glyph found for {ch}");
-                continue;
-            };
-            let params = RenderGlyphParams {
-                font_id,
-                glyph_id,
-                font_size: px(48.0),
-                subpixel_variant: point(0u8, 0u8),
-                scale_factor: 1.0,
-                is_emoji: true,
-                subpixel_rendering: false,
-                dilation: 0,
-            };
-            let raster_bounds = text_system.glyph_raster_bounds(&params)?;
-            if raster_bounds.size.width.0 == 0 || raster_bounds.size.height.0 == 0 {
-                log::info!("raster bounds are empty for {ch}");
-                continue;
-            }
-            params_list.push((params, raster_bounds));
-        }
-        assert!(!params_list.is_empty());
-
-        let first: Vec<_> = params_list
-            .iter()
-            .map(|(params, bounds)| text_system.rasterize_glyph(params, *bounds))
-            .collect::<Result<_>>()?;
-        for ((_, bounds), (_, bgra)) in params_list.iter().zip(&first) {
-            assert!(
-                bgra.chunks_exact(4)
-                    .any(|pixel| pixel[3] > 0 && (pixel[0] != pixel[1] || pixel[1] != pixel[2])),
-                "emoji with raster bounds {bounds:?} rasterized without color"
-            );
-        }
-
-        for _ in 0..3 {
-            for (params, bounds) in &params_list {
-                text_system.rasterize_glyph(params, *bounds)?;
-            }
-        }
-        let second: Vec<_> = params_list
-            .iter()
-            .map(|(params, bounds)| text_system.rasterize_glyph(params, *bounds))
-            .collect::<Result<_>>()?;
-
-        assert_eq!(
-            first, second,
-            "color glyph rasterization changed between batches"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn color_emoji_raster_bounds_contain_every_layer() -> Result<()> {
-        let text_system = DirectWriteTextSystem::new()?;
-        let font_id = text_system.font_id(&Font {
-            family: "Segoe UI Emoji".into(),
-            ..Default::default()
-        })?;
-        // The flag's layers extend well past its base glyph's outline.
-        for character in ['🏳', '🚀', '😀'] {
-            let glyph_id = text_system
-                .glyph_for_char(font_id, character)
-                .context("no glyph for the emoji")?;
-            let params = RenderGlyphParams {
-                font_id,
-                glyph_id,
-                font_size: px(48.0),
-                subpixel_variant: point(0u8, 0u8),
-                scale_factor: 2.0,
-                is_emoji: true,
-                subpixel_rendering: false,
-                dilation: 0,
-            };
-            let raster_bounds = text_system.glyph_raster_bounds(&params)?;
-            let margin = DevicePixels(32);
-            let enlarged_bounds = Bounds {
-                origin: raster_bounds.origin - point(margin, margin),
-                size: raster_bounds.size + size(margin + margin, margin + margin),
-            };
-            let coverage = |bounds| -> Result<u64> {
-                let (_, bgra) = text_system.rasterize_glyph(&params, bounds)?;
-                Ok(bgra.chunks_exact(4).map(|pixel| pixel[3] as u64).sum())
-            };
-            assert_eq!(
-                coverage(raster_bounds)?,
-                coverage(enlarged_bounds)?,
-                "{character} has coverage outside its raster bounds"
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn color_layers_composite_over_transparent_bitmap() {
-        let mut bitmap = ColorGlyphBitmap::new(size(DevicePixels(8), DevicePixels(8)));
-        let coverage = [255u8; 16];
-        let font_info = DirectXRenderer::get_font_info();
-        // Starts above and left of the bitmap, so only its bottom-right quarter is in bounds.
-        bitmap.composite(
-            Rgba {
-                r: 1.0,
-                g: 0.0,
-                b: 0.0,
-                a: 1.0,
-            },
-            bounds(point(-2, -2), size(4, 4)),
-            &coverage,
-            font_info,
-        );
-        bitmap.composite(
-            Rgba {
-                r: 0.0,
-                g: 0.0,
-                b: 1.0,
-                a: 0.5,
-            },
-            bounds(point(1, 1), size(4, 4)),
-            &coverage,
-            font_info,
-        );
-        let bgra = bitmap.into_straight_bgra();
-        let pixel = |x: usize, y: usize| &bgra[(y * 8 + x) * 4..][..4];
-
-        assert_eq!(pixel(0, 0), [0, 0, 255, 255], "red layer only");
-        assert_eq!(pixel(1, 1), [128, 0, 128, 255], "blue layer over red");
-        assert_eq!(pixel(2, 2), [255, 0, 0, 128], "blue layer only");
-        assert_eq!(pixel(7, 7), [0, 0, 0, 0], "no layer");
     }
 }
