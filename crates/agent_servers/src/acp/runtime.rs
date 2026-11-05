@@ -194,7 +194,7 @@ mod tests {
     use super::*;
     use crate::acp::v1::connect_client_future;
     use acp_thread::{ElicitationStatus, ElicitationStore};
-    use agent_client_protocol::schema::v2 as acp;
+    use agent_client_protocol::v2::schema as acp;
     use collections::HashMap;
     use gpui::TestAppContext;
     use std::{cell::RefCell, rc::Rc};
@@ -209,6 +209,7 @@ mod tests {
             request_elicitations: store.clone(),
             active_request_scopes: None,
             pending_session_updates: None,
+            accepts_subagent_updates: false,
         };
         let (mut runtime, shutdown) = ClientRuntime::new(context, &mut cx.to_async());
         let retained_sender = runtime.sender();
