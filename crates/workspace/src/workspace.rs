@@ -3439,7 +3439,7 @@ impl Workspace {
     pub fn clear_titlebar_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.titlebar_item.take().is_some() {
             if self.titlebar_focus_handle.contains_focused(window, cx) {
-                window.focus(&self.active_pane.focus_handle(cx), cx);
+                window.focus(&self.fallback_focus_handle(window, cx), cx);
             }
             cx.notify();
         }
@@ -12948,7 +12948,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let title_bar = cx.new(|cx| TestItem::new(cx));
         workspace.update_in(cx, |workspace, window, cx| {
-            workspace.set_titlebar_item(title_bar.into(), window, cx);
+            workspace.set_titlebar_item(title_bar.clone().into(), window, cx);
         });
         cx.run_until_parked();
 
@@ -12962,6 +12962,47 @@ mod tests {
 
             workspace.clear_titlebar_item(window, cx);
             assert!(workspace.active_pane.focus_handle(cx).is_focused(window));
+        });
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.set_titlebar_item(title_bar.into(), window, cx);
+            let panel =
+                cx.new(|cx| TestPanel::new_with_activation_child(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            panel
+        });
+        cx.run_until_parked();
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            window.focus(&workspace.titlebar_focus_handle, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+            workspace.clear_titlebar_item(window, cx);
+        });
+        cx.run_until_parked();
+        workspace.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.titlebar_item().is_none());
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert_eq!(workspace.zoomed, Some(panel.to_any().downgrade()));
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+            assert!(
+                panel
+                    .read(cx)
+                    .activation_focus_handle
+                    .as_ref()
+                    .unwrap()
+                    .is_focused(window)
+            );
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
     }
 
