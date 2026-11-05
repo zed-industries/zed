@@ -129,6 +129,8 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
+        let window_tabs = cx.new(|_| platform_title_bar::SystemWindowTabs::new());
+        workspace.set_window_tabs_item(window_tabs.into(), cx);
         apply_title_bar_visibility(workspace, window, cx);
 
         cx.observe_global_in::<SettingsStore>(window, apply_title_bar_visibility)
@@ -531,7 +533,7 @@ impl TitleBar {
 
         let update_version = cx.new(|cx| UpdateVersion::new(cx));
         let platform_titlebar = cx.new(|cx| {
-            let mut titlebar = PlatformTitleBar::new(id, cx);
+            let mut titlebar = PlatformTitleBar::new(id, cx).without_system_window_tabs();
             if let Some(mw) = multi_workspace.clone() {
                 titlebar = titlebar.with_multi_workspace(mw);
             }
@@ -1545,5 +1547,72 @@ mod tests {
         });
         cx.run_until_parked();
         assert!(workspace.read_with(cx, |workspace, _| workspace.titlebar_item().is_some()));
+    }
+
+    #[gpui::test]
+    async fn test_window_tabs_stay_mounted_when_title_bar_hides(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let mut settings = SettingsStore::test(cx);
+            settings.update_user_settings(cx, |settings| {
+                settings.title_bar.get_or_insert_default().show = Some(TitleBarVisibility::Never);
+            });
+            cx.set_global(settings);
+            cx.set_global(db::AppDatabase::test_new());
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            command_palette_hooks::init(cx);
+        });
+        let fs = fs::FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        cx.update(|cx| {
+            let project = project.read(cx);
+            call::init(project.client(), project.user_store(), cx);
+            init(cx);
+        });
+        let other_window = cx.add_window(|_, _| gpui::Empty);
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        workspace.update_in(cx, |_, window, cx| {
+            let this_window = window.window_handle();
+            gpui::SystemWindowTabController::add_tab(
+                cx,
+                this_window.window_id(),
+                vec![
+                    gpui::SystemWindowTab::new("this".into(), this_window),
+                    gpui::SystemWindowTab::new("other".into(), other_window.into()),
+                ],
+            );
+            gpui::SystemWindowTabController::set_visible(cx, true);
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let assert_tabs_mounted = |cx: &mut gpui::VisualTestContext| {
+            workspace.update(cx, |_, cx| cx.notify());
+            cx.run_until_parked();
+            let bounds = cx
+                .debug_bounds("system-window-tabs")
+                .expect("window tabs should stay mounted");
+            assert!(bounds.size.height > px(0.));
+        };
+
+        assert!(workspace.read_with(cx, |workspace, _| workspace.titlebar_item().is_none()));
+        assert_tabs_mounted(cx);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.title_bar.get_or_insert_default().show =
+                    Some(TitleBarVisibility::HideInFullScreen);
+            });
+        });
+        cx.run_until_parked();
+        assert!(workspace.read_with(cx, |workspace, _| workspace.titlebar_item().is_some()));
+        assert_tabs_mounted(cx);
+
+        let size = workspace.update_in(cx, |_, window, _| window.bounds().size);
+        workspace.update_in(cx, |_, window, _| window.toggle_fullscreen());
+        cx.simulate_resize(size);
+        cx.run_until_parked();
+        assert!(workspace.read_with(cx, |workspace, _| workspace.titlebar_item().is_none()));
+        assert_tabs_mounted(cx);
     }
 }

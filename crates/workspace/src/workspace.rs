@@ -1594,6 +1594,7 @@ pub struct Workspace {
     pub(crate) modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
+    window_tabs_item: Option<AnyView>,
     titlebar_focus_handle: FocusHandle,
     region_focus_handles: RegionFocusHandles,
     notifications: Notifications,
@@ -2100,6 +2101,7 @@ impl Workspace {
             modal_layer,
             toast_layer,
             titlebar_item: None,
+            window_tabs_item: None,
             titlebar_focus_handle: cx.focus_handle(),
             region_focus_handles: RegionFocusHandles::new(cx),
             notifications: Notifications::default(),
@@ -3443,6 +3445,11 @@ impl Workspace {
             }
             cx.notify();
         }
+    }
+
+    pub fn set_window_tabs_item(&mut self, item: AnyView, cx: &mut Context<Self>) {
+        self.window_tabs_item = Some(item);
+        cx.notify();
     }
 
     pub fn set_prompt_for_new_path(&mut self, prompt: PromptForNewPath) {
@@ -9887,6 +9894,7 @@ impl Render for Workspace {
                         .child(item),
                 )
             })
+            .children(self.window_tabs_item.clone())
             .on_modifiers_changed(move |_, _, cx| {
                 for &id in &notification_entities {
                     cx.notify(id);
