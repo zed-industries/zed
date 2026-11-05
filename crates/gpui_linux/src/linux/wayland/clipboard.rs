@@ -10,8 +10,8 @@ use strum::IntoEnumIterator;
 use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
-use crate::linux::platform::{PIPE_READ_TIMEOUT, read_fd_with_timeout};
-use gpui::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
+use crate::linux::platform::{PIPE_READ_TIMEOUT, parse_uri_list, read_fd_with_timeout};
+use gpui::{ClipboardEntry, ClipboardItem, ExternalPaths, Image, ImageFormat, hash};
 
 /// Text mime types that we'll offer to other programs.
 pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
@@ -93,6 +93,15 @@ impl<T: ReceiveData> DataOffer<T> {
                 None
             }
         }
+    }
+
+    fn read_paths(&self, connection: &Connection) -> Option<ExternalPaths> {
+        if !self.has_mime_type(FILE_LIST_MIME_TYPE) {
+            return None;
+        }
+        let bytes = self.read_bytes(connection, FILE_LIST_MIME_TYPE)?;
+        let paths = parse_uri_list(&bytes);
+        (!paths.is_empty()).then(|| ExternalPaths(paths))
     }
 
     fn read_text(&self, connection: &Connection) -> Option<ClipboardItem> {
@@ -200,9 +209,17 @@ impl Clipboard {
             return self.contents.clone();
         }
 
-        let item = offer
-            .read_text(&self.connection)
-            .or_else(|| offer.read_image(&self.connection))?;
+        let item = if let Some(paths) = offer.read_paths(&self.connection) {
+            let mut entries = vec![ClipboardEntry::ExternalPaths(paths)];
+            if let Some(text) = offer.read_text(&self.connection) {
+                entries.extend(text.into_entries());
+            }
+            ClipboardItem { entries }
+        } else {
+            offer
+                .read_text(&self.connection)
+                .or_else(|| offer.read_image(&self.connection))?
+        };
 
         self.cached_read = Some(item.clone());
         Some(item)

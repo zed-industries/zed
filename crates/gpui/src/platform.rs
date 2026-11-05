@@ -3246,14 +3246,16 @@ impl ClipboardItem {
         }
 
         if answer.is_empty() {
-            for entry in self.entries.iter() {
-                if let ClipboardEntry::ExternalPaths(paths) = entry {
-                    for path in &paths.0 {
-                        use std::fmt::Write as _;
-                        _ = write!(answer, "{}", path.display());
-                    }
-                }
-            }
+            answer = self
+                .entries
+                .iter()
+                .flat_map(|entry| match entry {
+                    ClipboardEntry::ExternalPaths(paths) => paths.paths(),
+                    _ => &[],
+                })
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
         }
 
         if !answer.is_empty() {
@@ -3875,6 +3877,18 @@ mod clipboard_tests {
     use super::*;
     use crate::ExternalPaths;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_clipboard_item_text_joins_paths_with_newlines() {
+        let item = ClipboardItem {
+            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
+                [PathBuf::from("first.txt"), PathBuf::from("second.txt")]
+                    .into_iter()
+                    .collect(),
+            ))],
+        };
+        assert_eq!(item.text().as_deref(), Some("first.txt\nsecond.txt"));
+    }
 
     #[test]
     fn test_clipboard_item_content_types() {

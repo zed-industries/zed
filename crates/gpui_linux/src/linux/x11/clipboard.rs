@@ -22,6 +22,7 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     collections::{HashMap, hash_map::Entry},
+    iter,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -47,7 +48,8 @@ use x11rb::{
     wrapper::ConnectionExt as _,
 };
 
-use gpui::{ClipboardItem, Image, ImageFormat, hash};
+use crate::linux::platform::parse_uri_list;
+use gpui::{ClipboardEntry, ClipboardItem, ExternalPaths, Image, ImageFormat, hash};
 use strum::IntoEnumIterator;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -78,7 +80,7 @@ x11rb::atom_manager! {
         TEXT_MIME_UNKNOWN: b"text/plain",
 
         // HTML: b"text/html",
-        // URI_LIST: b"text/uri-list",
+        URI_LIST: b"text/uri-list",
 
         PNG__MIME: ImageFormat::mime_type(ImageFormat::Png ).as_bytes(),
         JPEG_MIME: ImageFormat::mime_type(ImageFormat::Jpeg).as_bytes(),
@@ -1037,18 +1039,43 @@ impl Clipboard {
             self.inner.atoms.TEXT_MIME_UNKNOWN,
         ];
 
-        // image formats first, as they are more specific, and read will return the first
+        // File lists and images are more specific, and read will return the first
         // format that the contents can be converted to
-        let mut format_atoms = Vec::with_capacity(image_entries.len() + text_format_atoms.len());
-        format_atoms.extend(image_entries.iter().map(|(atom, _)| *atom));
-        format_atoms.extend_from_slice(text_format_atoms);
+        let image_and_text_atoms = image_entries
+            .iter()
+            .map(|(atom, _)| *atom)
+            .chain(text_format_atoms.iter().copied())
+            .collect::<Vec<_>>();
+        let format_atoms = iter::once(self.inner.atoms.URI_LIST)
+            .chain(image_and_text_atoms.iter().copied())
+            .collect::<Vec<_>>();
 
-        let result = self.inner.read(&format_atoms, selection)?;
+        let mut result = self.inner.read(&format_atoms, selection)?;
 
         log::trace!(
             "read clipboard as format {:?}",
             self.inner.atom_name(result.format)
         );
+
+        if result.format == self.inner.atoms.URI_LIST {
+            let paths = parse_uri_list(&result.bytes);
+            if !paths.is_empty() {
+                let mut entries = vec![ClipboardEntry::ExternalPaths(ExternalPaths(paths))];
+                match self
+                    .inner
+                    .read(text_format_atoms, selection)
+                    .and_then(|result| self.text_from_data(result))
+                {
+                    Ok(text) => entries.extend(text.into_entries()),
+                    Err(Error::ContentNotAvailable) => {}
+                    Err(error) => {
+                        log::debug!("Failed to read text accompanying clipboard files: {error}");
+                    }
+                }
+                return Ok(ClipboardItem { entries });
+            }
+            result = self.inner.read(&image_and_text_atoms, selection)?;
+        }
 
         for (format_atom, image_format) in image_entries {
             if result.format == format_atom {
@@ -1062,6 +1089,10 @@ impl Clipboard {
             }
         }
 
+        self.text_from_data(result)
+    }
+
+    fn text_from_data(&self, result: ClipboardData) -> Result<ClipboardItem> {
         let text = if result.format == self.inner.atoms.STRING {
             // ISO Latin-1
             // See: https://stackoverflow.com/questions/28169745/what-are-the-options-to-convert-iso-8859-1-latin-1-to-a-string-utf-8
