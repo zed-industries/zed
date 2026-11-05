@@ -1790,13 +1790,22 @@ impl ContextMenu {
                                 SubmenuState::Open(open_submenu) if open_submenu.item_index == ix
                             );
 
+                            let mouse_position = window.mouse_position();
                             let mouse_in_submenu_zone = this
                                 .padded_submenu_bounds()
-                                .is_some_and(|bounds| bounds.contains(&window.mouse_position()));
+                                .is_some_and(|bounds| bounds.contains(&mouse_position));
+                            // Keyboard input ends hover without the pointer moving, so typing into
+                            // the submenu would otherwise close it while the pointer rests here.
+                            let mouse_on_trigger = this
+                                .submenu_trigger_bounds
+                                .borrow()
+                                .get(&ix)
+                                .is_some_and(|bounds| bounds.contains(&mouse_position));
 
                             if is_open_for_this_item
                                 && this.hover_target != HoverTarget::Submenu
                                 && !mouse_in_submenu_zone
+                                && !mouse_on_trigger
                             {
                                 this.close_submenu(false, cx);
                                 this.clear_selected();
@@ -3455,6 +3464,39 @@ mod tests {
             content_is_focused,
             "opening the submenu by hover must focus its content"
         );
+    }
+
+    #[gpui::test]
+    fn typing_with_pointer_on_submenu_trigger_keeps_submenu_open(cx: &mut TestAppContext) {
+        let content_focus = cx.update(|cx| cx.focus_handle());
+        let content_bounds = Rc::new(Cell::new(None));
+        let (menu, mut visual) =
+            open_window_with_embedded_view_submenu(&content_focus, &content_bounds, cx);
+
+        let trigger = menu.read_with(&visual, |menu, _| {
+            menu.submenu_trigger_bounds
+                .borrow()
+                .get(&0)
+                .copied()
+                .expect("trigger bounds")
+        });
+        visual.simulate_mouse_move(trigger.center(), None, Modifiers::default());
+        draw_frames(&mut visual);
+        visual.simulate_click(trigger.center(), Modifiers::default());
+        draw_frames(&mut visual);
+
+        visual.simulate_keystrokes("a");
+        draw_frames(&mut visual);
+
+        let submenu_is_open = menu.read_with(&visual, |menu, _| {
+            matches!(menu.submenu_state, SubmenuState::Open(_))
+        });
+        let content_is_focused = visual.update(|window, _| content_focus.is_focused(window));
+        assert!(
+            submenu_is_open,
+            "typing must not close a submenu while the pointer rests on its trigger"
+        );
+        assert!(content_is_focused, "typing leaves focus on the content");
     }
 
     fn focus_menu(menu: &Entity<ContextMenu>, cx: &mut VisualTestContext) {
