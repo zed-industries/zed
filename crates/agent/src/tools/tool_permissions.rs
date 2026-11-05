@@ -12,7 +12,10 @@ use project::{Project, ProjectPath};
 use settings::Settings;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use util::{ResultExt as _, paths::component_matches_ignore_ascii_case, paths::normalize_path};
+use util::{
+    ResultExt as _,
+    paths::{PathStyle, component_matches_ignore_ascii_case, normalize_path},
+};
 
 pub enum SensitiveSettingsKind {
     Local,
@@ -155,15 +158,16 @@ pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathB
 
 /// Like [`resolve_global_skill_path`], but for a remote project, whose global
 /// skills are on the remote machine, so the path is expanded and canonicalized
-/// there.
+/// there, in the remote's path style.
 pub async fn resolve_remote_global_skill_path(
     path: &Path,
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Option<PathBuf> {
+    let path_style = project.read_with(cx, |project, cx| project.path_style(cx));
     // Most tool calls name project files, so skip the round trips for paths
     // that can't be under any home's skills dir.
-    if !mentions_skills_dir(path) {
+    if !mentions_skills_dir(path, path_style) {
         return None;
     }
     let client = cx
@@ -182,44 +186,92 @@ pub async fn resolve_remote_global_skill_path(
     };
 
     let home_dir = metadata(Path::new("~"), false).await?;
-    let skills_dir = home_dir
-        .join(agent_skills::AGENTS_DIR_NAME)
-        .join(agent_skills::SKILLS_DIR_NAME);
-    let normalized_path = expand_and_normalize_absolute_path(path, &home_dir)?;
-    let relative_path = normalized_path.strip_prefix(&skills_dir).ok()?;
+    let lexical_path = LexicalRemoteSkillPath::new(path, &home_dir, path_style)?;
 
-    let canonical_path = metadata(&normalized_path, true).await?;
-    let canonical_skills_dir = metadata(&skills_dir, true).await?;
-    if canonical_path.starts_with(&canonical_skills_dir) {
+    let canonical_path = metadata(&lexical_path.normalized_path, true).await?;
+    let canonical_skills_dir = metadata(&lexical_path.skills_dir, true).await?;
+    if path_style.starts_with(&canonical_path, &canonical_skills_dir) {
         return Some(canonical_path);
     }
 
     // A linked skill directory, as in `is_in_linked_global_skill_dir`.
-    let Some(Component::Normal(skill_dir_name)) = relative_path.components().next() else {
-        return None;
-    };
-    let skill_dir = skills_dir.join(skill_dir_name);
+    let skill_dir = lexical_path.skill_dir?;
     let canonical_skill_dir = metadata(&skill_dir, true).await?;
-    let is_skill = metadata(&skill_dir.join(agent_skills::SKILL_FILE_NAME), false)
-        .await
-        .is_some();
+    let is_skill = metadata(
+        &path_style.join(&skill_dir, agent_skills::SKILL_FILE_NAME),
+        false,
+    )
+    .await
+    .is_some();
     (is_skill
-        && !canonical_skill_dir.starts_with(&canonical_skills_dir)
-        && canonical_path.starts_with(&canonical_skill_dir))
+        && !path_style.starts_with(&canonical_skill_dir, &canonical_skills_dir)
+        && path_style.starts_with(&canonical_path, &canonical_skill_dir))
     .then_some(canonical_path)
+}
+
+/// A path checked, by its text alone, to be inside the remote's
+/// `~/.agents/skills`.
+#[derive(Debug, PartialEq)]
+struct LexicalRemoteSkillPath {
+    normalized_path: PathBuf,
+    skills_dir: PathBuf,
+    /// The skill directory the path is in, unless it's the skills dir itself.
+    skill_dir: Option<PathBuf>,
+}
+
+impl LexicalRemoteSkillPath {
+    fn new(path: &Path, home_dir: &Path, path_style: PathStyle) -> Option<Self> {
+        let path_text = path.to_string_lossy();
+        let expanded_path = if path_style.is_absolute(path) {
+            path.to_path_buf()
+        } else {
+            let after_home = path_text.strip_prefix('~')?;
+            if !after_home.is_empty() && !after_home.starts_with(path_style.separators_ch()) {
+                return None;
+            }
+            path_style.join(
+                home_dir,
+                after_home.trim_start_matches(path_style.separators_ch()),
+            )
+        };
+        let normalized_path = path_style.normalize_lexically(&expanded_path);
+        if !path_style.is_absolute(&normalized_path) {
+            return None;
+        }
+
+        let skills_dir = path_style.join(
+            path_style.join(home_dir, agent_skills::AGENTS_DIR_NAME),
+            agent_skills::SKILLS_DIR_NAME,
+        );
+        let relative_path = path_style
+            .strip_prefix(&normalized_path, &skills_dir)
+            .ok()?
+            .to_string_lossy()
+            .into_owned();
+        let skill_dir = relative_path
+            .split(path_style.separators_ch())
+            .find(|name| !name.is_empty())
+            .map(|skill_dir_name| path_style.join(&skills_dir, skill_dir_name));
+        Some(Self {
+            normalized_path,
+            skills_dir,
+            skill_dir,
+        })
+    }
 }
 
 /// Whether `path`, after resolving `..`, contains `.agents/skills`, which any
 /// path under `<home>/.agents/skills` does, whatever the home dir is.
-fn mentions_skills_dir(path: &Path) -> bool {
+fn mentions_skills_dir(path: &Path, path_style: PathStyle) -> bool {
+    let path_text = path.to_string_lossy();
     let mut names = Vec::new();
-    for component in path.components() {
-        match component {
-            Component::Normal(name) => names.push(name),
-            Component::ParentDir => {
+    for name in path_text.split(path_style.separators_ch()) {
+        match name {
+            "" | "." => {}
+            ".." => {
                 names.pop();
             }
-            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+            name => names.push(name),
         }
     }
     names.windows(2).any(|pair| {
@@ -253,7 +305,7 @@ async fn is_in_linked_global_skill_dir(
             .await
 }
 
-fn expand_home_prefix(path: &Path, home_dir: &Path) -> Option<PathBuf> {
+fn expand_home_prefix(path: &Path) -> Option<PathBuf> {
     if path.is_absolute() {
         return Some(path.to_path_buf());
     }
@@ -264,7 +316,7 @@ fn expand_home_prefix(path: &Path, home_dir: &Path) -> Option<PathBuf> {
         return None;
     }
 
-    let mut expanded = home_dir.to_path_buf();
+    let mut expanded = paths::home_dir().clone();
     for component in components {
         match component {
             Component::Normal(component) => expanded.push(component),
@@ -276,14 +328,14 @@ fn expand_home_prefix(path: &Path, home_dir: &Path) -> Option<PathBuf> {
     Some(expanded)
 }
 
-fn expand_and_normalize_absolute_path(path: &Path, home_dir: &Path) -> Option<PathBuf> {
-    let expanded_path = expand_home_prefix(path, home_dir)?;
+fn expand_and_normalize_absolute_path(path: &Path) -> Option<PathBuf> {
+    let expanded_path = expand_home_prefix(path)?;
     let normalized_path = normalize_path(&expanded_path);
     normalized_path.is_absolute().then_some(normalized_path)
 }
 
 fn resolve_lexical_global_skill_path(path: &Path) -> Option<PathBuf> {
-    let normalized_path = expand_and_normalize_absolute_path(path, paths::home_dir())?;
+    let normalized_path = expand_and_normalize_absolute_path(path)?;
     let normalized_skills_dir = normalize_path(&agent_skills::global_skills_dir());
 
     normalized_path
@@ -1552,23 +1604,83 @@ mod tests {
 
     #[test]
     fn test_mentions_skills_dir() {
-        for path in [
-            "~/.agents/skills",
-            "~/.agents/skills/my-skill/SKILL.md",
-            "/home/user/.agents/skills/my-skill/scripts/run.sh",
-            "~/.agents/other/../skills/my-skill",
-            "~/../user/.agents/skills",
+        for (path, path_style) in [
+            ("~/.agents/skills", PathStyle::Unix),
+            ("~/.agents/skills/my-skill/SKILL.md", PathStyle::Unix),
+            (
+                "/home/user/.agents/skills/my-skill/scripts/run.sh",
+                PathStyle::Unix,
+            ),
+            ("~/.agents/other/../skills/my-skill", PathStyle::Unix),
+            ("~/../user/.agents/skills", PathStyle::Unix),
+            (r"C:\Users\user\.agents\skills\my-skill", PathStyle::Windows),
+            ("~/.agents\\skills", PathStyle::Windows),
         ] {
-            assert!(mentions_skills_dir(Path::new(path)), "{path}");
+            assert!(mentions_skills_dir(Path::new(path), path_style), "{path}");
         }
-        for path in [
-            "project/src/main.rs",
-            "/home/user/project/src/main.rs",
-            "~/.agents",
-            "~/.agents/skills/../other",
-            "~/skills/.agents",
+        for (path, path_style) in [
+            ("project/src/main.rs", PathStyle::Unix),
+            ("/home/user/project/src/main.rs", PathStyle::Unix),
+            ("~/.agents", PathStyle::Unix),
+            ("~/.agents/skills/../other", PathStyle::Unix),
+            ("~/skills/.agents", PathStyle::Unix),
+            // A backslash is part of a file name on Unix.
+            (r"~/.agents\skills", PathStyle::Unix),
+            (r"C:\Users\user\project\main.rs", PathStyle::Windows),
         ] {
-            assert!(!mentions_skills_dir(Path::new(path)), "{path}");
+            assert!(!mentions_skills_dir(Path::new(path), path_style), "{path}");
         }
+    }
+
+    #[test]
+    fn test_lexical_remote_skill_path() {
+        let unix = |path: &str| {
+            LexicalRemoteSkillPath::new(Path::new(path), Path::new("/home/user"), PathStyle::Unix)
+        };
+        assert_eq!(
+            unix("~/.agents/skills/my-skill/scripts/../SKILL.md"),
+            Some(LexicalRemoteSkillPath {
+                normalized_path: PathBuf::from("/home/user/.agents/skills/my-skill/SKILL.md"),
+                skills_dir: PathBuf::from("/home/user/.agents/skills"),
+                skill_dir: Some(PathBuf::from("/home/user/.agents/skills/my-skill")),
+            })
+        );
+        assert_eq!(
+            unix("/home/user/.agents/skills"),
+            Some(LexicalRemoteSkillPath {
+                normalized_path: PathBuf::from("/home/user/.agents/skills"),
+                skills_dir: PathBuf::from("/home/user/.agents/skills"),
+                skill_dir: None,
+            })
+        );
+        assert_eq!(unix("~/.agents/skills/../../.ssh/id_rsa"), None);
+        assert_eq!(unix("/other/.agents/skills/my-skill"), None);
+        assert_eq!(unix("~other/.agents/skills"), None);
+        assert_eq!(unix("project/.agents/skills/my-skill"), None);
+
+        let windows = |path: &str| {
+            LexicalRemoteSkillPath::new(
+                Path::new(path),
+                Path::new(r"C:\Users\user"),
+                PathStyle::Windows,
+            )
+        };
+        assert_eq!(
+            windows("~/.agents/skills/my-skill/SKILL.md"),
+            Some(LexicalRemoteSkillPath {
+                normalized_path: PathBuf::from(r"C:\Users\user\.agents\skills\my-skill\SKILL.md"),
+                skills_dir: PathBuf::from(r"C:\Users\user\.agents\skills"),
+                skill_dir: Some(PathBuf::from(r"C:\Users\user\.agents\skills\my-skill")),
+            })
+        );
+        assert_eq!(
+            windows(r"C:\Users\user\.agents\skills\my-skill"),
+            Some(LexicalRemoteSkillPath {
+                normalized_path: PathBuf::from(r"C:\Users\user\.agents\skills\my-skill"),
+                skills_dir: PathBuf::from(r"C:\Users\user\.agents\skills"),
+                skill_dir: Some(PathBuf::from(r"C:\Users\user\.agents\skills\my-skill")),
+            })
+        );
+        assert_eq!(windows(r"C:\Users\other\.agents\skills\my-skill"), None);
     }
 }

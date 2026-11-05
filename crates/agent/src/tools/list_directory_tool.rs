@@ -104,18 +104,19 @@ impl ListDirectoryTool {
         input_path: &str,
         cx: &mut AsyncApp,
     ) -> Result<String, String> {
-        let entries = project
-            .update(cx, |project, cx| {
-                project.list_directory(canonical_path.to_string_lossy().into_owned(), cx)
-            })
-            .await
-            .map_err(|err| err.to_string())?;
+        let (entries, path_style) = project.update(cx, |project, cx| {
+            (
+                project.list_directory(canonical_path.to_string_lossy().into_owned(), cx),
+                project.path_style(cx),
+            )
+        });
+        let entries = entries.await.map_err(|err| err.to_string())?;
         let (folders, files) = entries
             .into_iter()
             .partition::<Vec<_>, _>(|entry| entry.is_dir);
         let display = |entry: project::DirectoryItem| {
-            canonical_path
-                .join(entry.path)
+            path_style
+                .join(canonical_path, entry.path)
                 .to_string_lossy()
                 .into_owned()
         };
