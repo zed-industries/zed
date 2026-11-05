@@ -648,6 +648,25 @@ impl GitPanel {
             .ok();
     }
 
+    /// The active branch diff tab, if it's at the panel's base and already
+    /// showing this entry.
+    pub(super) fn branch_diff_showing(
+        &self,
+        entry: &GitStatusEntry,
+        cx: &App,
+    ) -> Option<Entity<BranchDiff>> {
+        let repo = self.active_repository.as_ref()?.read(cx);
+        let tab = self.branch_diff_tab(&self.branch_base.effective()?, cx)?;
+        let active = self
+            .workspace
+            .upgrade()?
+            .read(cx)
+            .active_item_as::<BranchDiff>(cx)?;
+        let project_path = active.read(cx).active_project_path(cx)?;
+        (active == tab && repo.project_path_to_repo_path(&project_path, cx)? == entry.repo_path)
+            .then_some(active)
+    }
+
     fn branch_diff_tab(&self, base_ref: &SharedString, cx: &App) -> Option<Entity<BranchDiff>> {
         let repo_id = self.active_repository.as_ref()?.read(cx).id;
         self.workspace

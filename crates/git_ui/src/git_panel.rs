@@ -2848,6 +2848,11 @@ impl GitPanel {
                 .and_then(GitListEntry::status_entry)
                 .cloned();
             if let Some(entry) = entry {
+                if let Some(branch_diff) = self.branch_diff_showing(&entry, cx) {
+                    branch_diff.focus_handle(cx).focus(window, cx);
+                    branch_diff.update(cx, |branch_diff, cx| branch_diff.autoscroll(cx));
+                    return;
+                }
                 self.open_branch_diff(Some(entry), window, cx);
                 self.focus_handle.focus(window, cx);
             }
@@ -18015,6 +18020,99 @@ mod tests {
             Some(DiffBase::Merge {
                 base_ref: "origin/main".into()
             })
+        );
+    }
+
+    #[gpui::test]
+    async fn test_branch_mode_row_open_in_new_tab_shows_that_row(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.enter_branch_mode(window, cx);
+        });
+        settle_branch_mode(cx);
+
+        let d_index = panel.read_with(cx, |panel, _| {
+            panel.entry_by_path(&repo_path("d.txt")).unwrap()
+        });
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(d_index);
+            panel.open_diff(&menu::Confirm, window, cx);
+        });
+        settle_branch_mode(cx);
+
+        let shown_path = test.workspace.read_with(cx, |workspace, cx| {
+            let branch_diff = workspace.active_item_as::<BranchDiff>(cx)?;
+            branch_diff.read(cx).active_project_path(cx)
+        });
+        assert_eq!(
+            shown_path.map(|project_path| project_path.path.as_unix_str().to_owned()),
+            Some("d.txt".to_owned()),
+            "the new tab waits for its files to load before scrolling to the row",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_branch_mode_row_open_focuses_like_uncommitted_mode(cx: &mut TestAppContext) {
+        let (test, mut cx) = setup_branch_mode_test(cx, Some("refs/remotes/origin/main")).await;
+        let cx = &mut cx;
+        let panel = test.panel.clone();
+
+        // Focus only stays on a drawn panel; otherwise the workspace takes
+        // it back for the active item.
+        test.workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<GitPanel>(window, cx);
+        });
+        panel.update_in(cx, |panel, window, cx| {
+            panel.enter_branch_mode(window, cx);
+            panel.focus_handle.focus(window, cx);
+        });
+        settle_branch_mode(cx);
+
+        let open_row = |path: &str, cx: &mut VisualTestContext| {
+            let index = panel.read_with(cx, |panel, _| {
+                panel.entry_by_path(&repo_path(path)).unwrap()
+            });
+            panel.update_in(cx, |panel, window, cx| {
+                panel.selected_entry = Some(index);
+                panel.open_diff(&menu::Confirm, window, cx);
+            });
+            settle_branch_mode(cx);
+        };
+        let focus = |cx: &mut VisualTestContext| {
+            let branch_diff = test.workspace.read_with(cx, |workspace, cx| {
+                workspace.active_item_as::<BranchDiff>(cx).unwrap()
+            });
+            cx.update(|window, cx| {
+                (
+                    panel.read(cx).focus_handle.is_focused(window),
+                    branch_diff.focus_handle(cx).contains_focused(window, cx),
+                )
+            })
+        };
+
+        open_row("d.txt", cx);
+        assert_eq!(
+            focus(cx),
+            (true, false),
+            "opening a row in a new tab keeps focus in the panel",
+        );
+
+        open_row("a.txt", cx);
+        assert_eq!(
+            focus(cx),
+            (true, false),
+            "opening another row in the existing tab keeps focus in the panel",
+        );
+
+        open_row("a.txt", cx);
+        assert_eq!(
+            focus(cx),
+            (false, true),
+            "opening the row the tab already shows focuses the tab",
         );
     }
 
