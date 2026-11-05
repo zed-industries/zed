@@ -161,6 +161,11 @@ pub async fn resolve_remote_global_skill_path(
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Option<PathBuf> {
+    // Most tool calls name project files, so skip the round trips for paths
+    // that can't be under any home's skills dir.
+    if !mentions_skills_dir(path) {
+        return None;
+    }
     let client = cx
         .update(|cx| crate::remote_server_client(project, cx))
         .log_err()?;
@@ -202,6 +207,24 @@ pub async fn resolve_remote_global_skill_path(
         && !canonical_skill_dir.starts_with(&canonical_skills_dir)
         && canonical_path.starts_with(&canonical_skill_dir))
     .then_some(canonical_path)
+}
+
+/// Whether `path`, after resolving `..`, contains `.agents/skills`, which any
+/// path under `<home>/.agents/skills` does, whatever the home dir is.
+fn mentions_skills_dir(path: &Path) -> bool {
+    let mut names = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(name) => names.push(name),
+            Component::ParentDir => {
+                names.pop();
+            }
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    names.windows(2).any(|pair| {
+        pair[0] == agent_skills::AGENTS_DIR_NAME && pair[1] == agent_skills::SKILLS_DIR_NAME
+    })
 }
 
 async fn is_in_linked_global_skill_dir(
@@ -1525,5 +1548,27 @@ mod tests {
                 resolved
             );
         });
+    }
+
+    #[test]
+    fn test_mentions_skills_dir() {
+        for path in [
+            "~/.agents/skills",
+            "~/.agents/skills/my-skill/SKILL.md",
+            "/home/user/.agents/skills/my-skill/scripts/run.sh",
+            "~/.agents/other/../skills/my-skill",
+            "~/../user/.agents/skills",
+        ] {
+            assert!(mentions_skills_dir(Path::new(path)), "{path}");
+        }
+        for path in [
+            "project/src/main.rs",
+            "/home/user/project/src/main.rs",
+            "~/.agents",
+            "~/.agents/skills/../other",
+            "~/skills/.agents",
+        ] {
+            assert!(!mentions_skills_dir(Path::new(path)), "{path}");
+        }
     }
 }
