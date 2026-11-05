@@ -14,15 +14,16 @@ use editor::{
 };
 use file_icons::FileIcons;
 use fs::TrashId;
+use futures::FutureExt as _;
 use git;
 use git::status::GitSummary;
 use git_ui_core::file_diff_view::FileDiffView;
 use gpui::{
-    Action, Anchor, AnyElement, App, AsyncWindowContext, Bounds,
-    ClipboardEntry as GpuiClipboardEntry, ClipboardItem, Context, CursorStyle, DismissEvent, Div,
-    DragMoveEvent, Entity, EventEmitter, ExternalDragPayload, ExternalPaths, FileDragPaths,
-    FileDropEvent, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
+    Action, Anchor, AnyElement, App, AsyncWindowContext, Bounds, ClipboardContentTypes,
+    ClipboardEntry as GpuiClipboardEntry, ClipboardItem, ClipboardReadError, Context, CursorStyle,
+    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalDragPayload, ExternalPaths,
+    FileDragPaths, FileDropEvent, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement,
+    KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, ParentElement, PathPromptOptions, Pixels, Point,
     PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
@@ -209,6 +210,9 @@ struct DeployedContextMenu {
     /// in. When `None`, the menu is placed like any other anchored element.
     anchor: Option<Anchor>,
     _subscription: Subscription,
+    /// Dropped together with the menu, so a dismissed or replaced menu never receives a stale
+    /// clipboard query result.
+    _paste_state_task: Option<Task<()>>,
 }
 
 enum DragTarget {
@@ -1184,7 +1188,11 @@ impl ProjectPanel {
                 (has_git_repo, has_history)
             };
 
-            let has_pasteable_content = self.has_pasteable_content(cx);
+            let (has_pasteable_content, pending_clipboard_query) = if is_read_only {
+                (false, None)
+            } else {
+                self.initial_paste_state(cx)
+            };
             let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
@@ -1339,11 +1347,26 @@ impl ProjectPanel {
                 this.context_menu.take();
                 cx.notify();
             });
+            let paste_state_task = pending_clipboard_query.map(|query| {
+                let menu = context_menu.clone();
+                cx.spawn(async move |this, cx| {
+                    let content_types = query.await;
+                    this.update(cx, |this, cx| {
+                        if !this.has_internal_clipboard_entries()
+                            && !this.clipboard_may_have_external_paths(content_types, cx)
+                        {
+                            menu.update(cx, |menu, cx| menu.set_action_disabled(&Paste, true, cx));
+                        }
+                    })
+                    .log_err();
+                })
+            });
             self.context_menu = Some(DeployedContextMenu {
                 menu: context_menu,
                 position,
                 anchor,
                 _subscription: subscription,
+                _paste_state_task: paste_state_task,
             });
         }
 
@@ -4529,15 +4552,49 @@ impl ProjectPanel {
         None
     }
 
-    fn has_pasteable_content(&self, cx: &App) -> bool {
-        if self
-            .clipboard
+    fn has_internal_clipboard_entries(&self) -> bool {
+        self.clipboard
             .as_ref()
-            .is_some_and(|c| !c.items().is_empty())
-        {
-            return true;
+            .is_some_and(|clipboard| !clipboard.items().is_empty())
+    }
+
+    /// Returns whether Paste starts enabled, and the clipboard query whose result can still
+    /// disable it when the platform cannot answer immediately.
+    fn initial_paste_state(
+        &self,
+        cx: &App,
+    ) -> (
+        bool,
+        Option<Task<Result<ClipboardContentTypes, ClipboardReadError>>>,
+    ) {
+        if self.has_internal_clipboard_entries() {
+            return (true, None);
         }
-        self.external_paths_from_system_clipboard(cx).is_some()
+        let mut query = cx.clipboard_content_types();
+        match (&mut query).now_or_never() {
+            Some(content_types) => (
+                self.clipboard_may_have_external_paths(content_types, cx),
+                None,
+            ),
+            None => (true, Some(query)),
+        }
+    }
+
+    fn clipboard_may_have_external_paths(
+        &self,
+        content_types: Result<ClipboardContentTypes, ClipboardReadError>,
+        cx: &App,
+    ) -> bool {
+        match content_types {
+            Ok(content_types) => content_types.contains(ClipboardContentTypes::EXTERNAL_PATHS),
+            Err(ClipboardReadError::Unavailable) => {
+                self.external_paths_from_system_clipboard(cx).is_some()
+            }
+            Err(error) => {
+                log::debug!("Clipboard content types unknown: {error}");
+                true
+            }
+        }
     }
 
     fn selected_entry_handle<'a>(
