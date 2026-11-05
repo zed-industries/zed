@@ -253,7 +253,7 @@ impl BlameRenderer for GitBlameRenderer {
                                     repository.downgrade(),
                                     workspace.clone(),
                                     CommitViewOptions {
-                                        scroll_to: blame_entry.commit_line(),
+                                        reveal_file: RepoPath::new(&blame_entry.filename).ok(),
                                         ..Default::default()
                                     },
                                     window,
@@ -321,7 +321,6 @@ impl BlameRenderer for GitBlameRenderer {
             .unwrap_or(OffsetDateTime::now_utc());
 
         let sha = blame.sha.to_string().into();
-        let scroll_to = blame.commit_line();
         let author: SharedString = blame
             .author
             .clone()
@@ -497,7 +496,10 @@ impl BlameRenderer for GitBlameRenderer {
                                                         repository.downgrade(),
                                                         workspace.clone(),
                                                         CommitViewOptions {
-                                                            scroll_to: scroll_to.clone(),
+                                                            reveal_file: RepoPath::new(
+                                                                &blame.filename,
+                                                            )
+                                                            .ok(),
                                                             ..Default::default()
                                                         },
                                                         window,
@@ -532,7 +534,7 @@ impl BlameRenderer for GitBlameRenderer {
             repository.downgrade(),
             workspace,
             CommitViewOptions {
-                scroll_to: blame_entry.commit_line(),
+                reveal_file: RepoPath::new(&blame_entry.filename).ok(),
                 ..Default::default()
             },
             window,

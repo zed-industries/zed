@@ -220,7 +220,8 @@ pub struct CommitTooltip {
     markdown: Entity<Markdown>,
     repository: Entity<Repository>,
     workspace: WeakEntity<Workspace>,
-    scroll_to: Option<(RepoPath, u32)>,
+    // TODO!: Double-check why we actually need this in the tooltip.
+    reveal_file: Option<RepoPath>,
 }
 
 impl CommitTooltip {
@@ -255,7 +256,7 @@ impl CommitTooltip {
             workspace,
             cx,
         );
-        tooltip.scroll_to = blame.commit_line();
+        tooltip.reveal_file = RepoPath::new(&blame.filename).ok();
         tooltip
     }
 
@@ -283,7 +284,7 @@ impl CommitTooltip {
             workspace,
             scroll_handle: ScrollHandle::new(),
             markdown,
-            scroll_to: None,
+            reveal_file: None,
         }
     }
 }
@@ -337,7 +338,7 @@ impl Render for CommitTooltip {
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
         let repo = self.repository.clone();
         let workspace = self.workspace.clone();
-        let scroll_to = self.scroll_to.clone();
+        let reveal_file = self.reveal_file.clone();
         let commit_summary = CommitSummary {
             sha: self.commit.sha.clone(),
             subject: self
@@ -454,7 +455,16 @@ impl Render for CommitTooltip {
                                                         repo.downgrade(),
                                                         workspace.clone(),
                                                         CommitViewOptions {
-                                                            scroll_to: scroll_to.clone(),
+                                                            // TODO!: Understand
+                                                            // why, if we're
+                                                            // already calling
+                                                            // `self.reveal_file.clone()`,
+                                                            // we need to call
+                                                            // `reveal_file.clone()`
+                                                            // again here, why
+                                                            // we need two
+                                                            // clones?
+                                                            reveal_file: reveal_file.clone(),
                                                             ..Default::default()
                                                         },
                                                         window,
