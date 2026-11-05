@@ -1707,9 +1707,17 @@ impl GitGraph {
             },
         );
         let mut row_height = Self::row_height(window, cx);
+        let mut was_date_style = GitGraphSettings::get_global(cx).date_style;
+        let mut was_date_format = ProjectSettings::get_global(cx).git.date_format.clone();
 
         cx.observe_global_in::<settings::SettingsStore>(window, move |this, window, cx| {
-            cx.notify();
+            let date_style = GitGraphSettings::get_global(cx).date_style;
+            let date_format = &ProjectSettings::get_global(cx).git.date_format;
+            if date_style != was_date_style || *date_format != was_date_format {
+                was_date_style = date_style;
+                was_date_format = date_format.clone();
+                cx.notify();
+            }
             let new_row_height = Self::row_height(window, cx);
             if new_row_height != row_height {
                 // The `uniform_list` powering the table caches the item size
@@ -6132,6 +6140,81 @@ mod tests {
 
         assert_eq!(commit_count, 0);
         assert!(!is_loading, "empty graph data should stop loading");
+    }
+
+    #[gpui::test]
+    async fn test_only_date_setting_changes_notify_graph(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have an active repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let notifications = Rc::new(std::cell::Cell::new(0));
+        let _subscription = cx.update(|_, cx| {
+            let notifications = notifications.clone();
+            cx.observe(&git_graph, move |_, _| {
+                notifications.set(notifications.get() + 1);
+            })
+        });
+        let mut update_settings = |update: fn(&mut settings::SettingsContent)| {
+            notifications.set(0);
+            cx.update(|_, cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, update);
+                });
+            });
+            cx.run_until_parked();
+            notifications.get()
+        };
+
+        assert_eq!(
+            update_settings(
+                |content| content.git.get_or_insert_default().gutter_debounce = Some(5)
+            ),
+            0
+        );
+        assert_eq!(
+            update_settings(
+                |content| content.git_graph.get_or_insert_default().date_style =
+                    Some(GitDateStyle::Relative)
+            ),
+            1
+        );
+        assert_eq!(
+            update_settings(
+                |content| content.git.get_or_insert_default().date_format = Some("%Y".into())
+            ),
+            1
+        );
     }
 
     #[gpui::test]
