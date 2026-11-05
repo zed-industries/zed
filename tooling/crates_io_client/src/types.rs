@@ -1,6 +1,7 @@
 use std::fmt;
 
 use chrono::{DateTime, Utc};
+use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -8,6 +9,12 @@ use url::Url;
 pub struct UserId(pub i32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VersionId(pub i32);
+#[derive(
+    Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+pub struct GitHubConfigId(pub i32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GitHubAccountId(pub i32);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CrateName(pub String);
@@ -118,4 +125,28 @@ pub struct CrateUpdate {
     /// Whether the crate can only be published through Trusted Publishing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trustpub_only: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHubConfig {
+    pub id: GitHubConfigId,
+    #[serde(rename = "crate")]
+    pub crate_name: CrateName,
+    pub repository_owner: String,
+    /// Lets crates.io recognize the repository after its owner is renamed.
+    pub repository_owner_id: GitHubAccountId,
+    pub repository_name: String,
+    pub workflow_filename: String,
+    pub environment: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewGitHubConfig {
+    #[serde(rename = "crate")]
+    pub crate_name: CrateName,
+    pub repository_owner: String,
+    pub repository_name: String,
+    pub workflow_filename: String,
+    pub environment: Option<String>,
 }

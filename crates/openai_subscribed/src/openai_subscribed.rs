@@ -13,7 +13,7 @@ use language_model::{
     CompactionResult, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCompletionStream, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
-    LanguageModelToolChoiceSupport, RateLimiter,
+    LanguageModelToolChoiceSupport, PromptCompactionStrategy, RateLimiter,
 };
 use open_ai::{
     ReasoningEffort,
@@ -754,6 +754,7 @@ pub fn language_model(model: &ChatGptModel) -> LanguageModel {
         supports_tools: true,
         supports_images: model.supports_images(),
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+        prompt_compaction_strategy: PromptCompactionStrategy::PreserveRequestPrefix,
         supports_streaming_tools: true,
         supports_thinking: true,
         supports_fast_mode: model.supports_priority(),
