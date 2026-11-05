@@ -28,7 +28,6 @@
       "alt-shift-enter": "menu::Restart",
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
-      "cmd-o": "workspace::Open",
       "cmd-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "cmd-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "cmd--": ["zed::DecreaseBufferFontSize", { "persist": false }],
@@ -696,6 +695,7 @@
     "context": "Workspace",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-o": "workspace::Open",
       "alt-/": "which_key::ShowPendingBindings",
       // Move focus between the major regions of the window (editor, open
       // panels, status bar). Accessibility navigation; mirrors VS Code's

@@ -1,7 +1,7 @@
 use crate::{
     AppleActivity, AppleDispatcher, BoolExt, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
-    MacWindow, events::key_to_native, main_thread_marker, ns_string, pasteboard::Pasteboard,
-    renderer, set_active_window_cursor_style,
+    MacWindow, events::key_to_menu_equivalent, main_thread_marker, ns_string,
+    pasteboard::Pasteboard, renderer, set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -401,7 +401,9 @@ impl MacPlatform {
                                 NSMenuItem::alloc(self.1),
                                 &NSString::from_str(name),
                                 Some(selector),
-                                &NSString::from_str(key_to_native(keystroke.key()).as_ref()),
+                                &NSString::from_str(
+                                    key_to_menu_equivalent(keystroke.key()).as_ref(),
+                                ),
                             );
                             if Self::os_version() >= Version::new(12, 0, 0) {
                                 item.setAllowsAutomaticKeyEquivalentLocalization(false);
