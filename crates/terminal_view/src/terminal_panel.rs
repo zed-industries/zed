@@ -3,11 +3,12 @@ use std::{cmp, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
 use crate::{
     TerminalView, default_working_directory,
     persistence::{
-        SerializedItems, SerializedTerminalPanel, deserialize_terminal_panel, serialize_pane_group,
+        SerializedItems, SerializedTerminalPanel, TerminalDb, deserialize_terminal_panel,
+        serialize_pane_group,
     },
 };
 use breadcrumbs::Breadcrumbs;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use db::kvp::KeyValueStore;
 use futures::{channel::oneshot, future::join_all};
 use gpui::{
@@ -33,7 +34,6 @@ use workspace::{
     PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
     SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
-    item::SerializableItem,
     move_active_item, pane,
 };
 
@@ -314,6 +314,7 @@ impl TerminalPanel {
         cx: &mut AsyncWindowContext,
     ) -> Result<bool> {
         let mut restored = false;
+        let mut serialized_item_ids = Vec::new();
         if let Some((database_id, serialization_key, kvp)) = workspace
             .read_with(cx, |workspace, cx| {
                 workspace
@@ -333,6 +334,7 @@ impl TerminalPanel {
                 .log_err()
                 .flatten()
         {
+            serialized_item_ids = serialized_panel.item_ids();
             let started_at = std::time::Instant::now();
             let deserialized = workspace
                 .update_in(cx, |workspace, window, cx| {
@@ -356,51 +358,34 @@ impl TerminalPanel {
             }
         }
 
-        // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.
-        let cleanup = workspace.update_in(cx, |workspace, window, cx| {
-            let alive_item_ids = terminal_panel.upgrade().map(|terminal_panel| {
-                terminal_panel
-                    .read(cx)
-                    .center
-                    .panes()
-                    .into_iter()
-                    .flat_map(|pane| pane.read(cx).items())
-                    .map(|item| item.item_id().as_u64() as ItemId)
-                    .collect::<Vec<_>>()
-            });
-            alive_item_ids
-                .zip(workspace.database_id())
-                .map(|(alive_item_ids, workspace_id)| {
-                    let cleanup_task =
-                        TerminalView::cleanup(workspace_id, alive_item_ids.clone(), window, cx);
-                    (cleanup_task, alive_item_ids)
-                })
+        // Panels are loaded outside of the workspace, so the panel cleans up after its own
+        // terminals here. The `terminals` table is shared with the center pane terminals, which
+        // may still be restoring concurrently and reading their rows, so only delete the rows of
+        // previously serialized panel terminals that were not restored. The workspace cleans up
+        // the rows of the center pane terminals once it has restored them.
+        let cleanup = workspace.update(cx, |workspace, cx| {
+            let terminal_panel = terminal_panel.upgrade()?;
+            let workspace_id = workspace.database_id()?;
+            let alive_item_ids = terminal_panel
+                .read(cx)
+                .center
+                .panes()
+                .into_iter()
+                .flat_map(|pane| pane.read(cx).items())
+                .chain(workspace.items(cx))
+                .map(|item| item.item_id().as_u64() as ItemId)
+                .collect::<HashSet<_>>();
+            let stale_item_ids = serialized_item_ids
+                .into_iter()
+                .filter(|item_id| !alive_item_ids.contains(item_id))
+                .collect::<Vec<_>>();
+            let db = TerminalDb::global(cx);
+            Some(cx.background_spawn(
+                async move { db.delete_items(workspace_id, stale_item_ids).await },
+            ))
         })?;
-        if let Some((cleanup_task, alive_item_ids)) = cleanup {
-            cleanup_task.await.log_err();
-            terminal_panel
-                .update(cx, |terminal_panel, cx| {
-                    let terminals_to_reserialize = terminal_panel
-                        .center
-                        .panes()
-                        .into_iter()
-                        .flat_map(|pane| {
-                            pane.read(cx)
-                                .items()
-                                .filter(|item| {
-                                    !alive_item_ids.contains(&(item.item_id().as_u64() as ItemId))
-                                })
-                                .filter_map(|item| item.act_as::<TerminalView>(cx))
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>();
-                    for terminal_view in terminals_to_reserialize {
-                        terminal_view.update(cx, |terminal_view, cx| {
-                            terminal_view.mark_needs_serialize(cx)
-                        });
-                    }
-                })
-                .ok();
+        if let Some(cleanup) = cleanup {
+            cleanup.await.log_err();
         }
 
         let should_focus = workspace
@@ -1904,6 +1889,102 @@ mod tests {
         assert_eq!(
             result.command_label, expected_shell,
             "We show the shell launch for empty commands"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_panel_restoration_keeps_center_terminal_rows(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        let workspace = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, _| workspace.set_random_database_id());
+                workspace
+            })
+            .expect("Failed to read workspace");
+        let serialization_tasks = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.flush_all_serialization(window, cx)
+            })
+            .expect("Failed to flush workspace serialization");
+        for task in serialization_tasks {
+            task.await;
+        }
+
+        let (workspace_id, serialization_key, db, kvp) =
+            workspace.read_with(cx, |workspace, cx| {
+                (
+                    workspace
+                        .database_id()
+                        .expect("workspace should have a database id"),
+                    TerminalPanel::serialization_key(workspace)
+                        .expect("workspace should have a serialization key"),
+                    TerminalDb::global(cx),
+                    KeyValueStore::global(cx),
+                )
+            });
+
+        // A terminal in the center panes that has not been restored yet, and a terminal that was
+        // in the terminal panel during the previous session.
+        let center_item_id: ItemId = 1_000_001;
+        let panel_item_id: ItemId = 1_000_002;
+        db.save_custom_title(center_item_id, workspace_id, Some("center".to_string()))
+            .await
+            .expect("Failed to save center terminal title");
+        db.save_custom_title(panel_item_id, workspace_id, Some("panel".to_string()))
+            .await
+            .expect("Failed to save panel terminal title");
+        let serialized_panel = SerializedTerminalPanel {
+            items: SerializedItems::NoSplits(vec![panel_item_id]),
+            active_item_id: None,
+        };
+        kvp.write_kvp(
+            serialization_key,
+            serde_json::to_string(&serialized_panel).expect("Failed to serialize panel"),
+        )
+        .await
+        .expect("Failed to write serialized panel");
+
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let restored = window_handle
+            .update(cx, |_, window, cx| {
+                let workspace = workspace.downgrade();
+                let terminal_panel = terminal_panel.downgrade();
+                window.spawn(cx, async move |cx| {
+                    TerminalPanel::restore_serialized_state(workspace, terminal_panel, cx).await
+                })
+            })
+            .expect("Failed to restore serialized state")
+            .await
+            .expect("Failed to restore serialized state");
+        cx.run_until_parked();
+        assert!(restored, "the serialized panel terminal should be restored");
+
+        let restored_titles = terminal_panel.read_with(cx, |terminal_panel, cx| {
+            terminal_panel
+                .active_pane
+                .read(cx)
+                .items()
+                .filter_map(|item| item.act_as::<TerminalView>(cx))
+                .map(|terminal_view| terminal_view.read(cx).custom_title().map(str::to_string))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(restored_titles, vec![Some("panel".to_string())]);
+
+        assert_eq!(
+            db.get_custom_title(center_item_id, workspace_id)
+                .expect("Failed to read center terminal title"),
+            Some("center".to_string()),
+            "restoring the terminal panel must not delete the rows of center pane terminals"
+        );
+        assert_eq!(
+            db.get_custom_title(panel_item_id, workspace_id)
+                .expect("Failed to read panel terminal title"),
+            None,
+            "the row of the stale panel terminal id should be cleaned up"
         );
     }
 

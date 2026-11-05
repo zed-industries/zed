@@ -349,6 +349,18 @@ pub(crate) struct SerializedTerminalPanel {
     pub active_item_id: Option<u64>,
 }
 
+impl SerializedTerminalPanel {
+    /// The ids of all terminal items this serialized panel refers to.
+    pub(crate) fn item_ids(&self) -> Vec<ItemId> {
+        let mut item_ids = Vec::new();
+        match &self.items {
+            SerializedItems::NoSplits(ids) => item_ids.extend(ids.iter().copied()),
+            SerializedItems::WithSplits(pane_group) => pane_group.collect_item_ids(&mut item_ids),
+        }
+        item_ids
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum SerializedItems {
@@ -365,6 +377,19 @@ pub(crate) enum SerializedPaneGroup {
         flexes: Option<Vec<f32>>,
         children: Vec<SerializedPaneGroup>,
     },
+}
+
+impl SerializedPaneGroup {
+    fn collect_item_ids(&self, item_ids: &mut Vec<ItemId>) {
+        match self {
+            SerializedPaneGroup::Pane(pane) => item_ids.extend(pane.children.iter().copied()),
+            SerializedPaneGroup::Group { children, .. } => {
+                for child in children {
+                    child.collect_item_ids(item_ids);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -529,6 +554,33 @@ impl TerminalDb {
             let mut next_index = statement.bind(&item_id, 1)?;
             next_index = statement.bind(&workspace_id, next_index)?;
             statement.bind(&custom_title, next_index)?;
+            statement.exec()
+        })
+        .await
+    }
+
+    /// Deletes the rows of the given terminal items in a workspace.
+    ///
+    /// Unlike `workspace::delete_unloaded_items`, this only touches the listed
+    /// items, so it can't remove rows that belong to terminals living elsewhere
+    /// in the workspace (e.g. in the center panes) and may not be restored yet.
+    pub async fn delete_items(
+        &self,
+        workspace_id: WorkspaceId,
+        item_ids: Vec<ItemId>,
+    ) -> Result<()> {
+        if item_ids.is_empty() {
+            return Ok(());
+        }
+        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let query =
+            format!("DELETE FROM terminals WHERE workspace_id = ? AND item_id IN ({placeholders})");
+        self.write(move |conn| {
+            let mut statement = Statement::prepare(conn, query)?;
+            let mut next_index = statement.bind(&workspace_id, 1)?;
+            for item_id in item_ids {
+                next_index = statement.bind(&item_id, next_index)?;
+            }
             statement.exec()
         })
         .await
