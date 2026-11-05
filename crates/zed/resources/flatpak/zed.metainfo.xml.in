@@ -2,7 +2,7 @@
 <component type="desktop-application">
     <id>$APP_ID</id>
     <metadata_license>MIT</metadata_license>
-    <project_license>AGPL-3.0-or-later and Apache-2.0 and GPL-3.0-or-later</project_license>
+    <project_license>Apache-2.0 and GPL-3.0-or-later</project_license>
 
     <name>$APP_NAME</name>
     <summary>High-performance, multiplayer code editor</summary>

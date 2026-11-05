@@ -1,4 +1,5 @@
 #![cfg_attr(target_family = "wasm", no_main)]
+
 //! Example demonstrating GPUI's testing infrastructure.
 //!
 //! When run normally, this displays an interactive counter window.
@@ -6,6 +7,9 @@
 //!
 //! Run the app: cargo run -p gpui --example testing
 //! Run tests:   cargo test -p gpui --example testing --features test-support
+
+#[path = "example_support/fonts.rs"]
+mod example_support;
 
 use gpui::{
     App, Bounds, Context, FocusHandle, Focusable, Render, Task, Window, WindowBounds,
@@ -179,6 +183,9 @@ impl Render for Counter {
 
 fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         cx.bind_keys([
             gpui::KeyBinding::new("up", Increment, Some("Counter")),
             gpui::KeyBinding::new("down", Decrement, Some("Counter")),

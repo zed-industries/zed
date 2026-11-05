@@ -14,12 +14,13 @@ workspace = true
 
 [lib]
 path = "src/html_to_markdown.rs"
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
 html5ever.workspace = true
 markup5ever_rcdom.workspace = true
-regex.workspace = true
+regex = { workspace = true, features = ["unicode-perl"] }
 
 [dev-dependencies]
 indoc.workspace = true

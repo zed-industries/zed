@@ -48,7 +48,7 @@ async fn test_path_inclusion_matcher(cx: &mut gpui::TestAppContext) {
     let entry = Entry {
         id: ProjectEntryId::from_proto(1),
         kind: EntryKind::UnloadedDir,
-        path: Arc::from(RelPath::unix(Path::new("src/data")).unwrap()),
+        path: Arc::from(RelPath::from_unix_str(Path::new("src/data")).unwrap()),
         inode: 0,
         mtime: None,
         canonical_path: None,
@@ -90,7 +90,7 @@ async fn test_path_inclusion_matcher(cx: &mut gpui::TestAppContext) {
     // 2. Test searching for `field`, including ignored files but updating
     // `files_to_include` to only include files under `src/lib`.
     let include_ignored = true;
-    let files_to_include = PathMatcher::new(vec!["src/lib"], PathStyle::Posix).unwrap();
+    let files_to_include = PathMatcher::new(vec!["src/lib"], PathStyle::Unix).unwrap();
     let files_to_exclude = PathMatcher::default();
     let match_full_paths = false;
     let search_query = SearchQuery::text(

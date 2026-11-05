@@ -1,0 +1,3 @@
+# Wezel project-local state. Add patterns here as needed.
+events/
+*.local.toml

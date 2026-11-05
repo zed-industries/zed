@@ -1,9 +1,9 @@
-use gpui::{Context, Entity, IntoElement, ParentElement, Render, Subscription, div};
-use project::image_store::{ImageFormat, ImageMetadata};
+use gpui::{App, Context, Entity, IntoElement, ParentElement, Render, Subscription, div};
+use project::image_store::{ImageFormat, ImageMetadata, RasterImageFormat};
 use settings::Settings;
 use ui::prelude::*;
 use util::size::format_file_size;
-use workspace::{ItemHandle, StatusItemView, Workspace};
+use workspace::{HideStatusItem, ItemHandle, StatusItemView, Workspace};
 
 use crate::{ImageFileSizeUnit, ImageView, ImageViewerSettings};
 
@@ -64,15 +64,18 @@ impl Render for ImageInfo {
 
         components.push(
             match metadata.format {
-                ImageFormat::Png => "PNG",
-                ImageFormat::Jpeg => "JPEG",
-                ImageFormat::Gif => "GIF",
-                ImageFormat::WebP => "WebP",
-                ImageFormat::Tiff => "TIFF",
-                ImageFormat::Bmp => "BMP",
-                ImageFormat::Ico => "ICO",
-                ImageFormat::Avif => "Avif",
-                _ => "Unknown",
+                ImageFormat::Svg => "SVG",
+                ImageFormat::Raster(format) => match format {
+                    RasterImageFormat::Png => "PNG",
+                    RasterImageFormat::Jpeg => "JPEG",
+                    RasterImageFormat::Gif => "GIF",
+                    RasterImageFormat::WebP => "WebP",
+                    RasterImageFormat::Tiff => "TIFF",
+                    RasterImageFormat::Bmp => "BMP",
+                    RasterImageFormat::Ico => "ICO",
+                    RasterImageFormat::Avif => "Avif",
+                    _ => "Unknown",
+                },
             }
             .to_string(),
         );
@@ -101,5 +104,10 @@ impl StatusItemView for ImageInfo {
             self.metadata = None;
         }
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        // The image info is only visible when an image viewer item is active.
+        None
     }
 }

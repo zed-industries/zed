@@ -74,13 +74,13 @@ Populate this file with the same array of objects you would place in `.zed/debug
 
 ### Launching & Attaching
 
-Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
+The Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
 Which one you choose depends on what you are trying to achieve.
 
 When launching a new instance, Zed (and the underlying debug adapter) can often do a better job at picking up the debug information compared to attaching to an existing process, since it controls the lifetime of a whole program.
 Running unit tests or a debug build of your application is a good use case for launching.
 
-Compared to launching, attaching to an existing process might seem inferior, but that's far from truth; there are cases where you cannot afford to restart your program, because for example, the bug is not reproducible outside of a production environment or some other circumstances.
+Compared to launching, attaching to an existing process might seem inferior, but that's far from the truth; there are cases where you cannot afford to restart your program, because for example, the bug is not reproducible outside of a production environment or some other circumstances.
 
 ## Configuration
 
@@ -165,8 +165,6 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 ## Working with Split Panes
 
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
-
 When debugging with multiple split panes open, Zed shows the active debug line in one pane and preserves your layout in others. If you have the same file open in multiple panes, the debugger picks a pane where the file is already the active tab—it won't switch tabs in panes where the file is inactive.
 
 Once the debugger picks a pane, it continues using that pane for subsequent breakpoints during the session. If you drag the tab with the active debug line to a different split, the debugger tracks the move and uses the new pane.
@@ -175,9 +173,14 @@ This ensures the debugger doesn't disrupt your workflow when stepping through co
 
 ## Settings
 
+In the Settings Editor, open **Panels → Debugger Panel** to configure the panel's
+dock position, default width, and default height.
+
 The settings for the debugger are grouped under the `debugger` key in `settings.json`:
 
 - `dock`: Determines the position of the debug panel in the UI.
+- `default_width`: Default width in pixels when docked to the left or right (default: `300`).
+- `default_height`: Default height in pixels when docked to the bottom (default: `300`).
 - `stepping_granularity`: Determines the stepping granularity.
 - `save_breakpoints`: Whether the breakpoints should be reused across Zed sessions.
 - `button`: Whether to show the debug button in the status bar.

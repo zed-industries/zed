@@ -12,7 +12,6 @@ fuzzy.workspace = true
 gpui.workspace = true
 picker.workspace = true
 project.workspace = true
-schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 ui.workspace = true
@@ -24,6 +23,7 @@ editor = {workspace = true, features = ["test-support"]}
 gpui = {workspace = true, features = ["test-support"]}
 serde_json.workspace = true
 theme = {workspace = true, features = ["test-support"]}
+theme_settings.workspace = true
 workspace = {workspace = true, features = ["test-support"]}
 
 [lints]
@@ -31,3 +31,4 @@ workspace = true
 
 [lib]
 path = "src/open_path_prompt.rs"
+doctest = false

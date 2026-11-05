@@ -8,16 +8,14 @@ use gpui::{AnyElement, IntoElement, ParentElement, Styled};
 ///
 /// ```
 /// use ui::prelude::*;
-/// use ui::{Banner, Button, IconName, IconPosition, IconSize, Label, Severity};
+/// use ui::{Banner, Button, Icon, IconName, IconSize, Label, Severity};
 ///
 /// Banner::new()
 ///     .severity(Severity::Success)
 ///     .children([Label::new("This is a success message")])
 ///     .action_slot(
 ///         Button::new("learn-more", "Learn More")
-///             .icon(IconName::ArrowUpRight)
-///             .icon_size(IconSize::Small)
-///             .icon_position(IconPosition::End)
+///             .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::Small)),
 ///     );
 /// ```
 #[derive(IntoElement, RegisterComponent)]
@@ -136,7 +134,12 @@ impl Component for Banner {
         ComponentScope::DataDisplay
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A non-blocking, severity-aware message strip used to surface informative, \
+        success, warning, or error messages without interrupting the user."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         let severity_examples = vec![
             single_example(
                 "Default",
@@ -151,9 +154,7 @@ impl Component for Banner {
                     .child(Label::new("This is an informational message"))
                     .action_slot(
                         Button::new("learn-more", "Learn More")
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::Small)
-                            .icon_position(IconPosition::End),
+                            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::Small)),
                     )
                     .into_any_element(),
             ),
@@ -183,10 +184,8 @@ impl Component for Banner {
             ),
         ];
 
-        Some(
-            example_group(severity_examples)
-                .vertical()
-                .into_any_element(),
-        )
+        example_group(severity_examples)
+            .vertical()
+            .into_any_element()
     }
 }

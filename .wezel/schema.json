@@ -1,0 +1,355 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Aggregation": {
+      "description": "How to aggregate measurement values into a conclusion scalar.",
+      "enum": [
+        "sum",
+        "mean",
+        "median",
+        "max",
+        "min"
+      ],
+      "type": "string"
+    },
+    "DiffField": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "Either a boolean (uses `<step.name>.patch`) or an explicit patch filename."
+    },
+    "EmbeddedSummaryToml": {
+      "description": "Summary definition embedded under a step. The summary's `name` and `step` fields are recovered from the map keys (`step.<step>.summary.<name>`).",
+      "properties": {
+        "aggregation": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Aggregation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How to combine multiple matching values. Omit when the filter is expected to select a single value."
+        },
+        "bisect": {
+          "default": true,
+          "description": "Trigger bisection when this summary regresses.",
+          "type": "boolean"
+        },
+        "filter": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Tag key=value filters applied before aggregation.",
+          "type": "object"
+        },
+        "outcome": {
+          "description": "Outcome name (as emitted by the forager) to aggregate over.",
+          "type": "string"
+        },
+        "samples": {
+          "default": 1,
+          "description": "Number of forager invocations of the step to take. Lint requires all summaries on the same step to agree. Default 1.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "Step_cargo": {
+      "additionalProperties": false,
+      "description": "Body of a `[step.<tool>.<step_name>]` table. The tool name is recovered from the outer key, not a field; flatten-collected `rest` is forwarded to the forager plugin via `FORAGER_INPUTS` as JSON.",
+      "properties": {
+        "all_targets": {
+          "default": false,
+          "description": "Build every target (lib, bins, tests, benches, examples) via `--all-targets`.",
+          "type": "boolean"
+        },
+        "apply-diff": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DiffField"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Apply a patch before running this step. `true` uses `<step name>.patch`; a string overrides the filename."
+        },
+        "benches": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TargetSpecifier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Benchmarks to build, as `--benches` (all) or `--bench <name>` per name. Omit to build none."
+        },
+        "bins": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TargetSpecifier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Binaries to build, as `--bins` (all) or `--bin <name>` per name. Omit to build none."
+        },
+        "build_target": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PackageSpecifier"
+            }
+          ],
+          "description": "Build target — either a list of package names or the literal string \"workspace\"."
+        },
+        "command": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Command"
+            }
+          ],
+          "description": "Cargo subcommand to invoke (`build`, `bench`, or `test`)."
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "examples": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TargetSpecifier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Examples to build, as `--examples` (all) or `--example <name>` per name. Omit to build none."
+        },
+        "lib": {
+          "default": false,
+          "description": "Build the library target via `--lib`.",
+          "type": "boolean"
+        },
+        "profile": {
+          "default": null,
+          "description": "Cargo profile to use, propagated as `--profile <value>`. Omit to use the default profile.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "additionalProperties": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/EmbeddedSummaryToml"
+              },
+              {
+                "properties": {
+                  "outcome": {
+                    "description": "**`time_ms`** — how long `cargo <command>` took, in milliseconds.",
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          "description": "Summaries emitted by this step, keyed by summary name.",
+          "type": "object"
+        },
+        "tests": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TargetSpecifier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Test targets to build, as `--tests` (all) or `--test <name>` per name. Omit to build none."
+        }
+      },
+      "required": [
+        "build_target",
+        "command"
+      ],
+      "type": "object"
+    },
+    "Step_exec": {
+      "additionalProperties": false,
+      "description": "Body of a `[step.<tool>.<step_name>]` table. The tool name is recovered from the outer key, not a field; flatten-collected `rest` is forwarded to the forager plugin via `FORAGER_INPUTS` as JSON.",
+      "properties": {
+        "apply-diff": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DiffField"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Apply a patch before running this step. `true` uses `<step name>.patch`; a string overrides the filename."
+        },
+        "cmd": {
+          "description": "Shell command to run.",
+          "type": "string"
+        },
+        "cwd": {
+          "description": "Working directory override.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Extra environment variables.",
+          "type": "object"
+        },
+        "summary": {
+          "additionalProperties": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/EmbeddedSummaryToml"
+              },
+              {
+                "properties": {
+                  "outcome": {
+                    "description": "Every successful command emits these outcomes on Linux and macOS. No root access\nor external profiling tool is required.\n\n| Outcome | Unit | Meaning |\n| --- | --- | --- |\n| `wall_time_ms` | milliseconds | Elapsed time from immediately before command launch until its exit is collected, including waiting. |\n| `user_time_ms` | milliseconds | CPU time spent executing in user mode. |\n| `system_time_ms` | milliseconds | CPU time spent executing in kernel mode. |\n| `max_rss_bytes` | bytes | Largest individual process peak resident memory reported by the OS. |\n| `minor_page_faults` | count | Page faults serviced without I/O. |\n| `major_page_faults` | count | Page faults requiring I/O. |\n| `voluntary_context_switches` | count | Context switches caused by yielding or blocking. |\n| `involuntary_context_switches` | count | Context switches caused by preemption. |\n\nTime values retain fractional milliseconds. Memory and count values are integers.\nAll outcomes have unit metadata, use the default lower-is-better direction, and\nhave no tags. Fault and context-switch counts are diagnostic signals; a reduction\nalone does not establish that a build improved.\n\nCPU time and resource counters include the shell and descendants whose usage is\npropagated by their parents waiting for them. Commands must wait for their work to\nfinish; detached processes and work performed by an existing build daemon are not\nfully accounted for. CPU time can exceed wall time when work runs in parallel.\n\n`max_rss_bytes` is **not the combined peak memory of a parallel build**. It is the\nlargest individual peak reported through the process hierarchy. OS accounting\nsemantics differ, so compare measurements on the same platform and testbed.\n\nA command that cannot start, exits unsuccessfully, or is terminated by a signal\nfails the step and produces no outcome report.\n",
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          "description": "Summaries emitted by this step, keyed by summary name.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "cmd"
+      ],
+      "type": "object"
+    },
+    "Step_filesize": {
+      "additionalProperties": false,
+      "description": "Body of a `[step.<tool>.<step_name>]` table. The tool name is recovered from the outer key, not a field; flatten-collected `rest` is forwarded to the forager plugin via `FORAGER_INPUTS` as JSON.",
+      "properties": {
+        "apply-diff": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DiffField"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Apply a patch before running this step. `true` uses `<step name>.patch`; a string overrides the filename."
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "glob": {
+          "description": "Glob pattern, evaluated against the experiment workspace cwd.",
+          "type": "string"
+        },
+        "summary": {
+          "additionalProperties": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/EmbeddedSummaryToml"
+              },
+              {
+                "properties": {
+                  "outcome": {
+                    "description": "One outcome per matched file. The outcome name is the file's path (relative to cwd); the value is its size in bytes.",
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          "description": "Summaries emitted by this step, keyed by summary name.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "glob"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Top-level shape of `.wezel/experiments/<name>/experiment.toml`.\n\nSteps live under `[step.<tool>.<step_name>]`. The outer map is keyed by tool name and the inner by step name; bodies are wrapped in `toml::Spanned` so the parser can recover file-line order across reopened tables.",
+  "properties": {
+    "description": {
+      "description": "Human-readable description of what the experiment measures.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "step": {
+      "additionalProperties": false,
+      "description": "`[step.<tool>.<step_name>]`. Two-level map; step names must be unique across tools (enforced in [`parse_experiment`]).",
+      "properties": {
+        "cargo": {
+          "additionalProperties": {
+            "$ref": "#/definitions/Step_cargo"
+          },
+          "description": "Runs `cargo <command>` and records wall-clock time",
+          "type": "object"
+        },
+        "exec": {
+          "additionalProperties": {
+            "$ref": "#/definitions/Step_exec"
+          },
+          "description": "Executes a shell command and measures time and resource usage",
+          "type": "object"
+        },
+        "filesize": {
+          "additionalProperties": {
+            "$ref": "#/definitions/Step_filesize"
+          },
+          "description": "Reports byte size of every file matching a glob",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "step"
+  ],
+  "title": "Wezel experiment.toml",
+  "type": "object"
+}

@@ -1,3 +1,4 @@
+#![expect(clippy::result_large_err)]
 use dap::DapRegistry;
 use editor::Editor;
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};

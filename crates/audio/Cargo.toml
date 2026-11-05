@@ -14,20 +14,20 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-async-tar.workspace = true
 collections.workspace = true
 cpal.workspace = true
-crossbeam.workspace = true
+crossbeam-queue.workspace = true
+futures.workspace = true
 gpui.workspace = true
-denoise = { path = "../denoise" }
 log.workspace = true
 parking_lot.workspace = true
 rodio.workspace = true
-serde.workspace = true
 settings.workspace = true
-smol.workspace = true
 thiserror.workspace = true
 util.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))'.dependencies]
 libwebrtc.workspace = true

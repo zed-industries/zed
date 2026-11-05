@@ -19,14 +19,20 @@ pub fn derive_dynamic_spacing(input: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```
-/// use ui::Component;
+/// use ui::{AnyElement, App, Component, div, IntoElement, Window};
 /// use ui_macros::RegisterComponent;
 ///
 /// #[derive(RegisterComponent)]
 /// struct MyComponent;
 ///
 /// impl Component for MyComponent {
-///     // Component implementation
+///     fn description() -> &'static str {
+///         "My component description"
+///     }
+///
+///      fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+///         div().into_any_element()
+///     }
 /// }
 /// ```
 ///

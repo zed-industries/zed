@@ -27,10 +27,10 @@ main() {
     fi
 
     case "$platform-$arch" in
-        macos-arm64* | linux-arm64* | linux-armhf | linux-aarch64)
+        macos-arm64* | linux-arm64* | linux-aarch64)
             arch="aarch64"
             ;;
-        macos-x86* | linux-x86* | linux-i686*)
+        macos-x86* | linux-x86*)
             arch="x86_64"
             ;;
         *)
@@ -115,6 +115,16 @@ linux() {
     rm -rf "$HOME/.local/zed$suffix.app"
     mkdir -p "$HOME/.local/zed$suffix.app"
     tar -xzf "$temp/zed-linux-$arch.tar.gz" -C "$HOME/.local/"
+
+    zed_editor="$HOME/.local/zed$suffix.app/libexec/zed-editor"
+    if [ -f "$zed_editor" ] && command -v ldd >/dev/null 2>&1; then
+        missing="$(ldd "$zed_editor" 2>/dev/null | sed -n 's/^[[:space:]]*\(.*\) => not found$/\1/p')"
+        if [ -n "$missing" ]; then
+            echo "Warning: your system is missing libraries that Zed needs:"
+            echo "$missing" | sed 's/^/    /'
+            echo "Install them with your package manager, or Zed will fail to start."
+        fi
+    fi
 
     # Setup ~/.local directories
     mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"

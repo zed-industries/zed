@@ -28,6 +28,7 @@ pub fn init(cx: &mut App) {
     provider_registry.register_hosting_provider(Arc::new(Github::public_instance()));
     provider_registry.register_hosting_provider(Arc::new(Gitlab::public_instance()));
     provider_registry.register_hosting_provider(Arc::new(SourceHut::public_instance()));
+    provider_registry.register_hosting_provider(Arc::new(Tangled::public_instance()));
 }
 
 /// Registers additional Git hosting providers.

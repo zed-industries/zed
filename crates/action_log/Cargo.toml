@@ -7,6 +7,7 @@ license = "GPL-3.0-or-later"
 
 [lib]
 path = "src/action_log.rs"
+doctest = false
 
 [lints]
 workspace = true
@@ -20,6 +21,7 @@ buffer_diff.workspace = true
 log.workspace = true
 clock.workspace = true
 collections.workspace = true
+fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
@@ -32,9 +34,10 @@ watch.workspace = true
 
 [dev-dependencies]
 buffer_diff = { workspace = true, features = ["test-support"] }
-collections = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
+collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
+git.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }

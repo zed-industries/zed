@@ -29,7 +29,7 @@ You can modify how certain styles, such as directives and modifiers, appear in a
 
 ## Inlay Hints
 
-When inlay hints is enabled in Zed, to make the language server send them back, Zed sets the following initialization options:
+When inlay hints are enabled in Zed, to make the language server send them back, Zed sets the following initialization options:
 
 ```json
 "inlayHints": {

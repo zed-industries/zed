@@ -1,17 +1,9 @@
 use gpui::Pixels;
-use settings::{RegisterSetting, Settings};
-use ui::px;
+use settings::{IntoGpui, RegisterSetting, Settings};
 use workspace::dock::DockPosition;
 
 #[derive(Debug, RegisterSetting)]
 pub struct CollaborationPanelSettings {
-    pub button: bool,
-    pub dock: DockPosition,
-    pub default_width: Pixels,
-}
-
-#[derive(Debug, RegisterSetting)]
-pub struct NotificationPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
@@ -24,18 +16,7 @@ impl Settings for CollaborationPanelSettings {
         Self {
             button: panel.button.unwrap(),
             dock: panel.dock.unwrap().into(),
-            default_width: panel.default_width.map(px).unwrap(),
+            default_width: panel.default_width.unwrap().into_gpui(),
         }
-    }
-}
-
-impl Settings for NotificationPanelSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
-        let panel = content.notification_panel.as_ref().unwrap();
-        return Self {
-            button: panel.button.unwrap(),
-            dock: panel.dock.unwrap().into(),
-            default_width: panel.default_width.map(px).unwrap(),
-        };
     }
 }

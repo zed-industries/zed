@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+#
+# Run a single lint from this dylint library against the Zed workspace.
+#
+# Usage:   tooling/lints/single-lint <lint_name> [cargo check args...]
+# Example: tooling/lints/single-lint blocking_io_on_foreground -p project_panel
+#
+# Dylint loads the whole library, so we silence every lint with `-A warnings`
+# and force just the requested one back on with `--force-warn`. A plain
+# `-W <lint>` is dropped for a driver-registered lint once the group is allowed,
+# which is why `--force-warn` is required.
+#
+# `DYLINT_RUSTFLAGS` is not part of Cargo's fingerprint, so changing it does not
+# invalidate already-checked crates. We therefore clean the targeted package(s)
+# first so the filter actually applies instead of replaying a stale cache. When
+# no package is named (a `--workspace` run) we drop the whole check cache.
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+  echo "usage: $(basename "$0") <lint_name> [cargo check args...]" >&2
+  exit 1
+fi
+
+lint="$1"
+shift
+if [ "$#" -eq 0 ]; then
+  set -- --workspace
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../.." && pwd)"
+
+toolchain="$(awk -F'"' '/^channel/ {print $2}' "$script_dir/rust-toolchain.toml")"
+host="$(rustc -vV | awk '/^host:/ {print $2}')"
+check_target="$repo_root/target/dylint/target/${toolchain}-${host}"
+
+# Force a re-check of the requested package(s) so the lint filter takes effect.
+cleaned_any=0
+prev=""
+for arg in "$@"; do
+  pkg=""
+  case "$arg" in
+    -p=* | --package=*)
+      pkg="${arg#*=}"
+      ;;
+    *)
+      if [ "$prev" = "-p" ] || [ "$prev" = "--package" ]; then
+        pkg="$arg"
+      fi
+      ;;
+  esac
+  if [ -n "$pkg" ]; then
+    cargo clean -p "$pkg" --target-dir "$check_target" 2>/dev/null || true
+    cleaned_any=1
+  fi
+  prev="$arg"
+done
+
+if [ "$cleaned_any" -eq 0 ]; then
+  rm -rf "$check_target"
+fi
+
+cd "$repo_root"
+DYLINT_RUSTFLAGS="-A warnings --force-warn $lint" exec cargo dylint --all -- "$@"

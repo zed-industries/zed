@@ -7,7 +7,7 @@ fn main() {
     }
 
     if cfg!(target_os = "macos") {
-        println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15.7");
+        println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=12.0");
     }
 
     // Populate git sha environment variable if git is available
@@ -25,5 +25,13 @@ fn main() {
     }
     if let Some(build_identifier) = option_env!("GITHUB_RUN_NUMBER") {
         println!("cargo:rustc-env=ZED_BUILD_ID={build_identifier}");
+    }
+
+    #[cfg(all(windows, feature = "cli"))]
+    {
+        println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
+        println!("cargo:rerun-if-env-changed=GITHUB_RUN_NUMBER");
+
+        windows_resources::compile(false).expect("failed to compile Windows resources");
     }
 }

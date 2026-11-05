@@ -1,37 +1,37 @@
 pub use tracing::{Level, field};
 
-#[cfg(ztracing)]
+#[cfg(any(ztracing, all(target_family = "wasm", feature = "web")))]
 pub use tracing::{
     Span, debug_span, error_span, event, info_span, instrument, span, trace_span, warn_span,
 };
 
-#[cfg(not(ztracing))]
+#[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
 pub use ztracing_macro::instrument;
 
-#[cfg(ztracing)]
+#[cfg(all(ztracing, not(target_family = "wasm")))]
 const MAX_CALLSTACK_DEPTH: u16 = 16;
 
-#[cfg(all(ztracing, ztracing_with_memory))]
+#[cfg(all(ztracing, ztracing_with_memory, not(target_family = "wasm")))]
 #[global_allocator]
 static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
     tracy_client::ProfiledAllocator::new(std::alloc::System, MAX_CALLSTACK_DEPTH);
 
-#[cfg(not(ztracing))]
+#[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
 pub use __consume_all_tokens as trace_span;
-#[cfg(not(ztracing))]
+#[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
 pub use __consume_all_tokens as info_span;
-#[cfg(not(ztracing))]
+#[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
 pub use __consume_all_tokens as debug_span;
-#[cfg(not(ztracing))]
+#[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
 pub use __consume_all_tokens as warn_span;
-#[cfg(not(ztracing))]
+#[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
 pub use __consume_all_tokens as error_span;
-#[cfg(not(ztracing))]
+#[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
 pub use __consume_all_tokens as event;
-#[cfg(not(ztracing))]
+#[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
 pub use __consume_all_tokens as span;
 
-#[cfg(not(ztracing))]
+#[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
 #[macro_export]
 macro_rules! __consume_all_tokens {
     ($($t:tt)*) => {
@@ -39,10 +39,10 @@ macro_rules! __consume_all_tokens {
     };
 }
 
-#[cfg(not(ztracing))]
+#[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
 pub struct Span;
 
-#[cfg(not(ztracing))]
+#[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
 impl Span {
     pub fn current() -> Self {
         Self
@@ -53,7 +53,7 @@ impl Span {
     pub fn record<T, S>(&self, _t: T, _s: S) {}
 }
 
-#[cfg(ztracing)]
+#[cfg(all(ztracing, not(target_family = "wasm")))]
 pub fn init() {
     use tracing_subscriber::fmt::format::DefaultFields;
     use tracing_subscriber::prelude::*;
@@ -91,5 +91,27 @@ pub fn init() {
     .expect("setup tracy layer");
 }
 
-#[cfg(not(ztracing))]
+#[cfg(all(target_family = "wasm", feature = "web"))]
+mod web;
+
+#[cfg(all(target_family = "wasm", feature = "web"))]
+pub use web::{PerformanceLayer, PerformanceReporter, performance_layer};
+
+#[cfg(all(target_family = "wasm", feature = "web"))]
+pub fn init(start_reporter: impl FnOnce(PerformanceReporter)) {
+    use tracing_subscriber::prelude::*;
+
+    let (performance_layer, reporter) = performance_layer();
+    if tracing::subscriber::set_global_default(
+        tracing_subscriber::registry().with(performance_layer),
+    )
+    .is_ok()
+    {
+        start_reporter(reporter);
+    } else {
+        zlog::error!("failed to set browser performance tracing subscriber");
+    }
+}
+
+#[cfg(all(not(ztracing), not(all(target_family = "wasm", feature = "web"))))]
 pub fn init() {}

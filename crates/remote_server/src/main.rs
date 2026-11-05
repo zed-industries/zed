@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     if let Some(socket) = &cli.crash_handler {
-        crashes::crash_server(socket.as_path());
+        crashes::crash_server(socket.as_path(), paths::logs_dir().clone());
         return Ok(());
     }
 
@@ -56,7 +56,11 @@ fn main() -> anyhow::Result<()> {
         res
     } else {
         std::io::stderr()
-            .write_all(b"usage: remote <run|proxy|version>\n")
+            .write_all(if cfg!(unix) {
+                b"usage: remote <run|proxy|version|exec>\n"
+            } else {
+                b"usage: remote <run|proxy|version>\n"
+            })
             .ok();
         std::process::exit(1);
     }

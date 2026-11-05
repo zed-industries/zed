@@ -7,7 +7,7 @@ publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [features]
-test-support = ["collections/test-support"]
+test-support = []
 
 [lints]
 workspace = true
@@ -19,11 +19,10 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 prost.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 
 [build-dependencies]
 prost-build.workspace = true
+protox.workspace = true
 
 [dev-dependencies]
-collections = { workspace = true, features = ["test-support"] }
-typed-path = "0.11"

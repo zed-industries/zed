@@ -293,17 +293,31 @@ fn format_relative_date(timestamp: OffsetDateTime, reference: OffsetDateTime) ->
                     match month_diff {
                         0..=1 => "1 month ago".to_string(),
                         2..=11 => format!("{} months ago", month_diff),
+                        // Match git's `show_date_relative` behavior: for dates under 5 years old,
+                        // include both years and months so, for example, 22 months is shown as
+                        // "1 year, 10 months ago" instead of being collapsed to "1 year ago".
+                        12..60 => format_compound_year_month(month_diff),
+                        // Beyond 5 years, round to the nearest year.
                         months => {
-                            let years = months / 12;
-                            match years {
-                                1 => "1 year ago".to_string(),
-                                _ => format!("{years} years ago"),
-                            }
+                            let years = (months + 6) / 12;
+                            format!("{years} years ago")
                         }
                     }
                 }
             }
         }
+    }
+}
+
+fn format_compound_year_month(month_diff: usize) -> String {
+    let years = month_diff / 12;
+    let months = month_diff % 12;
+    let year_unit = if years == 1 { "year" } else { "years" };
+    if months == 0 {
+        format!("{years} {year_unit} ago")
+    } else {
+        let month_unit = if months == 1 { "month" } else { "months" };
+        format!("{years} {year_unit}, {months} {month_unit} ago")
     }
 }
 
@@ -999,7 +1013,7 @@ mod tests {
     fn test_relative_format_years() {
         let reference = create_offset_datetime(1990, 4, 12, 23, 0, 0);
 
-        // 12 months
+        // 12 months (exactly 1 year, no remainder)
         assert_eq!(
             format_relative_date(create_offset_datetime(1989, 4, 12, 23, 0, 0), reference),
             "1 year ago"
@@ -1008,16 +1022,22 @@ mod tests {
         // 13 months
         assert_eq!(
             format_relative_date(create_offset_datetime(1989, 3, 12, 23, 0, 0), reference),
-            "1 year ago"
+            "1 year, 1 month ago"
+        );
+
+        // 22 months (regression test for issue #57907)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1988, 6, 12, 23, 0, 0), reference),
+            "1 year, 10 months ago"
         );
 
         // 23 months
         assert_eq!(
             format_relative_date(create_offset_datetime(1988, 5, 12, 23, 0, 0), reference),
-            "1 year ago"
+            "1 year, 11 months ago"
         );
 
-        // 24 months
+        // 24 months (exactly 2 years, no remainder)
         assert_eq!(
             format_relative_date(create_offset_datetime(1988, 4, 12, 23, 0, 0), reference),
             "2 years ago"
@@ -1026,16 +1046,16 @@ mod tests {
         // 25 months
         assert_eq!(
             format_relative_date(create_offset_datetime(1988, 3, 12, 23, 0, 0), reference),
-            "2 years ago"
+            "2 years, 1 month ago"
         );
 
         // 35 months
         assert_eq!(
             format_relative_date(create_offset_datetime(1987, 5, 12, 23, 0, 0), reference),
-            "2 years ago"
+            "2 years, 11 months ago"
         );
 
-        // 36 months
+        // 36 months (exactly 3 years, no remainder)
         assert_eq!(
             format_relative_date(create_offset_datetime(1987, 4, 12, 23, 0, 0), reference),
             "3 years ago"
@@ -1044,7 +1064,31 @@ mod tests {
         // 37 months
         assert_eq!(
             format_relative_date(create_offset_datetime(1987, 3, 12, 23, 0, 0), reference),
-            "3 years ago"
+            "3 years, 1 month ago"
+        );
+
+        // 59 months (just under 5-year compound cutoff)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1985, 5, 12, 23, 0, 0), reference),
+            "4 years, 11 months ago"
+        );
+
+        // 60 months (5 years exactly; switches to year-only)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1985, 4, 12, 23, 0, 0), reference),
+            "5 years ago"
+        );
+
+        // 65 months (5 years + 5 months → rounds down to 5 years)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1984, 11, 12, 23, 0, 0), reference),
+            "5 years ago"
+        );
+
+        // 66 months (5 years + 6 months → rounds up to 6 years)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1984, 10, 12, 23, 0, 0), reference),
+            "6 years ago"
         );
 
         // 120 months

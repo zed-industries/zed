@@ -1,37 +1,68 @@
-use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{Action, Entity, FocusHandle, Hsla, IntoElement, TextStyle};
+use editor::{Editor, EditorElement, EditorStyle, MultiBufferOffset, ToOffset};
+use gpui::{
+    Action, App, ClickEvent, Context, Entity, FocusHandle, Hsla, IntoElement, TextStyle, Window,
+};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
+
+pub(super) enum HistoryNavigationDirection {
+    Previous,
+    Next,
+}
+
+pub(super) fn should_navigate_history(
+    editor: &Entity<Editor>,
+    direction: HistoryNavigationDirection,
+    cx: &App,
+) -> bool {
+    let editor_ref = editor.read(cx);
+    let snapshot = editor_ref.buffer().read(cx).snapshot(cx);
+    if snapshot.max_point().row == 0 {
+        return true;
+    }
+    let selections = editor_ref.selections.disjoint_anchors();
+    if let [selection] = selections {
+        let offset = selection.end.to_offset(&snapshot);
+        match direction {
+            HistoryNavigationDirection::Previous => offset == MultiBufferOffset(0),
+            HistoryNavigationDirection::Next => offset == snapshot.len(),
+        }
+    } else {
+        true
+    }
+}
 
 pub(super) enum ActionButtonState {
     Disabled,
     Toggled,
 }
 
-pub(super) fn render_action_button(
+pub(super) fn render_local_action_button<T: 'static, A: Action>(
     id_prefix: &'static str,
     icon: ui::IconName,
     button_state: Option<ActionButtonState>,
     tooltip: &'static str,
-    action: &'static dyn Action,
+    action: &'static A,
     focus_handle: FocusHandle,
+    cx: &Context<T>,
+    handler: fn(&mut T, &A, &mut Window, &mut Context<T>),
 ) -> impl IntoElement {
     IconButton::new(
         SharedString::from(format!("{id_prefix}-{}", action.name())),
         icon,
     )
     .shape(IconButtonShape::Square)
-    .on_click({
+    .on_click(cx.listener({
         let focus_handle = focus_handle.clone();
-        move |_, window, cx| {
+        move |this, _: &ClickEvent, window, cx| {
             if !focus_handle.is_focused(window) {
                 window.focus(&focus_handle, cx);
             }
-            window.dispatch_action(action.boxed_clone(), cx);
+            handler(this, action, window, cx);
         }
-    })
+    }))
     .tooltip(move |_window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, cx))
     .when_some(button_state, |this, state| match state {
         ActionButtonState::Toggled => this.toggle_state(true),
@@ -43,7 +74,7 @@ pub(crate) fn input_base_styles(border_color: Hsla, map: impl FnOnce(Div) -> Div
     h_flex()
         .map(map)
         .min_w_32()
-        .h_8()
+        .min_h_8()
         .pl_2()
         .pr_1()
         .border_1()

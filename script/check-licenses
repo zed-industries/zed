@@ -2,8 +2,33 @@
 
 set -euo pipefail
 
-AGPL_CRATES=("collab")
-RELEASE_CRATES=("cli" "remote_server" "zed")
+check_manifest_for_agpl () {
+    local cargo_toml="$1"
+
+    if grep -Eiq '(agpl|affero)' "$cargo_toml"; then
+        echo "Error: $cargo_toml references an AGPL license. First-party crates must use LICENSE-GPL or LICENSE-APACHE."
+        exit 1
+    fi
+
+    if grep -Eiq '^[[:space:]]*license-file[[:space:]]*=' "$cargo_toml"; then
+        echo "Error: $cargo_toml uses license-file. First-party crates must declare LICENSE-GPL or LICENSE-APACHE via the license field and symlink."
+        exit 1
+    fi
+}
+
+check_no_agpl_license_file () {
+    if [[ -e "LICENSE-AGPL" || -L "LICENSE-AGPL" ]]; then
+        echo "Error: LICENSE-AGPL exists. First-party code must use LICENSE-GPL or LICENSE-APACHE."
+        exit 1
+    fi
+
+    while IFS= read -r -d '' license_file; do
+        if [[ -e "$license_file" || -L "$license_file" ]]; then
+            echo "Error: $license_file exists. First-party crates must use LICENSE-GPL or LICENSE-APACHE."
+            exit 1
+        fi
+    done < <(git ls-files -z -- "*/LICENSE-AGPL")
+}
 
 check_symlink_target () {
     local symlink_path="$1"
@@ -32,21 +57,7 @@ check_symlink_target () {
 
 check_license () {
     local dir="$1"
-    local allowed_licenses=()
-
-    local is_agpl=false
-    for agpl_crate in "${AGPL_CRATES[@]}"; do
-        if [[ "$dir" == "crates/$agpl_crate" ]]; then
-            is_agpl=true
-            break
-        fi
-    done
-
-    if [[ "$is_agpl" == true ]]; then
-        allowed_licenses=("LICENSE-AGPL")
-    else
-        allowed_licenses=("LICENSE-GPL" "LICENSE-APACHE")
-    fi
+    local allowed_licenses=("LICENSE-GPL" "LICENSE-APACHE")
 
     for license in "${allowed_licenses[@]}"; do
         if [[ -L "$dir/$license" ]]; then
@@ -58,31 +69,18 @@ check_license () {
         fi
     done
 
-    if [[ "$is_agpl" == true ]]; then
-        echo "Error: $dir does not contain a LICENSE-AGPL symlink"
-    else
-        echo "Error: $dir does not contain a LICENSE-GPL or LICENSE-APACHE symlink"
-    fi
+    echo "Error: $dir does not contain a LICENSE-GPL or LICENSE-APACHE symlink"
     exit 1
 }
 
-git ls-files "**/*/Cargo.toml" | while read -r cargo_toml; do
-   check_license "$(dirname "$cargo_toml")"
-done
+check_no_agpl_license_file
 
+git ls-files -z -- "Cargo.toml" "**/Cargo.toml" | while IFS= read -r -d '' cargo_toml; do
+    check_manifest_for_agpl "$cargo_toml"
 
-# Make sure the AGPL server crates are included in the release tarball.
-for release_crate in "${RELEASE_CRATES[@]}"; do
-    tree_output=$(cargo tree --package "$release_crate")
-    for agpl_crate in "${AGPL_CRATES[@]}"; do
-        # Look for lines that contain the crate name followed by " v" (version)
-        # This matches patterns like "├── collab v0.44.0"
-        if echo "$tree_output" | grep -E "(^|[^a-zA-Z_])${agpl_crate} v" > /dev/null; then
-            echo "Error: crate '${agpl_crate}' is AGPL and is a dependency of crate '${release_crate}'." >&2
-            echo "AGPL licensed code should not be used in the release distribution, only in servers." >&2
-            exit 1
-        fi
-    done
+    if [[ "$cargo_toml" == */Cargo.toml ]]; then
+        check_license "$(dirname "$cargo_toml")"
+    fi
 done
 
 echo "check-licenses succeeded"

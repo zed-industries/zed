@@ -2,19 +2,19 @@ use crate::*;
 use anyhow::{Context as _, bail};
 use collections::HashMap;
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use fs::RemoveOptions;
+use fs::{Fs, RemoveOptions};
 use futures::{StreamExt, TryStreamExt};
 use gpui::http_client::AsyncBody;
 use gpui::{AsyncApp, SharedString};
-use json_dotpath::DotPaths;
 use language::{LanguageName, Toolchain};
+use log::warn;
 use paths::debug_adapters_dir;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use smol::fs::File;
 use smol::io::AsyncReadExt;
 use smol::lock::OnceCell;
 use std::ffi::OsString;
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::str::FromStr;
 use std::{
     ffi::OsStr,
@@ -34,6 +34,67 @@ pub(crate) struct PythonDebugAdapter {
     debugpy_whl_base_path: OnceCell<Result<Arc<Path>, String>>,
 }
 
+// debugpy doesn't support envFile natively, so we intercept it and convert to an env object
+async fn handle_envs(
+    config: &mut Map<String, Value>,
+    cwd: Option<&Path>,
+    fs: Arc<dyn Fs>,
+) -> Option<()> {
+    let env_files = match config.get("envFile")? {
+        Value::Array(arr) => arr.iter().map(|v| v.as_str()).collect::<Vec<_>>(),
+        Value::String(s) => vec![Some(s.as_str())],
+        _ => return None,
+    };
+
+    let rebase_path = |path: PathBuf| {
+        if path.is_absolute() {
+            Some(path)
+        } else {
+            cwd.map(|p| p.join(path))
+        }
+    };
+
+    let mut env_vars = HashMap::default();
+    for path in env_files {
+        let Some(path) = path
+            .and_then(|s| PathBuf::from_str(s).ok())
+            .and_then(rebase_path)
+        else {
+            continue;
+        };
+
+        if let Ok(file) = fs.open_sync(&path).await {
+            let file_envs: HashMap<String, String> = dotenvy::from_read_iter(file)
+                .filter_map(Result::ok)
+                .collect();
+            env_vars.extend(file_envs);
+        } else {
+            warn!("While starting Python debug session: failed to read env file {path:?}");
+        }
+    }
+
+    let mut env_obj: serde_json::Map<String, Value> = serde_json::Map::new();
+
+    for (k, v) in env_vars {
+        env_obj.insert(k, Value::String(v));
+    }
+
+    // Explicit `env` values take precedence over envFile values
+    if let Some(existing_env) = config.get("env").and_then(|v| v.as_object()) {
+        for (k, v) in existing_env {
+            env_obj.insert(k.clone(), v.clone());
+        }
+    }
+
+    if !env_obj.is_empty() {
+        config.insert("env".to_string(), Value::Object(env_obj));
+    }
+
+    // remove envFile now that it's been handled
+    config.remove("envFile");
+    Some(())
+}
+
 impl PythonDebugAdapter {
     const ADAPTER_NAME: &'static str = "Debugpy";
     const DEBUG_ADAPTER_NAME: DebugAdapterName =
@@ -42,7 +103,7 @@ impl PythonDebugAdapter {
     const LANGUAGE_NAME: &'static str = "Python";
 
     async fn generate_debugpy_arguments<'a>(
-        host: &'a Ipv4Addr,
+        host: &'a IpAddr,
         port: u16,
         launch_mode: DebugpyLaunchMode<'a>,
         user_installed_path: Option<&'a Path>,
@@ -94,8 +155,9 @@ impl PythonDebugAdapter {
         let request = self.request_kind(&task_definition.config).await?;
 
         let mut configuration = task_definition.config.clone();
-        if let Ok(console) = configuration.dot_get_mut("console") {
+        if let Some(object) = configuration.as_object_mut() {
             // Use built-in Zed terminal if user did not explicitly provide a setting for console.
+            let console = object.entry("console").or_insert(Value::Null);
             if console.is_null() {
                 *console = Value::String("integratedTerminal".into());
             }
@@ -104,6 +166,9 @@ impl PythonDebugAdapter {
         if let Some(obj) = configuration.as_object_mut() {
             obj.entry("cwd")
                 .or_insert(delegate.worktree_root_path().to_string_lossy().into());
+
+            let cwd = obj.get("cwd").and_then(|v| v.as_str()).map(PathBuf::from);
+            handle_envs(obj, cwd.as_deref(), delegate.fs().clone()).await;
         }
 
         Ok(StartDebuggingRequestArguments {
@@ -224,16 +289,27 @@ impl PythonDebugAdapter {
     ) -> Result<Arc<Path>, String> {
         self.debugpy_whl_base_path
             .get_or_init(|| async move {
-                self.maybe_fetch_new_wheel(toolchain, delegate)
-                    .await
-                    .map_err(|e| format!("{e}"))?;
-                Ok(Arc::from(
-                    debug_adapters_dir()
-                        .join(Self::ADAPTER_NAME)
-                        .join("debugpy")
-                        .join("adapter")
-                        .as_ref(),
-                ))
+                let adapter_path = debug_adapters_dir()
+                    .join(Self::ADAPTER_NAME)
+                    .join("debugpy")
+                    .join("adapter");
+
+                if let Err(error) = self.maybe_fetch_new_wheel(toolchain, delegate).await {
+                    if delegate
+                        .fs()
+                        .metadata(&adapter_path)
+                        .await
+                        .is_ok_and(|m| m.is_some())
+                    {
+                        log::warn!(
+                            "Failed to fetch latest debugpy, using cached version: {error:#}"
+                        );
+                    } else {
+                        return Err(format!("{error}"));
+                    }
+                }
+
+                Ok(Arc::from(adapter_path.as_ref()))
             })
             .await
             .clone()
@@ -369,7 +445,7 @@ impl PythonDebugAdapter {
             }
 
             if let Some(hostname) = config_host {
-                tcp_connection.host = Some(hostname.parse().context("hostname must be IPv4")?);
+                tcp_connection.host = Some(hostname.parse().context("invalid IP address")?);
             }
             tcp_connection.port = config_port;
             DebugpyLaunchMode::AttachWithConnect { host: config_host }
@@ -963,7 +1039,7 @@ mod tests {
                 .contains("Cannot have two different ports")
         );
 
-        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let host = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
         let config_with_host_conflict = json!({
             "request": "attach",
             "connect": {
@@ -1007,7 +1083,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_attach_with_connect_mode_generates_correct_arguments() {
-        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let host = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
         let port = 5678;
 
         let args_without_host = PythonDebugAdapter::generate_debugpy_arguments(
@@ -1060,7 +1136,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_debugpy_install_path_cases() {
-        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let host = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
         let port = 5678;
 
         // Case 1: User-defined debugpy path (highest precedence)
@@ -1121,5 +1197,70 @@ mod tests {
         assert_eq!(venv_args[1], "foo");
 
         // Note: Case 3 (GitHub-downloaded debugpy) is not tested since this requires mocking the Github API.
+    }
+
+    #[gpui::test]
+    async fn test_env_file_is_loaded_into_env_config(executor: gpui::BackgroundExecutor) {
+        let fs = fs::FakeFs::new(executor);
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".env": "IDE=zed\nLLM=claude\n"
+            }),
+        )
+        .await;
+
+        let mut config = serde_json::Map::new();
+        config.insert("envFile".to_string(), Value::String(".env".to_string()));
+
+        handle_envs(&mut config, Some(Path::new("/project")), fs).await;
+
+        assert!(
+            !config.contains_key("envFile"),
+            "envFile should be removed after processing"
+        );
+        let env = config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .expect("env should be set");
+        assert_eq!(env.get("IDE").and_then(|v| v.as_str()), Some("zed"));
+        assert_eq!(env.get("LLM").and_then(|v| v.as_str()), Some("claude"));
+    }
+
+    #[gpui::test]
+    async fn test_env_config_takes_precedence_over_env_file(executor: gpui::BackgroundExecutor) {
+        let fs = fs::FakeFs::new(executor);
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                // .env file suggests VS Code, but the explicit config overrides it with Zed
+                ".env": "IDE=vscode\nLLM=openai\n"
+            }),
+        )
+        .await;
+
+        let mut config = serde_json::Map::new();
+        config.insert("envFile".to_string(), Value::String(".env".to_string()));
+        config.insert(
+            "env".to_string(),
+            serde_json::json!({ "IDE": "zed", "LLM": "claude" }),
+        );
+
+        handle_envs(&mut config, Some(Path::new("/project")), fs).await;
+
+        let env = config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .expect("env should be set");
+        assert_eq!(
+            env.get("IDE").and_then(|v| v.as_str()),
+            Some("zed"),
+            "explicit env should take precedence over envFile"
+        );
+        assert_eq!(
+            env.get("LLM").and_then(|v| v.as_str()),
+            Some("claude"),
+            "explicit env should take precedence over envFile"
+        );
     }
 }

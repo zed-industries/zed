@@ -18,7 +18,7 @@ pub struct Connection {
 unsafe impl Send for Connection {}
 
 impl Connection {
-    pub(crate) fn open(uri: &str, persistent: bool) -> Result<Self> {
+    fn open_with_flags(uri: &str, persistent: bool, flags: i32) -> Result<Self> {
         let mut connection = Self {
             sqlite3: ptr::null_mut(),
             persistent,
@@ -26,7 +26,6 @@ impl Connection {
             _sqlite: PhantomData,
         };
 
-        let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_READWRITE;
         unsafe {
             sqlite3_open_v2(
                 CString::new(uri)?.as_ptr(),
@@ -38,10 +37,27 @@ impl Connection {
             // Turn on extended error codes
             sqlite3_extended_result_codes(connection.sqlite3, 1);
 
+            // Wait for the database lock to be released instead of failing
+            // immediately with SQLITE_BUSY. Some databases (e.g. the agent
+            // threads database) are shared between Zed instances, so transient
+            // lock contention is expected; failing fast turns it into a
+            // storm of dropped saves and retry churn.
+            if !connection.sqlite3.is_null() {
+                sqlite3_busy_timeout(connection.sqlite3, 5000);
+            }
+
             connection.last_error()?;
         }
 
         Ok(connection)
+    }
+
+    pub(crate) fn open(uri: &str, persistent: bool) -> Result<Self> {
+        Self::open_with_flags(
+            uri,
+            persistent,
+            SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_READWRITE,
+        )
     }
 
     /// Attempts to open the database at uri. If it fails, a shared memory db will be opened
@@ -51,13 +67,17 @@ impl Connection {
     }
 
     pub fn open_memory(uri: Option<&str>) -> Self {
-        let in_memory_path = if let Some(uri) = uri {
-            format!("file:{}?mode=memory&cache=shared", uri)
+        if let Some(uri) = uri {
+            let in_memory_path = format!("file:{}?mode=memory&cache=shared", uri);
+            return Self::open_with_flags(
+                &in_memory_path,
+                false,
+                SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_READWRITE | SQLITE_OPEN_URI,
+            )
+            .expect("Could not create fallback in memory db");
         } else {
-            ":memory:".to_string()
-        };
-
-        Self::open(&in_memory_path, false).expect("Could not create fallback in memory db")
+            Self::open(":memory:", false).expect("Could not create fallback in memory db")
+        }
     }
 
     pub fn persistent(&self) -> bool {
@@ -265,8 +285,49 @@ impl Drop for Connection {
 mod test {
     use anyhow::Result;
     use indoc::indoc;
+    use std::{
+        fs,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     use crate::connection::Connection;
+
+    static NEXT_NAMED_MEMORY_DB_ID: AtomicUsize = AtomicUsize::new(0);
+
+    fn unique_named_memory_db(prefix: &str) -> String {
+        format!(
+            "{prefix}_{}_{}",
+            std::process::id(),
+            NEXT_NAMED_MEMORY_DB_ID.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
+    fn literal_named_memory_paths(name: &str) -> [String; 3] {
+        let main = format!("file:{name}?mode=memory&cache=shared");
+        [main.clone(), format!("{main}-wal"), format!("{main}-shm")]
+    }
+
+    struct NamedMemoryPathGuard {
+        paths: [String; 3],
+    }
+
+    impl NamedMemoryPathGuard {
+        fn new(name: &str) -> Self {
+            let paths = literal_named_memory_paths(name);
+            for path in &paths {
+                let _ = fs::remove_file(path);
+            }
+            Self { paths }
+        }
+    }
+
+    impl Drop for NamedMemoryPathGuard {
+        fn drop(&mut self) {
+            for path in &self.paths {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
 
     #[test]
     fn string_round_trips() -> Result<()> {
@@ -380,6 +441,41 @@ mod test {
             .unwrap()()
         .unwrap();
         assert_eq!(read_blobs, vec![blob]);
+    }
+
+    #[test]
+    fn named_memory_connections_do_not_create_literal_backing_files() {
+        let name = unique_named_memory_db("named_memory_connections_do_not_create_backing_files");
+        let guard = NamedMemoryPathGuard::new(&name);
+
+        let connection1 = Connection::open_memory(Some(&name));
+        connection1
+            .exec(indoc! {"
+                CREATE TABLE shared (
+                    value INTEGER
+                )"})
+            .unwrap()()
+        .unwrap();
+        connection1
+            .exec("INSERT INTO shared (value) VALUES (7)")
+            .unwrap()()
+        .unwrap();
+
+        let connection2 = Connection::open_memory(Some(&name));
+        assert_eq!(
+            connection2
+                .select_row::<i64>("SELECT value FROM shared")
+                .unwrap()()
+            .unwrap(),
+            Some(7)
+        );
+
+        for path in &guard.paths {
+            assert!(
+                fs::metadata(path).is_err(),
+                "named in-memory database unexpectedly created backing file {path}"
+            );
+        }
     }
 
     #[test]

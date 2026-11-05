@@ -368,7 +368,10 @@ mark.fade-out {
 .searchbar-outer {
   margin-inline-start: auto;
   margin-inline-end: auto;
+  width: 100%;
   max-width: var(--content-max-width);
+  box-sizing: border-box;
+  padding: 16px;
 }
 
 #searchbar {
@@ -394,21 +397,21 @@ mark.fade-out {
 .searchresults-header {
   font-weight: bold;
   font-size: 1em;
-  padding-block-start: 18px;
+  padding-block-start: 0;
   padding-block-end: 0;
-  padding-inline-start: 5px;
-  padding-inline-end: 0;
   color: var(--searchresults-header-fg);
 }
 
 ul#searchresults {
   list-style: none;
   padding-inline-start: 0;
+  margin-block-end: 0;
 }
 ul#searchresults li {
   margin: 10px 0px;
   padding: 2px;
   border-radius: 2px;
+  scroll-margin-block-end: 10px;
 }
 ul#searchresults li.focus {
   background-color: var(--searchresults-li-bg);
@@ -431,6 +434,7 @@ ul#searchresults span.teaser em {
 
 .sidebar {
   position: relative;
+  order: 0;
   width: var(--sidebar-width);
   flex-shrink: 0;
   display: flex;
@@ -656,57 +660,6 @@ ul#searchresults span.teaser em {
   gap: 0.6em;
 }
 
-.theme-popup {
-  position: absolute;
-  right: 155px;
-  top: calc(var(--menu-bar-height) - 18px);
-  z-index: 1000;
-  border-radius: 4px;
-  font-size: 1.4rem;
-  color: var(--fg);
-  background: var(--popover-bg);
-  border: 1px solid var(--popover-border);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: none;
-  overflow: hidden;
-}
-
-[dir="rtl"] .theme-popup {
-  left: unset;
-  right: 10px;
-}
-.theme-popup .default {
-  color: var(--icons);
-}
-.theme-popup .theme {
-  width: 100%;
-  border: 0;
-  margin: 0;
-  padding: 2px 24px;
-  line-height: 25px;
-  white-space: nowrap;
-  text-align: start;
-  cursor: pointer;
-  color: inherit;
-  background: inherit;
-  font-size: inherit;
-  font-family: inherit;
-}
-.theme-popup .theme:hover {
-  background-color: var(--theme-hover);
-}
-
-.theme-selected::before {
-  font-family: Arial, Helvetica, sans-serif;
-  text-align: center;
-  display: inline-block;
-  content: "✓";
-  margin-inline-start: -20px;
-  width: 20px;
-}
-
 .download-button {
   max-height: 28px;
   margin-left: 8px;
@@ -794,8 +747,7 @@ ul#searchresults span.teaser em {
   max-height: 600px;
   display: flex;
   flex-direction: column;
-  padding: 16px;
-  overflow-y: auto;
+  overflow-y: hidden;
 
   border-radius: 8px;
   background: var(--popover-bg);
@@ -803,8 +755,11 @@ ul#searchresults span.teaser em {
   box-shadow: var(--popover-shadow);
 }
 
-.searchbar-outer {
-  width: 100%;
+.searchresults-outer {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0px 22px 22px 22px;
 }
 
 #searchbar {
@@ -854,9 +809,5 @@ ul#searchresults span.teaser em {
 
   .search-content-mobile {
     display: flex;
-  }
-
-  .theme-popup {
-    right: 15px;
   }
 }

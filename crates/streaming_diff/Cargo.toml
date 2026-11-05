@@ -10,11 +10,17 @@ workspace = true
 
 [lib]
 path = "src/streaming_diff.rs"
+doctest = false
 
 [dependencies]
 ordered-float.workspace = true
 rope.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 rand.workspace = true
 util = { workspace = true, features = ["test-support"] }
+
+[[bench]]
+name = "streaming_diff"
+harness = false

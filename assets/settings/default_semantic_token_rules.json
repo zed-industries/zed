@@ -122,7 +122,7 @@
   {
     "token_type": "parameter",
     "token_modifiers": [],
-    "style": ["variable"],
+    "style": ["variable.parameter"],
   },
   {
     "token_type": "variable",
@@ -200,6 +200,11 @@
     "token_type": "comment",
     "token_modifiers": [],
     "style": ["comment"],
+  },
+  {
+    "token_type": "string",
+    "token_modifiers": ["documentation"],
+    "style": ["string.doc"],
   },
   {
     "token_type": "string",

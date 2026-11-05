@@ -1,21 +1,19 @@
 use std::{cmp, ops::Range};
 
 use collections::HashMap;
-use futures::future::join_all;
-use gpui::{Hsla, Rgba};
-use itertools::Itertools;
-use language::point_from_lsp;
-use multi_buffer::Anchor;
-use project::{DocumentColor, InlayId};
+use gpui::{Entity, Hsla, Rgba, Task, WeakEntity};
+use language::{Buffer, range_from_lsp};
+use multi_buffer::{Anchor, MultiBufferSnapshot};
+use project::{DocumentColor, InlayId, Project};
 use settings::Settings as _;
-use text::{Bias, BufferId, OffsetRangeExt as _};
+use text::{Bias, BufferId};
 use ui::{App, Context, Window};
 use util::post_inc;
 
 use crate::{
     DisplayPoint, Editor, EditorSettings, EditorSnapshot, InlaySplice,
-    LSP_REQUEST_DEBOUNCE_TIMEOUT, RangeToAnchorExt, editor_settings::DocumentColorsRenderMode,
-    inlays::Inlay,
+    LSP_REQUEST_DEBOUNCE_TIMEOUT, LspDataKind, RangeToAnchorExt,
+    editor_settings::DocumentColorsRenderMode, inlays::Inlay,
 };
 
 #[derive(Debug)]
@@ -51,8 +49,8 @@ impl LspColorData {
                 to_remove: Vec::new(),
                 to_insert: self
                     .buffer_colors
-                    .iter()
-                    .flat_map(|(_, buffer_colors)| buffer_colors.colors.iter())
+                    .values()
+                    .flat_map(|buffer_colors| buffer_colors.colors.iter())
                     .map(|(range, color, id)| {
                         Inlay::color(
                             id.id(),
@@ -109,6 +107,41 @@ impl LspColorData {
         true
     }
 
+    fn remove_invalid_colors(
+        &mut self,
+        buffer_id: BufferId,
+        buffers_removed: bool,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Vec<InlayId> {
+        let Some(buffer_colors) = self.buffer_colors.get(&buffer_id) else {
+            return Vec::new();
+        };
+        let (valid_colors, invalid_colors) = buffer_colors
+            .colors
+            .iter()
+            .cloned()
+            .partition::<Vec<_>, _>(|(range, _, _)| {
+                !buffers_removed
+                    && [range.start, range.end].iter().all(|anchor| {
+                        anchor.raw_text_anchor().is_none_or(|text_anchor| {
+                            snapshot.anchor_in_excerpt(text_anchor).is_some()
+                        })
+                    })
+            });
+        if invalid_colors.is_empty() {
+            return Vec::new();
+        }
+        if valid_colors.is_empty() {
+            self.buffer_colors.remove(&buffer_id);
+        } else {
+            self.set_colors(buffer_id, valid_colors);
+        }
+        invalid_colors
+            .into_iter()
+            .map(|(_, _, inlay_id)| inlay_id)
+            .collect()
+    }
+
     pub fn editor_display_highlights(
         &self,
         snapshot: &EditorSnapshot,
@@ -120,8 +153,8 @@ impl LspColorData {
             Vec::new()
         } else {
             self.buffer_colors
-                .iter()
-                .flat_map(|(_, buffer_colors)| &buffer_colors.colors)
+                .values()
+                .flat_map(|buffer_colors| &buffer_colors.colors)
                 .map(|(range, color, _)| {
                     let display_range = range.clone().to_display_points(snapshot);
                     let color = Hsla::from(Rgba {
@@ -145,7 +178,7 @@ impl Editor {
         _: &Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() {
+        if !self.lsp_data_enabled() {
             return;
         }
         let Some(project) = self.project.as_ref() else {
@@ -159,128 +192,118 @@ impl Editor {
             return;
         }
 
-        let buffers_to_query = self
-            .visible_excerpts(true, cx)
-            .into_values()
-            .map(|(buffer, ..)| buffer)
-            .chain(buffer_id.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
-            .filter(|editor_buffer| {
-                let editor_buffer_id = editor_buffer.read(cx).remote_id();
-                buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer_id)
-                    && self.registered_buffers.contains_key(&editor_buffer_id)
-            })
-            .unique_by(|buffer| buffer.read(cx).remote_id())
-            .collect::<Vec<_>>();
-
         let project = project.downgrade();
-        self.refresh_colors_task = cx.spawn(async move |editor, cx| {
+        let buffers_to_query = self.lsp_data_buffers(buffer_id, cx);
+        self.spawn_lsp_data_tasks(
+            LspDataKind::DocumentColors,
+            buffer_id,
+            buffers_to_query,
+            cx,
+            |buffer, cx| Self::fetch_document_colors(project.clone(), buffer, cx),
+        );
+    }
+
+    pub(super) fn remove_invalid_document_colors(
+        &mut self,
+        buffer_ids: &[BufferId],
+        buffers_removed: bool,
+        snapshot: &MultiBufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(colors) = &mut self.colors else {
+            return;
+        };
+        let invalid_inlays = buffer_ids
+            .iter()
+            .flat_map(|buffer_id| {
+                colors.remove_invalid_colors(*buffer_id, buffers_removed, snapshot)
+            })
+            .collect::<Vec<_>>();
+        if invalid_inlays.is_empty() {
+            return;
+        }
+        if colors.render_mode == DocumentColorsRenderMode::Inlay {
+            self.splice_inlays(&invalid_inlays, Vec::new(), cx);
+        }
+        cx.notify();
+    }
+
+    fn fetch_document_colors(
+        project: WeakEntity<Project>,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        cx.spawn(async move |editor, cx| {
             cx.background_executor()
                 .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let Some(all_colors_task) = project
+            let Some((buffer_snapshot, colors_task)) = project
                 .update(cx, |project, cx| {
                     project.lsp_store().update(cx, |lsp_store, cx| {
-                        buffers_to_query
-                            .into_iter()
-                            .filter_map(|buffer| {
-                                let buffer_id = buffer.read(cx).remote_id();
-                                let colors_task = lsp_store.document_colors(buffer, cx)?;
-                                Some(async move { (buffer_id, colors_task.await) })
-                            })
-                            .collect::<Vec<_>>()
+                        let buffer_snapshot = buffer.read(cx).snapshot();
+                        Some((buffer_snapshot, lsp_store.document_colors(buffer, cx)?))
                     })
                 })
+                .ok()
+                .flatten()
+            else {
+                return;
+            };
+
+            let colors = colors_task.await;
+            let Some(multi_buffer_snapshot) = editor
+                .update(cx, |editor, cx| editor.buffer.read(cx).snapshot(cx))
                 .ok()
             else {
                 return;
             };
 
-            let all_colors = join_all(all_colors_task).await;
-            if all_colors.is_empty() {
-                return;
-            }
-            let Ok((multi_buffer_snapshot, editor_excerpts)) = editor.update(cx, |editor, cx| {
-                let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                let editor_excerpts = multi_buffer_snapshot.excerpts().fold(
-                    HashMap::default(),
-                    |mut acc, (excerpt_id, buffer_snapshot, excerpt_range)| {
-                        let excerpt_data = acc
-                            .entry(buffer_snapshot.remote_id())
-                            .or_insert_with(Vec::new);
-                        let excerpt_point_range =
-                            excerpt_range.context.to_point_utf16(buffer_snapshot);
-                        excerpt_data.push((
-                            excerpt_id,
-                            buffer_snapshot.clone(),
-                            excerpt_point_range,
-                        ));
-                        acc
-                    },
-                );
-                (multi_buffer_snapshot, editor_excerpts)
-            }) else {
-                return;
-            };
-
             let mut new_editor_colors: HashMap<BufferId, Vec<(Range<Anchor>, DocumentColor)>> =
                 HashMap::default();
-            for (buffer_id, colors) in all_colors {
-                let Some(excerpts) = editor_excerpts.get(&buffer_id) else {
-                    continue;
-                };
-                match colors {
-                    Ok(colors) => {
-                        if colors.colors.is_empty() {
-                            new_editor_colors
-                                .entry(buffer_id)
-                                .or_insert_with(Vec::new)
-                                .clear();
-                        } else {
-                            for color in colors.colors {
-                                let color_start = point_from_lsp(color.lsp_range.start);
-                                let color_end = point_from_lsp(color.lsp_range.end);
+            match colors {
+                Ok(colors) => {
+                    if colors.colors.is_empty() {
+                        new_editor_colors
+                            .entry(buffer_snapshot.remote_id())
+                            .or_insert_with(Vec::new)
+                            .clear();
+                    } else {
+                        for color in colors.colors {
+                            let color_range = range_from_lsp(color.lsp_range);
+                            let color_start = color_range.start;
+                            let color_end = color_range.end;
 
-                                for (excerpt_id, buffer_snapshot, excerpt_range) in excerpts {
-                                    if !excerpt_range.contains(&color_start.0)
-                                        || !excerpt_range.contains(&color_end.0)
-                                    {
-                                        continue;
-                                    }
-                                    let start = buffer_snapshot.anchor_before(
-                                        buffer_snapshot.clip_point_utf16(color_start, Bias::Left),
-                                    );
-                                    let end = buffer_snapshot.anchor_after(
-                                        buffer_snapshot.clip_point_utf16(color_end, Bias::Right),
-                                    );
-                                    let Some(range) = multi_buffer_snapshot
-                                        .anchor_range_in_excerpt(*excerpt_id, start..end)
-                                    else {
-                                        continue;
-                                    };
+                            let Some(range) = multi_buffer_snapshot
+                                .buffer_anchor_range_to_anchor_range(
+                                    buffer_snapshot.anchor_range_outside(
+                                        buffer_snapshot.clip_point_utf16(color_start, Bias::Left)
+                                            ..buffer_snapshot
+                                                .clip_point_utf16(color_end, Bias::Right),
+                                    ),
+                                )
+                            else {
+                                continue;
+                            };
 
-                                    let new_buffer_colors =
-                                        new_editor_colors.entry(buffer_id).or_insert_with(Vec::new);
+                            let new_buffer_colors = new_editor_colors
+                                .entry(buffer_snapshot.remote_id())
+                                .or_insert_with(Vec::new);
 
-                                    let (Ok(i) | Err(i)) =
-                                        new_buffer_colors.binary_search_by(|(probe, _)| {
-                                            probe
-                                                .start
-                                                .cmp(&range.start, &multi_buffer_snapshot)
-                                                .then_with(|| {
-                                                    probe
-                                                        .end
-                                                        .cmp(&range.end, &multi_buffer_snapshot)
-                                                })
-                                        });
-                                    new_buffer_colors.insert(i, (range, color));
-                                    break;
-                                }
-                            }
+                            let (Ok(i) | Err(i)) =
+                                new_buffer_colors.binary_search_by(|(probe, _)| {
+                                    probe
+                                        .start
+                                        .cmp(&range.start, &multi_buffer_snapshot)
+                                        .then_with(|| {
+                                            probe.end.cmp(&range.end, &multi_buffer_snapshot)
+                                        })
+                                });
+                            new_buffer_colors.insert(i, (range, color));
                         }
                     }
-                    Err(e) => log::error!("Failed to retrieve document colors: {e}"),
                 }
+                Err(e) => log::error!("Failed to retrieve document colors: {e}"),
             }
 
             editor
@@ -399,7 +422,7 @@ impl Editor {
                     }
                 })
                 .ok();
-        });
+        })
     }
 }
 
@@ -629,6 +652,7 @@ mod tests {
             editor.save(
                 SaveOptions {
                     format: true,
+                    force_format: false,
                     autosave: true,
                 },
                 project.clone(),
@@ -719,6 +743,7 @@ mod tests {
             editor.save(
                 SaveOptions {
                     format: false,
+                    force_format: false,
                     autosave: true,
                 },
                 project.clone(),

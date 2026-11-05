@@ -1,7 +1,7 @@
 use crate::{TestClient, TestServer};
 use async_trait::async_trait;
 use collab::{
-    db::{self, NewUserParams, UserId},
+    db::{self, UserId},
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
 };
 use futures::StreamExt;
@@ -191,7 +191,7 @@ pub async fn run_randomized_test<T: RandomizedTest>(
             let settings = cx.remove_global::<SettingsStore>();
             cx.clear_globals();
             cx.set_global(settings);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             drop(client);
         });
         executor.run_until_parked();
@@ -224,15 +224,7 @@ impl<T: RandomizedTest> TestPlan<T> {
             let user_id = server
                 .app_state
                 .db
-                .create_user(
-                    &format!("{username}@example.com"),
-                    None,
-                    false,
-                    NewUserParams {
-                        github_login: username.clone(),
-                        github_user_id: ix as i32,
-                    },
-                )
+                .create_user(false)
                 .await
                 .unwrap()
                 .user_id;

@@ -7,20 +7,22 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use cpal::DeviceId;
 use cpal::traits::{DeviceTrait, StreamTrait};
 use rodio::{buffer::SamplesBuffer, conversions::SampleTypeConverter};
 use util::ResultExt;
 
 pub struct CaptureInput {
     pub name: String,
+    pub input_device: Option<DeviceId>,
     config: cpal::SupportedStreamConfig,
     samples: Arc<Mutex<Vec<i16>>>,
     _stream: cpal::Stream,
 }
 
 impl CaptureInput {
-    pub fn start() -> anyhow::Result<Self> {
-        let (device, config) = crate::default_device(true)?;
+    pub fn start(input_device: Option<DeviceId>) -> anyhow::Result<Self> {
+        let (device, config) = crate::default_device(true, input_device.as_ref())?;
         let name = device
             .description()
             .map(|desc| desc.name().to_string())
@@ -28,10 +30,11 @@ impl CaptureInput {
         log::info!("Using microphone: {}", name);
 
         let samples = Arc::new(Mutex::new(Vec::new()));
-        let stream = start_capture(device, config.clone(), samples.clone())?;
+        let stream = start_capture(device, config, samples.clone())?;
 
         Ok(Self {
             name,
+            input_device,
             _stream: stream,
             config,
             samples,
@@ -55,7 +58,7 @@ fn start_capture(
 ) -> Result<cpal::Stream> {
     let stream = device
         .build_input_stream_raw(
-            &config.config(),
+            config.config(),
             config.sample_format(),
             move |data, _: &_| {
                 let data = crate::get_sample_data(config.sample_format(), data).log_err();

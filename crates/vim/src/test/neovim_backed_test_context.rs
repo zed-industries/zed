@@ -261,9 +261,10 @@ impl NeovimBackedTestContext {
     }
 
     pub async fn simulate_shared_keystrokes(&mut self, keystroke_texts: &str) {
+        let os = self.cx.read(|cx| cx.platform_info().os);
         for keystroke_text in keystroke_texts.split(' ') {
             self.recent_keystrokes.push(keystroke_text.to_string());
-            self.neovim.send_keystroke(keystroke_text).await;
+            self.neovim.send_keystroke(keystroke_text, os).await;
         }
         self.simulate_keystrokes(keystroke_texts);
     }
@@ -287,8 +288,7 @@ impl NeovimBackedTestContext {
         self.update(|_, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings(cx, |settings| {
-                    settings.project.all_languages.defaults.soft_wrap =
-                        Some(SoftWrap::PreferredLineLength);
+                    settings.project.all_languages.defaults.soft_wrap = Some(SoftWrap::Bounded);
                     settings
                         .project
                         .all_languages

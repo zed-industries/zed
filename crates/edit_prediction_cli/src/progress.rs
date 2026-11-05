@@ -638,7 +638,7 @@ fn truncate_to_visible_width(s: &str, max_visible_len: usize) -> &str {
 }
 
 fn format_duration(duration: Duration) -> String {
-    const MINUTE_IN_MILLIS: f32 = 60. * 1000.;
+    const MINUTE_IN_MILLIS: f32 = Duration::from_mins(1).as_millis() as f32;
 
     let millis = duration.as_millis() as f32;
     if millis < 1000.0 {

@@ -10,19 +10,26 @@ workspace = true
 
 [lib]
 path = "src/auto_update_ui.rs"
+test = false
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
 auto_update.workspace = true
 client.workspace = true
+db.workspace = true
 editor.workspace = true
 gpui.workspace = true
 markdown_preview.workspace = true
+project.workspace = true
 release_channel.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+settings.workspace = true
 smol.workspace = true
+telemetry.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true

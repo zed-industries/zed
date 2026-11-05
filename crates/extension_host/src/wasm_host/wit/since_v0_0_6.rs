@@ -10,15 +10,19 @@ use wasmtime::component::{Linker, Resource};
 pub const MIN_VERSION: Version = Version::new(0, 0, 6);
 
 wasmtime::component::bindgen!({
-    async: true,
-    trappable_imports: true,
+    imports: {
+        default: async | trappable,
+    },
+    exports: {
+        default: async,
+    },
     path: "../extension_api/wit/since_v0.0.6",
     with: {
-         "worktree": ExtensionWorktree,
-         "zed:extension/github": since_v0_6_0::zed::extension::github,
-         "zed:extension/lsp": since_v0_1_0::zed::extension::lsp,
-         "zed:extension/nodejs": latest::zed::extension::nodejs,
-         "zed:extension/platform": latest::zed::extension::platform,
+        "worktree": ExtensionWorktree,
+        "zed:extension/github": since_v0_6_0::zed::extension::github,
+        "zed:extension/lsp": since_v0_1_0::zed::extension::lsp,
+        "zed:extension/nodejs": latest::zed::extension::nodejs,
+        "zed:extension/platform": since_v0_6_0::zed::extension::platform,
     },
 });
 
@@ -31,7 +35,11 @@ pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
 
 pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| super::new_linker(executor, Extension::add_to_linker))
+    LINKER.get_or_init(|| {
+        super::new_linker(executor, |linker| {
+            Extension::add_to_linker::<_, WasmState>(linker, |s| s)
+        })
+    })
 }
 
 impl From<Command> for latest::Command {
@@ -48,7 +56,13 @@ impl From<SettingsLocation> for latest::SettingsLocation {
     fn from(value: SettingsLocation) -> Self {
         Self {
             worktree_id: value.worktree_id,
-            path: value.path,
+            // Passing the path here causes project settings reads to fail,
+            // since the extension passes the absolute path to the worktree,
+            // not a relative one like the settings API expects.
+            //
+            // This has been fixed in the API itself as of v0.2.0. Align the behavior
+            // here so that older extensions can also read project settings.
+            path: String::new(),
         }
     }
 }
@@ -147,7 +161,7 @@ impl HostWorktree for WasmState {
         latest::HostWorktree::which(self, delegate, binary_name).await
     }
 
-    async fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
+    async fn drop(&mut self, _worktree: Resource<Worktree>) -> wasmtime::Result<()> {
         // We only ever hand out borrows of worktrees.
         Ok(())
     }

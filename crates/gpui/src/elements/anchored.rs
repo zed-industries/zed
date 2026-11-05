@@ -1,7 +1,9 @@
+use std::cmp::Ordering;
+
 use smallvec::SmallVec;
 
 use crate::{
-    AnyElement, App, Axis, Bounds, Corner, Display, Edges, Element, GlobalElementId,
+    Anchor, AnyElement, App, Axis, Bounds, Display, Edges, Element, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, ParentElement, Pixels, Point, Position, Size, Style,
     Window, point, px,
 };
@@ -15,11 +17,21 @@ pub struct AnchoredState {
 /// will avoid overflowing the window bounds.
 pub struct Anchored {
     children: SmallVec<[AnyElement; 2]>,
-    anchor_corner: Corner,
+    anchor: Anchor,
     fit_mode: AnchoredFitMode,
-    anchor_position: Option<Point<Pixels>>,
+    placement: Placement,
     position_mode: AnchoredPositionMode,
     offset: Option<Point<Pixels>>,
+}
+
+#[derive(Clone, Copy)]
+enum Placement {
+    InPlace,
+    At(Point<Pixels>),
+    Attached {
+        target: Bounds<Pixels>,
+        corner: Anchor,
+    },
 }
 
 /// anchored gives you an element that will avoid overflowing the window bounds.
@@ -27,9 +39,9 @@ pub struct Anchored {
 pub fn anchored() -> Anchored {
     Anchored {
         children: SmallVec::new(),
-        anchor_corner: Corner::TopLeft,
+        anchor: Anchor::TopLeft,
         fit_mode: AnchoredFitMode::SwitchAnchor,
-        anchor_position: None,
+        placement: Placement::InPlace,
         position_mode: AnchoredPositionMode::Window,
         offset: None,
     }
@@ -37,15 +49,28 @@ pub fn anchored() -> Anchored {
 
 impl Anchored {
     /// Sets which corner of the anchored element should be anchored to the current position.
-    pub fn anchor(mut self, anchor: Corner) -> Self {
-        self.anchor_corner = anchor;
+    pub fn anchor(mut self, anchor: Anchor) -> Self {
+        self.anchor = anchor;
         self
     }
 
     /// Sets the position in window coordinates
     /// (otherwise the location the anchored element is rendered is used)
     pub fn position(mut self, anchor: Point<Pixels>) -> Self {
-        self.anchor_position = Some(anchor);
+        self.placement = Placement::At(anchor);
+        self
+    }
+
+    /// Places the element next to `target`, with the element's [`Anchored::anchor`] corner
+    /// on `corner` of `target`. For example, a submenu puts its top-left corner on its row's
+    /// top-right corner. Use this instead of [`Anchored::position`].
+    ///
+    /// If the element doesn't fit in the window, it moves to the other side of `target`, as
+    /// long as that side fits better. A submenu moves from the right of its row to the left,
+    /// and a dropdown moves from below its button to above. The offset flips with it.
+    /// [`AnchoredFitMode::SwitchAnchor`] has no effect here.
+    pub fn attach(mut self, target: Bounds<Pixels>, corner: Anchor) -> Self {
+        self.placement = Placement::Attached { target, corner };
         self
     }
 
@@ -57,8 +82,9 @@ impl Anchored {
     }
 
     /// Sets the position mode for this anchored element. Local will have this
-    /// interpret its [`Anchored::position`] as relative to the parent element.
-    /// While Window will have it interpret the position as relative to the window.
+    /// interpret its [`Anchored::position`] or [`Anchored::attach`] target as
+    /// relative to the parent element. While Window will have it interpret the
+    /// position as relative to the window.
     pub fn position_mode(mut self, mode: AnchoredPositionMode) -> Self {
         self.position_mode = mode;
         self
@@ -132,19 +158,22 @@ impl Element for Anchored {
             return;
         }
 
-        let mut child_min = point(Pixels::MAX, Pixels::MAX);
-        let mut child_max = Point::default();
-        for child_layout_id in &request_layout.child_layout_ids {
-            let child_bounds = window.layout_bounds(*child_layout_id);
-            child_min = child_min.min(&child_bounds.origin);
-            child_max = child_max.max(&child_bounds.bottom_right());
-        }
-        let size: Size<Pixels> = (child_max - child_min).into();
+        let children_bounds = request_layout
+            .child_layout_ids
+            .iter()
+            .map(|id| window.layout_bounds(*id))
+            .reduce(|acc, bounds| acc.union(&bounds))
+            .unwrap();
 
+        let anchor_position = match self.placement {
+            Placement::InPlace => None,
+            Placement::At(position) => Some(position),
+            Placement::Attached { target, corner } => Some(target.corner(corner)),
+        };
         let (origin, mut desired) = self.position_mode.get_position_and_bounds(
-            self.anchor_position,
-            self.anchor_corner,
-            size,
+            anchor_position,
+            self.anchor,
+            children_bounds.size,
             bounds,
             self.offset,
         );
@@ -154,26 +183,72 @@ impl Element for Anchored {
             size: window.viewport_size(),
         };
 
-        if self.fit_mode == AnchoredFitMode::SwitchAnchor {
-            let mut anchor_corner = self.anchor_corner;
+        if let Placement::Attached { target, mut corner } = self.placement {
+            // Compare against the window edges, not the snap margin, so an element that
+            // already fits doesn't move. The client inset doesn't count as room either,
+            // since on Linux it's the window's transparent shadow.
+            let visible = limits.inset(window.client_inset.unwrap_or(px(0.)));
+            let overflow_along = |bounds: Bounds<Pixels>, axis: Axis| match axis {
+                Axis::Horizontal => {
+                    (visible.left() - bounds.left()).max(px(0.))
+                        + (bounds.right() - visible.right()).max(px(0.))
+                }
+                Axis::Vertical => {
+                    (visible.top() - bounds.top()).max(px(0.))
+                        + (bounds.bottom() - visible.bottom()).max(px(0.))
+                }
+            };
+            let mut anchor = self.anchor;
+            let mut offset = self.offset.unwrap_or_default();
+            for axis in [Axis::Horizontal, Axis::Vertical] {
+                let corner_side = side_along(corner, axis);
+                let is_outside_target = corner_side != Ordering::Equal
+                    && side_along(anchor, axis) == corner_side.reverse();
+                let overflow = overflow_along(desired, axis);
+                if !is_outside_target || overflow == px(0.) {
+                    continue;
+                }
+
+                let flipped_corner = corner.other_side_along(axis);
+                let flipped_anchor = anchor.other_side_along(axis);
+                let flipped_offset = match axis {
+                    Axis::Horizontal => point(-offset.x, offset.y),
+                    Axis::Vertical => point(offset.x, -offset.y),
+                };
+                let (_, flipped) = self.position_mode.get_position_and_bounds(
+                    Some(target.corner(flipped_corner)),
+                    flipped_anchor,
+                    children_bounds.size,
+                    bounds,
+                    Some(flipped_offset),
+                );
+                if overflow_along(flipped, axis) < overflow {
+                    corner = flipped_corner;
+                    anchor = flipped_anchor;
+                    offset = flipped_offset;
+                    desired = flipped;
+                }
+            }
+        } else if self.fit_mode == AnchoredFitMode::SwitchAnchor {
+            let mut anchor = self.anchor;
 
             if desired.left() < limits.left() || desired.right() > limits.right() {
-                let switched = Bounds::from_corner_and_size(
-                    anchor_corner.other_side_corner_along(Axis::Horizontal),
+                let switched = Bounds::from_anchor_and_size(
+                    anchor.other_side_along(Axis::Horizontal),
                     origin,
-                    size,
+                    children_bounds.size,
                 );
                 if !(switched.left() < limits.left() || switched.right() > limits.right()) {
-                    anchor_corner = anchor_corner.other_side_corner_along(Axis::Horizontal);
+                    anchor = anchor.other_side_along(Axis::Horizontal);
                     desired = switched
                 }
             }
 
             if desired.top() < limits.top() || desired.bottom() > limits.bottom() {
-                let switched = Bounds::from_corner_and_size(
-                    anchor_corner.other_side_corner_along(Axis::Vertical),
+                let switched = Bounds::from_anchor_and_size(
+                    anchor.other_side_along(Axis::Vertical),
                     origin,
-                    size,
+                    children_bounds.size,
                 );
                 if !(switched.top() < limits.top() || switched.bottom() > limits.bottom()) {
                     desired = switched;
@@ -240,6 +315,23 @@ impl IntoElement for Anchored {
     }
 }
 
+/// Which side of a box `anchor` is on along `axis`. `Less` is left or top, `Equal` is the
+/// center, and `Greater` is right or bottom.
+fn side_along(anchor: Anchor, axis: Axis) -> Ordering {
+    match axis {
+        Axis::Horizontal => match anchor {
+            Anchor::TopLeft | Anchor::BottomLeft | Anchor::LeftCenter => Ordering::Less,
+            Anchor::TopCenter | Anchor::BottomCenter => Ordering::Equal,
+            Anchor::TopRight | Anchor::BottomRight | Anchor::RightCenter => Ordering::Greater,
+        },
+        Axis::Vertical => match anchor {
+            Anchor::TopLeft | Anchor::TopRight | Anchor::TopCenter => Ordering::Less,
+            Anchor::LeftCenter | Anchor::RightCenter => Ordering::Equal,
+            Anchor::BottomLeft | Anchor::BottomRight | Anchor::BottomCenter => Ordering::Greater,
+        },
+    }
+}
+
 /// Which algorithm to use when fitting the anchored element to be inside the window.
 #[derive(Copy, Clone, PartialEq)]
 pub enum AnchoredFitMode {
@@ -264,7 +356,7 @@ impl AnchoredPositionMode {
     fn get_position_and_bounds(
         &self,
         anchor_position: Option<Point<Pixels>>,
-        anchor_corner: Corner,
+        anchor: Anchor,
         size: Size<Pixels>,
         bounds: Bounds<Pixels>,
         offset: Option<Point<Pixels>>,
@@ -274,19 +366,214 @@ impl AnchoredPositionMode {
         match self {
             AnchoredPositionMode::Window => {
                 let anchor_position = anchor_position.unwrap_or(bounds.origin);
-                let bounds =
-                    Bounds::from_corner_and_size(anchor_corner, anchor_position + offset, size);
+                let bounds = Bounds::from_anchor_and_size(anchor, anchor_position + offset, size);
                 (anchor_position, bounds)
             }
             AnchoredPositionMode::Local => {
                 let anchor_position = anchor_position.unwrap_or_default();
-                let bounds = Bounds::from_corner_and_size(
-                    anchor_corner,
+                let bounds = Bounds::from_anchor_and_size(
+                    anchor,
                     bounds.origin + anchor_position + offset,
                     size,
                 );
                 (anchor_position, bounds)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        Anchor, Bounds, Context, Pixels, PlatformInput, Point, TestAppContext, Window, deferred,
+        div, point, prelude::*, px, size,
+    };
+
+    struct AnchoredTestView {
+        position: Point<Pixels>,
+    }
+
+    impl Render for AnchoredTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                div()
+                    .id("scroll-container")
+                    .overflow_y_scroll()
+                    .size_full()
+                    .child(div().h(px(2000.)).w_full())
+                    .child(
+                        deferred(
+                            super::anchored()
+                                .snap_to_window()
+                                .position(self.position)
+                                .child(
+                                    div()
+                                        .id("menu")
+                                        .debug_selector(|| "MENU".into())
+                                        .w(px(200.))
+                                        .h(px(300.)),
+                                ),
+                        )
+                        .with_priority(1),
+                    ),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn test_anchored_position_without_scroll(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(800.), px(600.)), |_, _| AnchoredTestView {
+            position: point(px(100.), px(100.)),
+        });
+
+        cx.run_until_parked();
+
+        let menu_bounds = window
+            .update(cx, |_, window, _| {
+                window.rendered_frame.debug_bounds.get("MENU").copied()
+            })
+            .unwrap()
+            .expect("MENU debug bounds not found");
+
+        assert_eq!(menu_bounds.origin, point(px(100.), px(100.)));
+        assert_eq!(menu_bounds.size, size(px(200.), px(300.)));
+    }
+
+    #[gpui::test]
+    fn test_anchored_position_when_scrolled(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(800.), px(600.)), |_, _| AnchoredTestView {
+            position: point(px(100.), px(100.)),
+        });
+
+        cx.run_until_parked();
+
+        window
+            .update(cx, |_, window, cx| {
+                let event = gpui::ScrollEvent {
+                    position: point(px(400.), px(300.)),
+                    delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-1000.))),
+                    ..Default::default()
+                };
+                window.dispatch_event(PlatformInput::Scroll(event), cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let menu_bounds = window
+            .update(cx, |_, window, _| {
+                window.rendered_frame.debug_bounds.get("MENU").copied()
+            })
+            .unwrap()
+            .expect("MENU debug bounds not found");
+
+        assert_eq!(menu_bounds.origin, point(px(100.), px(100.)));
+        assert_eq!(menu_bounds.size, size(px(200.), px(300.)));
+    }
+
+    #[gpui::test]
+    fn test_anchored_snaps_to_window(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(800.), px(600.)), |_, _| AnchoredTestView {
+            position: point(px(100.), px(500.)),
+        });
+
+        cx.run_until_parked();
+
+        let menu_bounds = window
+            .update(cx, |_, window, _| {
+                window.rendered_frame.debug_bounds.get("MENU").copied()
+            })
+            .unwrap()
+            .expect("MENU debug bounds not found");
+
+        assert_eq!(menu_bounds.origin, point(px(100.), px(300.)));
+        assert_eq!(menu_bounds.size, size(px(200.), px(300.)));
+    }
+
+    struct AttachedTestView {
+        target: Bounds<Pixels>,
+        corner: Anchor,
+        anchor: Anchor,
+    }
+
+    impl Render for AttachedTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                deferred(
+                    super::anchored()
+                        .attach(self.target, self.corner)
+                        .anchor(self.anchor)
+                        .offset(point(px(-2.), px(4.)))
+                        .snap_to_window_with_margin(px(8.))
+                        .child(
+                            div()
+                                .debug_selector(|| "MENU".into())
+                                .w(px(200.))
+                                .h(px(300.)),
+                        ),
+                )
+                .with_priority(1),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn test_anchored_attach_moves_to_the_side_with_room(cx: &mut TestAppContext) {
+        let trigger = |x: f32, y: f32| Bounds::new(point(px(x), px(y)), size(px(100.), px(20.)));
+        // A submenu sits to the right of its trigger, with their top edges lined up.
+        let submenu = (Anchor::TopRight, Anchor::TopLeft);
+        // A dropdown sits below its button, with their left edges lined up.
+        let dropdown = (Anchor::BottomLeft, Anchor::TopLeft);
+        for (target, (corner, anchor), expected_origin) in [
+            (trigger(100., 100.), submenu, point(px(198.), px(104.))),
+            (trigger(550., 100.), submenu, point(px(352.), px(104.))),
+            (trigger(100., 400.), dropdown, point(px(98.), px(96.))),
+            // Ends 4px from the window edge. That's inside the snap margin but still fits,
+            // so it stays.
+            (trigger(498., 100.), submenu, point(px(596.), px(104.))),
+            // Doesn't fit on either side. The left sticks out less, so it goes left and
+            // slides back into the window.
+            (
+                Bounds::new(point(px(180.), px(100.)), size(px(500.), px(20.))),
+                submenu,
+                point(px(8.), px(104.)),
+            ),
+            // Doesn't fit on either side, but the right sticks out less, so it stays right
+            // and slides back into the window.
+            (
+                Bounds::new(point(px(50.), px(100.)), size(px(650.), px(20.))),
+                submenu,
+                point(px(592.), px(104.)),
+            ),
+            // A dropdown that runs off the right edge slides left. It never moves beside its
+            // button.
+            (trigger(700., 100.), dropdown, point(px(592.), px(124.))),
+            // Centered under its button, so it can move above it but never sideways.
+            (
+                trigger(100., 400.),
+                (Anchor::BottomCenter, Anchor::TopCenter),
+                point(px(48.), px(96.)),
+            ),
+        ] {
+            let window = cx.open_window(size(px(800.), px(600.)), |_, _| AttachedTestView {
+                target,
+                corner,
+                anchor,
+            });
+
+            cx.run_until_parked();
+
+            let menu_bounds = window
+                .update(cx, |_, window, _| {
+                    window.rendered_frame.debug_bounds.get("MENU").copied()
+                })
+                .unwrap()
+                .expect("MENU debug bounds not found");
+
+            assert_eq!(
+                menu_bounds.origin, expected_origin,
+                "target: {target:?}, corner: {corner:?}, anchor: {anchor:?}"
+            );
         }
     }
 }

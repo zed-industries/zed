@@ -21,3 +21,5 @@ workspace = true
 
 [lib]
 path = "src/debug_adapter_extension.rs"
+test = false
+doctest = false

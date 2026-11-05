@@ -1,3 +1,4 @@
+#![expect(clippy::result_large_err)]
 use crate::{
     attach_modal::{Candidate, ModalIntent},
     tests::start_debug_session_with,
