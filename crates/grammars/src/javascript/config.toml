@@ -20,6 +20,7 @@ brackets = [
     { start = "/*", end = " */", close = true, newline = false, not_in = ["comment", "string"] },
 ]
 word_characters = ["$", "#"]
+completion_query_characters = ["$"]
 tab_size = 2
 scope_opt_in_language_servers = ["tailwindcss-language-server", "emmet-language-server"]
 prettier_parser_name = "babel"
