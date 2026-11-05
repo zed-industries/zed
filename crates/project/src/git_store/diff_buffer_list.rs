@@ -261,6 +261,15 @@ impl DiffBufferList {
         self.tree_diff_error.as_ref()
     }
 
+    /// Whether a merge-base list is still waiting for its first tree diff, so
+    /// `load_buffers` can't list any files yet.
+    pub fn is_awaiting_tree_diff(&self) -> bool {
+        self.diff_base.is_merge_base()
+            && self.repo.is_some()
+            && self.tree_diff.is_none()
+            && self.tree_diff_error.is_none()
+    }
+
     pub fn is_tree_base_loading(&self) -> bool {
         self.tree_diff_base_task
             .as_ref()
