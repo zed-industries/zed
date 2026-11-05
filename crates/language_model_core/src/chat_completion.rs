@@ -111,7 +111,7 @@ where
 
 #[derive(Serialize, Deserialize, Debug, Default, Eq, PartialEq)]
 pub struct ResponseMessageDelta {
-    pub content: Option<String>,
+    pub content: Option<ResponseContent>,
     /// Reasoning text as sent by OpenRouter and compatible providers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
@@ -124,6 +124,47 @@ pub struct ResponseMessageDelta {
     /// Provider-defined structured reasoning metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_details: Option<Value>,
+}
+
+/// Incremental content, which may change representation between chunks.
+#[derive(Clone, Serialize, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum ResponseContent {
+    Text(String),
+    Parts(Vec<ResponseContentPart>),
+}
+
+impl<'de> Deserialize<'de> for ResponseContent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        if value.is_array() {
+            Vec::<ResponseContentPart>::deserialize(value)
+                .map(Self::Parts)
+                .map_err(serde::de::Error::custom)
+        } else {
+            String::deserialize(value)
+                .map(Self::Text)
+                .map_err(serde::de::Error::custom)
+        }
+    }
+}
+
+/// Text and reasoning blocks carried by compatible streaming APIs.
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseContentPart {
+    Text { text: String },
+    Thinking { thinking: Vec<ResponseThinkingPart> },
+}
+
+/// A text fragment within a structured reasoning block.
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseThinkingPart {
+    Text { text: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -472,15 +513,40 @@ impl ChatCompletionEventMapper {
                     reasoning_details,
                 )));
             }
-            if let Some(reasoning) = delta.reasoning.clone() {
-                push_thinking_event(reasoning, &mut events);
+            // Gateways can mirror the same reasoning delta in both fields.
+            if let Some(reasoning) = delta
+                .reasoning
+                .as_ref()
+                .filter(|text| !text.is_empty())
+                .or(delta.reasoning_content.as_ref())
+            {
+                push_thinking_event(reasoning.clone(), &mut events);
             }
-            if let Some(reasoning_content) = delta.reasoning_content.clone() {
-                push_thinking_event(reasoning_content, &mut events);
-            }
-            if let Some(content) = delta.content.clone() {
-                if !content.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            if let Some(content) = delta.content.as_ref() {
+                match content {
+                    ResponseContent::Text(text) => {
+                        if !text.is_empty() {
+                            events.push(Ok(LanguageModelCompletionEvent::Text(text.clone())));
+                        }
+                    }
+                    ResponseContent::Parts(parts) => {
+                        for part in parts {
+                            match part {
+                                ResponseContentPart::Text { text } => {
+                                    if !text.is_empty() {
+                                        events.push(Ok(LanguageModelCompletionEvent::Text(
+                                            text.clone(),
+                                        )));
+                                    }
+                                }
+                                ResponseContentPart::Thinking { thinking } => {
+                                    for ResponseThinkingPart::Text { text } in thinking {
+                                        push_thinking_event(text.clone(), &mut events);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -598,6 +664,54 @@ mod tests {
     use crate::LanguageModelToolUse;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+
+    #[test]
+    fn maps_mistral_mixed_content_stream() -> anyhow::Result<()> {
+        let chunks = [
+            json!({"choices":[{"delta":{"content":""}}]}),
+            json!({"choices":[{"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"Hello"}]}]}}]}),
+            json!({"choices":[{"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":" there friend.\""}],"closed":true}]}}]}),
+            json!({"choices":[{"delta":{"content":[{"type":"thinking","thinking":[]},{"type":"text","text":"Hello there friend"}]}}]}),
+            json!({"choices":[{"delta":{"content":"."},"finish_reason":"stop"}],"usage":{"prompt_tokens":9,"completion_tokens":347,"total_tokens":356}}),
+        ];
+        let mut mapper = ChatCompletionEventMapper::new();
+        let mut events = Vec::new();
+        for chunk in chunks {
+            let ResponseStreamResult::Ok(chunk) =
+                serde_json::from_value::<ResponseStreamResult>(chunk)?
+            else {
+                anyhow::bail!("expected a completion chunk");
+            };
+            events.extend(
+                mapper
+                    .map_event(chunk)
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+        }
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::Thinking {
+                    text: "Hello".into(),
+                    signature: None,
+                },
+                LanguageModelCompletionEvent::Thinking {
+                    text: " there friend.\"".into(),
+                    signature: None,
+                },
+                LanguageModelCompletionEvent::Text("Hello there friend".into()),
+                LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: 9,
+                    output_tokens: 347,
+                    ..Default::default()
+                }),
+                LanguageModelCompletionEvent::Text(".".into()),
+                LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+            ]
+        );
+        Ok(())
+    }
 
     fn parse(chunk: &str) -> ResponseStreamResult {
         serde_json::from_str::<ResponseStreamResult>(chunk).unwrap()
@@ -737,8 +851,8 @@ mod tests {
     fn null_error_field_is_not_an_error() {
         let event = expect_event(r#"{"error":null,"choices":[{"delta":{"content":"hi"}}]}"#);
         assert_eq!(
-            event.choices[0].delta.as_ref().unwrap().content.as_deref(),
-            Some("hi")
+            event.choices[0].delta.as_ref().unwrap().content.as_ref(),
+            Some(&ResponseContent::Text("hi".into()))
         );
     }
 
@@ -800,28 +914,49 @@ mod tests {
 
     #[test]
     fn stream_maps_reasoning() {
-        let events = map_completion_events(vec![ResponseStreamEvent {
-            choices: vec![ChoiceDelta {
-                index: 0,
-                delta: Some(ResponseMessageDelta {
-                    content: None,
-                    reasoning: Some("thinking".into()),
-                    tool_calls: None,
-                    reasoning_content: None,
-                    reasoning_details: None,
-                }),
-                finish_reason: None,
-            }],
-            usage: None,
-        }]);
+        for (reasoning, reasoning_content, expected) in [
+            (Some("thinking"), None, Some("thinking")),
+            (None, Some("thinking"), Some("thinking")),
+            (Some("thinking"), Some("thinking"), Some("thinking")),
+            (Some("thinking"), Some("other"), Some("thinking")),
+            (Some(""), Some("thinking"), Some("thinking")),
+            (Some("thinking"), Some(""), Some("thinking")),
+            (None, None, None),
+            (Some(""), Some(""), None),
+        ] {
+            let mut mapper = ChatCompletionEventMapper::new();
+            // Identical successive chunks are still distinct pieces of text.
+            for _ in 0..2 {
+                let events = mapper
+                    .map_event(ResponseStreamEvent {
+                        choices: vec![ChoiceDelta {
+                            index: 0,
+                            delta: Some(ResponseMessageDelta {
+                                reasoning: reasoning.map(str::to_owned),
+                                reasoning_content: reasoning_content.map(str::to_owned),
+                                ..Default::default()
+                            }),
+                            finish_reason: None,
+                        }],
+                        ..Default::default()
+                    })
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()
+                    .expect("reasoning chunks should map successfully");
 
-        assert_eq!(
-            events,
-            vec![LanguageModelCompletionEvent::Thinking {
-                text: "thinking".into(),
-                signature: None,
-            }]
-        );
+                assert_eq!(
+                    events,
+                    expected
+                        .map(|text| LanguageModelCompletionEvent::Thinking {
+                            text: text.into(),
+                            signature: None,
+                        })
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                    "reasoning={reasoning:?}, reasoning_content={reasoning_content:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -854,7 +989,7 @@ mod tests {
             choices: vec![ChoiceDelta {
                 index: 0,
                 delta: Some(ResponseMessageDelta {
-                    content: Some("Hello!".to_string()),
+                    content: Some(ResponseContent::Text("Hello!".to_string())),
                     ..Default::default()
                 }),
                 finish_reason: Some("stop".to_string()),

@@ -12,7 +12,7 @@ use std::{
 
 use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, line_range_suffix};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use agent_servers::AgentServer;
 use agent_settings::UserAgentsMd;
 use collections::HashSet;
@@ -2431,7 +2431,7 @@ impl AgentPanel {
             custom_title: terminal.custom_title(cx),
             created_at: terminal.created_at,
             worktree_paths: project.worktree_paths(cx),
-            remote_connection: project.remote_connection_options(cx),
+            remote_connection: project.remote_connection_options(cx).cloned(),
             working_directory: terminal.working_directory.clone(),
         })
     }
@@ -6593,8 +6593,8 @@ impl AgentPanel {
         }
     }
 
-    fn key_context(&self) -> KeyContext {
-        let mut key_context = KeyContext::new_with_defaults();
+    fn key_context(&self, cx: &App) -> KeyContext {
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("AgentPanel");
         key_context
     }
@@ -6612,7 +6612,7 @@ impl Render for AgentPanel {
         // - Scrolling in all views works as expected
         // - Files can be dropped into the panel
         let content = v_flex()
-            .key_context(self.key_context())
+            .key_context(self.key_context(cx))
             .relative()
             .size_full()
             .justify_between()
@@ -7005,7 +7005,7 @@ mod tests {
     };
     use acp_thread::{AgentConnection, StubAgentConnection, ThreadStatus};
     use action_log::ActionLog;
-    use agent_client_protocol::schema::v1 as acp;
+    use agent_client_protocol::v1::schema as acp;
     use anyhow::{Result, anyhow};
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;

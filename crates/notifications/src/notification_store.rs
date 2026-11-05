@@ -1,6 +1,5 @@
 use anyhow::{Context as _, Result};
-use channel::ChannelStore;
-use client::{ChannelId, Client, UserStore};
+use client::{Client, UserStore};
 use futures_lite::stream::StreamExt;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task};
 use rpc::{Notification, TypedEnvelope, proto};
@@ -21,7 +20,6 @@ impl Global for GlobalNotificationStore {}
 pub struct NotificationStore {
     client: Arc<Client>,
     user_store: Entity<UserStore>,
-    channel_store: Entity<ChannelStore>,
     notifications: SumTree<NotificationEntry>,
     loaded_all_notifications: bool,
     _watch_connection_status: Task<Option<()>>,
@@ -58,7 +56,6 @@ pub struct NotificationEntry {
 pub struct NotificationSummary {
     max_id: u64,
     count: usize,
-    unread_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -92,7 +89,6 @@ impl NotificationStore {
         });
 
         Self {
-            channel_store: ChannelStore::global(cx),
             notifications: Default::default(),
             loaded_all_notifications: false,
             _watch_connection_status: watch_connection_status,
@@ -109,10 +105,6 @@ impl NotificationStore {
         self.notifications.summary().count
     }
 
-    pub fn unread_notification_count(&self) -> usize {
-        self.notifications.summary().unread_count
-    }
-
     // Get the nth newest notification.
     pub fn notification_at(&self, ix: usize) -> Option<&NotificationEntry> {
         let count = self.notifications.summary().count;
@@ -125,19 +117,8 @@ impl NotificationStore {
             .find::<Count, _>((), &Count(ix), Bias::Right);
         item
     }
-    pub fn notification_for_id(&self, id: u64) -> Option<&NotificationEntry> {
-        let (.., item) =
-            self.notifications
-                .find::<NotificationId, _>((), &NotificationId(id), Bias::Left);
-        if let Some(item) = item
-            && item.id == id
-        {
-            return Some(item);
-        }
-        None
-    }
 
-    pub fn load_more_notifications(
+    fn load_more_notifications(
         &self,
         clear_old: bool,
         cx: &mut Context<Self>,
@@ -347,31 +328,6 @@ impl NotificationStore {
             new_count,
         });
     }
-
-    pub fn respond_to_notification(
-        &mut self,
-        notification: Notification,
-        response: bool,
-        cx: &mut Context<Self>,
-    ) {
-        match notification {
-            Notification::ContactRequest { sender_id } => {
-                self.user_store
-                    .update(cx, |store, cx| {
-                        store.respond_to_contact_request(sender_id, response, cx)
-                    })
-                    .detach();
-            }
-            Notification::ChannelInvitation { channel_id, .. } => {
-                self.channel_store
-                    .update(cx, |store, cx| {
-                        store.respond_to_channel_invite(ChannelId(channel_id), response, cx)
-                    })
-                    .detach();
-            }
-            _ => {}
-        }
-    }
 }
 
 impl EventEmitter<NotificationEvent> for NotificationStore {}
@@ -383,7 +339,6 @@ impl sum_tree::Item for NotificationEntry {
         NotificationSummary {
             max_id: self.id,
             count: 1,
-            unread_count: if self.is_read { 0 } else { 1 },
         }
     }
 }
@@ -396,7 +351,6 @@ impl sum_tree::ContextLessSummary for NotificationSummary {
     fn add_summary(&mut self, summary: &Self) {
         self.max_id = self.max_id.max(summary.max_id);
         self.count += summary.count;
-        self.unread_count += summary.unread_count;
     }
 }
 
