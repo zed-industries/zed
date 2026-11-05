@@ -343,7 +343,7 @@ impl LanguageModelClient for OpenAiCompatibleLanguageModelProvider {
                 config.capabilities.prompt_cache_key,
                 config.max_output_tokens,
                 default_thinking_reasoning_effort(&config),
-                supports_none_reasoning_effort(&config),
+                minimum_reasoning_effort(&config),
                 &self.id,
             ) {
                 Ok(request) => request,
@@ -406,8 +406,21 @@ fn chat_completion_max_tokens_parameter(
     }
 }
 
-fn supports_none_reasoning_effort(model: &AvailableModel) -> bool {
-    model.reasoning_effort.is_some()
+fn minimum_reasoning_effort(model: &AvailableModel) -> Option<open_ai::ReasoningEffort> {
+    // An explicitly configured effort of `"none"` wins over the minimum, so
+    // both request paths agree for models pinned to non-thinking.
+    if model.reasoning_effort == Some(open_ai::ReasoningEffort::None) {
+        return Some(open_ai::ReasoningEffort::None);
+    }
+
+    // Models without a configured `reasoning_effort` never carried an
+    // effort on thinking-off requests, so they keep omitting the field
+    // instead of sending a value their endpoint may not know.
+    model.reasoning_effort.is_some().then(|| {
+        model
+            .minimum_reasoning_effort
+            .unwrap_or(open_ai::ReasoningEffort::None)
+    })
 }
 
 fn chat_completion_reasoning_effort(
@@ -421,10 +434,8 @@ fn chat_completion_reasoning_effort(
     if request.thinking_allowed {
         selected_thinking_reasoning_effort(request)
             .or_else(|| default_thinking_reasoning_effort(model))
-    } else if supports_none_reasoning_effort(model) {
-        Some(open_ai::ReasoningEffort::None)
     } else {
-        None
+        minimum_reasoning_effort(model)
     }
 }
 
@@ -452,6 +463,7 @@ mod tests {
             max_output_tokens: None,
             max_completion_tokens: None,
             reasoning_effort,
+            minimum_reasoning_effort: None,
             capabilities: ModelCapabilities {
                 chat_completions: false,
                 ..Default::default()
@@ -608,7 +620,7 @@ mod tests {
             model.capabilities.prompt_cache_key,
             model.max_output_tokens,
             default_thinking_reasoning_effort(&model),
-            supports_none_reasoning_effort(&model),
+            minimum_reasoning_effort(&model),
             &LanguageModelProviderId::new("test-compatible-provider"),
         )
         .unwrap();
@@ -639,7 +651,7 @@ mod tests {
             model.capabilities.prompt_cache_key,
             model.max_output_tokens,
             default_thinking_reasoning_effort(&model),
-            supports_none_reasoning_effort(&model),
+            minimum_reasoning_effort(&model),
             &LanguageModelProviderId::new("test-compatible-provider"),
         )
         .unwrap();
@@ -647,6 +659,34 @@ mod tests {
 
         assert_eq!(serialized.get("reasoning"), None);
         assert_eq!(serialized.get("include"), None);
+    }
+
+    #[test]
+    fn response_request_uses_minimum_reasoning_effort_when_thinking_is_disabled() {
+        let mut model = available_model(Some(open_ai::ReasoningEffort::High));
+        model.minimum_reasoning_effort = Some(open_ai::ReasoningEffort::Low);
+        let request = LanguageModelRequest {
+            thinking_allowed: false,
+            ..Default::default()
+        };
+
+        let request = into_open_ai_response(
+            request,
+            &model.name,
+            model.capabilities.parallel_tool_calls,
+            model.capabilities.prompt_cache_key,
+            model.max_output_tokens,
+            default_thinking_reasoning_effort(&model),
+            minimum_reasoning_effort(&model),
+            &LanguageModelProviderId::new("test-compatible-provider"),
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(request).unwrap();
+
+        assert_eq!(
+            serialized["reasoning"],
+            json!({ "effort": "low", "summary": "auto" })
+        );
     }
 
     #[test]
@@ -677,14 +717,59 @@ mod tests {
     }
 
     #[test]
-    fn configured_reasoning_effort_supports_none_reasoning_effort() {
-        assert!(supports_none_reasoning_effort(&available_model(Some(
-            open_ai::ReasoningEffort::Medium
-        ))));
-        assert!(supports_none_reasoning_effort(&available_model(Some(
-            open_ai::ReasoningEffort::None
-        ))));
-        assert!(!supports_none_reasoning_effort(&available_model(None)));
+    fn minimum_reasoning_effort_defaults_to_none_for_reasoning_models() {
+        let model = available_model(Some(open_ai::ReasoningEffort::Medium));
+        let request = LanguageModelRequest {
+            thinking_allowed: false,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            chat_completion_reasoning_effort(&request, &model),
+            Some(open_ai::ReasoningEffort::None)
+        );
+        assert_eq!(
+            minimum_reasoning_effort(&model),
+            Some(open_ai::ReasoningEffort::None)
+        );
+    }
+
+    #[test]
+    fn minimum_reasoning_effort_honors_configured_value() {
+        let mut model = available_model(Some(open_ai::ReasoningEffort::High));
+        model.minimum_reasoning_effort = Some(open_ai::ReasoningEffort::Low);
+        let request = LanguageModelRequest {
+            thinking_allowed: false,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            chat_completion_reasoning_effort(&request, &model),
+            Some(open_ai::ReasoningEffort::Low)
+        );
+        assert_eq!(
+            minimum_reasoning_effort(&model),
+            Some(open_ai::ReasoningEffort::Low)
+        );
+    }
+
+    #[test]
+    fn minimum_reasoning_effort_is_omitted_without_configured_effort() {
+        let mut model = available_model(None);
+        model.minimum_reasoning_effort = Some(open_ai::ReasoningEffort::Low);
+
+        assert_eq!(minimum_reasoning_effort(&model), None);
+    }
+
+    #[test]
+    fn minimum_reasoning_effort_preserves_explicit_none_effort() {
+        let mut model = available_model(Some(open_ai::ReasoningEffort::None));
+        model.minimum_reasoning_effort = Some(open_ai::ReasoningEffort::Low);
+
+        assert_eq!(
+            minimum_reasoning_effort(&model),
+            Some(open_ai::ReasoningEffort::None)
+        );
     }
 
     #[test]

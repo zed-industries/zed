@@ -454,6 +454,11 @@ pub struct OpenAiCompatibleAvailableModel {
     pub max_output_tokens: Option<u64>,
     pub max_completion_tokens: Option<u64>,
     pub reasoning_effort: Option<OpenAiReasoningEffort>,
+    /// The effort sent on requests with thinking disabled (compaction, thread
+    /// titles), for endpoints that reject `"none"` as a `reasoning_effort`
+    /// value. Defaults to `"none"`. Only meaningful when `reasoning_effort`
+    /// is configured.
+    pub minimum_reasoning_effort: Option<OpenAiReasoningEffort>,
     #[serde(default)]
     pub capabilities: OpenAiCompatibleModelCapabilities,
 }

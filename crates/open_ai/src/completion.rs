@@ -271,7 +271,9 @@ pub fn into_open_ai_response(
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     default_reasoning_effort: Option<ReasoningEffort>,
-    supports_none_reasoning_effort: bool,
+    // The effort sent when thinking is disabled. `None` omits the reasoning
+    // field entirely; `Some(ReasoningEffort::None)` sends `"none"`.
+    minimum_reasoning_effort: Option<ReasoningEffort>,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<ResponseRequest> {
     let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
@@ -363,10 +365,8 @@ pub fn into_open_ai_response(
             .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
             .filter(|effort| *effort != ReasoningEffort::None)
             .or(default_reasoning_effort)
-    } else if supports_none_reasoning_effort {
-        Some(ReasoningEffort::None)
     } else {
-        None
+        minimum_reasoning_effort
     };
 
     let reasoning = reasoning_effort.map(|effort| crate::responses::ReasoningConfig {
@@ -1575,7 +1575,7 @@ mod tests {
                 supported,
                 None,
                 None,
-                false,
+                None,
                 &OPEN_AI_PROVIDER_ID,
             )?;
             assert_eq!(chat.prompt_cache_key.as_deref(), expected);
@@ -1919,7 +1919,7 @@ mod tests {
             true,
             Some(2048),
             Some(ReasoningEffort::Low),
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2108,7 +2108,7 @@ mod tests {
             false,
             None,
             None,
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2211,7 +2211,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Low),
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2298,7 +2298,7 @@ mod tests {
             false,
             None,
             None,
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2366,7 +2366,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2405,7 +2405,7 @@ mod tests {
                 true,
                 None,
                 effort,
-                effort == Some(NoReasoning),
+                (effort == Some(NoReasoning)).then_some(NoReasoning),
                 &OPEN_AI_PROVIDER_ID,
             )?;
             let chat = into_open_ai(
@@ -2477,7 +2477,7 @@ mod tests {
                 true,
                 None,
                 None,
-                true,
+                Some(ReasoningEffort::None),
                 &OPEN_AI_PROVIDER_ID,
             )
             .unwrap();
@@ -2614,7 +2614,7 @@ mod tests {
                 false,
                 model_maximum,
                 None,
-                false,
+                None,
                 &language_model_core::OPEN_AI_PROVIDER_ID,
             )?;
             assert_eq!(
@@ -2656,7 +2656,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            true,
+            Some(ReasoningEffort::None),
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2699,7 +2699,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            true,
+            Some(ReasoningEffort::None),
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2754,7 +2754,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2848,7 +2848,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2940,7 +2940,7 @@ mod tests {
             false,
             None,
             None,
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4342,7 +4342,7 @@ mod tests {
             true,
             None,
             None,
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4392,7 +4392,7 @@ mod tests {
             true,
             None,
             None,
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4438,7 +4438,7 @@ mod tests {
             true,
             None,
             None,
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4468,7 +4468,7 @@ mod tests {
             true,
             None,
             None,
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4512,7 +4512,7 @@ mod tests {
             true,
             None,
             None,
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4569,7 +4569,7 @@ mod tests {
             true,
             None,
             None,
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4648,7 +4648,7 @@ mod tests {
             true,
             None,
             None,
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4699,7 +4699,7 @@ mod tests {
             true,
             None,
             None,
-            false,
+            None,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap_err();
@@ -4763,7 +4763,7 @@ mod tests {
             true,
             None,
             None,
-            false,
+            None,
             &LanguageModelProviderId::new("my-compatible-endpoint"),
         )
         .unwrap();

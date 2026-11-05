@@ -543,7 +543,8 @@ fn codex_responses_request(
         model.default_reasoning_effort(),
         model
             .supported_reasoning_efforts()
-            .contains(&ReasoningEffort::None),
+            .contains(&ReasoningEffort::None)
+            .then_some(ReasoningEffort::None),
         &PROVIDER_ID,
     )?;
     responses_request.store = Some(false);

@@ -1997,7 +1997,7 @@ impl BedrockLanguageModelProvider {
                     false,
                     max_output_tokens,
                     mantle_default_reasoning_effort(config),
-                    config.supports_thinking(),
+                    config.supports_thinking().then_some(ReasoningEffort::None),
                     &PROVIDER_ID,
                 ) {
                     Ok(request) => request,
@@ -4871,7 +4871,9 @@ mod tests {
             false,
             Some(MantleModel::Grok4_3.max_output_tokens()),
             mantle_default_reasoning_effort(&MantleModel::Grok4_3),
-            MantleModel::Grok4_3.supports_thinking(),
+            MantleModel::Grok4_3
+                .supports_thinking()
+                .then_some(ReasoningEffort::None),
             &PROVIDER_ID,
         )
         .unwrap();
@@ -4924,7 +4926,7 @@ mod tests {
             false,
             Some(128_000),
             Some(ReasoningEffort::Medium),
-            false,
+            None,
             &PROVIDER_ID,
         )
         .unwrap();

@@ -559,6 +559,7 @@ struct ModelInput {
     max_output_tokens: Entity<Editor>,
     max_tokens: Entity<Editor>,
     reasoning_effort: OpenAiReasoningEffort,
+    minimum_reasoning_effort: OpenAiReasoningEffort,
     supports_tools: ToggleState,
     supports_images: ToggleState,
     supports_parallel_tool_calls: ToggleState,
@@ -593,6 +594,7 @@ impl ModelInput {
             max_output_tokens: new_input("Max Output Tokens", Some("32000"), false, window, cx),
             max_tokens: new_input("Max Tokens", Some("200000"), false, window, cx),
             reasoning_effort: OpenAiReasoningEffort::Medium,
+            minimum_reasoning_effort: OpenAiReasoningEffort::None,
             supports_tools: tools.into(),
             supports_images: images.into(),
             supports_parallel_tool_calls: parallel_tool_calls.into(),
@@ -924,7 +926,21 @@ fn render_model_capabilities(
             ))
             .when(model.supports_thinking.selected(), |this| {
                 this.child(render_reasoning_effort_selector(
+                    &OpenAiReasoningEffort::OPENAI_COMPATIBLE_SELECTABLE,
+                    "default-reasoning-effort",
+                    "Default reasoning effort",
                     model.reasoning_effort,
+                    |model, effort| model.reasoning_effort = effort,
+                    index,
+                    window,
+                    cx,
+                ))
+                .child(render_reasoning_effort_selector(
+                    MINIMUM_REASONING_EFFORT_SELECTABLE,
+                    "minimum-reasoning-effort",
+                    "Minimum reasoning effort",
+                    model.minimum_reasoning_effort,
+                    |model, effort| model.minimum_reasoning_effort = effort,
                     index,
                     window,
                     cx,
@@ -963,16 +979,30 @@ fn render_capability_checkbox(
         }))
 }
 
+const MINIMUM_REASONING_EFFORT_SELECTABLE: &[OpenAiReasoningEffort] = &[
+    OpenAiReasoningEffort::None,
+    OpenAiReasoningEffort::Minimal,
+    OpenAiReasoningEffort::Low,
+    OpenAiReasoningEffort::Medium,
+    OpenAiReasoningEffort::High,
+    OpenAiReasoningEffort::XHigh,
+    OpenAiReasoningEffort::Max,
+];
+
 fn render_reasoning_effort_selector(
+    efforts: &'static [OpenAiReasoningEffort],
+    id: &'static str,
+    label: &'static str,
     selected: OpenAiReasoningEffort,
+    update: fn(&mut ModelInput, OpenAiReasoningEffort),
     index: usize,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> impl IntoElement {
     let settings_window = cx.weak_entity();
     let menu = ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
-        for effort in OpenAiReasoningEffort::OPENAI_COMPATIBLE_SELECTABLE {
-            let is_selected = effort == selected;
+        for effort in efforts {
+            let is_selected = *effort == selected;
             let settings_window = settings_window.clone();
             menu.push_item(
                 ui::ContextMenuEntry::new(effort.label())
@@ -983,7 +1013,7 @@ fn render_reasoning_effort_selector(
                                 if let Some(form) = this.llm_provider_form.as_mut()
                                     && let Some(model) = form.models.get_mut(index)
                                 {
-                                    model.reasoning_effort = effort;
+                                    update(model, *effort);
                                 }
                                 cx.notify();
                             })
@@ -996,17 +1026,17 @@ fn render_reasoning_effort_selector(
 
     v_flex()
         .gap_1()
-        .child(Label::new("Default reasoning effort").size(LabelSize::Small))
+        .child(Label::new(label).size(LabelSize::Small))
         .child(
             DropdownMenu::new(
-                ElementId::Name(format!("reasoning-effort-selector-{index}").into()),
+                ElementId::Name(format!("{id}-{index}").into()),
                 selected.label(),
                 menu,
             )
             .style(DropdownStyle::Outlined)
             .trigger_size(ButtonSize::Compact)
             .full_width(true)
-            .aria_label("Default reasoning effort"),
+            .aria_label(label),
         )
 }
 
@@ -1058,6 +1088,7 @@ struct ModelValues {
     max_output_tokens: String,
     max_tokens: String,
     reasoning_effort: OpenAiReasoningEffort,
+    minimum_reasoning_effort: OpenAiReasoningEffort,
     supports_tools: bool,
     supports_images: bool,
     supports_parallel_tool_calls: bool,
@@ -1096,6 +1127,7 @@ fn save_llm_provider_form(
                     max_output_tokens: model.max_output_tokens.read(cx).text(cx),
                     max_tokens: model.max_tokens.read(cx).text(cx),
                     reasoning_effort: model.reasoning_effort,
+                    minimum_reasoning_effort: model.minimum_reasoning_effort,
                     supports_tools: model.supports_tools.selected(),
                     supports_images: model.supports_images.selected(),
                     supports_parallel_tool_calls: model.supports_parallel_tool_calls.selected(),
@@ -1282,6 +1314,10 @@ fn parse_open_ai_model(
         )?),
         max_tokens: parse_u64_field(&model.max_tokens, "Max Tokens")?,
         reasoning_effort: model.supports_thinking.then_some(model.reasoning_effort),
+        minimum_reasoning_effort: model
+            .supports_thinking
+            .then_some(model.minimum_reasoning_effort)
+            .filter(|effort| *effort != OpenAiReasoningEffort::None),
         capabilities: OpenAiCompatibleModelCapabilities {
             tools: model.supports_tools,
             images: model.supports_images,

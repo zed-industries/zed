@@ -123,7 +123,7 @@ pub async fn stream_completion(
                 false,
                 model.max_output_tokens(),
                 None,
-                supports_none,
+                supports_none.then_some(ReasoningEffort::None),
                 &config.provider_id,
             )?;
             let stream = open_ai::responses::stream_response(

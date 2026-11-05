@@ -407,7 +407,8 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
                 default_thinking_reasoning_effort(&config),
                 config
                     .supported_reasoning_efforts()
-                    .contains(&open_ai::ReasoningEffort::None),
+                    .contains(&open_ai::ReasoningEffort::None)
+                    .then_some(open_ai::ReasoningEffort::None),
                 &OPEN_AI_PROVIDER_ID,
             ) {
                 Ok(request) => request,
@@ -474,7 +475,8 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
             default_thinking_reasoning_effort(&config),
             config
                 .supported_reasoning_efforts()
-                .contains(&open_ai::ReasoningEffort::None),
+                .contains(&open_ai::ReasoningEffort::None)
+                .then_some(open_ai::ReasoningEffort::None),
             &OPEN_AI_PROVIDER_ID,
         );
         let http_client = self.http_client.clone();
@@ -536,7 +538,8 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
             default_thinking_reasoning_effort(&config),
             config
                 .supported_reasoning_efforts()
-                .contains(&open_ai::ReasoningEffort::None),
+                .contains(&open_ai::ReasoningEffort::None)
+                .then_some(open_ai::ReasoningEffort::None),
             &OPEN_AI_PROVIDER_ID,
         ) {
             Ok(request) => request,

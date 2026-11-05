@@ -371,10 +371,14 @@ fn open_ai_request(
         .as_ref()
         .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok())
         .filter(|effort| *effort != open_ai::ReasoningEffort::None);
-    let supports_none_reasoning_effort = config.supported_effort_levels.iter().any(|effort| {
-        open_ai::ReasoningEffort::from_str(&effort.value)
-            .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
-    });
+    let minimum_reasoning_effort = config
+        .supported_effort_levels
+        .iter()
+        .any(|effort| {
+            open_ai::ReasoningEffort::from_str(&effort.value)
+                .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
+        })
+        .then_some(open_ai::ReasoningEffort::None);
     let mut request = into_open_ai_response(
         request,
         &config.id.0,
@@ -382,7 +386,7 @@ fn open_ai_request(
         true,
         None,
         None,
-        supports_none_reasoning_effort,
+        minimum_reasoning_effort,
         &OPEN_AI_PROVIDER_ID,
     )?;
     if enable_thinking && let Some(effort) = effort {
@@ -802,10 +806,14 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
         let app_version = self.app_version.clone();
         let model_provider = config.provider;
         let provider_name = provider_name(&config.provider);
-        let supports_none_reasoning_effort = config.supported_effort_levels.iter().any(|effort| {
-            open_ai::ReasoningEffort::from_str(&effort.value)
-                .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
-        });
+        let minimum_reasoning_effort = config
+            .supported_effort_levels
+            .iter()
+            .any(|effort| {
+                open_ai::ReasoningEffort::from_str(&effort.value)
+                    .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
+            })
+            .then_some(open_ai::ReasoningEffort::None);
         // Cloud proxies to OpenAI's own infrastructure, so the resulting
         // compaction state is owned by (and interchangeable with) OpenAI
         // proper, not by the cloud transport.
@@ -816,7 +824,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             true,
             None,
             None,
-            supports_none_reasoning_effort,
+            minimum_reasoning_effort,
             &OPEN_AI_PROVIDER_ID,
         ) {
             Ok(request) => request,
