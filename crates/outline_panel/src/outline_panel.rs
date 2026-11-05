@@ -1334,7 +1334,7 @@ impl OutlinePanel {
     }
 
     fn dispatch_context(&self, window: &mut Window, cx: &mut Context<Self>) -> KeyContext {
-        let mut dispatch_context = KeyContext::new_with_defaults();
+        let mut dispatch_context = KeyContext::new_with_defaults(cx.platform_info().os);
         dispatch_context.add("OutlinePanel");
         dispatch_context.add("menu");
         let identifier = if self.filter_editor.focus_handle(cx).is_focused(window) {

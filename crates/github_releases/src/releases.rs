@@ -1,10 +1,8 @@
-use crate::{AsyncBody, HttpClient, HttpRequestExt};
 use anyhow::{Context as _, Result, anyhow, bail};
 use futures::AsyncReadExt;
-use http::Request;
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, Url};
 use serde::{Deserialize, Deserializer};
 use std::{sync::Arc, time::Duration};
-use url::Url;
 
 const GITHUB_API_URL: &str = "https://api.github.com";
 const GITHUB_RELEASE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -142,7 +140,7 @@ pub async fn get_release_by_tag_name(
 
 fn github_api_request(url: &str) -> Result<Request<AsyncBody>> {
     Request::get(url)
-        .follow_redirects(crate::RedirectPolicy::FollowAll)
+        .follow_redirects(http_client::RedirectPolicy::FollowAll)
         .timeout(GITHUB_RELEASE_REQUEST_TIMEOUT)
         .when_some(std::env::var("GITHUB_TOKEN").ok(), |builder, token| {
             builder.header("Authorization", format!("Bearer {}", token))
@@ -182,13 +180,11 @@ pub fn build_asset_url(repo_name_with_owner: &str, tag: &str, kind: AssetKind) -
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        RequestTimeout,
-        github::{
-            AssetKind, GITHUB_RELEASE_REQUEST_TIMEOUT, GithubReleaseAsset, build_asset_url,
-            github_api_request,
-        },
+    use super::{
+        AssetKind, GITHUB_RELEASE_REQUEST_TIMEOUT, GithubReleaseAsset, build_asset_url,
+        github_api_request,
     };
+    use http_client::RequestTimeout;
 
     #[test]
     fn test_asset_digest_deserialization() {
