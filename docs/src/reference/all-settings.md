@@ -4716,7 +4716,7 @@ These settings belong inside the `file_finder` object.
 
 ## Preferred Line Length
 
-- Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled.
+- Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled. The {#action editor::Rewrap} action also wraps to this column by default, whether or not soft-wrap is enabled.
 - Setting: `preferred_line_length`
 - Default: `80`
 
