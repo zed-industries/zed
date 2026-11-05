@@ -3,7 +3,7 @@ use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::{
     Addon, Editor, EditorEvent, EditorSettings, HiddenDiffHunkRenderer, MultiBuffer, RowExt,
-    SplittableEditor,
+    SelectionEffects, SplittableEditor,
     display_map::{Block, DisplayRow, ToDisplayPoint},
     hover_markdown_style, multibuffer_context_lines,
     scroll::ScrollAnchor,
@@ -22,14 +22,14 @@ use gpui::{
     Window, actions,
 };
 use language::{
-    Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
-    ReplicaId, Rope, TextBuffer,
+    Buffer, BufferId, Capability, DiskState, File, LanguageRegistry, LineEnding,
+    OffsetRangeExt as _, ReplicaId, Rope, TextBuffer,
 };
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::PathKey;
 use project::{
     Project, ProjectPath, WorktreeId,
-    git_store::{CommitDiff, Repository, UnshallowState},
+    git_store::{CommitDiff, CommitFile, Repository, UnshallowState},
 };
 use settings::{DiffViewStyle, Settings};
 use std::{
@@ -346,154 +346,118 @@ impl CommitView {
         let repository_clone = repository.clone();
         let project_clone = project.clone();
         let reveal_file_clone = reveal_file.clone();
+        let mut files = commit_diff.files;
 
         let load_diff_task = cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
-            let mut target_buffer_id = None;
 
-            // TODO!: Update this such that, if `reveal_file` is set, we handle
-            // that first instead of doing the regular ordering.
-            for file in commit_diff.files {
-                let should_reveal_file = reveal_file_clone
-                    .clone()
-                    .filter(|path| *path == file.path)
-                    .is_some();
-                let is_created = file.old_text.is_none();
-                let is_deleted = file.new_text.is_none();
-                let raw_new_text = file.new_text.unwrap_or_default();
-                let raw_old_text = file.old_text;
+            // In case there's a file we should scroll to, i.e.,
+            // `CommitViewOptions::reveal_file` is set, we'll append that file
+            // first and immediatelly set the scroll anchor to its buffer
+            // header.
+            let target_file = reveal_file_clone
+                .as_ref()
+                .and_then(|target_path| files.iter().position(|file| &file.path == target_path))
+                .map(|index| files.remove(index));
 
+            if let Some(file) = target_file {
                 let is_binary = file.is_binary;
+                let (buffer_id, file_status) = Self::append_commit_file(
+                    this.clone(),
+                    file,
+                    repository_clone.clone(),
+                    project_clone.clone(),
+                    &commit_sha,
+                    &language_registry,
+                    cx,
+                )
+                .await?;
 
-                let new_text = if is_binary {
-                    "(binary file not shown)".to_string()
-                } else {
-                    raw_new_text
-                };
-                let old_text = if is_binary { None } else { raw_old_text };
-                let worktree_id = repository_clone
-                    .read_with(cx, |repository, cx| {
-                        worktree_id_for_repo_path(
-                            repository,
-                            project_clone.read(cx),
-                            &file.path,
-                            cx,
-                        )
-                    })
-                    .context("project has no worktrees")?;
-                let short_sha = commit_sha
-                    .get(0..git::SHORT_SHA_LENGTH)
-                    .unwrap_or(&commit_sha);
-                let file_name = file
-                    .path
-                    .file_name()
-                    .map(|name| name.to_string())
-                    .unwrap_or_else(|| file.path.display(PathStyle::local()).to_string());
-                let display_name = format!("{short_sha} - {file_name}");
-
-                let file = Arc::new(GitBlob {
-                    path: file.path.clone(),
-                    is_deleted,
-                    is_binary,
-                    worktree_id,
-                    display_name,
-                }) as Arc<dyn language::File>;
-
-                let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
-                let buffer_id = cx.update(|_, cx| buffer.read(cx).remote_id())?;
-                if should_reveal_file {
-                    target_buffer_id = Some(buffer_id);
-                };
-
-                let status_code = if is_created {
-                    StatusCode::Added
-                } else if is_deleted {
-                    StatusCode::Deleted
-                } else {
-                    StatusCode::Modified
-                };
-                file_statuses.insert(
-                    buffer_id,
-                    FileStatus::Tracked(TrackedStatus {
-                        index_status: status_code,
-                        worktree_status: StatusCode::Unmodified,
-                    }),
-                );
+                file_statuses.insert(buffer_id, file_status);
 
                 if is_binary {
                     binary_buffer_ids.insert(buffer_id);
                 }
 
-                let buffer_diff = if is_binary {
-                    cx.update(|_, cx| {
-                        let snapshot = buffer.read(cx).snapshot();
-                        cx.new(|cx| {
-                            BufferDiff::new_unchanged(
-                                &snapshot,
-                                snapshot.language().cloned(),
-                                Some(language_registry.clone()),
-                                cx,
-                            )
-                        })
-                    })?
-                } else {
-                    build_buffer_diff(old_text, &buffer, &language_registry, cx).await?
-                };
+                // Update the editor's scroll anchor to the file's buffer
+                // header, ensuring that the buffer header is kept at the top
+                // when `reveal_file` is set.
+                //
+                // The editor's selections are also updated to ensure that the
+                // cursor is at the first hunk of the file, otherwise it'll get
+                // pushed to the end of the diff. Navigation history is set to
+                // `false`, ensuring that going back returns to where the commit
+                // was opened from.
+                this.update_in(cx, |this, window, cx| {
+                    this.editor.update(cx, |editor, cx| {
+                        editor.rhs_editor().update(cx, |editor, cx| {
+                            let display_snapshot = editor.display_snapshot(cx);
+                            let header_height = display_snapshot.buffer_header_height();
 
-                let (excerpt_ranges, path) = cx.update(|_, cx| {
-                    let snapshot = buffer.read(cx).snapshot();
-                    let path = PathKey::with_sort_prefix(
-                        FILE_NAMESPACE_SORT_PREFIX,
-                        snapshot.file().unwrap().path().clone(),
-                    );
-                    let ranges = if is_binary {
-                        vec![language::Point::zero()..snapshot.max_point()]
-                    } else {
-                        let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
-                        let mut hunks = diff_snapshot.hunks(&snapshot).peekable();
-                        if hunks.peek().is_none() {
-                            vec![language::Point::zero()..snapshot.max_point()]
-                        } else {
-                            hunks
-                                .map(|hunk| hunk.buffer_range.to_point(&snapshot))
-                                .collect::<Vec<_>>()
-                        }
-                    };
-                    (ranges, path)
-                })?;
+                            // Since we're guaranteed that the file we're
+                            // dealing with is the first one for which excerpts
+                            // are added, we can constrain our search range to
+                            // simply
+                            // `DisplayRow(0)..DisplayRow(header_height)`, as
+                            // the block should always be found within that.
+                            let header = display_snapshot
+                                .blocks_in_range(DisplayRow(0)..DisplayRow(header_height))
+                                .find_map(|(row, block)| match block {
+                                    Block::BufferHeader { excerpt, .. }
+                                        if excerpt.buffer_id() == buffer_id =>
+                                    {
+                                        Some((row, excerpt.start_anchor))
+                                    }
+                                    _ => None,
+                                });
 
-                // Batch the insertion of excerpts and yield between batches, to avoid blocking the main thread when a single file has many hunks.
-                const EXCERPT_BATCH_SIZE: usize = 10;
-                let total = excerpt_ranges.len();
-                let mut batch_end = 0;
-                while batch_end < total {
-                    let is_first_batch = batch_end == 0;
-                    batch_end = (batch_end + EXCERPT_BATCH_SIZE).min(total);
-                    let ranges = excerpt_ranges[..batch_end].to_vec();
-                    this.update_in(cx, |this, window, cx| {
-                        this.editor.update(cx, |editor, cx| {
-                            editor.update_excerpts_for_path(
-                                path.clone(),
-                                buffer.clone(),
-                                ranges,
-                                multibuffer_context_lines(cx),
-                                buffer_diff.clone(),
-                                cx,
-                            );
-                            if is_first_batch && editor.diff_view_style() == DiffViewStyle::Split {
-                                editor.split(window, cx);
+                            if let Some((header_row, anchor)) = header {
+                                editor.change_selections(
+                                    SelectionEffects::no_scroll().nav_history(false),
+                                    window,
+                                    cx,
+                                    |selections| selections.select_ranges([anchor..anchor]),
+                                );
+
+                                let anchor_row =
+                                    anchor.to_display_point(&display_snapshot).row().as_f64();
+                                let offset = gpui::point(0.0, header_row.as_f64() - anchor_row);
+
+                                editor.set_scroll_anchor(
+                                    ScrollAnchor { offset, anchor },
+                                    window,
+                                    cx,
+                                );
                             }
                         });
-                    })?;
-                    if batch_end < total {
-                        yield_now().await;
-                    }
+                    });
+                })?;
+            }
+
+            for file in files {
+                let is_binary = file.is_binary;
+                let (buffer_id, file_status) = Self::append_commit_file(
+                    this.clone(),
+                    file,
+                    repository_clone.clone(),
+                    project_clone.clone(),
+                    &commit_sha,
+                    &language_registry,
+                    cx,
+                )
+                .await?;
+
+                file_statuses.insert(buffer_id, file_status);
+
+                if is_binary {
+                    binary_buffer_ids.insert(buffer_id);
                 }
             }
 
-            this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, _window, cx| {
                 let commit_view = cx.weak_entity();
+
                 this.editor.update(cx, |editor, cx| {
                     editor.rhs_editor().update(cx, |editor, _cx| {
                         editor.register_addon(CommitDiffAddon {
@@ -502,59 +466,11 @@ impl CommitView {
                         });
                     });
                 });
+
                 if !binary_buffer_ids.is_empty() {
                     this.editor.update(cx, |editor, cx| {
                         editor.rhs_editor().update(cx, |editor, cx| {
                             editor.fold_buffers(binary_buffer_ids, cx);
-                        });
-                    });
-                }
-                if let Some(buffer_id) = target_buffer_id {
-                    this.editor.update(cx, |editor, cx| {
-                        editor.rhs_editor().update(cx, |editor, cx| {
-                            let display_snapshot = editor.display_snapshot(cx);
-                            let max_display_row = display_snapshot.max_point().row();
-                            // TODO!: Once we're sure this is first run for the
-                            // file in `reveal_file`, we can probably constrain
-                            // the range to `0..2`, knowing that the buffer
-                            // header is always at the top and should take 2
-                            // display rows.
-                            display_snapshot
-                                .blocks_in_range(DisplayRow(0)..max_display_row)
-                                .find(|(_row, block)| match block {
-                                    Block::BufferHeader { excerpt, .. } => {
-                                        excerpt.buffer_id() == buffer_id
-                                    }
-                                    _ => false,
-                                })
-                                .inspect(|(row, block)| match block {
-                                    Block::BufferHeader { excerpt, .. } => {
-                                        target_buffer_id = None;
-                                        let anchor = excerpt.start_anchor;
-                                        let header_row = row.as_f64();
-                                        let anchor_row = anchor
-                                            .to_display_point(&display_snapshot)
-                                            .row()
-                                            .as_f64();
-                                        let offset = gpui::point(0.0, header_row - anchor_row);
-
-                                        editor.set_scroll_anchor(
-                                            ScrollAnchor { anchor, offset },
-                                            window,
-                                            cx,
-                                        );
-                                    }
-                                    _ => {}
-                                });
-
-                            // // Leave navigation history alone so that going back returns to where the commit was opened from.
-                            // // TODO!: Update this to use `Autoscroll::top` instead.
-                            // editor.change_selections(
-                            //     SelectionEffects::scroll(Autoscroll::center()).nav_history(false),
-                            //     window,
-                            //     cx,
-                            //     |selections| selections.select_ranges([anchor..anchor]),
-                            // );
                         });
                     });
                 }
@@ -595,6 +511,137 @@ impl CommitView {
             reveal_file,
             _load_diff_task: load_diff_task,
         }
+    }
+
+    async fn append_commit_file(
+        commit_view: WeakEntity<CommitView>,
+        file: CommitFile,
+        repository: Entity<Repository>,
+        project: Entity<Project>,
+        commit_sha: &Arc<str>,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<(BufferId, FileStatus)> {
+        let is_created = file.old_text.is_none();
+        let is_deleted = file.new_text.is_none();
+        let is_binary = file.is_binary;
+        let raw_old_text = file.old_text;
+        let raw_new_text = file.new_text.unwrap_or_default();
+        let old_text = if is_binary { None } else { raw_old_text };
+        let new_text = if is_binary {
+            "(binary file not shown)".to_string()
+        } else {
+            raw_new_text
+        };
+
+        let worktree_id = repository
+            .read_with(cx, |repository, cx| {
+                worktree_id_for_repo_path(repository, project.read(cx), &file.path, cx)
+            })
+            .context("project has no worktrees")?;
+
+        let short_sha = commit_sha
+            .get(0..git::SHORT_SHA_LENGTH)
+            .unwrap_or(&commit_sha);
+        let file_name = file
+            .path
+            .file_name()
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| file.path.display(PathStyle::local()).to_string());
+        let display_name = format!("{short_sha} - {file_name}");
+        let file = Arc::new(GitBlob {
+            path: file.path.clone(),
+            is_deleted,
+            is_binary,
+            worktree_id,
+            display_name,
+        }) as Arc<dyn language::File>;
+
+        let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
+        let buffer_id = cx.update(|_window, cx| buffer.read(cx).remote_id())?;
+
+        let status_code = match (is_created, is_deleted) {
+            (true, _) => StatusCode::Added,
+            (_, true) => StatusCode::Deleted,
+            (_, _) => StatusCode::Unmodified,
+        };
+        let file_status = FileStatus::Tracked(TrackedStatus {
+            index_status: status_code,
+            worktree_status: StatusCode::Unmodified,
+        });
+
+        let buffer_diff = if is_binary {
+            cx.update(|_window, cx| {
+                let snapshot = buffer.read(cx).snapshot();
+
+                cx.new(|cx| {
+                    BufferDiff::new_unchanged(
+                        &snapshot,
+                        snapshot.language().cloned(),
+                        Some(language_registry.clone()),
+                        cx,
+                    )
+                })
+            })?
+        } else {
+            build_buffer_diff(old_text, &buffer, language_registry, cx).await?
+        };
+
+        let (excerpt_ranges, path) = cx.update(|_window, cx| {
+            let snapshot = buffer.read(cx).snapshot();
+            let path = PathKey::with_sort_prefix(
+                FILE_NAMESPACE_SORT_PREFIX,
+                snapshot.file().unwrap().path().clone(),
+            );
+
+            let ranges = if is_binary {
+                vec![language::Point::zero()..snapshot.max_point()]
+            } else {
+                let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
+                let mut hunks = diff_snapshot.hunks(&snapshot).peekable();
+
+                if hunks.peek().is_none() {
+                    vec![language::Point::zero()..snapshot.max_point()]
+                } else {
+                    hunks
+                        .map(|hunk| hunk.buffer_range.to_point(&snapshot))
+                        .collect::<Vec<_>>()
+                }
+            };
+
+            (ranges, path)
+        })?;
+
+        // Batch the insertion of excerpts and yield between batches, to avoid
+        // blocking the main thread when a single file has many hunks.
+        const EXCERPT_BATCH_SIZE: usize = 10;
+        let total = excerpt_ranges.len();
+        let mut batch_end = 0;
+        while batch_end < total {
+            let is_first_batch = batch_end == 0;
+            batch_end = (batch_end + EXCERPT_BATCH_SIZE).min(total);
+            let ranges = excerpt_ranges[..batch_end].to_vec();
+            commit_view.update_in(cx, |commit_view, window, cx| {
+                commit_view.editor.update(cx, |editor, cx| {
+                    editor.update_excerpts_for_path(
+                        path.clone(),
+                        buffer.clone(),
+                        ranges,
+                        multibuffer_context_lines(cx),
+                        buffer_diff.clone(),
+                        cx,
+                    );
+                    if is_first_batch && editor.diff_view_style() == DiffViewStyle::Split {
+                        editor.split(window, cx);
+                    }
+                });
+            })?;
+            if batch_end < total {
+                yield_now().await;
+            }
+        }
+
+        Ok((buffer_id, file_status))
     }
 
     fn render_shallow_boundary_notice(&self, cx: &App) -> impl IntoElement {
