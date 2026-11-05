@@ -29,6 +29,19 @@ pub trait CratesIoClient: Send + Sync {
     /// Requires a token with the `trusted-publishing` endpoint scope that
     /// belongs to an owner of the crate.
     async fn update_crate(&self, name: &CrateName, update: &CrateUpdate) -> Result<Crate>;
+
+    /// Requires a token with the `trusted-publishing` endpoint scope that
+    /// belongs to an owner of the crate.
+    async fn list_github_configs(&self, crate_name: &CrateName) -> Result<Vec<GitHubConfig>>;
+
+    /// Requires a token with the `trusted-publishing` endpoint scope that
+    /// belongs to an owner of the crate with a verified email address.
+    /// crates.io allows at most five configurations per crate.
+    async fn create_github_config(&self, config: &NewGitHubConfig) -> Result<GitHubConfig>;
+
+    /// Requires a token with the `trusted-publishing` endpoint scope that
+    /// belongs to an owner of the configuration's crate.
+    async fn delete_github_config(&self, id: GitHubConfigId) -> Result<()>;
 }
 
 #[derive(Debug, thiserror::Error)]
