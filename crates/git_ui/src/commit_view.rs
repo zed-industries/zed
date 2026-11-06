@@ -185,10 +185,18 @@ const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
 #[derive(Clone, Default)]
 pub struct CommitViewOptions {
+    /// The zero-based stash index when displaying a stash instead of a regular
+    /// commit.
     pub stash: Option<usize>,
+    /// Restricts the displayed diff to this repository-relative file path.
+    /// When absent, all files in the commit are displayed.
     pub file_filter: Option<RepoPath>,
-    /// A file to be loaded first and focused on once the [`CommitView`] is
-    /// rendered.
+    /// Loads this repository-relative file first, places the cursor at its
+    /// first excerpt, and reveals its header at the top of the viewport.
+    /// Other files remain visible in their normal order, subject to
+    /// `file_filter`.
+    /// If the file is absent from the displayed diff, normal loading is
+    /// unchanged.
     pub reveal_file: Option<RepoPath>,
 }
 
@@ -241,7 +249,6 @@ impl CommitView {
                     .update_in(cx, |workspace, window, cx| {
                         let project = workspace.project();
                         let workspace_entity = cx.entity();
-                        let workspace_handle = cx.weak_entity();
                         let commit_view = cx.new(|cx| {
                             CommitView::new(
                                 commit_details,
@@ -249,7 +256,6 @@ impl CommitView {
                                 repo,
                                 project.clone(),
                                 workspace_entity,
-                                workspace_handle,
                                 options,
                                 window,
                                 cx,
@@ -294,10 +300,7 @@ impl CommitView {
         commit_diff: CommitDiff,
         repository: Entity<Repository>,
         project: Entity<Project>,
-        // TODO!: Do we need bobth? Can't the weak one be generated from the
-        // regular one with `Entity::downgrade`?
-        workspace_entity: Entity<Workspace>,
-        workspace: WeakEntity<Workspace>,
+        workspace: Entity<Workspace>,
         options: CommitViewOptions,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -329,7 +332,7 @@ impl CommitView {
                 EditorSettings::get_global(cx).diff_view_style,
                 multibuffer.clone(),
                 project.clone(),
-                workspace_entity.clone(),
+                workspace.clone(),
                 window,
                 cx,
             );
@@ -454,7 +457,7 @@ impl CommitView {
             stash,
             repository,
             project,
-            workspace,
+            workspace: workspace.downgrade(),
             remote,
             is_shallow_boundary,
             file_filter,
@@ -1853,7 +1856,6 @@ mod tests {
 
         let commit_view = workspace.update_in(cx, |workspace, window, cx| {
             let workspace_entity = cx.entity();
-            let workspace_handle = workspace_entity.downgrade();
             let project = workspace.project().clone();
             let options = CommitViewOptions {
                 reveal_file: Some(RepoPath::new("b.txt").unwrap()),
@@ -1867,7 +1869,6 @@ mod tests {
                     repository,
                     project,
                     workspace_entity,
-                    workspace_handle,
                     options,
                     window,
                     cx,

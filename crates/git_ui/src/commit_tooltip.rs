@@ -220,7 +220,6 @@ pub struct CommitTooltip {
     markdown: Entity<Markdown>,
     repository: Entity<Repository>,
     workspace: WeakEntity<Workspace>,
-    // TODO!: Double-check why we actually need this in the tooltip.
     reveal_file: Option<RepoPath>,
 }
 
