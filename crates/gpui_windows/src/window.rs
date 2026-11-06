@@ -1571,7 +1571,7 @@ fn create_icon_from_rgba(rgba: &image::RgbaImage) -> Result<HICON> {
     // GDI handles have no RAII here, so neither bitmap may outlive a failure.
     .map_err(|err| {
         unsafe {
-            let _ = DeleteObject(HGDIOBJ(color.0));
+            DeleteObject(HGDIOBJ(color.0)).ok().log_err();
         }
         anyhow::anyhow!("creating an icon's mask bitmap: {err}")
     })?;
@@ -1595,15 +1595,15 @@ fn create_icon_from_rgba(rgba: &image::RgbaImage) -> Result<HICON> {
     }
     .map_err(|err| {
         unsafe {
-            let _ = DeleteObject(HGDIOBJ(color.0));
-            let _ = DeleteObject(HGDIOBJ(mask.0));
+            DeleteObject(HGDIOBJ(color.0)).ok().log_err();
+            DeleteObject(HGDIOBJ(mask.0)).ok().log_err();
         }
         anyhow::anyhow!("creating a window icon: {err}")
     })?;
     // `CreateIconIndirect` copies both bitmaps, so ours are ours to free.
     unsafe {
-        let _ = DeleteObject(HGDIOBJ(color.0));
-        let _ = DeleteObject(HGDIOBJ(mask.0));
+        DeleteObject(HGDIOBJ(color.0)).ok().log_err();
+        DeleteObject(HGDIOBJ(mask.0)).ok().log_err();
     }
     Ok(icon)
 }
