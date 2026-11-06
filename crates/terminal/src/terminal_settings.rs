@@ -1,8 +1,9 @@
 use collections::{HashMap, IndexMap};
 use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels};
+use parking_lot::Mutex as ParkingMutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{path::Path, sync::LazyLock};
 use util::shell_detection::DetectedShell;
 
 pub use settings::AlternateScroll;
@@ -91,10 +92,25 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
 /// `title_override` is unset.
 pub fn profile_to_task_shell(name: &str, profile: &TerminalProfile) -> Shell {
     Shell::WithArguments {
-        program: profile.program.clone(),
+        program: expand_tilde(&profile.program),
         args: profile.args.clone().unwrap_or_default(),
         title_override: profile.title_override.clone().or(Some(name.to_string())),
     }
+}
+
+/// Expand a leading `~` to the user's home directory. Validation, menu
+/// shadowing, and spawn all resolve the same expanded program.
+fn expand_tilde(program: &str) -> String {
+    if program == "~" {
+        return util::paths::home_dir().to_string_lossy().into_owned();
+    }
+    if let Some(rest) = program.strip_prefix("~/") {
+        return util::paths::home_dir()
+            .join(rest)
+            .to_string_lossy()
+            .into_owned();
+    }
+    program.to_string()
 }
 
 /// A configured profile or detected shell entry for the "+" menu.
@@ -150,7 +166,9 @@ fn detected_program_is_shadowed(
 ) -> bool {
     let fold = |key: &str| {
         if windows_extension_matching {
-            key.to_lowercase()
+            // Windows accepts both separators, so normalize before
+            // comparing case-insensitively.
+            key.replace("/", "\\").to_lowercase()
         } else {
             key.to_string()
         }
@@ -263,9 +281,10 @@ fn validate_configured_profiles_with(
             });
             continue;
         }
-        let path = Path::new(program);
+        let program = expand_tilde(program);
+        let path = Path::new(&program);
         let absolute_exists = path.is_absolute() && is_file(path);
-        let on_path = !path.is_absolute() && resolve_on_path(program).is_some();
+        let on_path = !path.is_absolute() && resolve_on_path(&program).is_some();
         if !absolute_exists && !on_path {
             warnings.push(ProfileWarning {
                 profile_name: name.clone(),
@@ -278,6 +297,11 @@ fn validate_configured_profiles_with(
     }
     warnings
 }
+
+/// Programs already warned about, so an invalid profile logs once per
+/// process instead of on every settings recompute.
+static WARNED_PROFILE_PROGRAMS: LazyLock<ParkingMutex<std::collections::HashSet<String>>> =
+    LazyLock::new(|| ParkingMutex::new(std::collections::HashSet::new()));
 
 /// Return one [`ProfileWarning`] per profile whose `program` is neither an
 /// existing absolute path nor resolvable on `PATH`. Advisory only: actual
@@ -299,12 +323,15 @@ impl settings::Settings for TerminalSettings {
         let profiles = project_content.profiles.clone().unwrap_or_default();
         let default_profile = project_content.default_profile.clone();
         let profile_warnings = validate_configured_profiles(&profiles);
+        let mut warned_programs = WARNED_PROFILE_PROGRAMS.lock();
         for warning in &profile_warnings {
-            log::warn!(
-                "terminal.profiles.{}: {}",
-                warning.profile_name,
-                warning.reason
-            );
+            if warned_programs.insert(warning.program.clone()) {
+                log::warn!(
+                    "terminal.profiles.{}: {}",
+                    warning.profile_name,
+                    warning.reason
+                );
+            }
         }
         let shell = if let Some(name) = default_profile.as_deref() {
             match profiles.get(name) {

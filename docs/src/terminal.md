@@ -87,7 +87,7 @@ Each profile entry has the following fields:
 
 | Field            | Type              | Description                                                                    |
 | ---------------- | ----------------- | ------------------------------------------------------------------------------ |
-| `program`        | string            | Program to launch (e.g. `/bin/zsh`, `pwsh`, `wsl.exe`).                        |
+| `program`        | string            | Program to launch (e.g. `/bin/zsh`, `pwsh`, `wsl.exe`). A leading `~` is expanded to your home directory.                         |
 | `args`           | array of strings  | Arguments passed to `program`. Omit to launch with no arguments.               |
 | `title_override` | string (optional) | Tab title for this profile. If unset, the profile's name is used (e.g. `Zsh`). |
 
@@ -130,7 +130,7 @@ Click the terminal panel's **"+"** button to see all available shells:
 
 - **New Terminal** and **Spawn Task** entries (always present).
 - One entry per configured profile (in `terminal.profiles` order).
-- One entry per detected shell not already covered by a configured profile. Detected shells come from `/etc/shells` (Unix) or a small set of well-known Windows locations (PowerShell, Command Prompt, Git Bash).
+- One entry per detected shell not already covered by a configured profile. Detected shells come from `/etc/shells` (Unix) or a small set of well-known Windows locations (PowerShell, Command Prompt, Git Bash). The list is detected once at startup; shells installed while Zed is running appear after a restart.
 
 Selecting a configured profile dispatches {#action workspace::NewTerminal} with that profile. Selecting a detected shell spawns a terminal running its program directly; the tab title is set to the detected shell's label (for example, `bash`, `zsh`, or `pwsh`).
 
