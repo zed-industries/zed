@@ -41,19 +41,30 @@ async fn test_one_off_debug_task_inherits_working_directory(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let captured = Arc::new(Mutex::new(None));
+    // Register a fake locator that produces a direct (non-build) scenario with
+    // no working directory, so `resolve_scenario` injects the resolved one.
     cx.update(|_, cx| {
-        dap::DapRegistry::global(cx).add_locator(Arc::new(FakeLocator {
-            captured: captured.clone(),
-        }));
+        dap::DapRegistry::global(cx).add_locator(Arc::new(FakeLocator));
+    });
+
+    // Observe the working directory sent to the debug adapter.
+    let cwd = Arc::new(Mutex::new(None));
+    let _subscription = project::debugger::test::intercept_debug_sessions(cx, {
+        let cwd = cwd.clone();
+        move |client| {
+            let cwd = cwd.clone();
+            client.on_request::<dap::requests::Launch, _>(move |_, args| {
+                *cwd.lock().unwrap() = args.raw.get("cwd").cloned();
+                Ok(())
+            });
+        }
     });
 
     let workspace = workspace
         .read_with(cx, |multi, _| multi.workspace().clone())
         .unwrap();
 
-    // Open a Rust buffer so `confirm_input` can derive a debug adapter from the
-    // active buffer's language and reach the DAP locators.
+    // Open a Rust buffer so `confirm_input` can derive a debug adapter.
     let rust_language = Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
@@ -93,13 +104,10 @@ async fn test_one_off_debug_task_inherits_working_directory(
     cx.dispatch_action(picker::ConfirmInput { secondary: false });
     cx.run_until_parked();
 
-    let captured = captured.lock().unwrap();
-    let input = captured
-        .as_ref()
-        .expect("the one-off debug task should be resolved by a DAP locator");
+    let cwd = cwd.lock().unwrap().clone();
     assert!(
-        input.task_template.cwd.is_some(),
-        "one-off debug tasks must inherit the working directory from their task context"
+        cwd.as_ref().is_some_and(|value| value.is_string()),
+        "one-off debug tasks must have a working directory in their DAP config"
     );
 }
 

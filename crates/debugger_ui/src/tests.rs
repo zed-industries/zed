@@ -1,6 +1,4 @@
 use std::sync::Arc;
-#[cfg(test)]
-use std::sync::Mutex;
 
 use anyhow::{Context as _, Result};
 use dap::adapters::DebugTaskDefinition;
@@ -173,22 +171,12 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     )
 }
 
-/// The inputs a [`dap::DapLocator`] receives when asked to resolve a debug
-/// scenario, captured by [`FakeLocator`] so tests can assert on them.
 #[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CapturedScenarioRequest {
-    pub task_template: task::TaskTemplate,
-    pub resolved_label: String,
-    pub adapter: dap::adapters::DebugAdapterName,
-}
-
-/// A [`dap::DapLocator`] used in tests that captures the arguments passed to
-/// `create_scenario` instead of resolving a debug scenario.
-#[cfg(test)]
-pub struct FakeLocator {
-    pub captured: Arc<Mutex<Option<CapturedScenarioRequest>>>,
-}
+/// A [`dap::DapLocator`] used in tests that resolves any task to a fake `launch`
+/// scenario (with no working directory), so tests can drive a debug session
+/// without real locators.
+#[derive(Default)]
+pub struct FakeLocator;
 
 #[cfg(test)]
 #[async_trait::async_trait]
@@ -199,16 +187,17 @@ impl dap::DapLocator for FakeLocator {
 
     async fn create_scenario(
         &self,
-        build_config: &task::TaskTemplate,
+        _build_config: &task::TaskTemplate,
         resolved_label: &str,
-        adapter: &dap::adapters::DebugAdapterName,
+        _adapter: &dap::adapters::DebugAdapterName,
     ) -> Option<task::DebugScenario> {
-        *self.captured.lock().unwrap() = Some(CapturedScenarioRequest {
-            task_template: build_config.clone(),
-            resolved_label: resolved_label.to_owned(),
-            adapter: adapter.clone(),
-        });
-        None
+        Some(task::DebugScenario {
+            adapter: gpui::SharedString::from("fake-adapter"),
+            label: resolved_label.to_string().into(),
+            build: None,
+            config: serde_json::json!({ "request": "launch" }),
+            tcp_connection: None,
+        })
     }
 
     async fn run(
