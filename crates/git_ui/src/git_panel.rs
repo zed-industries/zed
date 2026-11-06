@@ -1516,6 +1516,8 @@ impl GitPanel {
             let mut was_folder_indicator = GitPanelSettings::get_global(cx).folder_indicator;
             let mut was_diff_stats = GitPanelSettings::get_global(cx).diff_stats;
             let mut was_commit_editor = GitPanelSettings::get_global(cx).commit_editor;
+            let mut was_date_style = GitPanelSettings::get_global(cx).date_style;
+            let mut was_date_format = ProjectSettings::get_global(cx).git.date_format.clone();
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let settings = GitPanelSettings::get_global(cx);
                 let sort_by = settings.sort_by;
@@ -1525,6 +1527,8 @@ impl GitPanel {
                 let folder_indicator = settings.folder_indicator;
                 let diff_stats = settings.diff_stats;
                 let commit_editor = settings.commit_editor;
+                let date_style = settings.date_style;
+                let date_format = ProjectSettings::get_global(cx).git.date_format.clone();
                 // Changing the setting is an explicit request, so it wins over
                 // whatever this workspace last persisted.
                 if commit_editor != was_commit_editor {
@@ -1558,7 +1562,11 @@ impl GitPanel {
                 if (diff_stats != was_diff_stats) || update_entries {
                     this.update_visible_entries(window, cx);
                 }
-                if file_icons != was_file_icons || folder_indicator != was_folder_indicator {
+                if file_icons != was_file_icons
+                    || folder_indicator != was_folder_indicator
+                    || date_style != was_date_style
+                    || date_format != was_date_format
+                {
                     cx.notify();
                 }
                 was_sort_by = sort_by;
@@ -1568,6 +1576,8 @@ impl GitPanel {
                 was_folder_indicator = folder_indicator;
                 was_diff_stats = diff_stats;
                 was_commit_editor = commit_editor;
+                was_date_style = date_style;
+                was_date_format = date_format;
             })
             .detach();
 
@@ -7636,8 +7646,7 @@ impl GitPanel {
                                     commit.sha.to_string(),
                                     repo.clone(),
                                     workspace.clone(),
-                                    None,
-                                    None,
+                                    Default::default(),
                                     window,
                                     cx,
                                 );
@@ -7896,8 +7905,7 @@ impl GitPanel {
             entry.sha.to_string(),
             active_repository.downgrade(),
             self.workspace.clone(),
-            None,
-            None,
+            Default::default(),
             window,
             cx,
         );
@@ -8128,10 +8136,7 @@ impl GitPanel {
                         let repo_weak = repo_weak;
                         let git_panel = cx.weak_entity();
                         move |range, window, cx| {
-                            let local_offset = time::UtcOffset::current_local_offset()
-                                .unwrap_or(time::UtcOffset::UTC);
-                            let now = time::OffsetDateTime::now_utc();
-
+                            let date_style = GitPanelSettings::get_global(cx).date_style;
                             let visible_data: Vec<Option<Arc<CommitData>>> = repo_weak
                                 .update(cx, |repository, cx| {
                                     entries[range.clone()]
@@ -8174,16 +8179,13 @@ impl GitPanel {
                                         None => ("Loading…".into(), "".into(), None, None),
                                     };
 
-                                    let relative_time: SharedString = timestamp
+                                    let formatted_time: SharedString = timestamp
                                         .and_then(|ts| {
                                             time::OffsetDateTime::from_unix_timestamp(ts).ok()
                                         })
                                         .map(|dt| {
-                                            time_format::format_localized_timestamp(
-                                                dt,
-                                                now,
-                                                local_offset,
-                                                time_format::TimestampFormat::Relative,
+                                            crate::git_timestamp::format_git_date(
+                                                dt, date_style, cx,
                                             )
                                             .into()
                                         })
@@ -8335,9 +8337,9 @@ impl GitPanel {
                                                     )
                                                     .child(dot_separator())
                                                 })
-                                                .when(!relative_time.is_empty(), |this| {
+                                                .when(!formatted_time.is_empty(), |this| {
                                                     this.child(
-                                                        Label::new(relative_time)
+                                                        Label::new(formatted_time)
                                                             .size(LabelSize::Small)
                                                             .color(Color::Muted)
                                                             .flex_none(),
@@ -8403,8 +8405,7 @@ impl GitPanel {
                                                 sha_for_click.clone(),
                                                 repo.clone(),
                                                 workspace.clone(),
-                                                None,
-                                                None,
+                                                Default::default(),
                                                 window,
                                                 cx,
                                             );
@@ -11638,8 +11639,7 @@ mod tests {
                     sha.to_string(),
                     repository.downgrade(),
                     workspace,
-                    None,
-                    None,
+                    Default::default(),
                     window,
                     cx,
                 );
