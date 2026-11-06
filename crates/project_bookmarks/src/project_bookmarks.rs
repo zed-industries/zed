@@ -16,7 +16,7 @@ use project::WorktreeId;
 use project::bookmark_store::ProjectBookmark;
 use project::{Project, ProjectPath, bookmark_store::BookmarkStore};
 use ui::{Divider, HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
-use util::ResultExt;
+
 use util::rel_path::RelPath;
 use workspace::Workspace;
 
@@ -360,37 +360,28 @@ impl PickerDelegate for ProjectBookmarksDelegate {
             return;
         };
 
-        let open_task = workspace.update(cx, |workspace, cx| {
-            workspace.open_path_preview(
-                selected_bookmark.path.clone(),
+        let editor = workspace.update(cx, |workspace, cx| {
+            workspace.open_project_item::<editor::Editor>(
                 None,
+                selected_bookmark.buffer.clone(),
+                true,
+                true,
                 true,
                 !secondary,
-                true,
                 window,
                 cx,
             )
         });
 
-        let point = selected_bookmark
-            .buffer
-            .read(cx)
-            .snapshot()
-            .summary_for_anchor::<text::Point>(&selected_bookmark.anchor);
+        editor.update(cx, |editor, cx| {
+            let point = selected_bookmark
+                .buffer
+                .read(cx)
+                .snapshot()
+                .summary_for_anchor::<text::Point>(&selected_bookmark.anchor);
 
-        cx.spawn_in(window, async move |_, cx| {
-            let item = open_task.await.log_err()?;
-            if let Some(active_editor) = item.downcast::<editor::Editor>() {
-                active_editor
-                    .downgrade()
-                    .update_in(cx, |editor, window, cx| {
-                        editor.go_to_singleton_buffer_point(point, window, cx);
-                    })
-                    .log_err();
-            }
-            Some(())
-        })
-        .detach();
+            editor.go_to_singleton_buffer_point(point, window, cx);
+        });
 
         cx.emit(DismissEvent);
     }
