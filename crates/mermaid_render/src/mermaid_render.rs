@@ -125,7 +125,7 @@ impl Default for MermaidTheme {
 
         Self {
             dark_mode: false,
-            font_family: "IBM Plex Sans, sans-serif".to_string(),
+            font_family: "Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", \"DejaVu Sans\", \"Liberation Sans\", sans-serif, \"Noto Color Emoji\", \"Apple Color Emoji\", \"Segoe UI Emoji\"".to_string(),
             background: rgb(0xFFFFFF).into(),
             primary_color: rgb(0xF8FAFC).into(),
             primary_text_color: rgb(0x0F172A).into(),

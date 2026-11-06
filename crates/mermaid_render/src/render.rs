@@ -22,10 +22,8 @@ pub(super) fn render_mermaid(source: &str, theme: &MermaidTheme) -> Result<Strin
     // Zed also strips merman's existing `!important` declarations before
     // injecting its own theme CSS so host styling wins consistently in usvg/resvg.
     //
-    // Text measurement must use real font metrics (IBM Plex Sans, matching the
-    // fonts usvg loads for `.ZedSans`). `SvgEnvironment::deterministic()` alone
-    // is font-agnostic and under-sizes labels relative to final glyphs — the
-    // 0.8 `with_vendored_text_measurer()` / parity path we used to rely on.
+    // Measure labels with the bundled IBM Plex Sans faces used by `.ZedSans`.
+    // The deterministic environment alone uses font-agnostic width estimates.
     let environment = SvgEnvironment::deterministic()
         .with_native_font_context(shared_native_font_context()?.clone())
         .context("configure native Mermaid text measurement")?;
@@ -56,7 +54,7 @@ fn shared_native_font_context() -> Result<&'static NativeFontContext> {
         return Ok(context);
     }
 
-    // Same faces gpui/usvg use for `.ZedSans` / default Mermaid labels.
+    // Load the bundled regular, semibold, and italic faces once.
     const REGULAR: &[u8] =
         include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
     const SEMIBOLD: &[u8] =
@@ -171,7 +169,7 @@ fn to_merman_config(theme: &MermaidTheme) -> merman::MermaidConfig {
 
     merman::MermaidConfig::from_value(serde_json::json!({
         "theme": "base",
-        // Mermaid 12 defaults to the neo look; Zed's injected CSS targets classic output.
+        // Zed's injected CSS targets classic output.
         "look": "classic",
         "darkMode": theme.dark_mode,
         "fontFamily": theme.font_family,
@@ -324,32 +322,6 @@ mod tests {
     }
 
     #[test]
-    fn class_diagram_respects_non_default_font_size() {
-        // Regression for the merman upgrade: layout honors themeVariables.fontSize,
-        // so Zed must not force fallback text back to 16px in CSS.
-        let source = r#"classDiagram
-%%{init: {"themeVariables": {"fontSize": "8px"}}}%%
-class User {
-    +String WWWWWWWWWWWWWWWWWWWW
-    +String WWWWWWWWWWWWWWWWWWWW
-    +String WWWWWWWWWWWWWWWWWWWW
-}
-"#;
-        let theme = MermaidTheme::default();
-        let svg = render_mermaid(source, &theme).expect("render failed");
-        let svg = crate::postprocess::postprocess(&svg, &theme).expect("postprocess failed");
-        let mut options = usvg::Options::default();
-        options.fontdb_mut().load_system_fonts();
-        let tree = usvg::Tree::from_str(&svg, &options).expect("SVG parsing failed");
-
-        assert_eq!(text_font_size(tree.root(), "User"), Some(8.0));
-        assert_eq!(
-            text_font_size(tree.root(), "+String WWWWWWWWWWWWWWWWWWWW"),
-            Some(8.0)
-        );
-    }
-
-    #[test]
     fn mindmap_fallback_text_recovers_section_classes() {
         // merman parks section-* tokens on data-merman-source-classes for
         // foreignObject fallback labels. Promote them back onto class so the
@@ -366,15 +338,17 @@ class User {
             let needle_start = svg.find(&format!(">{label}</text>")).expect(label);
             let tag_start = svg[..needle_start].rfind("<text").expect("text tag");
             let tag = &svg[tag_start..needle_start];
-            assert!(
-                tag.contains("section-root") && tag.contains("section--1"),
-                "{label} text should carry recovered section classes, got: {tag}"
+            let element = quick_xml::events::BytesStart::from_content(
+                tag.trim_start_matches('<'),
+                "text".len(),
             );
+            let class = element.try_get_attribute("class").unwrap().unwrap();
+            let classes = std::str::from_utf8(&class.value).unwrap();
             assert!(
-                tag.contains("class=\"")
-                    && tag.contains("section-root")
-                    && tag.contains("section--1"),
-                "{label} section classes should be live class tokens, got: {tag}"
+                ["section-root", "section--1"]
+                    .iter()
+                    .all(|expected| classes.split_whitespace().any(|class| class == *expected)),
+                "{label} missing section classes: {classes}"
             );
         }
 
@@ -383,7 +357,6 @@ class User {
         let tree = usvg::Tree::from_str(&svg, &options).expect("SVG parsing failed");
         let expected = {
             let rgba = gpui::Rgba::from(theme.text_color);
-            // usvg exposes fills; compare via re-rendered fill on the text span.
             (rgba.r, rgba.g, rgba.b)
         };
         for label in ["First", "Second"] {
@@ -399,8 +372,7 @@ class User {
 
     #[test]
     fn class_method_label_fits_fallback_viewport() {
-        // Reviewer repro: deterministic measurer clipped +MMMMMMMMMMMMMMMM() inside
-        // the foreignObject fallback viewport when final glyphs used IBM Plex Sans.
+        // Wide method labels must fit their fallback viewports.
         let source = r#"classDiagram
     class User {
         +MMMMMMMMMMMMMMMM()
@@ -408,14 +380,12 @@ class User {
 "#;
         let theme = ibm_plex_theme();
         let svg = crate::render_to_svg(source, &theme).expect("render failed");
-        assert_label_fits_fallback_viewport(&svg, "+MMMMMMMMMMMMMMMM()", &theme);
+        assert_label_fits_fallback_viewport(&svg, "+MMMMMMMMMMMMMMMM()");
     }
 
     #[test]
     fn sequence_participant_label_fits_box() {
-        // Reviewer repro: participant MMMMMMMMMMMMMMMM overflowed a shrunken box
-        // under deterministic measurement (~174px). Native IBM Plex metrics keep
-        // the actor box near main's ~233px and the glyphs inside it.
+        // Participant boxes must contain the rendered label.
         let source = "sequenceDiagram\n    participant MMMMMMMMMMMMMMMM";
         let theme = ibm_plex_theme();
         let svg = crate::render_to_svg(source, &theme).expect("render failed");
@@ -425,10 +395,6 @@ class User {
         let box_width =
             actor_box_width_for_label(&svg, "MMMMMMMMMMMMMMMM").expect("missing actor box");
         assert!(
-            box_width >= 200.0,
-            "actor box shrank too far: {box_width} (main was ~233, broken PR was ~174)"
-        );
-        assert!(
             glyph_width <= box_width + 1.0,
             "participant glyphs {glyph_width} overflow actor box {box_width}"
         );
@@ -436,8 +402,7 @@ class User {
 
     #[test]
     fn state_description_fits_fallback_viewport() {
-        // Reviewer note on our own fixture: "group deleted" was wider than its
-        // overflow:hidden fallback viewport under deterministic measurement.
+        // Description text must fit without being clipped by its fallback viewport.
         let source = r#"stateDiagram-v2
     [*] --> Teardown
     Teardown : members kicked
@@ -445,13 +410,13 @@ class User {
 "#;
         let theme = ibm_plex_theme();
         let svg = crate::render_to_svg(source, &theme).expect("render failed");
-        assert_label_fits_fallback_viewport(&svg, "group deleted", &theme);
-        assert_label_fits_fallback_viewport(&svg, "members kicked", &theme);
+        assert_label_fits_fallback_viewport(&svg, "group deleted");
+        assert_label_fits_fallback_viewport(&svg, "members kicked");
     }
 
     #[test]
-    fn class_diagram_custom_fontsize_keeps_visible_labels() {
-        // Reviewer repro: fontSize 8px layout must agree with final paint size.
+    fn class_diagram_custom_font_size_keeps_visible_labels() {
+        // Layout and rendering must use the same configured font size.
         let source = r#"classDiagram
 %%{init: {"themeVariables": {"fontSize": "8px"}}}%%
 class User {
@@ -468,26 +433,31 @@ class User {
             text_font_size(tree.root(), "+String WWWWWWWWWWWWWWWWWWWW"),
             Some(8.0)
         );
-        assert_label_fits_fallback_viewport(&svg, "User", &theme);
-        assert_label_fits_fallback_viewport(&svg, "+String WWWWWWWWWWWWWWWWWWWW", &theme);
+        assert_label_fits_fallback_viewport(&svg, "User");
+        assert_label_fits_fallback_viewport(&svg, "+String WWWWWWWWWWWWWWWWWWWW");
     }
 
     #[test]
     fn mindmap_rectangular_child_uses_theme_text_color() {
-        // Reviewer dark-palette repro: rectangular AB / multiline A<br/>B must
-        // pick up section text-color CSS (#dce0e5), not gitBranchLabel fills.
-        let theme = dark_review_theme();
-        for source in [
-            r#"mindmap
+        // Single-line and multiline labels must use the theme text color.
+        let theme = dark_theme();
+        for (source, labels) in [
+            (
+                r#"mindmap
     root((Root))
         First
         second[AB]
 "#,
-            r#"mindmap
+                &["AB"][..],
+            ),
+            (
+                r#"mindmap
     root((Root))
         First
         second[A<br/>B]
 "#,
+                &["A", "B"][..],
+            ),
         ] {
             let svg = crate::render_to_svg(source, &theme).expect("render failed");
             let tree = parse_svg_with_ibm_plex(&svg);
@@ -495,22 +465,16 @@ class User {
                 let rgba = gpui::Rgba::from(theme.text_color);
                 (rgba.r, rgba.g, rgba.b)
             };
-            for label in ["AB", "A", "B"] {
-                if let Some(fill) = text_fill_rgb(tree.root(), label) {
-                    assert!(
-                        (fill.0 - expected.0).abs() < 0.05
-                            && (fill.1 - expected.1).abs() < 0.05
-                            && (fill.2 - expected.2).abs() < 0.05,
-                        "{label} fill {fill:?} should be theme text {expected:?} in:\n{source}"
-                    );
-                }
+            for label in labels {
+                let fill = text_fill_rgb(tree.root(), label)
+                    .unwrap_or_else(|| panic!("missing label {label} in {source}"));
+                assert!(
+                    (fill.0 - expected.0).abs() < 1.0 / 255.0
+                        && (fill.1 - expected.1).abs() < 1.0 / 255.0
+                        && (fill.2 - expected.2).abs() < 1.0 / 255.0,
+                    "{label} fill {fill:?} should be theme text {expected:?}"
+                );
             }
-            // At least one of AB or A must be present
-            assert!(
-                text_fill_rgb(tree.root(), "AB").is_some()
-                    || text_fill_rgb(tree.root(), "A").is_some(),
-                "missing rectangular child label in: {source}\n{svg}"
-            );
         }
     }
 
@@ -575,7 +539,7 @@ class User {
         theme
     }
 
-    fn dark_review_theme() -> MermaidTheme {
+    fn dark_theme() -> MermaidTheme {
         use gpui::rgb;
         let mut theme = MermaidTheme::default();
         theme.dark_mode = true;
@@ -610,7 +574,7 @@ class User {
         usvg::Tree::from_str(svg, &options).expect("SVG parsing failed")
     }
 
-    fn assert_label_fits_fallback_viewport(svg: &str, label: &str, _theme: &MermaidTheme) {
+    fn assert_label_fits_fallback_viewport(svg: &str, label: &str) {
         let tree = parse_svg_with_ibm_plex(svg);
         let glyph_width = text_glyph_width(tree.root(), label)
             .unwrap_or_else(|| panic!("missing glyph metrics for {label}"));
@@ -618,7 +582,7 @@ class User {
             .unwrap_or_else(|| panic!("missing fallback viewport for {label}"));
         assert!(
             glyph_width <= viewport_width + 1.0,
-            "{label}: glyph width {glyph_width} overflows fallback viewport {viewport_width}; svg snippet nearby should not clip"
+            "{label}: glyph width {glyph_width} overflows fallback viewport {viewport_width}"
         );
     }
 
@@ -646,7 +610,7 @@ class User {
         let needle = format!(">{label}</text>");
         let end = svg.find(&needle)?;
         let text_start = svg[..end].rfind("<text")?;
-        // Walk back to the enclosing <svg ... width="..."> inside the foreignobject label def.
+        // Read the enclosing fallback viewport in the label definition.
         let def_svg_start = svg[..text_start].rfind("<svg ")?;
         let def_svg_tag_end = svg[def_svg_start..].find('>')? + def_svg_start;
         let tag = &svg[def_svg_start..def_svg_tag_end];

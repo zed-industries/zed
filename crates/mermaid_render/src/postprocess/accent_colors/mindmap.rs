@@ -130,7 +130,7 @@ impl MindmapAccents {
         tokens: impl Iterator<Item = &'b str>,
     ) -> Option<usize> {
         let tokens: Vec<&str> = tokens.collect();
-        let is_root = tokens.iter().any(|t| *t == "section-root");
+        let is_root = tokens.contains(&"section-root");
 
         for token in &tokens {
             if let Some(rest) = token.strip_prefix("section-") {
