@@ -15,8 +15,8 @@ use git::{
 use gpui::{
     AnyElement, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Task, WeakEntity,
-    Window, actions,
+    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Subscription, Task,
+    WeakEntity, Window, actions,
 };
 use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -79,6 +79,7 @@ pub struct CommitView {
     message: Entity<Markdown>,
     message_expanded: bool,
     message_scroll_handle: ScrollHandle,
+    header_hidden: bool,
     stash: Option<usize>,
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
@@ -87,6 +88,7 @@ pub struct CommitView {
     remote: Option<GitRemote>,
     is_shallow_boundary: bool,
     file_filter: Option<RepoPath>,
+    _editor_subscription: Subscription,
     _load_diff_task: Task<Result<()>>,
 }
 
@@ -521,12 +523,15 @@ impl CommitView {
             })
         });
 
+        let editor_subscription = Self::subscribe_to_editor_scroll(&editor, cx);
+
         Self {
             commit,
             editor,
             message,
             message_expanded: false,
             message_scroll_handle: ScrollHandle::new(),
+            header_hidden: false,
             multibuffer,
             stash,
             repository,
@@ -535,8 +540,28 @@ impl CommitView {
             remote,
             is_shallow_boundary,
             file_filter,
+            _editor_subscription: editor_subscription,
             _load_diff_task: load_diff_task,
         }
+    }
+
+    /// Hides the commit header while the diff is scrolled down, to give the diff more room.
+    fn subscribe_to_editor_scroll(
+        editor: &Entity<SplittableEditor>,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe(editor, |this, editor, event: &EditorEvent, cx| {
+            if !matches!(event, EditorEvent::ScrollPositionChanged { .. }) {
+                return;
+            }
+            let rhs_editor = editor.read(cx).rhs_editor().clone();
+            let header_hidden =
+                rhs_editor.update(cx, |editor, cx| editor.scroll_position(cx).y > 0.);
+            if this.header_hidden != header_hidden {
+                this.header_hidden = header_hidden;
+                cx.notify();
+            }
+        })
     }
 
     fn render_shallow_boundary_notice(&self, cx: &App) -> impl IntoElement {
@@ -1369,11 +1394,13 @@ impl Item for CommitView {
                     cx,
                 )
             });
+            let editor_subscription = Self::subscribe_to_editor_scroll(&editor, cx);
             Self {
                 editor,
                 message,
                 message_expanded: self.message_expanded,
                 message_scroll_handle: ScrollHandle::new(),
+                header_hidden: false,
                 multibuffer: self.multibuffer.clone(),
                 commit: self.commit.clone(),
                 stash: self.stash,
@@ -1383,6 +1410,7 @@ impl Item for CommitView {
                 remote: self.remote.clone(),
                 is_shallow_boundary: self.is_shallow_boundary,
                 file_filter: self.file_filter.clone(),
+                _editor_subscription: editor_subscription,
                 _load_diff_task: Task::ready(Ok(())),
             }
         })))
@@ -1398,7 +1426,9 @@ impl Render for CommitView {
             .on_action(cx.listener(Self::open_file_at_head_action))
             .size_full()
             .bg(cx.theme().colors().editor_background)
-            .child(self.render_header(window, cx))
+            .when(!self.header_hidden, |this| {
+                this.child(self.render_header(window, cx))
+            })
             .when(
                 !self.editor.read(cx).rhs_editor().read(cx).is_empty(cx),
                 |this| this.child(div().flex_grow(1.).child(self.editor.clone())),
