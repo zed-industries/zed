@@ -15,7 +15,7 @@ pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
 };
-use project::{linked_worktree_short_name, repo_identity_path, repo_identity_path_if_local};
+use project::{linked_worktree_short_name, repo_identity_path};
 
 #[cfg(not(target_os = "macos"))]
 use crate::application_menu::{
@@ -42,7 +42,6 @@ use remote::RemoteConnectionOptions;
 use settings::{Settings as _, SettingsStore};
 
 use std::any::TypeId;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ActiveTheme;
@@ -65,18 +64,6 @@ pub use onboarding_banner::restore_banner;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 const MAX_SHORT_SHA_LENGTH: usize = 8;
-
-fn linked_worktree_name_anchor<'a>(
-    main_worktree_path: Option<&'a Path>,
-    repository_identity_path: Option<&'a Path>,
-    is_linked_worktree: bool,
-) -> Option<&'a Path> {
-    main_worktree_path.or_else(|| {
-        is_linked_worktree
-            .then_some(repository_identity_path)
-            .flatten()
-    })
-}
 
 actions!(
     collab,
@@ -261,20 +248,11 @@ impl Render for TitleBar {
             if let Some(repo) = &repository {
                 let repo = repo.read(cx);
                 let identity = repo_identity_path(&repo.common_dir_abs_path, path_style);
-                let identity_fallback =
-                    repo_identity_path_if_local(&repo.common_dir_abs_path, path_style);
-                linked_worktree_name = linked_worktree_name_anchor(
-                    repo.main_worktree_abs_path(),
-                    identity_fallback,
-                    repo.is_linked_worktree(),
+                linked_worktree_name = linked_worktree_short_name(
+                    repo.linked_worktree_anchor_path(),
+                    repo.work_directory_abs_path.as_ref(),
+                    path_style,
                 )
-                .and_then(|name_anchor_path| {
-                    linked_worktree_short_name(
-                        name_anchor_path,
-                        repo.work_directory_abs_path.as_ref(),
-                        path_style,
-                    )
-                })
                 .or_else(|| {
                     repo.is_linked_worktree()
                         .then_some(project_name.clone())
@@ -628,21 +606,15 @@ impl TitleBar {
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
 
-        let (nickname, tooltip_title, icon) = match options {
-            RemoteConnectionOptions::Ssh(options) => (
-                options.nickname.map(|nick| nick.into()),
-                "Remote Project",
-                IconName::Server,
-            ),
-            RemoteConnectionOptions::Wsl(_) => (None, "Remote Project", IconName::Linux),
+        let (tooltip_title, icon) = match options {
+            RemoteConnectionOptions::Ssh(_) => ("Remote Project", IconName::Server),
+            RemoteConnectionOptions::Wsl(_) => ("Remote Project", IconName::Linux),
             RemoteConnectionOptions::Docker(_dev_container_connection) => {
-                (None, "Dev Container", IconName::Box)
+                ("Dev Container", IconName::Box)
             }
             #[cfg(any(test, feature = "test-support"))]
-            RemoteConnectionOptions::Mock(_) => (None, "Mock Remote Project", IconName::Server),
+            RemoteConnectionOptions::Mock(_) => ("Mock Remote Project", IconName::Server),
         };
-
-        let nickname = nickname.unwrap_or_else(|| host.clone());
 
         let (indicator_color, meta) = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
@@ -700,7 +672,7 @@ impl TitleBar {
                                     ))
                                     .into_any_element(),
                                 )
-                                .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+                                .child(Label::new(host).size(LabelSize::Small).truncate()),
                         ),
                     move |_window, cx| {
                         Tooltip::with_meta(
@@ -1451,54 +1423,5 @@ impl TitleBar {
                 .into()
             })
             .anchor(Anchor::TopRight)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use util::paths::PathStyle;
-
-    #[test]
-    fn test_foreign_path_style_does_not_use_repository_identity_as_name_anchor() {
-        let (common_dir, foreign_path_style) = match PathStyle::local() {
-            PathStyle::Unix => (Path::new(r"C:\repos\zed"), PathStyle::Windows),
-            PathStyle::Windows => (Path::new("/repos/zed"), PathStyle::Unix),
-        };
-        let repository_identity_path = repo_identity_path_if_local(common_dir, foreign_path_style);
-
-        assert_eq!(
-            linked_worktree_name_anchor(None, repository_identity_path, true),
-            None
-        );
-    }
-
-    #[test]
-    fn test_local_path_style_uses_bare_repository_worktree_name() {
-        let (repository_identity_path, work_directory_path) = match PathStyle::local() {
-            PathStyle::Unix => (
-                Path::new("/repos/zed"),
-                Path::new("/worktrees/zed/plum-warbler/zed"),
-            ),
-            PathStyle::Windows => (
-                Path::new(r"C:\repos\zed"),
-                Path::new(r"C:\worktrees\zed\plum-warbler\zed"),
-            ),
-        };
-
-        let repository_identity_path =
-            repo_identity_path_if_local(repository_identity_path, PathStyle::local());
-        let name_anchor_path = linked_worktree_name_anchor(None, repository_identity_path, true);
-
-        assert_eq!(
-            name_anchor_path.and_then(|name_anchor_path| {
-                linked_worktree_short_name(
-                    name_anchor_path,
-                    work_directory_path,
-                    PathStyle::local(),
-                )
-            }),
-            Some("plum-warbler".into())
-        );
     }
 }

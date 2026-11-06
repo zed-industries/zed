@@ -460,6 +460,119 @@ async fn test_open_directory_in_empty_workspace_does_not_open_sidebar(cx: &mut T
 }
 
 #[gpui::test]
+async fn test_local_files_reuse_local_workspace_when_non_local_workspace_is_active(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let app_state = cx.update(AppState::test);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/"),
+            json!({
+                "local": { "inside.txt": "" },
+                "outside": { "loose.txt": "" },
+            }),
+        )
+        .await;
+    cx.update(|cx| {
+        cx.default_global::<ProjectItemRegistry>()
+            .build_project_item_for_path_fns
+            .push(|_, _, _, _| {
+                let build_item: WorkspaceItemBuilder =
+                    Box::new(|_, _, cx| cx.new(TestItem::new).boxed_clone());
+                Some(Task::ready(Ok((None, build_item))))
+            });
+    });
+
+    let remote_project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+    remote_project.update(cx, |project, _| project.mark_as_collab_for_testing());
+    let local_project = Project::test(app_state.fs.clone(), [path!("/local").as_ref()], cx).await;
+    let window =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(remote_project.clone(), window, cx));
+    let (remote_workspace, local_workspace) = window
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.open_sidebar(cx);
+            let remote_workspace = multi_workspace.workspace().clone();
+            let local_workspace = multi_workspace.test_add_workspace(local_project, window, cx);
+            (remote_workspace, local_workspace)
+        })
+        .unwrap();
+
+    for (path, wait) in [
+        (path!("/outside/loose.txt"), false),
+        (path!("/local/inside.txt"), true),
+    ] {
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate(remote_workspace.clone(), None, window, cx);
+                window.activate_window();
+            })
+            .unwrap();
+        let result = cx
+            .update(|cx| {
+                open_paths(
+                    &[PathBuf::from(path)],
+                    app_state.clone(),
+                    OpenOptions {
+                        wait,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.window, window, "{path}, wait: {wait}");
+        assert_eq!(result.workspace, local_workspace, "{path}, wait: {wait}");
+        assert_eq!(cx.windows().len(), 1);
+        assert!(matches!(result.opened_items.as_slice(), [Some(Ok(_))]));
+        window
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(multi_workspace.workspace(), &local_workspace);
+            })
+            .unwrap();
+    }
+}
+
+#[gpui::test]
+async fn test_local_workspace_lookup_skips_collab_with_same_paths(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+
+    let collab_project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    collab_project.update(cx, |project, _| project.mark_as_collab_for_testing());
+
+    let local_project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let (multi_workspace, cx) = setup_multi_workspace(&[collab_project, local_project], cx);
+
+    let paths = PathList::new(&[PathBuf::from(path!("/project"))]);
+
+    let local_workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+    let workspace = multi_workspace
+        .update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.find_or_create_local_workspace(
+                paths,
+                None,
+                None,
+                OpenMode::Activate,
+                None,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(workspace, local_workspace);
+}
+
+#[gpui::test]
 async fn test_project_group_keys_duplicate_not_added(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());
@@ -910,7 +1023,8 @@ async fn test_close_workspace_prefers_already_loaded_neighboring_workspace(
         assert!(
             multi_workspace
                 .workspaces_for_project_group(&project_c_key, cx)
-                .is_empty(),
+                .next()
+                .is_none(),
             "the unloaded neighboring group C should remain unopened"
         );
     });
@@ -930,14 +1044,14 @@ async fn test_close_workspace_prefers_workspace_in_same_project_group(cx: &mut T
     let (multi_workspace, cx) = setup_multi_workspace(&[project_a_1, project_a_2, project_b], cx);
 
     let (workspace_a_1, workspace_a_2) = multi_workspace.read_with(cx, |multi_workspace, cx| {
-        let mut workspaces = multi_workspace
-            .workspaces_for_project_group(&key_a, cx)
-            .into_iter();
+        let mut workspaces = multi_workspace.workspaces_for_project_group(&key_a, cx);
         let first = workspaces
             .next()
+            .cloned()
             .expect("project group A should have a first workspace");
         let second = workspaces
             .next()
+            .cloned()
             .expect("project group A should have a second workspace");
 
         assert!(
@@ -973,7 +1087,10 @@ async fn test_close_workspace_prefers_workspace_in_same_project_group(cx: &mut T
         );
 
         assert_eq!(
-            multi_workspace.workspaces_for_project_group(&key_a, cx),
+            multi_workspace
+                .workspaces_for_project_group(&key_a, cx)
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![workspace_a_2],
             "only the fallback workspace should remain in project group A"
         );
@@ -1637,25 +1754,27 @@ async fn test_nearest_retained_workspace(cx: &mut TestAppContext) {
             .expect("project group for project-c should exist");
         let workspace_b = multi_workspace
             .workspaces_for_project_group(&key_b, cx)
-            .into_iter()
             .next()
+            .cloned()
             .expect("workspace for project-b should exist");
         let workspace_d = multi_workspace
             .workspaces_for_project_group(&key_d, cx)
-            .into_iter()
             .next()
+            .cloned()
             .expect("workspace for project-d should exist");
         let retained_workspaces_a = multi_workspace
-            .workspaces_for_project_group(&key_a, cx);
+            .workspaces_for_project_group(&key_a, cx)
+            .collect::<Vec<_>>();
         assert_eq!(
             retained_workspaces_a.len(),
             2,
             "project group A should retain both workspaces"
         );
         let workspace_a_1 = retained_workspaces_a
-            .first()
-            .expect("project group A should have a retained workspace")
-            .clone();
+            .into_iter()
+            .next()
+            .cloned()
+            .expect("project group A should have a retained workspace");
         let workspace_a_2 = multi_workspace
             .last_active_workspace_for_group(&key_a, cx)
             .expect("project group A should have a last active workspace");

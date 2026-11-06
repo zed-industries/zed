@@ -56,18 +56,6 @@ mod shader_compilation {
                 &rust_binding_path,
             );
         }
-
-        {
-            let shader_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
-                .join("src/color_text_raster.hlsl");
-            compile_shader_for_module(
-                "emoji_rasterization",
-                &out_dir,
-                &fxc_path,
-                shader_path.to_str().unwrap(),
-                &rust_binding_path,
-            );
-        }
     }
 
     /// Locate `binary` in the newest installed Windows SDK.

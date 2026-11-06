@@ -800,9 +800,7 @@ pub(crate) fn open_options_for_behavior(
 
     // If reuse flag is passed, open a new workspace in an existing window.
     let requesting_window = if open_behavior == cli::OpenBehavior::Reuse {
-        workspace::workspace_windows_for_location(location, cx)
-            .into_iter()
-            .next()
+        workspace::workspace_windows_for_location(location, cx).next()
     } else {
         None
     };
@@ -2044,13 +2042,11 @@ mod tests {
         let window_to_replace = workspace::find_existing_workspace(
             &paths,
             &workspace::OpenOptions::default(),
-            &workspace::SerializedWorkspaceLocation::Local,
+            &project::ProjectHost::Local,
             &mut cx.to_async(),
         )
-        .await
-        .0
         .unwrap()
-        .0;
+        .window;
 
         let errored_reuse = cx
             .spawn({
