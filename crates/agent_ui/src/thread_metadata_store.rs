@@ -1157,6 +1157,7 @@ impl ThreadMetadataStore {
             .try_send(DbOperation::Delete(thread_id))
             .log_err();
         crate::draft_prompt_store::delete(thread_id, cx).detach_and_log_err(cx);
+        crate::draft_prompt_store::delete_queued_messages(thread_id, cx).detach_and_log_err(cx);
         cx.notify();
     }
 
