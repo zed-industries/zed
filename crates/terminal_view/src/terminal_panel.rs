@@ -952,12 +952,7 @@ impl TerminalPanel {
                         window,
                         cx,
                     );
-                    let override_applies = profile_name.is_some()
-                        && !workspace.project().read(cx).is_via_remote_server();
-                    if override_applies {
-                        view.profile_name = profile_name;
-                        view.needs_serialize = true;
-                    }
+                    tag_view_with_profile(&mut view, profile_name);
                     view
                 });
                 // Don't steal focus from an open modal (e.g. the command palette):
@@ -1084,13 +1079,18 @@ impl TerminalPanel {
                             window,
                             cx,
                         );
-                        let override_applies = profile_name.is_some()
-                            && (force_local
-                                || !workspace.project().read(cx).is_via_remote_server());
-                        if override_applies {
-                            view.profile_name = profile_name;
-                            view.needs_serialize = true;
-                        }
+                        // A remote, non-force_local spawn drops the
+                        // override (create_terminal_shell_internal warns),
+                        // so the view must stay untagged or restore would
+                        // spawn a local terminal where the user had a
+                        // remote one.
+                        let profile_name = if force_local {
+                            profile_name
+                        } else {
+                            profile_name
+                                .filter(|_| !workspace.project().read(cx).is_via_remote_server())
+                        };
+                        tag_view_with_profile(&mut view, profile_name);
                         view
                     }));
 
@@ -1426,6 +1426,18 @@ pub fn prepare_task_for_spawn(
 
 fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
     workspace.project().read(cx).supports_terminal(cx)
+}
+
+/// Tag a freshly spawned view with the profile name for persistence.
+/// Callers must only pass a name when the profile override actually
+/// applied to the spawned shell — restore re-runs the override from this
+/// tag, so tagging a terminal that ran something else would flip its type
+/// on reload.
+fn tag_view_with_profile(view: &mut TerminalView, profile_name: Option<String>) {
+    if let Some(profile_name) = profile_name {
+        view.profile_name = Some(profile_name);
+        view.needs_serialize = true;
+    }
 }
 
 /// Resolve [`TerminalSettings`] scoped to the worktree containing `cwd`

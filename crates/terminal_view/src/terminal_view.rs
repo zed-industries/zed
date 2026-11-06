@@ -177,7 +177,7 @@ pub struct TerminalView {
     custom_title: Option<String>,
     /// The `terminal.profiles` entry this view was spawned from, persisted
     /// so workspace reload respawns the same profile.
-    pub profile_name: Option<String>,
+    pub(crate) profile_name: Option<String>,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
@@ -3036,19 +3036,6 @@ mod tests {
         server_cx.run_until_parked();
         cx.run_until_parked();
         server_cx.run_until_parked();
-        window_handle
-            .update(cx, |mw, _window, cx| {
-                let panel = mw
-                    .workspace()
-                    .read_with(cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
-                    .unwrap();
-                eprintln!(
-                    "DEBUG items after parked: {}",
-                    panel.read(cx).active_pane.read(cx).items_len()
-                );
-            })
-            .unwrap();
-
         let terminal_view: Entity<TerminalView> = window_handle
             .update(cx, |mw, _window, cx| {
                 let panel = mw
@@ -3514,6 +3501,108 @@ mod tests {
         terminal_view.update(cx, |view, cx| {
             let title = view.terminal().read(cx).title(false);
             assert_eq!(title, "Detected Local Shell");
+        });
+    }
+
+    /// The "+" menu spawning a profile terminal into a focused center pane
+    /// of a remote project routes through `create_local_terminal_with`
+    /// (the override applies), so the view must be tagged for persistence.
+    #[gpui::test]
+    async fn remote_center_pane_profile_spawn_tags_view(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let mock_bin_dir = tempfile::TempDir::new().unwrap();
+        let mock_binary = mock_bin_dir.path().join("mock");
+        std::fs::write(&mock_binary, "#!/bin/sh\nexec sleep 3000\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&mock_binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let (_project, _workspace, window_handle) =
+            init_remote_test_with_panel(cx, server_cx).await;
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let terminal = settings.terminal.get_or_insert_default();
+                    let mut env = collections::HashMap::default();
+                    env.insert(
+                        "PATH".to_string(),
+                        std::env::join_paths(
+                            std::iter::once(mock_bin_dir.path().to_path_buf()).chain(
+                                std::env::split_paths(&std::env::var("PATH").unwrap_or_default()),
+                            ),
+                        )
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    );
+                    terminal.project.env = Some(env);
+                    let mut profiles = collections::IndexMap::default();
+                    profiles.insert(
+                        "Remote Profile".to_string(),
+                        settings::settings_content::TerminalProfile {
+                            program: "/bin/bash".to_string(),
+                            args: None,
+                            title_override: None,
+                        },
+                    );
+                    terminal.project.profiles = Some(profiles);
+                });
+            });
+        });
+
+        // Seed the center pane with a terminal and focus it, so the next
+        // NewTerminal dispatch takes the center-pane path.
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, cx| project.create_local_terminal(cx),
+                        None,
+                    )
+                    .detach_and_log_err(cx);
+                });
+                let pane = multi_workspace.workspace().read(cx).active_pane().clone();
+                window.focus(&pane.read(cx).focus_handle(cx), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let action = workspace::NewTerminal {
+                    local: true,
+                    profile: Some("Remote Profile".to_string()),
+                };
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::new_terminal(workspace, &action, window, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let terminal_view = window_handle
+            .update(cx, |mw, _window, cx| {
+                let pane = mw.workspace().read(cx).active_pane().clone();
+                let item = pane.read(cx).active_item();
+                item.and_then(|item| item.act_as::<TerminalView>(cx))
+                    .expect("center-pane profile spawn should produce a terminal")
+            })
+            .unwrap();
+
+        terminal_view.update(cx, |view, _cx| {
+            assert_eq!(
+                view.profile_name.as_deref(),
+                Some("Remote Profile"),
+                "a center-pane remote spawn with local=true applies the override, \
+                 so the view must be tagged for persistence"
+            );
         });
     }
 

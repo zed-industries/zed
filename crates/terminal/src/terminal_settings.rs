@@ -115,19 +115,7 @@ pub fn merge_with_configured_profiles(
     detected: Vec<DetectedShell>,
     profiles: &IndexMap<String, TerminalProfile>,
 ) -> Vec<MergedShellEntry> {
-    let configured_paths: std::collections::HashSet<String> =
-        profiles.values().map(|p| p.program.clone()).collect();
-    let configured_stems: std::collections::HashSet<String> = profiles
-        .values()
-        .filter_map(|p| {
-            if p.program.contains(std::path::MAIN_SEPARATOR)
-                || (cfg!(windows) && p.program.contains('/'))
-            {
-                return None;
-            }
-            Some(p.program.clone())
-        })
-        .collect();
+    let configured_programs: Vec<String> = profiles.values().map(|p| p.program.clone()).collect();
 
     let mut entries: Vec<MergedShellEntry> = profiles
         .iter()
@@ -138,12 +126,9 @@ pub fn merge_with_configured_profiles(
         .collect();
 
     for shell in detected {
-        let program_string = shell.program.to_string_lossy().into_owned();
         let shadowed = detected_program_is_shadowed(
             shell.program.as_ref(),
-            &program_string,
-            &configured_paths,
-            &configured_stems,
+            &configured_programs,
             cfg!(windows),
         );
         if !shadowed {
@@ -156,26 +141,42 @@ pub fn merge_with_configured_profiles(
 
 /// Whether a detected shell's program collides with a configured profile.
 /// With `windows_extension_matching`, the detected program's file stem
-/// (`pwsh` from `pwsh.exe`) also matches configured bare names.
+/// (`pwsh` from `pwsh.exe`) also matches configured bare names, and all
+/// comparisons are case-insensitive (Windows paths are).
 fn detected_program_is_shadowed(
     program: &std::path::Path,
-    program_string: &str,
-    configured_paths: &std::collections::HashSet<String>,
-    configured_stems: &std::collections::HashSet<String>,
+    configured_programs: &[String],
     windows_extension_matching: bool,
 ) -> bool {
-    if configured_paths.contains(program_string) {
+    let fold = |key: &str| {
+        if windows_extension_matching {
+            key.to_lowercase()
+        } else {
+            key.to_string()
+        }
+    };
+    let configured_paths: std::collections::HashSet<String> =
+        configured_programs.iter().map(|p| fold(p)).collect();
+    if configured_paths.contains(&fold(&program.to_string_lossy())) {
         return true;
     }
+    let configured_stems: std::collections::HashSet<String> = configured_programs
+        .iter()
+        .filter(|p| {
+            !p.contains(std::path::MAIN_SEPARATOR)
+                && !(windows_extension_matching && p.contains('/'))
+        })
+        .map(|p| fold(p))
+        .collect();
     if let Some(name) = program.file_name()
-        && configured_stems.contains(&name.to_string_lossy().into_owned())
+        && configured_stems.contains(&fold(&name.to_string_lossy()))
     {
         return true;
     }
     windows_extension_matching
         && program
             .file_stem()
-            .is_some_and(|stem| configured_stems.contains(&stem.to_string_lossy().into_owned()))
+            .is_some_and(|stem| configured_stems.contains(&fold(&stem.to_string_lossy())))
 }
 
 /// Single menu entry for the "+" PopoverMenu, produced by
@@ -695,23 +696,18 @@ mod tests {
             assert_eq!(merged.len(), 1, "detected pwsh.exe should be shadowed");
         }
 
-        let configured_paths = std::collections::HashSet::new();
-        let configured_stems: std::collections::HashSet<String> =
-            ["pwsh".to_string()].into_iter().collect();
-        let program = std::path::Path::new("/windows/system32/pwsh.exe");
-        let program_string = program.to_string_lossy().into_owned();
+        let configured_programs = vec!["pwsh".to_string()];
+        // Case-insensitive on Windows: a detected "PWSH.exe" shadows
+        // against configured "pwsh"; case-sensitive elsewhere.
+        let program = std::path::Path::new("/windows/system32/PWSH.exe");
         assert!(detected_program_is_shadowed(
             program,
-            &program_string,
-            &configured_paths,
-            &configured_stems,
+            &configured_programs,
             true,
         ));
         assert!(!detected_program_is_shadowed(
             program,
-            &program_string,
-            &configured_paths,
-            &configured_stems,
+            &configured_programs,
             false,
         ));
     }
