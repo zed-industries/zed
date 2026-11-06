@@ -6554,9 +6554,23 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 19] {
+    fn git_panel_section() -> [SettingsPageItem; 20] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Style",
+                description: "Show relative or absolute dates in commit history.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.date_style"),
+                    pick: |content| content.git_panel.as_ref()?.date_style.as_ref(),
+                    write: |content, value, _| {
+                        content.git_panel.get_or_insert_default().date_style = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Git Panel Button",
                 description: "Show the Git panel button in the status bar.",
@@ -8193,9 +8207,23 @@ fn terminal_page() -> SettingsPage {
 }
 
 fn version_control_page() -> SettingsPage {
-    fn git_integration_section() -> [SettingsPageItem; 3] {
+    fn git_integration_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Git Integration"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Format",
+                description: "Format absolute dates using locale, iso (YYYY-MM-DD HH:MM), or a strftime format such as %Y-%m-%d %H:%M.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.date_format"),
+                    pick: |content| content.git.as_ref()?.date_format.as_ref(),
+                    write: |content, value, _| {
+                        content.git.get_or_insert_default().date_format = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::DynamicItem(DynamicItem {
                 discriminant: SettingItem {
                     files: USER,
@@ -8404,9 +8432,36 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn inline_git_blame_section() -> [SettingsPageItem; 6] {
+    fn inline_git_blame_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Inline Git Blame"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Style",
+                description: "Show relative or absolute dates inline and in the status bar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.inline_blame.date_style"),
+                    pick: |content| {
+                        content
+                            .git
+                            .as_ref()?
+                            .inline_blame
+                            .as_ref()?
+                            .date_style
+                            .as_ref()
+                    },
+                    write: |content, value, _| {
+                        content
+                            .git
+                            .get_or_insert_default()
+                            .inline_blame
+                            .get_or_insert_default()
+                            .date_style = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::DynamicItem(DynamicItem {
                 discriminant: SettingItem {
                     title: "Enabled",
@@ -8588,9 +8643,28 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn git_blame_view_section() -> [SettingsPageItem; 2] {
+    fn git_blame_view_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Git Blame View"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Style",
+                description: "Show relative or absolute dates in the blame gutter.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.blame.date_style"),
+                    pick: |content| content.git.as_ref()?.blame.as_ref()?.date_style.as_ref(),
+                    write: |content, value, _| {
+                        content
+                            .git
+                            .get_or_insert_default()
+                            .blame
+                            .get_or_insert_default()
+                            .date_style = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Avatar",
                 description: "Show the avatar of the author of the commit.",
@@ -8621,9 +8695,36 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn branch_picker_section() -> [SettingsPageItem; 2] {
+    fn branch_picker_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Branch Picker"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Style",
+                description: "Show relative or absolute dates in the branch picker.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.branch_picker.date_style"),
+                    pick: |content| {
+                        content
+                            .git
+                            .as_ref()?
+                            .branch_picker
+                            .as_ref()?
+                            .date_style
+                            .as_ref()
+                    },
+                    write: |content, value, _| {
+                        content
+                            .git
+                            .get_or_insert_default()
+                            .branch_picker
+                            .get_or_insert_default()
+                            .date_style = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Author Name",
                 description: "Show author name as part of the commit information in branch picker.",
@@ -8646,6 +8747,59 @@ fn version_control_page() -> SettingsPage {
                             .branch_picker
                             .get_or_insert_default()
                             .show_author_name = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn stash_picker_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Stash Picker"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Style",
+                description: "Show relative or absolute dates in the stash picker.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.stash_picker.date_style"),
+                    pick: |content| {
+                        content
+                            .git
+                            .as_ref()?
+                            .stash_picker
+                            .as_ref()?
+                            .date_style
+                            .as_ref()
+                    },
+                    write: |content, value, _| {
+                        content
+                            .git
+                            .get_or_insert_default()
+                            .stash_picker
+                            .get_or_insert_default()
+                            .date_style = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn git_graph_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Git Graph"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Style",
+                description: "Show relative or absolute dates in graph rows.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_graph.date_style"),
+                    pick: |content| content.git_graph.as_ref()?.date_style.as_ref(),
+                    write: |content, value, _| {
+                        content.git_graph.get_or_insert_default().date_style = value
                     },
                 }),
                 metadata: None,
@@ -8766,6 +8920,8 @@ fn version_control_page() -> SettingsPage {
             inline_git_blame_section(),
             git_blame_view_section(),
             branch_picker_section(),
+            stash_picker_section(),
+            git_graph_section(),
             file_diff_section(),
             git_hunks_section(),
         ],

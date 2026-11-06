@@ -355,8 +355,8 @@ impl ScrollAxes {
         T: Debug + Default + PartialEq + Clone,
     {
         match self {
-            Self::Horizontal => point.apply_along(ScrollbarAxis::Horizontal, |_| value),
-            Self::Vertical => point.apply_along(ScrollbarAxis::Vertical, |_| value),
+            Self::Horizontal => point.apply_along(ScrollbarAxis::Horizontal, |_| value.clone()),
+            Self::Vertical => point.apply_along(ScrollbarAxis::Vertical, |_| value.clone()),
             Self::Both => Point::new(value.clone(), value),
         }
     }
