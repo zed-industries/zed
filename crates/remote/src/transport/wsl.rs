@@ -1,7 +1,8 @@
 use crate::{
     RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
+    command::{RemoteCommand, home_stdio_launcher_command},
     remote_client::{CommandTemplate, Interactive, RemoteConnection, RemoteConnectionOptions},
-    transport::{parse_platform, parse_shell},
+    transport::{HOME_DIR_ARGS, HOME_DIR_PROGRAM, parse_home_dir, parse_platform, parse_shell},
 };
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
@@ -57,6 +58,7 @@ pub(crate) struct WslRemoteConnection {
     shell_kind: ShellKind,
     default_system_shell: String,
     has_wsl_interop: bool,
+    home_dir: Option<String>,
     connection_options: WslConnectionOptions,
 }
 
@@ -86,6 +88,7 @@ impl WslRemoteConnection {
             shell_kind: ShellKind::Posix,
             default_system_shell: String::from("/bin/sh"),
             has_wsl_interop: false,
+            home_dir: None,
         };
         delegate.set_status(Some("Detecting WSL environment"), cx);
         this.shell = this
@@ -110,6 +113,8 @@ impl WslRemoteConnection {
         log::info!("Remote platform discovered: {:?}", this.platform);
         this.os_version = this.detect_os_version().await;
         log::info!("Remote OS version discovered: {:?}", this.os_version);
+        this.home_dir = this.detect_home_dir().await;
+        log::info!("Remote home directory discovered: {:?}", this.home_dir);
         this.remote_binary_path = Some(
             this.ensure_server_binary(&delegate, release_channel, version, cx)
                 .await
@@ -135,6 +140,26 @@ impl WslRemoteConnection {
             Ok(output) => super::parse_os_version(self.platform.os, &output),
             Err(error) => {
                 log::warn!("Failed to determine remote OS version: {error:#}");
+                None
+            }
+        }
+    }
+
+    async fn detect_home_dir(&self) -> Option<String> {
+        let program = self.shell_kind.prepend_command_prefix(HOME_DIR_PROGRAM);
+        match self
+            .run_wsl_command_with_output(&program, &HOME_DIR_ARGS)
+            .await
+        {
+            Ok(output) => {
+                let home_dir = parse_home_dir(&output);
+                if home_dir.is_none() {
+                    log::warn!("Failed to parse remote home directory from {output:?}");
+                }
+                home_dir
+            }
+            Err(error) => {
+                log::warn!("Failed to determine remote home directory: {error:#}");
                 None
             }
         }
@@ -598,6 +623,47 @@ impl RemoteConnection for WslRemoteConnection {
         })
     }
 
+    fn build_stdio_command(
+        &self,
+        mut command: RemoteCommand,
+    ) -> Result<(CommandTemplate, Vec<u8>)> {
+        let remote_binary_path = self
+            .remote_binary_path
+            .as_ref()
+            .context("Remote binary path not set")?;
+        command.retain_valid_env();
+        let startup_dir = command
+            .working_dir
+            .take()
+            .map(|working_dir| RemotePathBuf::new(working_dir, PathStyle::Unix).to_string())
+            .unwrap_or_else(|| String::from("~"));
+        let exec = home_stdio_launcher_command(
+            self.shell_kind,
+            self.home_dir.as_deref(),
+            &remote_binary_path.display(PathStyle::Unix),
+        )?;
+        let (shell, shell_args) =
+            ShellBuilder::new(&Shell::Program(self.shell.clone()), false).build(Some(exec), &[]);
+        let mut args = vec![
+            String::from("--distribution"),
+            self.connection_options.distro_name.clone(),
+        ];
+        if let Some(user) = &self.connection_options.user {
+            args.push(String::from("--user"));
+            args.push(user.clone());
+        }
+        args.extend([String::from("--cd"), startup_dir, String::from("--"), shell]);
+        args.extend(shell_args);
+        Ok((
+            CommandTemplate {
+                program: String::from("wsl.exe"),
+                args,
+                env: HashMap::default(),
+            },
+            command.encode()?,
+        ))
+    }
+
     fn build_forward_ports_command(
         &self,
         _: Vec<(u16, String, u16)>,
@@ -754,4 +820,175 @@ fn wsl_command_impl(
 
     log::debug!("wsl {:?}", command);
     command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_stdio_command() -> Result<()> {
+        let mut connection = WslRemoteConnection {
+            remote_binary_path: None,
+            platform: RemotePlatform {
+                os: RemoteOs::Linux,
+                arch: RemoteArch::X86_64,
+            },
+            os_version: None,
+            shell: String::from("/bin/fish"),
+            shell_kind: ShellKind::Fish,
+            default_system_shell: String::from("/bin/sh"),
+            has_wsl_interop: false,
+            home_dir: None,
+            connection_options: WslConnectionOptions {
+                distro_name: String::from("Ubuntu"),
+                user: None,
+            },
+        };
+        let command = |env: HashMap<String, String>, working_dir: Option<&str>| RemoteCommand {
+            program: String::from("agent"),
+            args: vec![String::from("--token=argument-secret")],
+            env,
+            working_dir: working_dir.map(str::to_owned),
+        };
+        let valid_env =
+            HashMap::from_iter([(String::from("API_KEY"), String::from("agent-secret"))]);
+        assert_eq!(
+            connection
+                .build_stdio_command(command(valid_env.clone(), Some("~/project")))
+                .unwrap_err()
+                .to_string(),
+            "Remote binary path not set"
+        );
+
+        connection.remote_binary_path = Some(Arc::from(RelPath::from_unix_str(
+            ".local/share/zed/remote server",
+        )?));
+        for (home_dir, user, working_dir, shell, shell_kind, expected_args) in [
+            (
+                None,
+                None,
+                Some("~/project"),
+                "/bin/bash",
+                ShellKind::Posix,
+                vec![
+                    "--distribution",
+                    "Ubuntu",
+                    "--cd",
+                    "~/project",
+                    "--",
+                    "/bin/bash",
+                    "-i",
+                    "-c",
+                    "exec \"$HOME\"/'.local/share/zed/remote server' exec",
+                ],
+            ),
+            (
+                Some("/home/user"),
+                None,
+                Some("/home/user$UNSET/project 'x'"),
+                "/bin/fish",
+                ShellKind::Fish,
+                vec![
+                    "--distribution",
+                    "Ubuntu",
+                    "--cd",
+                    "/home/user$UNSET/project 'x'",
+                    "--",
+                    "/bin/fish",
+                    "-i",
+                    "-c",
+                    "exec '/home/user/.local/share/zed/remote server' exec",
+                ],
+            ),
+            (
+                Some("/home/user"),
+                Some(String::from("user")),
+                None,
+                "/usr/bin/nu",
+                ShellKind::Nushell,
+                vec![
+                    "--distribution",
+                    "Ubuntu",
+                    "--user",
+                    "user",
+                    "--cd",
+                    "~",
+                    "--",
+                    "/usr/bin/nu",
+                    "-i",
+                    "-c",
+                    "exec '/home/user/.local/share/zed/remote server' exec",
+                ],
+            ),
+            (
+                Some("/home/a^b"),
+                None,
+                None,
+                "/usr/bin/nu",
+                ShellKind::Nushell,
+                vec![
+                    "--distribution",
+                    "Ubuntu",
+                    "--cd",
+                    "~",
+                    "--",
+                    "/usr/bin/nu",
+                    "-i",
+                    "-c",
+                    "exec '/home/a^b/.local/share/zed/remote server' exec",
+                ],
+            ),
+            (
+                None,
+                None,
+                Some("~/project"),
+                "/usr/bin/nu",
+                ShellKind::Nushell,
+                vec![
+                    "--distribution",
+                    "Ubuntu",
+                    "--cd",
+                    "~/project",
+                    "--",
+                    "/usr/bin/nu",
+                    "-i",
+                    "-c",
+                    "exec ($env.HOME | path join '.local/share/zed/remote server') exec",
+                ],
+            ),
+            (
+                Some("/home/bang!user"),
+                None,
+                None,
+                "/bin/tcsh",
+                ShellKind::Tcsh,
+                vec![
+                    "--distribution",
+                    "Ubuntu",
+                    "--cd",
+                    "~",
+                    "--",
+                    "/bin/tcsh",
+                    "-i",
+                    "-c",
+                    "exec '/home/bang'\\!'user/.local/share/zed/remote server' exec",
+                ],
+            ),
+        ] {
+            connection.home_dir = home_dir.map(String::from);
+            connection.connection_options.user = user;
+            connection.shell = String::from(shell);
+            connection.shell_kind = shell_kind;
+            let expected_payload = command(valid_env.clone(), None).encode()?;
+            let mut env = valid_env.clone();
+            env.insert(String::from("NAME=VALUE"), String::from("dropped"));
+            let (template, payload) = connection.build_stdio_command(command(env, working_dir))?;
+            assert_eq!(template.program, "wsl.exe");
+            assert_eq!(template.args, expected_args);
+            assert_eq!(template.env, HashMap::default());
+            assert_eq!(payload, expected_payload);
+        }
+        Ok(())
+    }
 }
