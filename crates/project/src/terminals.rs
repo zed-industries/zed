@@ -313,10 +313,8 @@ impl Project {
         self.create_local_terminal_with(None, cx)
     }
 
-    /// Same as [`create_local_terminal`](Self::create_local_terminal) but
-    /// accepts a profile-derived shell override. Local terminals always
-    /// honor the override (only remote, non-`force_local` terminals
-    /// drop it).
+    /// Like [`create_local_terminal`] but accepts a profile-derived shell
+    /// override, which is always honored.
     pub fn create_local_terminal_with(
         &mut self,
         shell_override: Option<Shell>,
@@ -334,10 +332,8 @@ impl Project {
     /// If `force_local` is true, creates a local terminal even if the project has a remote client.
     /// This allows "breaking out" to a local shell in remote projects.
     ///
-    /// `shell_override`, when set, replaces `terminal.shell` at both consumption
-    /// sites (the program/ShellKind selection and the `TerminalBuilder::new`
-    /// call). The override is dropped for remote, non-`force_local`
-    /// terminals and a warning is logged.
+    /// `shell_override` replaces `terminal.shell` and is dropped for
+    /// remote, non-`force_local` terminals with a warning.
     fn create_terminal_shell_internal(
         &mut self,
         cwd: Option<PathBuf>,
@@ -361,8 +357,6 @@ impl Project {
         let detect_venv = settings.detect_venv.as_option().is_some();
         let local_path = if is_via_remote { None } else { path.clone() };
 
-        // Profile overrides only apply to local (or force_local) terminals.
-        // Dropping the override here keeps the rest of the spawn path unchanged.
         let shell_override = if is_via_remote && shell_override.is_some() {
             log::warn!(
                 "terminal profile override ignored for remote terminal \
@@ -406,10 +400,6 @@ impl Project {
                         .map(|settings_location| settings_location.worktree_id.to_proto()),
                 })
         });
-        // The override must apply at BOTH consumption sites — the
-        // program/ShellKind selection below and the TerminalBuilder::new
-        // call inside the spawn — or the spawned shell and the env/venv
-        // resolution would disagree.
         let shell = match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
@@ -417,10 +407,9 @@ impl Project {
                 .unwrap_or_else(get_default_system_shell),
             None => effective_shell.program(),
         };
-        // Environment resolution stays on the login shell locally
-        // (`get_system_shell()`), independent of the profile. Routing env
-        // through a fish/tmux/etc. profile would break venv detection for
-        // users whose `$SHELL` differs.
+        // Env resolution stays on the login shell locally, independent of
+        // the profile, so venv detection keeps working when `$SHELL`
+        // differs from the profile program.
         let env_shell = match &remote_client {
             Some(_) => shell.clone(),
             None => get_system_shell(),

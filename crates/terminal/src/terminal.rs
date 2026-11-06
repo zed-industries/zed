@@ -2353,10 +2353,8 @@ impl Terminal {
         self.keyboard_input_sent
     }
 
-    /// The working directory the terminal was spawned with, recorded
-    /// synchronously at construction (unlike [`Self::working_directory`],
-    /// which reads the child process's live cwd and needs the PTY event
-    /// loop to make progress).
+    /// The recorded spawn directory; unlike [`Self::working_directory`],
+    /// does not need the PTY event loop to progress.
     #[cfg(any(test, feature = "test-support"))]
     pub fn initial_working_directory(&self) -> Option<&Path> {
         self.cwd_history

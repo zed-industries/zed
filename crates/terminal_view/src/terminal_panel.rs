@@ -167,9 +167,6 @@ impl TerminalPanel {
                             .menu(move |window, cx| {
                                 let focus_handle = focus_handle.clone();
                                 let plan = {
-                                    // Per-location lookup so profiles defined
-                                    // in project settings appear in the menu,
-                                    // matching what the spawn path resolves.
                                     let settings = workspace
                                         .upgrade()
                                         .map(|workspace| {
@@ -184,21 +181,12 @@ impl TerminalPanel {
                                         });
                                     let detected =
                                         util::shell_detection::detect_available_shells().to_vec();
-                                    // Read cached warnings off
-                                    // TerminalSettings instead of re-running
-                                    // validate_configured_profiles (which
-                                    // already ran in from_settings).
                                     build_menu_entries(
                                         &settings.profiles,
                                         detected,
                                         &settings.profile_warnings,
                                     )
                                 };
-                                // In remote projects, configured
-                                // profiles and detected shells reference
-                                // local executables — spawn them with
-                                // force_local=true so the override is
-                                // honored.
                                 let is_remote = workspace.upgrade().is_some_and(|workspace| {
                                     workspace.read(cx).project().read(cx).is_via_remote_server()
                                 });
@@ -679,9 +667,7 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
-    /// Spawn a terminal running a detected (non-profile) shell program —
-    /// the dispatch side of `terminal::SpawnDetectedShell`. Mirrors
-    /// `new_terminal` for the configured-profile path.
+    /// Spawn a terminal running a detected (non-profile) shell program.
     pub fn spawn_detected_shell(
         workspace: &mut Workspace,
         action: &crate::SpawnDetectedShell,
@@ -699,8 +685,6 @@ impl TerminalPanel {
         };
         terminal_panel
             .update(cx, |panel, cx| {
-                // `profile_name` is None: detected shells don't round-trip
-                // through persistence (the detected set varies per host).
                 panel.add_terminal_shell_with(
                     action.local,
                     working_directory,
@@ -841,9 +825,6 @@ impl TerminalPanel {
         if center_pane_has_focus && active_center_item_is_terminal {
             let working_directory = default_working_directory(workspace, cx);
             let local = action.local;
-            // When the project is remote and the action isn't
-            // force-local, the override is dropped at spawn time — pass
-            // no profile tag so restore won't flip the terminal to local.
             let is_remote = workspace.project().read(cx).is_via_remote_server();
             let tag = if local || !is_remote {
                 profile_name
@@ -971,12 +952,6 @@ impl TerminalPanel {
                         window,
                         cx,
                     );
-                    // Same tagging rule as add_terminal_shell_with: only
-                    // tag when the override actually applied. A remote
-                    // project drops the override in
-                    // create_terminal_shell_with, so the view must stay
-                    // untagged or restore would flip it to a local
-                    // terminal.
                     let override_applies = profile_name.is_some()
                         && !workspace.project().read(cx).is_via_remote_server();
                     if override_applies {
@@ -1063,9 +1038,9 @@ impl TerminalPanel {
         self.add_terminal_shell_with(force_local, cwd, None, None, reveal_strategy, window, cx)
     }
 
-    /// Same as [`add_terminal_shell`](Self::add_terminal_shell) but supplies a
-    /// profile-derived shell override and the profile name (used to tag the
-    /// resulting `TerminalView` for persistence).
+    /// Like [`add_terminal_shell`] but supplies a profile-derived shell
+    /// override, with the name used to tag the `TerminalView` for
+    /// persistence.
     fn add_terminal_shell_with(
         &mut self,
         force_local: bool,
@@ -1109,11 +1084,6 @@ impl TerminalPanel {
                             window,
                             cx,
                         );
-                        // Only tag the view when the override actually
-                        // applies. A remote, non-force_local spawn drops
-                        // the override (create_terminal_shell_internal
-                        // warns); tagging anyway would make restore spawn
-                        // a local terminal where the user had a remote one.
                         let override_applies = profile_name.is_some()
                             && (force_local
                                 || !workspace.project().read(cx).is_via_remote_server());
@@ -1436,9 +1406,7 @@ impl TerminalPanel {
     }
 }
 
-/// Prepares a `SpawnInTerminal` by computing the command, args, and command_label
-/// based on the shell configuration. This is a pure function that can be tested
-/// without spawning actual terminals.
+/// Prepares a `SpawnInTerminal` for the given shell configuration.
 pub fn prepare_task_for_spawn(
     task: &SpawnInTerminal,
     shell: &Shell,
@@ -1460,12 +1428,10 @@ fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
     workspace.project().read(cx).supports_terminal(cx)
 }
 
-/// Resolve [`TerminalSettings`] the same way the spawn path does: scoped
-/// to the worktree containing `cwd` (falling back to the worktree of the
-/// workspace's default working directory, then to global settings). This
-/// keeps the menu, keymap dispatch, and restore consistent with the spawn
-/// path, which reads per-location settings in
-/// `project::terminals::create_terminal_shell_internal`.
+/// Resolve [`TerminalSettings`] scoped to the worktree containing `cwd`
+/// (falling back to the worktree of the workspace's default working
+/// directory, then to global), matching the spawn path's per-location
+/// lookup.
 pub(crate) fn terminal_settings_for_cwd(
     workspace: Option<&Workspace>,
     cwd: Option<&Path>,
@@ -1490,24 +1456,13 @@ fn settings_location_for_path(
     let (worktree, _) = project.find_worktree(cwd, cx)?;
     Some(SettingsLocation {
         worktree_id: worktree.read(cx).id(),
-        // The spawn path scopes to the worktree root as well; profile
-        // resolution only needs the worktree-level settings layer.
         path: RelPath::empty(),
     })
 }
 
-/// Resolve an optional profile name from a `NewTerminal` action into a
-/// `(shell_override, profile_name)` pair.
-///
-/// - When `requested_profile` is `None`, returns `(None, None)` — caller
-///   uses the default shell resolution.
-/// - When the name resolves against `TerminalSettings.profiles`, returns
-///   the converted `task::Shell` (with title promotion) and the name
-///   (the latter so the spawned `TerminalView` can be tagged for
-///   persistence).
-/// - When the name does not resolve, emits a user-visible toast and
-///   returns `(None, None)` so the caller falls back to the default shell
-///   (never silently to the system shell).
+/// Resolve a profile name from a `NewTerminal` action into a
+/// `(shell_override, profile_name)` pair. An unresolvable name emits a
+/// user-visible toast and falls back to the default shell.
 fn resolve_profile_override(
     requested_profile: Option<&str>,
     workspace: &mut Workspace,
@@ -2110,10 +2065,6 @@ impl RenderOnce for InlineAssistTabBarButton {
 }
 
 /// Extend `ContextMenu` with the "+" menu's terminal-shell section.
-///
-/// Lives as a small private trait so the trait method chains naturally
-/// (`.separator().shell_entries(plan, is_remote)`); the alternative (a free
-/// function) would break the builder chain.
 trait TerminalPanelMenuExt: Sized {
     fn shell_entries(self, plan: MenuEntryPlan, is_remote: bool) -> Self;
 }
@@ -2122,14 +2073,6 @@ impl TerminalPanelMenuExt for ContextMenu {
     fn shell_entries(self, plan: MenuEntryPlan, is_remote: bool) -> Self {
         match plan {
             MenuEntryPlan::Inline { entries } => inline_shell_entries(self, entries, is_remote),
-            // Escalation: collapse into a submenu. The submenu builder
-            // receives a fresh `ContextMenu` and must be `'static`, so the
-            // entry list + `is_remote` are cloned into the closure. Picking
-            // a submenu over a Picker modal here because `ContextMenu::submenu`
-            // is already available in GPUI, requires no new infrastructure,
-            // and matches the existing menu interaction model. The Picker
-            // pattern stays available for future surfacing (e.g. command
-            // palette) without being preemptively wired up.
             MenuEntryPlan::Collapsed { entries } => {
                 self.submenu("Select Shell…", move |submenu, _window, _cx| {
                     inline_shell_entries(submenu, entries.clone(), is_remote)
@@ -2283,8 +2226,6 @@ mod tests {
             })
             .unwrap();
 
-        // Define the profile in project settings (the worktree root's
-        // `.zed/settings.json` layer), not in user settings.
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store
@@ -2307,9 +2248,6 @@ mod tests {
             });
         });
 
-        // A keymap dispatch referencing the project-defined profile must
-        // resolve it (previously only user/global settings were consulted,
-        // producing a spurious "Unknown terminal profile" toast).
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 let action = workspace::NewTerminal {
@@ -2333,8 +2271,6 @@ mod tests {
                 let terminal_view = item
                     .and_then(|item| item.act_as::<TerminalView>(cx))
                     .expect("profile spawn should produce a terminal");
-                // `profile_to_task_shell` promotes the profile name to the
-                // title override, so the title proves the override applied.
                 assert_eq!(
                     terminal_view.read(cx).terminal.read(cx).title(false),
                     "Project Profile"
@@ -3890,9 +3826,6 @@ mod tests {
 
         let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
 
-        // Dispatch SpawnDetectedShell exactly as the menu's `.action()` would.
-        // Use the existing `/bin/sh` so the spawn actually succeeds on Unix
-        // hosts and we can inspect the resulting terminal.
         let detected = crate::SpawnDetectedShell {
             program: if cfg!(unix) {
                 "/bin/sh".to_string()
@@ -3918,8 +3851,6 @@ mod tests {
             .and_then(|item| item.downcast::<TerminalView>())
             .expect("active panel item should be a TerminalView after detected-shell spawn");
         terminal_view.update(cx, |view, cx| {
-            // Detected shells don't tag the view with a
-            // profile_name (they don't round-trip through persistence).
             assert!(
                 view.profile_name.is_none(),
                 "detected-shell spawn must NOT set profile_name (would mislead deserialize into a default-shell fallback). Got: {:?}",
@@ -3938,10 +3869,6 @@ mod tests {
         cx.executor().allow_parking();
         init_test(cx);
 
-        // A workspace with a real project root: the spawned terminal must
-        // start in the project directory (via default_working_directory)
-        // rather than inheriting the host process's working directory,
-        // which is $HOME when Zed is launched from a desktop launcher.
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/project", serde_json::json!({})).await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
@@ -3989,9 +3916,7 @@ mod tests {
         terminal_view.update(cx, |view, cx| {
             assert_eq!(
                 view.terminal().read(cx).initial_working_directory(),
-                Some(Path::new("/project")),
-                "detected-shell spawn should open in the project directory, \
-                 not the host process's working directory"
+                Some(Path::new("/project"))
             );
         });
     }

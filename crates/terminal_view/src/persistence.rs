@@ -585,13 +585,8 @@ mod tests {
     use super::*;
     use workspace::WorkspaceDb;
 
-    // The terminals table has a FK on workspace_id referencing the workspaces
-    // table, so we insert a workspace row via `WorkspaceDb::next_id` before
-    // exercising the terminals table writes.
-    //
     // Serialize and deserialize share a single #[gpui::test] because the
-    // global test DB is a shared LazyLock and parallel writes against it
-    // lock.
+    // global test DB is a shared LazyLock that serializes writes.
 
     #[gpui::test]
     async fn test_profile_name_round_trip(cx: &mut gpui::TestAppContext) {
@@ -625,8 +620,7 @@ mod tests {
             "profile_name should round-trip through SQLite"
         );
 
-        // Re-saving with None clears the slot (some binding paths encode None
-        // as the empty string; the read filter normalises both to None).
+        // Some binding paths encode None as the empty string.
         db.save_profile_name(item_id, workspace_id, None)
             .await
             .expect("save_profile_name None ok");
@@ -636,7 +630,6 @@ mod tests {
             "profile_name should clear back to NULL/empty"
         );
 
-        // Other terminal persistence columns must coexist on the same row.
         db.save_working_directory(item_id, workspace_id, PathBuf::from("/tmp"))
             .await
             .expect("save_working_directory ok");

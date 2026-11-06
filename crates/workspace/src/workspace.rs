@@ -640,9 +640,8 @@ pub struct NewTerminal {
     /// If true, creates a local terminal even in remote projects.
     #[serde(default)]
     pub local: bool,
-    /// Optional name of a `terminal.profiles` entry to spawn. If the name
-    /// does not match a configured profile, Zed emits a warning and falls
-    /// back to the default shell.
+    /// Name of a `terminal.profiles` entry to spawn; unknown names warn
+    /// and fall back to the default shell.
     #[serde(default)]
     pub profile: Option<String>,
 }

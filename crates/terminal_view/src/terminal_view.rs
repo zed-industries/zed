@@ -110,31 +110,18 @@ actions!(
 #[action(namespace = terminal)]
 pub struct RenameTerminal;
 
-/// Spawn a terminal running a detected (non-profile) shell program.
-///
-/// Used by the "+" PopoverMenu's "detected shells" section. Detected
-/// shells bypass the `terminal.profiles` lookup — they carry their own
-/// program/args. The `label` is used as the tab title (via the
-/// `title_override` field on the constructed `task::Shell::WithArguments`),
-/// NOT as a persistence key — detected shells don't round-trip through
-/// `SerializableItem::deserialize` because the detected set is
-/// machine/session-specific. The action is registered on the workspace
-/// (same pattern as `workspace::NewTerminal`) and dispatched from the menu
-/// via `ContextMenu::action`.
+/// Spawn a terminal running a detected (non-profile) shell program from
+/// the "+" menu. The label becomes the tab title; detected shells are not
+/// persisted because the detected set is machine-specific.
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = terminal)]
 pub struct SpawnDetectedShell {
-    /// Program to launch — typically an absolute path from
-    /// `util::shell_detection::DetectedShell::program`.
     pub program: String,
-    /// Arguments to pass to the program (e.g. `["-d", "Ubuntu"]` for WSL).
+    /// e.g. `["-d", "Ubuntu"]` for WSL distros.
     pub args: Vec<String>,
-    /// Tab title. Usually `DetectedShell::label`.
     pub label: String,
-    /// If true, spawn a LOCAL terminal even in remote projects. The menu
-    /// sets this to `true` when the project is remote so detected shells
-    /// (which reference local executables) actually spawn locally instead
-    /// of falling through to the remote shell.
+    /// Spawn a local terminal even in remote projects (the menu sets this
+    /// so detected local executables are actually used).
     #[serde(default)]
     pub local: bool,
 }
@@ -188,10 +175,8 @@ pub struct TerminalView {
     blinking_terminal_enabled: bool,
     needs_serialize: bool,
     custom_title: Option<String>,
-    /// When non-`None`, this view was spawned from the named
-    /// `terminal.profiles` entry. Used by `SerializableItem::serialize`
-    /// to persist the profile choice so that workspace reload respawns
-    /// the same profile.
+    /// The `terminal.profiles` entry this view was spawned from, persisted
+    /// so workspace reload respawns the same profile.
     pub profile_name: Option<String>,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
@@ -2139,12 +2124,6 @@ impl SerializableItem for TerminalView {
                 .ok()
                 .unwrap_or((None, None, None));
 
-            // Re-resolve the persisted profile name against the current
-            // TerminalSettings, scoped to the worktree containing the
-            // restored terminal's directory so project-level profiles
-            // resolve the same way they did at spawn time. A profile may
-            // disappear after a settings change; in that case fall back to
-            // the default shell with a log line.
             let (shell_override, restored_profile_name) = cx
                 .update(|_window, cx| {
                     let settings = terminal_panel::terminal_settings_for_cwd(
@@ -2177,14 +2156,6 @@ impl SerializableItem for TerminalView {
 
             let terminal = project
                 .update(cx, |project, cx| {
-                    // The menu spawns profile-tagged terminals with
-                    // `local: is_remote` so the override survives the
-                    // remote-drop. Persisted terminals restore the same
-                    // way: when the project is remote AND we have an
-                    // override to restore, route through
-                    // `create_local_terminal_with` (force_local=true) so the
-                    // override is honored. Otherwise (local project, or no
-                    // override) the normal spawn path applies.
                     let is_remote = project.is_via_remote_server();
                     if is_remote && shell_override.is_some() {
                         project.create_local_terminal_with(shell_override, cx)
@@ -3091,11 +3062,7 @@ mod tests {
             .unwrap();
 
         terminal_view.update(cx, |view, _cx| {
-            assert!(
-                view.profile_name.is_none(),
-                "remote spawn without local must not tag the view with a profile name; \
-                 tagging would flip the terminal to local on restore"
-            );
+            assert!(view.profile_name.is_none());
         });
     }
 
@@ -3383,8 +3350,7 @@ mod tests {
     }
 
     /// Like [`init_remote_test`] but also attaches a `TerminalPanel` and
-    /// registers its action handlers, mirroring what `terminal_view::init`
-    /// does for workspaces created after `crate::init` runs.
+    /// registers its action handlers.
     async fn init_remote_test_with_panel(
         cx: &mut TestAppContext,
         server_cx: &mut TestAppContext,
@@ -3547,11 +3513,7 @@ mod tests {
 
         terminal_view.update(cx, |view, cx| {
             let title = view.terminal().read(cx).title(false);
-            assert_eq!(
-                title, "Detected Local Shell",
-                "force_local spawn should apply the detected label as the title; \
-                 the remote wrapper title would mean the override was dropped"
-            );
+            assert_eq!(title, "Detected Local Shell");
         });
     }
 

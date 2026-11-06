@@ -56,10 +56,8 @@ pub struct TerminalSettings {
     pub bell: TerminalBell,
     pub profiles: collections::IndexMap<String, TerminalProfile>,
     pub default_profile: Option<String>,
-    /// Cached output of [`validate_configured_profiles`] for the current
-    /// settings, so consumers (e.g. the "+"-menu builder) don't re-run the
-    /// validator (and its `which::which` / `Path::is_file` probes) on every
-    /// menu open.
+    /// Cached output of [`validate_configured_profiles`], so consumers
+    /// don't re-run the validator on every menu open.
     #[serde(skip)]
     pub profile_warnings: Vec<ProfileWarning>,
 }
@@ -88,12 +86,9 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
     }
 }
 
-/// Convert a `TerminalProfile` (settings twin) into the runtime `task::Shell`
-/// used by the spawn path. If the profile does not specify a
-/// `title_override`, the profile name is used so the tab is titled after
-/// the profile (matching VSCode's `overrideName` default for generated
-/// profiles). The result is always `Shell::WithArguments`, since
-/// `title_override` is only expressible on that variant.
+/// Convert a `TerminalProfile` into the runtime `task::Shell` for the
+/// spawn path. The profile name becomes the tab title when
+/// `title_override` is unset.
 pub fn profile_to_task_shell(name: &str, profile: &TerminalProfile) -> Shell {
     Shell::WithArguments {
         program: profile.program.clone(),
@@ -102,36 +97,20 @@ pub fn profile_to_task_shell(name: &str, profile: &TerminalProfile) -> Shell {
     }
 }
 
-/// A view over the configured-vs-detected shell entries used by the "+"
-/// menu. Configured profiles shadow detected shells with the same resolved
-/// program path; order is configured-first (preserving IndexMap insertion
-/// order), then detected.
+/// A configured profile or detected shell entry for the "+" menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergedShellEntry {
-    /// User-configured profile from `terminal.profiles`.
     Configured {
         name: String,
         profile: TerminalProfile,
     },
-    /// Detected shell that is not shadowed by a configured profile.
     Detected(DetectedShell),
 }
 
-/// Combine configured profiles with detected shells, dropping any detected
-/// entry whose program path collides with a configured profile's program
-/// (configured wins the slot).
-///
-/// Comparison is by the profile's program string resolved against the
-/// detected entry's `program` both ways:
-/// * exact string match (covers the common "configured `/bin/zsh`,
-///   detected `/bin/zsh`" case), and
-/// * bare-basename match when the configured program is a bare name like
-///   `zsh` (no path separator). This covers "configured `zsh`, detected
-///   `/bin/zsh`". Path-bearing configured programs (`/bin/bash`,
-///   `./local/shell`) only shadow via exact path equality — otherwise a
-///   single `program: "/bin/bash"` profile would shadow every bash on the
-///   system, and a future `program: "wsl.exe"` profile would shadow all
-///   WSL distros (which differ only by `args`).
+/// Combine configured profiles with detected shells, dropping detected
+/// entries whose program collides with a configured profile's program.
+/// Path-bearing configured programs only shadow via exact path equality —
+/// otherwise `program: "/bin/bash"` would shadow every bash on the system.
 pub fn merge_with_configured_profiles(
     detected: Vec<DetectedShell>,
     profiles: &IndexMap<String, TerminalProfile>,
@@ -141,15 +120,9 @@ pub fn merge_with_configured_profiles(
     let configured_stems: std::collections::HashSet<String> = profiles
         .values()
         .filter_map(|p| {
-            // Only bare basenames (no path separator) participate in
-            // stem-matching. Path-bearing programs only shadow via exact
-            // path equality above.
-            if p.program.contains(std::path::MAIN_SEPARATOR) {
-                return None;
-            }
-            // On Windows also treat '/' as a separator for cross-platform
-            // configs (a user might write `C:/Program Files/...`).
-            if cfg!(windows) && p.program.contains('/') {
+            if p.program.contains(std::path::MAIN_SEPARATOR)
+                || (cfg!(windows) && p.program.contains('/'))
+            {
                 return None;
             }
             Some(p.program.clone())
@@ -182,10 +155,8 @@ pub fn merge_with_configured_profiles(
 }
 
 /// Whether a detected shell's program collides with a configured profile.
-/// `windows_extension_matching` additionally matches the detected
-/// program's file stem (e.g. `pwsh` from `pwsh.exe`) against configured
-/// bare names; it is threaded through as a parameter so the comparison
-/// stays testable from any host.
+/// With `windows_extension_matching`, the detected program's file stem
+/// (`pwsh` from `pwsh.exe`) also matches configured bare names.
 fn detected_program_is_shadowed(
     program: &std::path::Path,
     program_string: &str,
@@ -207,19 +178,13 @@ fn detected_program_is_shadowed(
             .is_some_and(|stem| configured_stems.contains(&stem.to_string_lossy().into_owned()))
 }
 
-/// Single menu entry for the "+" PopoverMenu. Produced by
-/// [`build_menu_entries`], which filters invalid profiles and applies the
-/// escalation threshold. The view layer converts each `MenuEntry` into a
-/// `ContextMenuItem` (`action` for configured, `entry` callback for
-/// detected).
+/// Single menu entry for the "+" PopoverMenu, produced by
+/// [`build_menu_entries`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuEntry {
-    /// A configured profile that passed validation. Selecting it dispatches
-    /// `workspace::NewTerminal { profile: Some(name) }`.
-    Configured { name: String },
-    /// A detected shell not shadowed by any configured profile. Selecting it
-    /// constructs a `task::Shell::WithArguments` with the detected label as
-    /// `title_override` and calls `add_terminal_shell_with`.
+    Configured {
+        name: String,
+    },
     Detected {
         label: String,
         program: String,
@@ -227,33 +192,16 @@ pub enum MenuEntry {
     },
 }
 
-/// Above this many entries, the menu collapses into a single "Select Shell…"
-/// submenu entry (keeps the menu manageable when long).
 pub const MENU_ESCALATION_THRESHOLD: usize = 8;
 
-/// Outcome of [`build_menu_entries`]: either render entries inline, or
-/// collapse into a single "Select Shell…" entry whose submenu holds the
-/// same list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuEntryPlan {
-    /// `entries.len() <= MENU_ESCALATION_THRESHOLD` — render each entry
-    /// directly under a separator.
     Inline { entries: Vec<MenuEntry> },
-    /// `entries.len() > MENU_ESCALATION_THRESHOLD` — render a single
-    /// "Select Shell…" entry; the same `entries` move into its submenu.
     Collapsed { entries: Vec<MenuEntry> },
 }
 
-/// Pure, fs-free computation of the menu contents. Used both by the menu
-/// UI (terminal_panel.rs) and by unit tests; the latter assert structure
-/// without rendering GPUI elements.
-///
-/// * `profiles` — the user's `terminal.profiles` map (insertion order
-///   preserved).
-/// * `detected` — output of `util::shell_detection::detect_available_shells`.
-/// * `warnings` — output of `validate_configured_profiles`. Any profile
-///   named here is **hidden** from the menu (the user can still spawn it
-///   via keymap with a warning).
+/// Pure, fs-free computation of the "+" menu contents. Profiles named in
+/// `warnings` are hidden from the menu.
 pub fn build_menu_entries(
     profiles: &IndexMap<String, TerminalProfile>,
     detected: Vec<DetectedShell>,
@@ -262,9 +210,6 @@ pub fn build_menu_entries(
     let hidden: std::collections::HashSet<&str> =
         warnings.iter().map(|w| w.profile_name.as_str()).collect();
 
-    // Hide invalid configured profiles by filtering the IndexMap before
-    // merging with detected shells. This also prevents an invalid profile
-    // from shadowing a detected shell at the same path.
     let visible_profiles: IndexMap<String, TerminalProfile> = profiles
         .iter()
         .filter(|(name, _)| !hidden.contains(name.as_str()))
@@ -292,10 +237,8 @@ pub fn build_menu_entries(
     }
 }
 
-/// A non-blocking warning about a configured profile whose `program` is
-/// neither an existing absolute path nor resolvable on `PATH`. Returned by
-/// [`validate_configured_profiles`]; the caller decides how to surface the
-/// warning (log line, toast, settings diagnostic).
+/// An advisory warning about a configured profile whose `program` is
+/// neither an existing absolute path nor resolvable on `PATH`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileWarning {
     pub profile_name: String,
@@ -303,9 +246,6 @@ pub struct ProfileWarning {
     pub reason: String,
 }
 
-/// Test-friendly inner validator. The `is_file` and `resolve_on_path`
-/// callbacks abstract `Path::is_file()` and `which::which()` so unit tests
-/// can run without touching the real filesystem.
 fn validate_configured_profiles_with(
     profiles: &IndexMap<String, TerminalProfile>,
     is_file: &dyn Fn(&Path) -> bool,
@@ -338,14 +278,9 @@ fn validate_configured_profiles_with(
     warnings
 }
 
-/// Validate the configured terminal profiles, returning one
-/// [`ProfileWarning`] per profile whose `program` is neither an existing
-/// absolute path nor resolvable on `PATH`.
-///
-/// Never blocks terminal spawn — the existing `TerminalError` notification
-/// path handles actual spawn failures. This is purely advisory: invalid
-/// programs surface a warning, selection still routes through the regular
-/// spawn-error path.
+/// Return one [`ProfileWarning`] per profile whose `program` is neither an
+/// existing absolute path nor resolvable on `PATH`. Advisory only: actual
+/// spawn failures surface through the regular `TerminalError` path.
 pub fn validate_configured_profiles(
     profiles: &IndexMap<String, TerminalProfile>,
 ) -> Vec<ProfileWarning> {
@@ -362,13 +297,6 @@ impl settings::Settings for TerminalSettings {
         project_content.merge_from_option(content.project.terminal.as_ref());
         let profiles = project_content.profiles.clone().unwrap_or_default();
         let default_profile = project_content.default_profile.clone();
-        // Surface a warning per profile whose `program` is
-        // neither an existing absolute path nor resolvable on `PATH`. This
-        // is advisory only — spawn still goes through the normal
-        // `TerminalError` path if the program is genuinely missing. The
-        // result is cached on `TerminalSettings.profile_warnings` so the
-        // "+"-menu builder doesn't have to re-run the validator on every
-        // menu open.
         let profile_warnings = validate_configured_profiles(&profiles);
         for warning in &profile_warnings {
             log::warn!(
@@ -377,9 +305,6 @@ impl settings::Settings for TerminalSettings {
                 warning.reason
             );
         }
-        // Precedence: default_profile (if it resolves) > terminal.shell > System.
-        // Unknown default_profile name falls through to terminal.shell with a warning,
-        // never silently to System.
         let shell = if let Some(name) = default_profile.as_deref() {
             match profiles.get(name) {
                 Some(profile) => profile_to_task_shell(name, profile),
@@ -742,14 +667,11 @@ mod tests {
                 MergedShellEntry::Detected(shell) => shell.label.clone(),
             })
             .collect();
-        // Configured Zsh wins; detected zsh is dropped; detected bash survives.
         assert_eq!(labels, vec!["Zsh".to_string(), "bash".to_string()]);
     }
 
     #[test]
     fn merge_shadows_detected_when_configured_is_basename_match() {
-        // Configured profile uses bare "zsh"; detected shell is at
-        // "/bin/zsh". The basename match should shadow the detected entry.
         let profiles = profile_map(&[("MyZsh", "zsh")]);
         let detected = vec![detected_shell("zsh", "/bin/zsh")];
         let merged = merge_with_configured_profiles(detected, &profiles);
@@ -762,9 +684,6 @@ mod tests {
 
     #[test]
     fn merge_shadows_detected_exe_by_configured_stem_on_windows() {
-        // Windows: detected programs carry `.exe` (e.g. `pwsh.exe`). A
-        // configured bare stem (`pwsh`) must still shadow the entry, or
-        // the menu shows both.
         let profiles = profile_map(&[("PowerShell", "pwsh")]);
         let detected = vec![detected_shell("pwsh", r"C:\Windows\System32\pwsh.exe")];
         let merged = merge_with_configured_profiles(detected, &profiles);
@@ -776,14 +695,9 @@ mod tests {
             assert_eq!(merged.len(), 1, "detected pwsh.exe should be shadowed");
         }
 
-        // Host-independent check of the extension-matching rule itself:
-        // enabled on Windows, disabled elsewhere (a Unix `pwsh.exe`
-        // detection would be a real, distinct program).
         let configured_paths = std::collections::HashSet::new();
         let configured_stems: std::collections::HashSet<String> =
             ["pwsh".to_string()].into_iter().collect();
-        // Forward slashes so the path parses identically on any host
-        // (backslash paths only split into components on Windows).
         let program = std::path::Path::new("/windows/system32/pwsh.exe");
         let program_string = program.to_string_lossy().into_owned();
         assert!(detected_program_is_shadowed(
@@ -804,10 +718,6 @@ mod tests {
 
     #[test]
     fn merge_does_not_shadow_by_basename_when_configured_is_path() {
-        // Configured profile uses an absolute path "/bin/bash"; detected
-        // shell is at "/usr/bin/bash" — same stem, different path. The
-        // path-bearing configured program should only shadow via exact
-        // match (it doesn't here), so both entries survive.
         let profiles = profile_map(&[("Bash", "/bin/bash")]);
         let detected = vec![detected_shell("bash", "/usr/bin/bash")];
         let merged = merge_with_configured_profiles(detected, &profiles);
@@ -828,7 +738,6 @@ mod tests {
             detected_shell("fish", "/usr/bin/fish"),
         ];
         let merged = merge_with_configured_profiles(detected, &profiles);
-        // 1 configured + 2 detected = 3 entries.
         assert_eq!(merged.len(), 3);
     }
 
@@ -882,8 +791,6 @@ mod tests {
 
     #[test]
     fn validate_does_not_block_on_partial_failure() {
-        // Multiple profiles, only one broken — should still return only the
-        // one warning, never panic.
         let profiles = profile_map(&[
             ("Good", "/bin/zsh"),
             ("Bad", "totally-bogus-program"),
@@ -964,7 +871,6 @@ mod tests {
 
     #[test]
     fn menu_inline_when_at_threshold() {
-        // Distinct programs so dedup doesn't collapse them.
         let names: Vec<String> = (1..=MENU_ESCALATION_THRESHOLD)
             .map(|i| format!("n{i}"))
             .collect();
@@ -1018,9 +924,6 @@ mod tests {
 
     #[test]
     fn menu_lets_detected_surface_when_configured_invalid() {
-        // When a configured profile fails validation, it's filtered out
-        // BEFORE merging — so a detected shell at the same path can surface
-        // in its place (rather than being shadowed by the broken entry).
         let plan = build_plan(
             &[("Broken", "/bin/zsh")],
             vec![detected_shell("zsh", "/bin/zsh")],
@@ -1067,7 +970,6 @@ mod tests {
 
     #[test]
     fn menu_escalation_counts_after_filtering() {
-        // 10 profiles, but 3 are invalid -> 7 visible -> stays inline.
         let names: Vec<String> = (1..=10).map(|i| format!("n{i}")).collect();
         let programs: Vec<String> = (1..=10).map(|i| format!("/bin/n{i}")).collect();
         let profiles: Vec<(&str, &str)> = names

@@ -13,22 +13,14 @@ pub struct ProjectTerminalSettingsContent {
     ///
     /// Default: system
     pub shell: Option<Shell>,
-    /// Named terminal profiles that can be selected via the
-    /// `workspace::NewTerminal` action (e.g. from a keybinding) or from
-    /// the terminal panel's "+" menu. Each profile describes
-    /// the program to launch and optional arguments.
-    ///
-    /// Profile entries merge key-wise across settings layers (user, project,
-    /// etc.), so a project can override individual keys of a user-level
-    /// profile without redefining the whole map.
+    /// Named terminal profiles, selectable via the terminal panel's "+"
+    /// menu or a `workspace::NewTerminal` keybinding. Entries merge
+    /// key-wise across settings layers.
     ///
     /// Default: {}
     pub profiles: Option<IndexMap<String, TerminalProfile>>,
-    /// Name of the profile to use when no explicit profile is selected
-    /// (e.g. when pressing the default "open terminal" keybinding). The
-    /// name must match a key in `profiles`; if it does not, a warning is
-    /// emitted and Zed falls back to `terminal.shell` (not the system
-    /// shell).
+    /// Profile to use when none is explicitly selected. Must match a key
+    /// in `profiles`; otherwise Zed warns and falls back to `terminal.shell`.
     ///
     /// Default: none
     pub default_profile: Option<String>,
@@ -301,11 +293,8 @@ pub enum Shell {
     },
 }
 
-/// A named terminal profile: a program plus optional arguments and an
-/// optional title override. When selected (via `terminal.default_profile`
-/// or the `workspace::NewTerminal` action's `profile` field), the profile
-/// is converted into a `task::Shell` for spawning. If `title_override` is
-/// unset, the profile's name is used as the tab title.
+/// A named terminal profile. If `title_override` is unset, the profile's
+/// name is used as the tab title.
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct TerminalProfile {
