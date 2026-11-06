@@ -1,4 +1,4 @@
-use std::{cmp, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
+use std::{cmp, path::{Path, PathBuf}, process::ExitStatus, sync::Arc, time::Duration};
 
 use crate::{
     TerminalView, default_working_directory,
@@ -18,7 +18,7 @@ use gpui::{
 use itertools::Itertools;
 use project::{Fs, Project};
 
-use settings::{Settings, TerminalDockPosition};
+use settings::{Settings, SettingsLocation, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{
     Terminal,
@@ -28,7 +28,7 @@ use ui::{
     ButtonLike, Clickable, CommonAnimationExt, ContextMenu, FluentBuilder, PopoverMenu,
     SplitButton, Toggleable, Tooltip, prelude::*,
 };
-use util::{ResultExt, TryFutureExt, defer};
+use util::{ResultExt, TryFutureExt, defer, rel_path::RelPath};
 use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedTab, ItemId, MoveItemToPane,
@@ -161,7 +161,19 @@ impl TerminalPanel {
                             .menu(move |window, cx| {
                                 let focus_handle = focus_handle.clone();
                                 let plan = {
-                                    let settings = TerminalSettings::get_global(cx).clone();
+                                    // Per-location lookup so profiles defined
+                                    // in project settings appear in the menu,
+                                    // matching what the spawn path resolves.
+                                    let settings = workspace
+                                        .upgrade()
+                                        .map(|workspace| {
+                                            terminal_settings_for_cwd(
+                                                Some(workspace.read(cx)),
+                                                None,
+                                                cx,
+                                            )
+                                        })
+                                        .unwrap_or_else(|| TerminalSettings::get_global(cx).clone());
                                     let detected =
                                         util::shell_detection::detect_available_shells().to_vec();
                                     // Read cached warnings off
@@ -1446,6 +1458,42 @@ fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
     workspace.project().read(cx).supports_terminal(cx)
 }
 
+/// Resolve [`TerminalSettings`] the same way the spawn path does: scoped
+/// to the worktree containing `cwd` (falling back to the worktree of the
+/// workspace's default working directory, then to global settings). This
+/// keeps the menu, keymap dispatch, and restore consistent with the spawn
+/// path, which reads per-location settings in
+/// `project::terminals::create_terminal_shell_internal`.
+pub(crate) fn terminal_settings_for_cwd(
+    workspace: Option<&Workspace>,
+    cwd: Option<&Path>,
+    cx: &App,
+) -> TerminalSettings {
+    let settings_location = cwd
+        .and_then(|cwd| settings_location_for_path(workspace, cwd, cx))
+        .or_else(|| {
+            let workspace = workspace?;
+            let cwd = default_working_directory(workspace, cx)?;
+            settings_location_for_path(Some(workspace), &cwd, cx)
+        });
+    TerminalSettings::get(settings_location, cx).clone()
+}
+
+fn settings_location_for_path(
+    workspace: Option<&Workspace>,
+    cwd: &Path,
+    cx: &App,
+) -> Option<SettingsLocation<'static>> {
+    let project = workspace?.project().read(cx);
+    let (worktree, _) = project.find_worktree(cwd, cx)?;
+    Some(SettingsLocation {
+        worktree_id: worktree.read(cx).id(),
+        // The spawn path scopes to the worktree root as well; profile
+        // resolution only needs the worktree-level settings layer.
+        path: RelPath::empty(),
+    })
+}
+
 /// Resolve an optional profile name from a `NewTerminal` action into a
 /// `(shell_override, profile_name)` pair.
 ///
@@ -1466,7 +1514,7 @@ fn resolve_profile_override(
     let Some(name) = requested_profile else {
         return (None, None);
     };
-    let settings = TerminalSettings::get_global(cx);
+    let settings = terminal_settings_for_cwd(Some(workspace), None, cx);
     match settings.profiles.get(name) {
         Some(profile) => {
             let shell = terminal::terminal_settings::profile_to_task_shell(name, profile);
@@ -2196,6 +2244,103 @@ mod tests {
             item_count, 5,
             "Terminal panel should bypass max_tabs limit and have all 5 terminals"
         );
+    }
+
+    #[gpui::test]
+    async fn project_scoped_profile_resolves_from_keymap_dispatch(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({
+                ".zed": { "settings.json": "" },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                    workspace.add_panel(panel, window, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let worktree_id = window_handle
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read_with(cx, |workspace, cx| {
+                        workspace.worktrees(cx).next().unwrap().read(cx).id()
+                    })
+            })
+            .unwrap();
+
+        // Define the profile in project settings (the worktree root's
+        // `.zed/settings.json` layer), not in user settings.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        settings::LocalSettingsPath::InWorktree(RelPath::empty_arc()),
+                        settings::LocalSettingsKind::Settings,
+                        Some(
+                            r#"{
+                                "terminal": {
+                                    "profiles": {
+                                        "Project Profile": { "program": "/bin/bash" }
+                                    }
+                                }
+                            }"#,
+                        ),
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+
+        // A keymap dispatch referencing the project-defined profile must
+        // resolve it (previously only user/global settings were consulted,
+        // producing a spurious "Unknown terminal profile" toast).
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let action = workspace::NewTerminal {
+                    local: false,
+                    profile: Some("Project Profile".to_string()),
+                };
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::new_terminal(workspace, &action, window, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window_handle
+            .read_with(cx, |multi_workspace, cx| {
+                let panel = multi_workspace
+                    .workspace()
+                    .read_with(cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
+                    .unwrap();
+                let item = panel.read(cx).active_pane.read(cx).active_item();
+                let terminal_view = item
+                    .and_then(|item| item.act_as::<TerminalView>(cx))
+                    .expect("profile spawn should produce a terminal");
+                // `profile_to_task_shell` promotes the profile name to the
+                // title override, so the title proves the override applied.
+                assert_eq!(
+                    terminal_view.read(cx).terminal.read(cx).title(false),
+                    "Project Profile"
+                );
+            })
+            .unwrap();
     }
 
     #[cfg(unix)]

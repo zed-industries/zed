@@ -406,9 +406,10 @@ impl Project {
                         .map(|settings_location| settings_location.worktree_id.to_proto()),
                 })
         });
-        // Apply the override at BOTH consumption sites — program/ShellKind
-        // selection below and the TerminalBuilder::new call inside the spawn.
-        // Use `effective_shell` consistently.
+        // The override must apply at BOTH consumption sites — the
+        // program/ShellKind selection below and the TerminalBuilder::new
+        // call inside the spawn — or the spawned shell and the env/venv
+        // resolution would disagree.
         let shell = match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)

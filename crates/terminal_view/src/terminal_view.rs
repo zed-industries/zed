@@ -2106,10 +2106,6 @@ impl SerializableItem for TerminalView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
-        // Read TerminalSettings synchronously here (where `cx: &App`) so we
-        // can re-resolve a persisted profile name into a `task::Shell`
-        // override before entering the async spawn.
-        let settings = TerminalSettings::get_global(cx).clone();
         window.spawn(cx, async move |cx| {
             let (cwd, custom_title, profile_name) = cx
                 .update(|_window, cx| {
@@ -2144,29 +2140,40 @@ impl SerializableItem for TerminalView {
                 .unwrap_or((None, None, None));
 
             // Re-resolve the persisted profile name against the current
-            // TerminalSettings. A profile may disappear after a settings
-            // change; in that case fall back to the default shell with a
-            // log line.
-            let (shell_override, restored_profile_name) = match profile_name
-                .as_deref()
-                .and_then(|name| settings.profiles.get(name).map(|profile| (name, profile)))
-            {
-                Some((name, profile)) => (
-                    Some(terminal::terminal_settings::profile_to_task_shell(
-                        name, profile,
-                    )),
-                    Some(name.to_string()),
-                ),
-                None => {
-                    if let Some(name) = &profile_name {
-                        log::warn!(
-                            "Persisted terminal profile '{name}' is no longer defined; \
-                             falling back to the default shell"
-                        );
+            // TerminalSettings, scoped to the worktree containing the
+            // restored terminal's directory so project-level profiles
+            // resolve the same way they did at spawn time. A profile may
+            // disappear after a settings change; in that case fall back to
+            // the default shell with a log line.
+            let (shell_override, restored_profile_name) = cx
+                .update(|_window, cx| {
+                    let settings = terminal_panel::terminal_settings_for_cwd(
+                        workspace.upgrade().as_ref().map(|w| w.read(cx)),
+                        cwd.as_deref(),
+                        cx,
+                    );
+                    match profile_name
+                        .as_deref()
+                        .and_then(|name| settings.profiles.get(name).map(|profile| (name, profile)))
+                    {
+                        Some((name, profile)) => (
+                            Some(terminal::terminal_settings::profile_to_task_shell(
+                                name, profile,
+                            )),
+                            Some(name.to_string()),
+                        ),
+                        None => {
+                            if let Some(name) = &profile_name {
+                                log::warn!(
+                                    "Persisted terminal profile '{name}' is no longer defined; \
+                                     falling back to the default shell"
+                                );
+                            }
+                            (None, None)
+                        }
                     }
-                    (None, None)
-                }
-            };
+                })
+                .unwrap_or((None, None));
 
             let terminal = project
                 .update(cx, |project, cx| {
