@@ -454,15 +454,6 @@ impl Render for CommitTooltip {
                                                         repo.downgrade(),
                                                         workspace.clone(),
                                                         CommitViewOptions {
-                                                            // TODO!: Understand
-                                                            // why, if we're
-                                                            // already calling
-                                                            // `self.reveal_file.clone()`,
-                                                            // we need to call
-                                                            // `reveal_file.clone()`
-                                                            // again here, why
-                                                            // we need two
-                                                            // clones?
                                                             reveal_file: reveal_file.clone(),
                                                             ..Default::default()
                                                         },
