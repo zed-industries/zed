@@ -13960,7 +13960,6 @@ dependencies = [
 name = "project_bookmarks"
 version = "0.1.0"
 dependencies = [
- "ctor",
  "editor",
  "futures 0.3.34",
  "fuzzy_nucleo",
