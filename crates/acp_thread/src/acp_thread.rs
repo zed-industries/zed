@@ -1874,6 +1874,31 @@ impl ToolCall {
             })
     }
 
+    pub fn diff_line_counts(&self, cx: &App) -> Option<(u32, u32)> {
+        let mut has_diff = false;
+        let mut added = 0u32;
+        let mut removed = 0u32;
+        for content in &self.structured_content {
+            match content {
+                ToolCallContent::Diff(diff) | ToolCallContent::LegacyDiff { diff, .. } => {
+                    if let Some((a, r)) = diff.read(cx).changed_row_counts(cx) {
+                        has_diff = true;
+                        added = added.saturating_add(a);
+                        removed = removed.saturating_add(r);
+                    }
+                }
+                ToolCallContent::DiffPatch { render, .. } => {
+                    let (a, r) = render.changed_row_counts();
+                    has_diff = true;
+                    added = added.saturating_add(a);
+                    removed = removed.saturating_add(r);
+                }
+                _ => {}
+            }
+        }
+        has_diff.then_some((added, removed))
+    }
+
     pub fn terminals(&self) -> impl Iterator<Item = &Entity<Terminal>> {
         self.structured_content
             .iter()
