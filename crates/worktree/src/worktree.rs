@@ -2163,7 +2163,6 @@ impl LocalWorktree {
             vec![path.clone()]
         };
         let t0 = Instant::now();
-        let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
         let mut refresh = self.refresh_entries_for_paths(paths);
         // todo(lw): Hot foreground spawn
@@ -2179,6 +2178,7 @@ impl LocalWorktree {
             // snapshot, for instance a file inside a gitignored directory that the
             // scanner has not expanded yet. Report it the same way as an excluded
             // path so that callers can still open it by absolute path.
+            let abs_path = this.read_with(cx, |this, _| this.absolutize(&path))?;
             if fs.metadata(&abs_path).await?.is_some() {
                 return Ok(None);
             }
