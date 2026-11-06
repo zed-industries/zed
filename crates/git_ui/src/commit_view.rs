@@ -5,6 +5,7 @@ use editor::{
     Addon, Editor, EditorEvent, EditorSettings, HiddenDiffHunkRenderer, MultiBuffer,
     SplittableEditor, hover_markdown_style, multibuffer_context_lines,
 };
+use futures::{StreamExt as _, stream};
 use futures_lite::future::yield_now;
 use git::repository::{CommitDetails, RepoPath};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
@@ -26,7 +27,7 @@ use markdown::{Markdown, MarkdownElement};
 use multi_buffer::PathKey;
 use project::{
     Project, ProjectPath, WorktreeId,
-    git_store::{CommitDiff, Repository, UnshallowState},
+    git_store::{CommitDiff, CommitFile, Repository, UnshallowState},
 };
 use settings::{DiffViewStyle, Settings};
 use std::{
@@ -46,6 +47,7 @@ use workspace::{
 };
 
 use crate::commit_tooltip::CommitAvatar;
+use crate::diff_multibuffer::MAX_CONCURRENT_BUFFER_LOADS;
 use crate::git_panel::GitPanel;
 
 actions!(
@@ -353,58 +355,39 @@ impl CommitView {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
-            for file in commit_diff.files {
-                let is_created = file.old_text.is_none();
-                let is_deleted = file.new_text.is_none();
-                let raw_new_text = file.new_text.unwrap_or_default();
-                let raw_old_text = file.old_text;
+            // Ordered, so files appear in commit order while later files load concurrently.
+            let load_cx = cx.clone();
+            let mut loads = stream::iter(commit_diff.files.into_iter().map(|file| {
+                let mut cx = load_cx.clone();
+                let repository = repository_clone.clone();
+                let project = project_clone.clone();
+                let language_registry = language_registry.clone();
+                let commit_sha = commit_sha.clone();
+                async move {
+                    load_commit_file(
+                        file,
+                        &commit_sha,
+                        &repository,
+                        &project,
+                        &language_registry,
+                        &mut cx,
+                    )
+                    .await
+                }
+            }))
+            .buffered(MAX_CONCURRENT_BUFFER_LOADS);
 
-                let is_binary = file.is_binary;
-
-                let new_text = if is_binary {
-                    "(binary file not shown)".to_string()
-                } else {
-                    raw_new_text
-                };
-                let old_text = if is_binary { None } else { raw_old_text };
-                let worktree_id = repository_clone
-                    .read_with(cx, |repository, cx| {
-                        worktree_id_for_repo_path(
-                            repository,
-                            project_clone.read(cx),
-                            &file.path,
-                            cx,
-                        )
-                    })
-                    .context("project has no worktrees")?;
-                let short_sha = commit_sha
-                    .get(0..git::SHORT_SHA_LENGTH)
-                    .unwrap_or(&commit_sha);
-                let file_name = file
-                    .path
-                    .file_name()
-                    .map(|name| name.to_string())
-                    .unwrap_or_else(|| file.path.display(PathStyle::local()).to_string());
-                let display_name = format!("{short_sha} - {file_name}");
-
-                let file = Arc::new(GitBlob {
-                    path: file.path.clone(),
-                    is_deleted,
+            while let Some(loaded) = loads.next().await {
+                // Buffered loads can already be complete when we poll them, in which
+                // case this loop never awaits and starves the foreground thread.
+                yield_now().await;
+                let LoadedCommitFile {
+                    buffer,
+                    buffer_diff,
+                    status_code,
                     is_binary,
-                    worktree_id,
-                    display_name,
-                }) as Arc<dyn language::File>;
-
-                let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
+                } = loaded?;
                 let buffer_id = cx.update(|_, cx| buffer.read(cx).remote_id())?;
-
-                let status_code = if is_created {
-                    StatusCode::Added
-                } else if is_deleted {
-                    StatusCode::Deleted
-                } else {
-                    StatusCode::Modified
-                };
                 file_statuses.insert(
                     buffer_id,
                     FileStatus::Tracked(TrackedStatus {
@@ -412,26 +395,9 @@ impl CommitView {
                         worktree_status: StatusCode::Unmodified,
                     }),
                 );
-
                 if is_binary {
                     binary_buffer_ids.insert(buffer_id);
                 }
-
-                let buffer_diff = if is_binary {
-                    cx.update(|_, cx| {
-                        let snapshot = buffer.read(cx).snapshot();
-                        cx.new(|cx| {
-                            BufferDiff::new_unchanged(
-                                &snapshot,
-                                snapshot.language().cloned(),
-                                Some(language_registry.clone()),
-                                cx,
-                            )
-                        })
-                    })?
-                } else {
-                    build_buffer_diff(old_text, &buffer, &language_registry, cx).await?
-                };
 
                 let (excerpt_ranges, path) = cx.update(|_, cx| {
                     let snapshot = buffer.read(cx).snapshot();
@@ -1119,15 +1085,104 @@ impl language::File for GitBlob {
     }
 }
 
+struct LoadedCommitFile {
+    buffer: Entity<Buffer>,
+    buffer_diff: Entity<BufferDiff>,
+    status_code: StatusCode,
+    is_binary: bool,
+}
+
+/// Builds the buffer and diff for one file of a commit. Most of the time goes into
+/// parsing the old text, so callers run several of these concurrently.
+async fn load_commit_file(
+    file: CommitFile,
+    commit_sha: &str,
+    repository: &Entity<Repository>,
+    project: &Entity<Project>,
+    language_registry: &Arc<LanguageRegistry>,
+    cx: &mut AsyncWindowContext,
+) -> Result<LoadedCommitFile> {
+    let is_created = file.old_text.is_none();
+    let is_deleted = file.new_text.is_none();
+    let is_binary = file.is_binary;
+
+    let new_text = if is_binary {
+        "(binary file not shown)".to_string()
+    } else {
+        file.new_text.unwrap_or_default()
+    };
+    let old_text = if is_binary { None } else { file.old_text };
+    let worktree_id = repository
+        .read_with(cx, |repository, cx| {
+            worktree_id_for_repo_path(repository, project.read(cx), &file.path, cx)
+        })
+        .context("project has no worktrees")?;
+    let short_sha = commit_sha
+        .get(0..git::SHORT_SHA_LENGTH)
+        .unwrap_or(commit_sha);
+    let file_name = file
+        .path
+        .file_name()
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| file.path.display(PathStyle::local()).to_string());
+    let display_name = format!("{short_sha} - {file_name}");
+
+    let blob = Arc::new(GitBlob {
+        path: file.path.clone(),
+        is_deleted,
+        is_binary,
+        worktree_id,
+        display_name,
+    }) as Arc<dyn language::File>;
+
+    let buffer = build_buffer(new_text, blob, language_registry, cx).await?;
+
+    let buffer_diff = if is_binary {
+        cx.update(|_, cx| {
+            let snapshot = buffer.read(cx).snapshot();
+            cx.new(|cx| {
+                BufferDiff::new_unchanged(
+                    &snapshot,
+                    snapshot.language().cloned(),
+                    Some(language_registry.clone()),
+                    cx,
+                )
+            })
+        })?
+    } else {
+        build_buffer_diff(old_text, &buffer, language_registry, cx).await?
+    };
+
+    let status_code = if is_created {
+        StatusCode::Added
+    } else if is_deleted {
+        StatusCode::Deleted
+    } else {
+        StatusCode::Modified
+    };
+
+    Ok(LoadedCommitFile {
+        buffer,
+        buffer_diff,
+        status_code,
+        is_binary,
+    })
+}
+
 pub(crate) async fn build_buffer(
     mut text: String,
     blob: Arc<dyn File>,
     language_registry: &Arc<language::LanguageRegistry>,
     cx: &mut AsyncWindowContext,
 ) -> Result<Entity<Buffer>> {
-    let line_ending = LineEnding::detect(&text);
-    LineEnding::normalize(&mut text);
-    let text = Rope::from(text);
+    // Several files load concurrently, so keep per-file text work off the foreground thread.
+    let (line_ending, text) = cx
+        .background_spawn(async move {
+            let line_ending = LineEnding::detect(&text);
+            LineEnding::normalize(&mut text);
+            (line_ending, Rope::from(text))
+        })
+        .await;
     let language =
         cx.update(|_, cx| language_registry.language_for_file(&blob, Some(&text), cx))?;
     let language = if let Some(language_id) = language {
@@ -1155,14 +1210,19 @@ pub(crate) async fn build_buffer(
 }
 
 async fn build_buffer_diff(
-    mut old_text: Option<String>,
+    old_text: Option<String>,
     buffer: &Entity<Buffer>,
     language_registry: &Arc<LanguageRegistry>,
     cx: &mut AsyncWindowContext,
 ) -> Result<Entity<BufferDiff>> {
-    if let Some(old_text) = &mut old_text {
-        LineEnding::normalize(old_text);
-    }
+    let old_text = cx
+        .background_spawn(async move {
+            old_text.map(|mut old_text| {
+                LineEnding::normalize(&mut old_text);
+                Arc::<str>::from(old_text)
+            })
+        })
+        .await;
 
     let language = cx.update(|_, cx| buffer.read(cx).language().cloned())?;
     let buffer = cx.update(|_, cx| buffer.read(cx).snapshot())?;
@@ -1171,11 +1231,7 @@ async fn build_buffer_diff(
         cx.new(|cx| BufferDiff::new(&buffer.text, language, Some(language_registry.clone()), cx));
 
     diff.update(cx, |diff, cx| {
-        diff.set_base_text(
-            old_text.map(|old_text| Arc::from(old_text.as_str())),
-            buffer.text.clone(),
-            cx,
-        )
+        diff.set_base_text(old_text, buffer.text.clone(), cx)
     })
     .await;
 

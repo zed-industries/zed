@@ -563,6 +563,15 @@ impl SplittableEditor {
         self.lhs.as_ref().map(|s| &s.editor)
     }
 
+    /// Split panes share a scroll position, but only the scrolled pane emits
+    /// `ScrollPositionChanged`, so the other pane's sticky headers are refreshed here.
+    fn refresh_sticky_headers(editor: &Entity<Editor>, cx: &mut App) {
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            editor.refresh_sticky_headers(&snapshot, cx);
+        });
+    }
+
     pub fn update_editors(
         &self,
         cx: &mut Context<Self>,
@@ -625,6 +634,8 @@ impl SplittableEditor {
                 Editor::for_multibuffer(rhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_runnables();
+            editor.enable_single_excerpt_sticky_headers();
+            editor.enable_excerpt_contexts(cx);
             editor.disable_code_lens(cx);
             editor.disable_inline_diagnostics();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
@@ -647,6 +658,12 @@ impl SplittableEditor {
                             *direction,
                             cx,
                         );
+                    }
+                    EditorEvent::ScrollPositionChanged { .. } => {
+                        if let Some(lhs) = &this.lhs {
+                            Self::refresh_sticky_headers(&lhs.editor, cx);
+                        }
+                        cx.emit(event.clone());
                     }
                     _ => cx.emit(event.clone()),
                 },
@@ -745,6 +762,8 @@ impl SplittableEditor {
             editor.set_show_vertical_scrollbar(false, cx);
             editor.disable_lsp_data();
             editor.disable_runnables();
+            editor.enable_single_excerpt_sticky_headers();
+            editor.enable_excerpt_contexts(cx);
             editor.disable_diagnostics(cx);
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
 
@@ -790,6 +809,10 @@ impl SplittableEditor {
                     this.rhs_editor.update(cx, |editor, cx| {
                         editor.inlay_hint_visibility_changed(cx);
                     });
+                    cx.emit(event.clone());
+                }
+                EditorEvent::ScrollPositionChanged { .. } => {
+                    Self::refresh_sticky_headers(&this.rhs_editor, cx);
                     cx.emit(event.clone());
                 }
                 EditorEvent::OpenExcerptsRequested {
@@ -4567,6 +4590,119 @@ mod tests {
             lhs_pos.x, rhs_pos.x,
             "LHS should have same horizontal scroll position as RHS after autoscroll"
         )
+    }
+
+    #[gpui::test]
+    async fn test_sticky_headers_follow_scroll_from_other_pane(cx: &mut gpui::TestAppContext) {
+        use crate::EditorElement;
+        use crate::element::StickyHeader;
+        use rope::Point;
+
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.sticky_scroll = Some(settings::StickyScrollContent {
+                        enabled: Some(true),
+                    });
+                });
+            });
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            crate::init(cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs as Arc<dyn fs::Fs>, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        // Headerless, like the full-file diff view, so that sticky headers apply.
+        let rhs_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::without_headers(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+        let editor = cx.new_window_entity(|window, cx| {
+            SplittableEditor::new(
+                DiffViewStyle::Split,
+                rhs_multibuffer.clone(),
+                project.clone(),
+                workspace,
+                window,
+                cx,
+            )
+        });
+
+        // `fn foo` loses five lines and `fn bar` gains four, so `fn bar` starts on
+        // row 12 of the base text and row 7 of the current text.
+        let base_text = format!(
+            "fn foo() {{\n{}}}\nfn bar() {{\n{}}}\n",
+            "    let a = 1;\n".repeat(10),
+            "    let b = 2;\n".repeat(10),
+        );
+        let current_text = format!(
+            "fn foo() {{\n{}}}\nfn bar() {{\n{}{}}}\n",
+            "    let a = 1;\n".repeat(5),
+            "    let c = 3;\n".repeat(4),
+            "    let b = 2;\n".repeat(10),
+        );
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, cx);
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(language::rust_lang()), cx)
+        });
+        diff.read_with(cx, |diff, _| diff.base_text_buffer().clone())
+            .update(cx, |base_text_buffer, cx| {
+                base_text_buffer.set_language(Some(language::rust_lang()), cx)
+            });
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let (rhs_editor, lhs_editor) = editor.update(cx, |editor, _cx| {
+            let lhs = editor.lhs.as_ref().expect("should have lhs editor");
+            (editor.rhs_editor.clone(), lhs.editor.clone())
+        });
+
+        let sticky_rows = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
+            editor.update_in(cx, |editor, window, cx| {
+                EditorElement::sticky_headers(editor, &editor.snapshot(window, cx))
+                    .into_iter()
+                    .map(|StickyHeader { start_point, .. }| start_point.row)
+                    .collect::<Vec<_>>()
+            })
+        };
+
+        // Display row 18 is inside `fn bar` on both sides. Each step scrolls to rows
+        // the other pane's last outline query did not cover, so stale headers fail.
+        rhs_editor.update_in(cx, |editor, window, cx| {
+            editor.set_scroll_position(gpui::Point::new(0., 18.), window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            sticky_rows(&lhs_editor, cx),
+            vec![12],
+            "scrolling the RHS should refresh the LHS sticky header to `fn bar`"
+        );
+        assert_eq!(sticky_rows(&rhs_editor, cx), vec![7]);
+
+        lhs_editor.update_in(cx, |editor, window, cx| {
+            editor.set_scroll_position(gpui::Point::new(0., 2.), window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            sticky_rows(&rhs_editor, cx),
+            vec![0],
+            "scrolling the LHS should refresh the RHS sticky header to `fn foo`"
+        );
+        assert_eq!(sticky_rows(&lhs_editor, cx), vec![0]);
     }
 
     #[gpui::test]
