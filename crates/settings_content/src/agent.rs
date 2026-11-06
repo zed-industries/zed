@@ -320,9 +320,9 @@ pub struct AgentSettingsContent {
     pub default_profile: Option<Arc<str>>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
-    /// Where to show a popup notification when the agent is waiting for user input.
+    /// Whether to show an operating system notification when the agent is waiting for user input.
     ///
-    /// Default: "primary_screen"
+    /// Default: "always"
     pub notify_when_agent_waiting: Option<NotifyWhenAgentWaiting>,
     /// When to play a sound when the agent has either completed its response, or needs user input.
     ///
@@ -661,8 +661,8 @@ fn agent_profile_tools_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sc
 #[serde(rename_all = "snake_case")]
 pub enum NotifyWhenAgentWaiting {
     #[default]
-    PrimaryScreen,
-    AllScreens,
+    #[serde(alias = "primary_screen", alias = "all_screens")]
+    Always,
     Never,
 }
 
@@ -1156,6 +1156,29 @@ impl std::fmt::Display for ToolPermissionMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_notification_settings_accept_legacy_screen_choices() {
+        for value in ["always", "primary_screen", "all_screens"] {
+            let setting =
+                serde_json::from_value::<NotifyWhenAgentWaiting>(serde_json::json!(value))
+                    .expect("deserialize enabled notifications");
+            assert_eq!(setting, NotifyWhenAgentWaiting::Always);
+            assert_eq!(
+                serde_json::to_value(setting).expect("serialize enabled notifications"),
+                serde_json::json!("always")
+            );
+        }
+        assert_eq!(
+            serde_json::from_value::<NotifyWhenAgentWaiting>(serde_json::json!("never"))
+                .expect("deserialize disabled notifications"),
+            NotifyWhenAgentWaiting::Never
+        );
+        assert_eq!(
+            NotifyWhenAgentWaiting::default(),
+            NotifyWhenAgentWaiting::Always
+        );
+    }
 
     #[test]
     fn agent_config_option_value_serializes_value_id_as_string() {

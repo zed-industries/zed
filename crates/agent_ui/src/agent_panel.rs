@@ -56,7 +56,7 @@ use crate::{
     conversation_view::{
         AcpThreadViewEvent, RootThreadUpdated, ThreadView, reset_fast_mode_warnings,
     },
-    ui::{AgentNotification, AgentNotificationEvent, EndTrialUpsell},
+    ui::EndTrialUpsell,
 };
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
@@ -75,9 +75,8 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
-    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
-    PlatformDisplay, Subscription, Task, TaskExt, WeakEntity, WindowHandle, prelude::*,
-    pulsating_between,
+    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, Subscription,
+    Task, TaskExt, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
@@ -964,7 +963,7 @@ struct AgentTerminal {
     created_at: DateTime<Utc>,
     has_notification: bool,
     search_bar: Option<Entity<BufferSearchBar>>,
-    notification_windows: Vec<WindowHandle<AgentNotification>>,
+    notification_tag: Option<SharedString>,
     notification_subscriptions: Vec<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
@@ -2260,7 +2259,7 @@ impl AgentPanel {
             created_at: created_at.unwrap_or_else(Utc::now),
             has_notification: false,
             search_bar: None,
-            notification_windows: Vec::new(),
+            notification_tag: None,
             notification_subscriptions: Vec::new(),
             _subscriptions: vec![view_subscription, terminal_subscription],
         };
@@ -2680,7 +2679,7 @@ impl AgentPanel {
         let Some(terminal) = self.terminals.get(&terminal_id) else {
             return;
         };
-        if !terminal.notification_windows.is_empty() {
+        if terminal.notification_tag.is_some() {
             return;
         }
         let title = terminal.title(cx);
@@ -2688,33 +2687,25 @@ impl AgentPanel {
             return;
         }
         let settings = AgentSettings::get_global(cx);
-        match settings.notify_when_agent_waiting {
-            NotifyWhenAgentWaiting::PrimaryScreen => {
-                window.request_attention();
-                if let Some(primary) = cx.primary_display() {
-                    self.pop_up_terminal_notification(terminal_id, &title, primary, window, cx);
-                }
-            }
-            NotifyWhenAgentWaiting::AllScreens => {
-                window.request_attention();
-                for screen in cx.displays() {
-                    self.pop_up_terminal_notification(terminal_id, &title, screen, window, cx);
-                }
-            }
-            NotifyWhenAgentWaiting::Never => {}
+        if settings.notify_when_agent_waiting != NotifyWhenAgentWaiting::Never {
+            window.request_attention();
+            self.post_terminal_system_notification(terminal_id, &title, window, cx);
         }
     }
 
-    fn pop_up_terminal_notification(
+    fn post_terminal_system_notification(
         &mut self,
         terminal_id: TerminalId,
         title: &SharedString,
-        screen: Rc<dyn PlatformDisplay>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let options = AgentNotification::window_options(screen, cx);
-        let project_name = self.workspace.upgrade().and_then(|workspace| {
+        let tag: SharedString =
+            format!("agent-terminal-{:?}-{terminal_id:?}", cx.entity_id()).into();
+        let workspace = self.workspace.clone();
+        let panel = cx.weak_entity();
+        let handle = window.window_handle().downcast::<MultiWorkspace>();
+        let project_name = workspace.upgrade().and_then(|workspace| {
             workspace
                 .read(cx)
                 .project()
@@ -2723,94 +2714,70 @@ impl AgentPanel {
                 .next()
                 .map(|worktree| worktree.read(cx).root_name_str().to_string())
         });
-        let title = title.clone();
-        let Ok(screen_window) = cx.open_window(options, |_window, cx| {
-            cx.new(|_cx| AgentNotification::new(title, None, IconName::Terminal, project_name))
-        }) else {
-            return;
-        };
-        let Ok(pop_up) = screen_window.entity(cx) else {
-            return;
-        };
-
-        let event_subscription = cx.subscribe_in(&pop_up, window, {
-            move |this, _, event: &AgentNotificationEvent, window, cx| match event {
-                AgentNotificationEvent::Accepted => {
-                    let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
-                        log::error!("root view should be a MultiWorkspace");
-                        return;
-                    };
-                    cx.activate(true);
-
-                    let workspace = this.workspace.clone();
-                    cx.defer(move |cx| {
-                        handle
-                            .update(cx, |multi_workspace, window, cx| {
-                                window.activate_window();
-
-                                let Some(workspace) = workspace.upgrade() else {
-                                    return;
-                                };
-                                multi_workspace.activate(workspace.clone(), None, window, cx);
-
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace.reveal_panel::<AgentPanel>(window, cx);
-                                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                                        panel.update(cx, |panel, cx| {
-                                            panel.activate_terminal(terminal_id, true, window, cx);
-                                        });
-                                    }
-                                    workspace.focus_panel::<AgentPanel>(window, cx);
-                                });
-                            })
-                            .log_err();
+        super::system_notifications::show(
+            cx,
+            tag.clone(),
+            title.clone(),
+            project_name.unwrap_or_default().into(),
+            move |cx| {
+                if let Some(panel) = panel.upgrade() {
+                    panel.update(cx, |panel, cx| {
+                        panel.dismiss_terminal_notifications(terminal_id, cx)
                     });
-
-                    this.dismiss_terminal_notifications(terminal_id, cx);
                 }
-                AgentNotificationEvent::Dismissed => {
-                    this.dismiss_terminal_notifications(terminal_id, cx);
-                }
-            }
-        });
-
-        let pop_up_weak = pop_up.downgrade();
-        let window_activation_subscription = cx.observe_window_activation(window, {
-            let pop_up_weak = pop_up_weak.clone();
-            move |this, window, cx| {
-                this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
-            }
-        });
-
-        let multi_workspace_subscription = {
-            let pop_up_weak = pop_up_weak.clone();
-            window.root::<MultiWorkspace>().flatten().map(|mw| {
-                cx.observe_in(&mw, window, move |this, _, window, cx| {
-                    this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
-                })
-            })
-        };
-
+                let Some(handle) = handle else { return };
+                cx.activate(true);
+                handle
+                    .update(cx, |multi_workspace, window, cx| {
+                        window.activate_window();
+                        let Some(workspace) = workspace.upgrade() else {
+                            return;
+                        };
+                        multi_workspace.activate(workspace.clone(), None, window, cx);
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.reveal_panel::<AgentPanel>(window, cx);
+                            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                                panel.update(cx, |panel, cx| {
+                                    panel.activate_terminal(terminal_id, true, window, cx)
+                                });
+                            }
+                            workspace.focus_panel::<AgentPanel>(window, cx);
+                        });
+                    })
+                    .log_err();
+            },
+        );
         let this_panel = cx.entity();
-        let agent_panel_subscription = cx.subscribe_in(&this_panel, window, {
-            move |this, _, event: &AgentPanelEvent, window, cx| match event {
-                AgentPanelEvent::ActiveViewChanged | AgentPanelEvent::ActiveViewFocused => {
-                    this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
+        let window_activation_subscription =
+            cx.observe_window_activation(window, move |this, window, cx| {
+                this.dismiss_terminal_notification_if_visible(terminal_id, window, cx);
+            });
+        let multi_workspace_subscription =
+            window
+                .root::<MultiWorkspace>()
+                .flatten()
+                .map(|multi_workspace| {
+                    cx.observe_in(&multi_workspace, window, move |this, _, window, cx| {
+                        this.dismiss_terminal_notification_if_visible(terminal_id, window, cx);
+                    })
+                });
+        let agent_panel_subscription = cx.subscribe_in(
+            &this_panel,
+            window,
+            move |this, _, event: &AgentPanelEvent, window, cx| {
+                if matches!(
+                    event,
+                    AgentPanelEvent::ActiveViewChanged | AgentPanelEvent::ActiveViewFocused
+                ) {
+                    this.dismiss_terminal_notification_if_visible(terminal_id, window, cx);
                 }
-                AgentPanelEvent::EntryChanged
-                | AgentPanelEvent::TerminalCloseRequested { .. }
-                | AgentPanelEvent::ThreadInteracted { .. } => {}
-            }
-        });
-
+            },
+        );
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
-            screen_window
-                .update(cx, |_, window, _| window.remove_window())
-                .ok();
+            super::system_notifications::dismiss(cx, &tag);
             return;
         };
-        terminal.notification_windows.push(screen_window);
-        terminal.notification_subscriptions.push(event_subscription);
+        terminal.notification_tag = Some(tag);
         terminal
             .notification_subscriptions
             .push(window_activation_subscription);
@@ -2826,15 +2793,10 @@ impl AgentPanel {
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
-        let windows = std::mem::take(&mut terminal.notification_windows);
-        terminal.notification_subscriptions.clear();
-        for window in windows {
-            window
-                .update(cx, |_, window, _| {
-                    window.remove_window();
-                })
-                .ok();
+        if let Some(tag) = terminal.notification_tag.take() {
+            super::system_notifications::dismiss(cx, &tag);
         }
+        terminal.notification_subscriptions.clear();
     }
 
     fn dismiss_all_terminal_notifications(&mut self, cx: &mut App) {
@@ -2852,7 +2814,7 @@ impl AgentPanel {
         let had_terminal_notifications = self
             .terminals
             .values()
-            .any(|t| !t.notification_windows.is_empty());
+            .any(|t| t.notification_tag.is_some());
         if had_terminal_notifications {
             self.dismiss_all_terminal_notifications(cx);
             dismissed = true;
@@ -2909,10 +2871,9 @@ impl AgentPanel {
         })
     }
 
-    fn dismiss_terminal_pop_up_if_visible(
+    fn dismiss_terminal_notification_if_visible(
         &mut self,
         terminal_id: TerminalId,
-        pop_up: &WeakEntity<AgentNotification>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2927,11 +2888,7 @@ impl AgentPanel {
             cx.emit(AgentPanelEvent::EntryChanged);
             cx.notify();
         }
-        if let Some(pop_up) = pop_up.upgrade() {
-            pop_up.update(cx, |notification, cx| {
-                notification.dismiss(cx);
-            });
-        }
+        self.dismiss_terminal_notifications(terminal_id, cx);
     }
 
     #[cfg(feature = "audio")]
@@ -9849,7 +9806,7 @@ mod tests {
             language_model::LanguageModelRegistry::test(cx);
             AgentSettings::override_global(
                 AgentSettings {
-                    notify_when_agent_waiting: NotifyWhenAgentWaiting::PrimaryScreen,
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Always,
                     ..AgentSettings::get_global(cx).clone()
                 },
                 cx,
@@ -10983,11 +10940,7 @@ mod tests {
                 .expect("terminal should remain in the panel");
             assert!(!terminal.has_notification);
         });
-        assert!(
-            cx.windows()
-                .iter()
-                .all(|window| window.downcast::<AgentNotification>().is_none())
-        );
+        assert!(cx.delivered_system_notifications().is_empty());
     }
 
     #[gpui::test]
@@ -11031,11 +10984,7 @@ mod tests {
                 .expect("terminal should remain in the panel");
             assert!(!terminal.has_notification);
         });
-        assert!(
-            cx.windows()
-                .iter()
-                .all(|window| window.downcast::<AgentNotification>().is_none())
-        );
+        assert!(cx.delivered_system_notifications().is_empty());
     }
 
     #[gpui::test]
@@ -11080,11 +11029,7 @@ mod tests {
                 .expect("first terminal should remain in the panel");
             assert!(first_terminal.has_notification);
         });
-        assert!(
-            cx.windows()
-                .iter()
-                .all(|window| window.downcast::<AgentNotification>().is_none())
-        );
+        assert!(cx.delivered_system_notifications().is_empty());
     }
 
     #[gpui::test]
@@ -11129,9 +11074,9 @@ mod tests {
                 .expect("first terminal should remain in the panel");
             assert!(first_terminal.has_notification);
         });
-        cx.windows()
-            .iter()
-            .find_map(|window| window.downcast::<AgentNotification>())
+        cx.delivered_system_notifications()
+            .into_iter()
+            .next()
             .expect("terminal bell should notify when the sidebar thread list is hidden");
     }
 
@@ -11158,9 +11103,9 @@ mod tests {
         });
         cx.run_until_parked();
 
-        cx.windows()
-            .iter()
-            .find_map(|window| window.downcast::<AgentNotification>())
+        cx.delivered_system_notifications()
+            .into_iter()
+            .next()
             .expect("inactive terminal bell should show a notification");
 
         cx.update(|window, cx| {
@@ -11182,11 +11127,7 @@ mod tests {
                 .expect("first terminal should remain in the panel");
             assert!(first_terminal.has_notification);
         });
-        assert!(
-            cx.windows()
-                .iter()
-                .all(|window| window.downcast::<AgentNotification>().is_none())
-        );
+        assert!(cx.delivered_system_notifications().is_empty());
     }
 
     #[gpui::test]
@@ -11221,9 +11162,9 @@ mod tests {
                 .expect("terminal should remain in the panel");
             assert!(terminal.has_notification);
         });
-        cx.windows()
-            .iter()
-            .find_map(|window| window.downcast::<AgentNotification>())
+        cx.delivered_system_notifications()
+            .into_iter()
+            .next()
             .expect("background terminal bell should show a notification");
     }
 
@@ -11253,9 +11194,9 @@ mod tests {
                 .expect("terminal should remain in the panel");
             assert!(terminal.has_notification);
         });
-        cx.windows()
-            .iter()
-            .find_map(|window| window.downcast::<AgentNotification>())
+        cx.delivered_system_notifications()
+            .into_iter()
+            .next()
             .expect("background terminal bell should show a notification");
 
         cx.update(|window, _cx| {
@@ -11271,11 +11212,7 @@ mod tests {
                 .expect("terminal should remain in the panel");
             assert!(!terminal.has_notification);
         });
-        assert!(
-            cx.windows()
-                .iter()
-                .all(|window| window.downcast::<AgentNotification>().is_none())
-        );
+        assert!(cx.delivered_system_notifications().is_empty());
     }
 
     #[gpui::test]
@@ -11286,7 +11223,7 @@ mod tests {
         cx.update(|_window, cx| {
             AgentSettings::override_global(
                 AgentSettings {
-                    notify_when_agent_waiting: NotifyWhenAgentWaiting::PrimaryScreen,
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Always,
                     ..AgentSettings::get_global(cx).clone()
                 },
                 cx,
@@ -11312,9 +11249,9 @@ mod tests {
                 .expect("terminal should remain in the panel");
             assert!(terminal.has_notification);
         });
-        cx.windows()
-            .iter()
-            .find_map(|window| window.downcast::<AgentNotification>())
+        cx.delivered_system_notifications()
+            .into_iter()
+            .next()
             .expect("hidden terminal bell should show a notification");
 
         let workspace = cx.update(|window, cx| {
@@ -11340,11 +11277,7 @@ mod tests {
                 .expect("terminal should remain in the panel");
             assert!(!terminal.has_notification);
         });
-        assert!(
-            cx.windows()
-                .iter()
-                .all(|window| window.downcast::<AgentNotification>().is_none())
-        );
+        assert!(cx.delivered_system_notifications().is_empty());
     }
 
     #[gpui::test]
@@ -11353,7 +11286,7 @@ mod tests {
         cx.update(|_window, cx| {
             AgentSettings::override_global(
                 AgentSettings {
-                    notify_when_agent_waiting: NotifyWhenAgentWaiting::PrimaryScreen,
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Always,
                     ..AgentSettings::get_global(cx).clone()
                 },
                 cx,
@@ -11372,9 +11305,9 @@ mod tests {
         });
         cx.run_until_parked();
 
-        cx.windows()
-            .iter()
-            .find_map(|window| window.downcast::<AgentNotification>())
+        cx.delivered_system_notifications()
+            .into_iter()
+            .next()
             .expect("hidden terminal bell should show a notification");
 
         drop(panel);
@@ -11385,11 +11318,7 @@ mod tests {
             !weak_panel.is_upgradable(),
             "agent panel should be released after dropping the last handle"
         );
-        assert!(
-            cx.windows()
-                .iter()
-                .all(|window| window.downcast::<AgentNotification>().is_none())
-        );
+        assert!(cx.delivered_system_notifications().is_empty());
     }
 
     #[gpui::test]
@@ -11401,7 +11330,7 @@ mod tests {
             cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
             AgentSettings::override_global(
                 AgentSettings {
-                    notify_when_agent_waiting: NotifyWhenAgentWaiting::PrimaryScreen,
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Always,
                     ..AgentSettings::get_global(cx).clone()
                 },
                 cx,
@@ -11463,18 +11392,15 @@ mod tests {
         cx.run_until_parked();
 
         let notification = cx
-            .windows()
-            .iter()
-            .find_map(|window| window.downcast::<AgentNotification>())
+            .delivered_system_notifications()
+            .into_iter()
+            .next()
             .expect("terminal bell should show a notification");
-        notification
-            .update(cx, |notification, _window, cx| notification.accept(cx))
-            .unwrap();
-        assert!(
-            cx.windows()
-                .iter()
-                .all(|window| window.downcast::<AgentNotification>().is_none())
-        );
+        cx.simulate_system_notification_response(gpui::SystemNotificationResponse {
+            tag: notification.tag,
+            action_id: None,
+        });
+        assert!(cx.delivered_system_notifications().is_empty());
         cx.run_until_parked();
 
         multi_workspace

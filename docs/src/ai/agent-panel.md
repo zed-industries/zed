@@ -114,6 +114,11 @@ If you send a prompt to the Agent and then put Zed in the background, you can ch
 
 These notifications can be used together or individually, and you can use the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys to customize that, including turning both off entirely.
 
+In the Settings Editor, set **Notify When Agent Waiting** to **Always** or **Never**.
+Notifications appear only when the agent's status is not visible in the active window.
+Your operating system controls their placement and whether they are allowed to appear.
+The older `primary_screen` and `all_screens` values still enable notifications, but no longer control which screen displays them.
+
 ### Reviewing Changes {#reviewing-changes}
 
 Once the agent has made changes to your project, the panel will surface which files, how many of them, and how many lines have been edited.
