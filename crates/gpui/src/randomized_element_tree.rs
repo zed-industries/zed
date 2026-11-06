@@ -1665,6 +1665,108 @@ mod tests {
     const MUTATION_COUNT: usize = 32;
     const WINDOW_SIZE: Size<Pixels> = size(px(1200.0), px(900.0));
 
+    struct CachedHoverChild {
+        group: bool,
+    }
+
+    impl Render for CachedHoverChild {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("child")
+                .size(px(100.0))
+                .bg(crate::rgb(0xff0000))
+                .when(self.group, |element| {
+                    element.group_hover("parent", |element| element.bg(crate::rgb(0x0000ff)))
+                })
+                .when(!self.group, |element| {
+                    element.hover(|element| element.bg(crate::rgb(0x0000ff)))
+                })
+        }
+    }
+
+    struct CachedHoverParent {
+        child: Entity<CachedHoverChild>,
+        group: bool,
+        show_group: bool,
+    }
+
+    impl Render for CachedHoverParent {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("parent")
+                .size(px(200.0))
+                .when(self.show_group, |element| element.group("parent"))
+                .when(!self.group, |element| {
+                    element.hover(|element| element.border(px(10.0)))
+                })
+                .child(
+                    self.child
+                        .clone()
+                        .cached(crate::StyleRefinement::default().size(px(100.0))),
+                )
+        }
+    }
+
+    fn cached_hover_regression(cx: &mut TestAppContext, group: bool, show_group: bool) {
+        let windows = [false, true].map(|_| {
+            cx.open_window(WINDOW_SIZE, move |_, cx| {
+                let child = cx.new(|_| CachedHoverChild { group });
+                CachedHoverParent {
+                    child,
+                    group,
+                    show_group,
+                }
+            })
+        });
+        let roots = windows.map(|window| window.root(cx).expect("hover root"));
+        for (frame, position) in [
+            crate::point(px(300.0), px(300.0)),
+            crate::point(px(1.0), px(1.0)),
+            crate::point(px(20.0), px(20.0)),
+            crate::point(px(300.0), px(300.0)),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if group && frame == 1 {
+                for root in &roots {
+                    root.update(cx, |parent, cx| {
+                        parent.show_group = true;
+                        cx.notify();
+                    });
+                }
+            }
+            let scenes = windows.map(|window| {
+                let fresh = window == windows[1];
+                cx.update_window(window.into(), |_, window, cx| {
+                    window.simulate_mouse_move(position, cx);
+                    if fresh {
+                        window.refresh();
+                    }
+                    window.draw(cx).clear(cx);
+                    SceneSnapshot::from_window(window)
+                })
+                .expect("hover window")
+            });
+            assert_eq!(scenes[0], scenes[1], "frame {frame}, group={group}");
+        }
+    }
+
+    #[gpui::test]
+    fn cached_group_hover_survives_parent_redraw(cx: &mut TestAppContext) {
+        cached_hover_regression(cx, true, true);
+    }
+
+    #[gpui::test]
+    fn cached_group_hover_resolves_new_ancestor_group(cx: &mut TestAppContext) {
+        cached_hover_regression(cx, true, false);
+    }
+
+    #[gpui::test]
+    fn cached_own_hover_rechecks_changed_hitboxes(cx: &mut TestAppContext) {
+        cached_hover_regression(cx, false, false);
+    }
+
     #[derive(Debug, PartialEq)]
     struct SceneSnapshot {
         quads: Vec<QuadSnapshot>,

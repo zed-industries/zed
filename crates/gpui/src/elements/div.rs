@@ -2630,7 +2630,12 @@ impl Interactivity {
                                             }
 
                                             if let Some(group) = self.group.clone() {
-                                                GroupHitboxes::push(group, hitbox.id, cx);
+                                                GroupHitboxes::push(
+                                                    group,
+                                                    hitbox.id,
+                                                    window.cached_view_outer_groups.len(),
+                                                    cx,
+                                                );
                                             }
 
                                             if let Some(area) = self.window_control {
@@ -2916,12 +2921,13 @@ impl Interactivity {
             });
             let current_view = window.current_view();
 
+            // Layout can move the hitbox after input updates hover_state. Track
+            // transitions from the hit test used by the frame we painted instead.
+            let mut was_hovered = hitbox.is_hovered(window);
             window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                 let hovered = hitbox.is_hovered(window);
-                let was_hovered = hover_state
-                    .as_ref()
-                    .is_some_and(|state| state.borrow().element);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
+                    was_hovered = hovered;
                     if let Some(hover_state) = &hover_state {
                         hover_state.borrow_mut().element = hovered;
                         cx.notify(current_view);
@@ -2931,19 +2937,20 @@ impl Interactivity {
         }
 
         if let Some(group_hover) = self.group_hover_style.as_ref() {
-            if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
+            if let Some(group_hitbox_id) =
+                GroupHitboxes::get_for_hover(&group_hover.group, window, cx)
+            {
                 let hover_state = element_state
                     .as_ref()
                     .and_then(|element| element.hover_state.as_ref())
                     .cloned();
                 let current_view = window.current_view();
 
+                let mut was_group_hovered = group_hitbox_id.is_hovered(window);
                 window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                     let group_hovered = group_hitbox_id.is_hovered(window);
-                    let was_group_hovered = hover_state
-                        .as_ref()
-                        .is_some_and(|state| state.borrow().group);
                     if phase == DispatchPhase::Capture && group_hovered != was_group_hovered {
+                        was_group_hovered = group_hovered;
                         if let Some(hover_state) = &hover_state {
                             hover_state.borrow_mut().group = group_hovered;
                             cx.notify(current_view);
@@ -3368,7 +3375,7 @@ impl Interactivity {
         let group_hitbox = self
             .group_hover_style
             .as_ref()
-            .and_then(|group_hover| GroupHitboxes::get(&group_hover.group, cx));
+            .and_then(|group_hover| GroupHitboxes::get_for_hover(&group_hover.group, window, cx));
 
         if let Some(group_hitbox) = group_hitbox {
             let was_hovered = group_hitbox.is_hovered(window);
@@ -3497,19 +3504,20 @@ impl Interactivity {
 
         if !cx.has_active_drag() {
             if let Some(group_hover) = self.group_hover_style.as_ref() {
-                let is_group_hovered =
-                    if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
-                        !window.last_input_was_touch() && group_hitbox_id.is_hovered(window)
-                    } else if let Some(element_state) = element_state.as_ref() {
-                        !window.last_input_was_touch()
-                            && element_state
-                                .hover_state
-                                .as_ref()
-                                .map(|state| state.borrow().group)
-                                .unwrap_or(false)
-                    } else {
-                        false
-                    };
+                let is_group_hovered = if let Some(group_hitbox_id) =
+                    GroupHitboxes::get_for_hover(&group_hover.group, window, cx)
+                {
+                    !window.last_input_was_touch() && group_hitbox_id.is_hovered(window)
+                } else if let Some(element_state) = element_state.as_ref() {
+                    !window.last_input_was_touch()
+                        && element_state
+                            .hover_state
+                            .as_ref()
+                            .map(|state| state.borrow().group)
+                            .unwrap_or(false)
+                } else {
+                    false
+                };
 
                 if is_group_hovered {
                     style.refine(&group_hover.style);
@@ -4098,7 +4106,7 @@ fn handle_tooltip_check_visible_and_update(
 }
 
 #[derive(Default)]
-pub(crate) struct GroupHitboxes(HashMap<SharedString, SmallVec<[HitboxId; 1]>>);
+pub(crate) struct GroupHitboxes(HashMap<SharedString, SmallVec<[(HitboxId, usize); 1]>>);
 
 impl Global for GroupHitboxes {}
 
@@ -4108,15 +4116,32 @@ impl GroupHitboxes {
             .0
             .get(name)
             .and_then(|bounds_stack| bounds_stack.last())
-            .cloned()
+            .map(|(hitbox, _)| *hitbox)
     }
 
-    pub fn push(name: SharedString, hitbox_id: HitboxId, cx: &mut App) {
+    fn get_for_hover(name: &SharedString, window: &mut Window, cx: &mut App) -> Option<HitboxId> {
+        let group = cx
+            .default_global::<Self>()
+            .0
+            .get(name)
+            .and_then(|stack| stack.last())
+            .copied();
+        let depth = group.map_or(0, |(_, depth)| depth);
+        // Replaying a child cannot retain a hitbox owned by an ancestor that
+        // paints afresh. Groups painted inside the cached view remain reusable.
+        // An absent group can also start resolving when an ancestor changes.
+        for uses_outer_group in window.cached_view_outer_groups.iter_mut().skip(depth) {
+            *uses_outer_group = true;
+        }
+        group.map(|(hitbox, _)| hitbox)
+    }
+
+    pub fn push(name: SharedString, hitbox_id: HitboxId, depth: usize, cx: &mut App) {
         cx.default_global::<Self>()
             .0
             .entry(name)
             .or_default()
-            .push(hitbox_id);
+            .push((hitbox_id, depth));
     }
 
     pub fn pop(name: &SharedString, cx: &mut App) {
