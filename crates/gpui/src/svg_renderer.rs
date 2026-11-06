@@ -307,8 +307,13 @@ fn rasterize_tree(tree: &usvg::Tree, size: SvgSize) -> Result<Pixmap, usvg::Erro
 }
 
 fn load_bundled_fonts(asset_source: &dyn AssetSource, db: &mut usvg::fontdb::Database) {
+    // Keep IBM Plex faces in sync with mermaid_render's native measurement set so
+    // italic/semibold labels are measured and painted with the same metrics.
     let font_paths = [
         "fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf",
+        "fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf",
+        "fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf",
+        "fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf",
         "fonts/lilex/Lilex-Regular.ttf",
     ];
     for path in font_paths {
