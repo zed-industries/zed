@@ -11639,8 +11639,7 @@ mod tests {
                     sha.to_string(),
                     repository.downgrade(),
                     workspace,
-                    None,
-                    None,
+                    Default::default(),
                     window,
                     cx,
                 );
