@@ -2760,7 +2760,6 @@ impl Sidebar {
                                 let targets = worktree_create_targets(
                                     has_multiple_repositories,
                                     default_branch,
-                                    current_branch.as_deref(),
                                 );
                                 for target in targets {
                                     let label = format!(
