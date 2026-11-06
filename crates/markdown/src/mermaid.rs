@@ -550,10 +550,10 @@ fn on_mermaid_zoom_scroll(
     markdown: Entity<Markdown>,
     source_offset: usize,
     on_zoom: Option<MermaidZoomCallback>,
-) -> impl Fn(&ScrollEvent, &mut Window, &mut App) + 'static {
+) -> impl Fn(&ScrollEvent, &mut Window, &mut App) -> ScrollDelta + 'static {
     move |event, window, cx| {
         if !(event.modifiers.control || event.modifiers.platform) {
-            return;
+            return event.delta;
         }
         let scroll_ticks = mermaid_zoom_ticks(event.delta);
         if scroll_ticks != 0.0 {
@@ -571,6 +571,7 @@ fn on_mermaid_zoom_scroll(
             }
         }
         cx.stop_propagation();
+        ScrollDelta::default()
     }
 }
 

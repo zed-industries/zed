@@ -560,7 +560,6 @@ impl InputEvent for ScrollEvent {
         PlatformInput::Scroll(self)
     }
 }
-impl MouseEvent for ScrollEvent {}
 
 impl Deref for ScrollEvent {
     type Target = Modifiers;

@@ -20,10 +20,10 @@ use git::{
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
     DismissEvent, Div, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle,
-    Focusable, Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollEvent,
-    ScrollHandle, ScrollStrategy, SharedString, Stateful, Subscription, Task, TextStyleRefinement,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
-    px, uniform_list,
+    Focusable, Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollDelta,
+    ScrollEvent, ScrollHandle, ScrollStrategy, SharedString, Stateful, Subscription, Task,
+    TextStyleRefinement, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
+    point, prelude::*, px, uniform_list,
 };
 use language::line_diff;
 use markdown::{Markdown, MarkdownElement};
@@ -4128,7 +4128,7 @@ impl GitGraph {
     ) -> Stateful<Div> {
         column
             .cursor_pointer()
-            .on_scroll(cx.listener(Self::handle_graph_scroll))
+            .on_scroll(cx.scroll_listener(Self::handle_graph_scroll))
             .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
             .on_click(cx.listener(Self::handle_graph_click))
             .on_mouse_down(
@@ -4148,7 +4148,7 @@ impl GitGraph {
         event: &ScrollEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> ScrollDelta {
         let line_height = window.line_height();
         let delta = event.delta.pixel_delta(line_height);
 
@@ -4168,10 +4168,12 @@ impl GitGraph {
         let new_y = (current_offset.y + delta.y).clamp(max_vertical_scroll, px(0.));
         let new_offset = Point::new(current_offset.x, new_y);
 
-        if new_offset != current_offset {
-            table_state.set_scroll_offset(new_offset);
-            cx.notify();
+        if new_offset == current_offset {
+            return event.delta;
         }
+        table_state.set_scroll_offset(new_offset);
+        cx.notify();
+        ScrollDelta::Pixels(point(delta.x, delta.y - (new_y - current_offset.y)))
     }
 
     fn commit_count_and_loading_state(&mut self, cx: &mut Context<Self>) -> (usize, bool) {

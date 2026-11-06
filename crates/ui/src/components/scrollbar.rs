@@ -6,8 +6,8 @@ use gpui::{
     ContentMask, Context, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId,
     Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement,
     IntoElement, IsZero, LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Point, Position, Render, ScrollEvent, ScrollHandle, Size,
-    Stateful, StatefulInteractiveElement, Style, StyleRefinement, Styled, Subscription, Task,
+    MouseUpEvent, ParentElement, Pixels, Point, Position, Render, ScrollHandle, Size, Stateful,
+    StatefulInteractiveElement, Style, StyleRefinement, Styled, Subscription, Task,
     UniformListDecoration, UniformListScrollHandle, Window, ease_in_out, fill,
     prelude::FluentBuilder as _, px, quad, relative, size,
 };
@@ -1666,15 +1666,16 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                 }
             });
 
-            window.on_mouse_event({
+            window.on_scroll_event({
                 let state = self.state.clone();
 
-                move |event: &ScrollEvent, phase, window, cx| {
+                move |event, phase, window, cx| {
                     state.update(cx, |state, cx| {
                         if phase.capture() && state.parent_hovered(window) {
                             state.update_hovered_thumb(&event.position, window, cx)
                         }
                     });
+                    event.delta
                 }
             });
 

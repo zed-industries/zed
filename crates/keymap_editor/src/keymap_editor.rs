@@ -19,9 +19,9 @@ use gpui::{
     Action, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, Global, IsZero,
     KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
-    KeyContext, KeybindingKeystroke, MouseButton, PlatformKeyboardMapper, Point, ScrollEvent,
-    ScrollStrategy, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
-    actions, anchored, deferred, div,
+    KeyContext, KeybindingKeystroke, MouseButton, PlatformKeyboardMapper, Point, ScrollStrategy,
+    Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity, actions, anchored,
+    deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 
@@ -2376,13 +2376,14 @@ impl Render for KeymapEditor {
                         }),
                     ),
             )
-            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
+            .on_scroll(cx.scroll_listener(|this, event, _, cx| {
                 // This ensures that the menu is not dismissed in cases where scroll events
                 // with a delta of zero are emitted
                 if !event.delta.pixel_delta(px(1.)).y.is_zero() {
                     this.context_menu.take();
                     cx.notify();
                 }
+                event.delta
             }))
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
