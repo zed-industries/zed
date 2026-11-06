@@ -49,7 +49,10 @@ use x11rb::{
 };
 
 use crate::linux::platform::parse_uri_list;
-use gpui::{ClipboardEntry, ClipboardItem, ExternalPaths, Image, ImageFormat, hash};
+use gpui::{
+    ClipboardContentTypes, ClipboardEntry, ClipboardItem, ClipboardReadError, ExternalPaths, Image,
+    ImageFormat, hash,
+};
 use strum::IntoEnumIterator;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -308,30 +311,15 @@ impl Inner {
         }
         let reader = XContext::new(&self.display)?;
 
-        let highest_precedence_format =
-            match self
-                .atoms
-                .read_single(&reader, selection, self.atoms.TARGETS)
-            {
-                Err(err) => {
-                    log::trace!("Clipboard TARGETS query failed with {err:?}");
-                    None
-                }
-                Ok(ClipboardData { bytes, format }) => {
-                    if format == self.atoms.ATOM {
-                        let available_formats = Self::parse_formats(&bytes);
-                        formats
-                            .iter()
-                            .find(|format| available_formats.contains(format))
-                    } else {
-                        log::trace!(
-                            "Unexpected clipboard TARGETS format {}",
-                            self.atom_name(format)
-                        );
-                        None
-                    }
-                }
-            };
+        let highest_precedence_format = match self.atoms.read_targets(&reader, selection) {
+            Err(err) => {
+                log::trace!("Clipboard TARGETS query failed with {err:?}");
+                None
+            }
+            Ok(available_formats) => formats
+                .iter()
+                .find(|format| available_formats.contains(format)),
+        };
 
         if let Some(&format) = highest_precedence_format {
             let data = self.atoms.read_single(&reader, selection, format)?;
@@ -362,7 +350,7 @@ impl Inner {
                         continue;
                     }
                 }
-                Err(Error::ContentNotAvailable) => {
+                Err(Error::ContentNotAvailable | Error::Timeout) => {
                     continue;
                 }
                 Err(e) => {
@@ -373,13 +361,6 @@ impl Inner {
         }
         log::trace!("All conversions to supported formats failed.");
         Err(Error::ContentNotAvailable)
-    }
-
-    fn parse_formats(bytes: &[u8]) -> Vec<Atom> {
-        bytes
-            .chunks_exact(4)
-            .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-            .collect()
     }
 
     fn selection_of(&self, selection: ClipboardKind) -> &Selection {
@@ -435,6 +416,39 @@ impl Inner {
 }
 
 impl Atoms {
+    fn read_targets(&self, reader: &XContext, selection: ClipboardKind) -> Result<Vec<Atom>> {
+        let ClipboardData { bytes, format } = self.read_single(reader, selection, self.TARGETS)?;
+        if format != self.ATOM {
+            log::trace!("Unexpected clipboard TARGETS format {format}");
+            return Err(Error::ConversionFailure);
+        }
+        Ok(Self::parse_formats(&bytes))
+    }
+
+    fn parse_formats(bytes: &[u8]) -> Vec<Atom> {
+        bytes
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()
+    }
+
+    fn text_format_atoms(&self) -> [Atom; 6] {
+        [
+            self.UTF8_STRING,
+            self.UTF8_MIME_0,
+            self.UTF8_MIME_1,
+            self.STRING,
+            self.TEXT,
+            self.TEXT_MIME_UNKNOWN,
+        ]
+    }
+
+    fn image_entries(&self) -> Vec<(Atom, ImageFormat)> {
+        ImageFormat::iter()
+            .map(|format| (self.image_format_atom(format), format))
+            .collect()
+    }
+
     fn read_single(
         &self,
         reader: &XContext,
@@ -525,7 +539,7 @@ impl Atoms {
             }
         }
         log::info!("Time-out hit while reading the clipboard.");
-        Err(Error::ContentNotAvailable)
+        Err(Error::Timeout)
     }
 
     fn atom_of(&self, selection: ClipboardKind) -> Atom {
@@ -979,6 +993,50 @@ pub(crate) struct Clipboard {
     inner: Arc<Inner>,
 }
 
+pub(crate) struct ClipboardContentTypesQuery {
+    display: String,
+    atoms: Atoms,
+}
+
+impl ClipboardContentTypesQuery {
+    pub(crate) fn run(self) -> Result<ClipboardContentTypes, ClipboardReadError> {
+        let targets = match XContext::new(&self.display)
+            .and_then(|reader| self.atoms.read_targets(&reader, ClipboardKind::Clipboard))
+        {
+            Ok(targets) => targets,
+            Err(Error::ContentNotAvailable) => return Ok(ClipboardContentTypes::empty()),
+            Err(Error::Timeout) => return Err(ClipboardReadError::TimedOut),
+            Err(Error::ConversionFailure) => return Err(ClipboardReadError::UnsupportedContent),
+            Err(error) => {
+                log::debug!("Failed to query X11 clipboard content types: {error}");
+                return Err(ClipboardReadError::Unavailable);
+            }
+        };
+
+        let mut content_types = ClipboardContentTypes::empty();
+        if self
+            .atoms
+            .text_format_atoms()
+            .iter()
+            .any(|atom| targets.contains(atom))
+        {
+            content_types |= ClipboardContentTypes::TEXT;
+        }
+        if self
+            .atoms
+            .image_entries()
+            .iter()
+            .any(|(atom, _)| targets.contains(atom))
+        {
+            content_types |= ClipboardContentTypes::IMAGE;
+        }
+        if targets.contains(&self.atoms.URI_LIST) {
+            content_types |= ClipboardContentTypes::EXTERNAL_PATHS;
+        }
+        Ok(content_types)
+    }
+}
+
 impl Clipboard {
     /// Returns the process's clipboard, connecting it to `display` if it doesn't exist yet.
     pub(crate) fn new(display: &str) -> Result<Self> {
@@ -1006,6 +1064,15 @@ impl Clipboard {
             server_handle: join_handle,
         });
         Ok(Self { inner: ctx })
+    }
+
+    pub(crate) fn content_types_query(&self) -> ClipboardContentTypesQuery {
+        // Holding an Arc<Inner> in the background task would prevent Clipboard::drop
+        // from handing the clipboard contents over to the clipboard manager.
+        ClipboardContentTypesQuery {
+            display: self.inner.display.clone(),
+            atoms: self.inner.atoms,
+        }
     }
 
     pub(crate) fn set_text(
@@ -1037,18 +1104,8 @@ impl Clipboard {
     }
 
     pub(crate) fn get_any(&self, selection: ClipboardKind) -> Result<ClipboardItem> {
-        let image_entries = ImageFormat::iter()
-            .map(|format| (self.inner.atoms.image_format_atom(format), format))
-            .collect::<Vec<_>>();
-
-        let text_format_atoms: &[Atom] = &[
-            self.inner.atoms.UTF8_STRING,
-            self.inner.atoms.UTF8_MIME_0,
-            self.inner.atoms.UTF8_MIME_1,
-            self.inner.atoms.STRING,
-            self.inner.atoms.TEXT,
-            self.inner.atoms.TEXT_MIME_UNKNOWN,
-        ];
+        let image_entries = self.inner.atoms.image_entries();
+        let text_format_atoms = self.inner.atoms.text_format_atoms();
 
         // File lists and images are more specific, and read will return the first
         // format that the contents can be converted to
@@ -1074,11 +1131,11 @@ impl Clipboard {
                 let mut entries = vec![ClipboardEntry::ExternalPaths(ExternalPaths(paths))];
                 match self
                     .inner
-                    .read(text_format_atoms, selection)
+                    .read(&text_format_atoms, selection)
                     .and_then(|result| self.text_from_data(result))
                 {
                     Ok(text) => entries.extend(text.into_entries()),
-                    Err(Error::ContentNotAvailable) => {}
+                    Err(Error::ContentNotAvailable | Error::Timeout) => {}
                     Err(error) => {
                         log::debug!("Failed to read text accompanying clipboard files: {error}");
                     }
@@ -1264,6 +1321,9 @@ pub enum Error {
     /// an incompatible format to the requested one (eg when calling `get_image` on text)
     ContentNotAvailable,
 
+    /// The clipboard owner did not respond in time.
+    Timeout,
+
     /// The native clipboard is not accessible due to being held by an other party.
     ///
     /// This "other party" could be a different process or it could be within
@@ -1290,6 +1350,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
 			Error::ContentNotAvailable => f.write_str("The clipboard contents were not available in the requested format or the clipboard is empty."),
+			Error::Timeout => f.write_str("The clipboard owner did not respond in time."),
 			Error::ClipboardOccupied => f.write_str("The native clipboard is not accessible due to being held by an other party."),
 			Error::ConversionFailure => f.write_str("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format."),
 			Error::Unknown { description } => f.write_fmt(format_args!("Unknown error while interacting with the clipboard: {description}")),
@@ -1313,6 +1374,7 @@ impl std::fmt::Debug for Error {
 		}
         let name = kind_to_str!(
             ContentNotAvailable,
+            Timeout,
             ClipboardOccupied,
             ConversionFailure,
             Unknown { .. }
