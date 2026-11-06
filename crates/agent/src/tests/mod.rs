@@ -4207,11 +4207,14 @@ async fn test_title_generation_disabled_by_settings(cx: &mut TestAppContext) {
         ..
     } = setup(cx, TestModel::Fake).await;
 
-    cx.update(|cx| {
-        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.auto_generate_thread_titles = false;
-        agent_settings::AgentSettings::override_global(settings, cx);
-    });
+    let set_auto_generate_thread_titles = |enabled, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.auto_generate_thread_titles = enabled;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        })
+    };
+    set_auto_generate_thread_titles(false, cx);
 
     let summary_model = fake.model("summary");
     thread.update(cx, |thread, cx| {
@@ -4229,16 +4232,32 @@ async fn test_title_generation_disabled_by_settings(cx: &mut TestAppContext) {
     fake.end_last(&model);
     cx.run_until_parked();
 
-    // Automatic title generation is disabled, so the summary model is not
-    // invoked for the title.
     thread.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
     assert_eq!(fake.pending_completions_for(&summary_model), Vec::new());
     send.collect::<Vec<_>>().await;
     cx.run_until_parked();
     thread.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
 
-    // Manual title generation still works when automatic generation is
-    // disabled.
+    set_auto_generate_thread_titles(true, cx);
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Hello again"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake.send_last_text(&model, "Hey again!");
+    fake.end_last(&model);
+    cx.run_until_parked();
+    let summary_request = fake.pending_completions_for(&summary_model).pop().unwrap();
+    fake.send_text(&summary_model, &summary_request, "Auto title\n");
+    fake.end_stream(&summary_model, &summary_request);
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Auto title".into()))
+    });
+
+    set_auto_generate_thread_titles(false, cx);
     thread.update(cx, |thread, cx| {
         assert!(thread.regenerate_title(cx));
     });
