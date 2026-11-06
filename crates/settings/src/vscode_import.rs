@@ -861,6 +861,7 @@ impl VsCodeSettings {
             file_icons: None,
             folder_indicator: None,
             git_status: self.read_bool("git.decorations.enabled"),
+            hide_empty_folder_chevrons: None,
             hide_gitignore: self.read_bool("explorer.excludeGitIgnore"),
             hide_hidden: None,
             hide_root: None,

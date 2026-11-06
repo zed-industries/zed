@@ -849,6 +849,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: icon
     pub folder_indicator: Option<FolderIndicator>,
+    /// Whether to hide the disclosure chevron on directories that are known to be empty.
+    ///
+    /// Default: false
+    pub hide_empty_folder_chevrons: Option<bool>,
     /// Whether to show the git status in the project panel.
     ///
     /// Default: true
