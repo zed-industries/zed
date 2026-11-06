@@ -33,6 +33,7 @@ pub enum Role {
     User,
     Assistant,
     System,
+    Developer,
     Tool,
 }
 
@@ -44,6 +45,7 @@ impl TryFrom<String> for Role {
             "user" => Ok(Self::User),
             "assistant" => Ok(Self::Assistant),
             "system" => Ok(Self::System),
+            "developer" => Ok(Self::Developer),
             "tool" => Ok(Self::Tool),
             _ => anyhow::bail!("invalid role '{value}'"),
         }
@@ -56,6 +58,7 @@ impl From<Role> for String {
             Role::User => "user".to_owned(),
             Role::Assistant => "assistant".to_owned(),
             Role::System => "system".to_owned(),
+            Role::Developer => "developer".to_owned(),
             Role::Tool => "tool".to_owned(),
         }
     }
