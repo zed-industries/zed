@@ -491,13 +491,23 @@ impl BookmarkStore {
                 for bookmark in &buffer_bookmarks.bookmarks {
                     let label = if bookmark.label.is_empty() {
                         let row = snapshot.summary_for_anchor::<Point>(&bookmark.anchor).row;
-                        snapshot
-                            .text_for_range(
-                                Point::new(row, 0)..Point::new(row, snapshot.line_len(row)),
-                            )
-                            .collect::<String>()
-                            .trim()
-                            .to_string()
+                        let line_length = snapshot.line_len(row);
+                        let mut label = String::with_capacity(line_length as usize);
+
+                        for chunk in snapshot
+                            .text_for_range(Point::new(row, 0)..Point::new(row, line_length))
+                        {
+                            let chunk = if label.is_empty() {
+                                chunk.trim_start()
+                            } else {
+                                chunk
+                            };
+                            label.push_str(chunk);
+                        }
+
+                        let trimmed_length = label.trim_end().len();
+                        label.truncate(trimmed_length);
+                        label
                     } else {
                         bookmark.label.clone()
                     };
