@@ -16,6 +16,11 @@ use taffy::{
     tree::NodeId,
 };
 
+#[cfg(feature = "layout-id-debug")]
+mod layout_id_debug;
+#[cfg(feature = "layout-id-debug")]
+use layout_id_debug::LayoutIdTag;
+
 #[cfg(feature = "stacker")]
 type StackSafe<T> = stacksafe::StackSafe<T>;
 #[cfg(not(feature = "stacker"))]
@@ -28,8 +33,14 @@ type NodeMeasureFn = StackSafe<Box<MeasureFn>>;
 struct NodeContext {
     measure: NodeMeasureFn,
 }
+
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
+    /// Tags every [`LayoutId`] this engine issues in the current frame.
+    #[cfg(feature = "layout-id-debug")]
+    tag: LayoutIdTag,
+    #[cfg(feature = "layout-id-debug")]
+    child_node_ids: Vec<NodeId>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
     absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
@@ -45,6 +56,10 @@ impl TaffyLayoutEngine {
         taffy.disable_rounding();
         TaffyLayoutEngine {
             taffy,
+            #[cfg(feature = "layout-id-debug")]
+            tag: LayoutIdTag::new_engine(),
+            #[cfg(feature = "layout-id-debug")]
+            child_node_ids: Vec::new(),
             absolute_layout_bounds: FxHashMap::default(),
             absolute_outer_origins: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
@@ -53,6 +68,8 @@ impl TaffyLayoutEngine {
     }
 
     pub fn clear(&mut self) {
+        #[cfg(feature = "layout-id-debug")]
+        self.tag.advance_frame();
         self.taffy.clear();
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
@@ -68,17 +85,36 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
 
-        if children.is_empty() {
-            self.taffy
-                .new_leaf(taffy_style)
-                .expect(EXPECT_MESSAGE)
-                .into()
+        let node = if children.is_empty() {
+            self.taffy.new_leaf(taffy_style).expect(EXPECT_MESSAGE)
         } else {
+            #[cfg(feature = "layout-id-debug")]
+            let children = {
+                self.check_children(children);
+                &self.child_node_ids
+            };
+            // SAFETY: Without `layout-id-debug`, LayoutId is repr(transparent) to NodeId.
+            #[cfg(not(feature = "layout-id-debug"))]
+            let children = unsafe { std::mem::transmute::<&[LayoutId], &[NodeId]>(children) };
             self.taffy
-                // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
-                .new_with_children(taffy_style, LayoutId::to_taffy_slice(children))
+                .new_with_children(taffy_style, children)
                 .expect(EXPECT_MESSAGE)
-                .into()
+        };
+        self.layout_id(node)
+    }
+
+    /// Checks each child and collects its node into `child_node_ids`.
+    #[cfg(feature = "layout-id-debug")]
+    fn check_children(&mut self, children: &[LayoutId]) {
+        self.child_node_ids.clear();
+        for (index, child) in children.iter().enumerate() {
+            let node = self.node_id(*child, || {
+                format!(
+                    "child {index} of {} passed to request_layout",
+                    children.len()
+                )
+            });
+            self.child_node_ids.push(node);
         }
     }
 
@@ -100,10 +136,36 @@ impl TaffyLayoutEngine {
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
 
-        self.taffy
+        let node = self
+            .taffy
             .new_leaf_with_context(taffy_style, NodeContext { measure })
-            .expect(EXPECT_MESSAGE)
-            .into()
+            .expect(EXPECT_MESSAGE);
+        self.layout_id(node)
+    }
+
+    fn layout_id(&self, node: NodeId) -> LayoutId {
+        LayoutId {
+            node,
+            #[cfg(feature = "layout-id-debug")]
+            tag: self.tag,
+        }
+    }
+
+    /// Returns the Taffy node for `id`.
+    ///
+    /// # Panics
+    ///
+    /// With the `layout-id-debug` feature, panics if `id` wasn't issued by this
+    /// engine during the current frame, or if its node can't be a slotmap key,
+    /// naming what kind of invalid ID it is and where it was used. Taffy would
+    /// otherwise panic with an uninformative slotmap error, or silently resolve
+    /// a foreign ID to an unrelated node.
+    #[inline]
+    #[cfg_attr(not(feature = "layout-id-debug"), expect(unused_variables))]
+    pub(crate) fn node_id(&self, id: LayoutId, describe_use: impl FnOnce() -> String) -> NodeId {
+        #[cfg(feature = "layout-id-debug")]
+        self.tag.check(id.tag, id.node, describe_use);
+        id.node
     }
 
     /// Treats any `auto` dimension of the given node's style as filling `size`.
@@ -118,7 +180,8 @@ impl TaffyLayoutEngine {
         size: Size<Pixels>,
         scale_factor: f32,
     ) {
-        let style = self.taffy.style(id.0).expect(EXPECT_MESSAGE);
+        let node = self.node_id(id, || "passed to stretch_auto_size_to_fill".into());
+        let style = self.taffy.style(node).expect(EXPECT_MESSAGE);
         let stretch_width = style.size.width.is_auto();
         let stretch_height = style.size.height.is_auto();
         if !stretch_width && !stretch_height {
@@ -133,7 +196,7 @@ impl TaffyLayoutEngine {
             style.size.height =
                 taffy::style::Dimension::length(round_to_device_pixel(size.height.0, scale_factor));
         }
-        self.taffy.set_style(id.0, style).expect(EXPECT_MESSAGE);
+        self.taffy.set_style(node, style).expect(EXPECT_MESSAGE);
     }
 
     // Used to understand performance
@@ -141,12 +204,12 @@ impl TaffyLayoutEngine {
     fn count_all_children(&self, parent: LayoutId) -> anyhow::Result<u32> {
         let mut count = 0;
 
-        for child in self.taffy.children(parent.0)? {
+        for child in self.taffy.children(parent.node)? {
             // Count this child.
             count += 1;
 
             // Count all of this child's children.
-            count += self.count_all_children(LayoutId(child))?
+            count += self.count_all_children(self.layout_id(child))?
         }
 
         Ok(count)
@@ -157,13 +220,14 @@ impl TaffyLayoutEngine {
     fn max_depth(&self, depth: u32, parent: LayoutId) -> anyhow::Result<u32> {
         println!(
             "{parent:?} at depth {depth} has {} children",
-            self.taffy.child_count(parent.0)
+            self.taffy.child_count(parent.node)
         );
 
         let mut max_child_depth = 0;
 
-        for child in self.taffy.children(parent.0)? {
-            max_child_depth = std::cmp::max(max_child_depth, self.max_depth(0, LayoutId(child))?);
+        for child in self.taffy.children(parent.node)? {
+            max_child_depth =
+                std::cmp::max(max_child_depth, self.max_depth(0, self.layout_id(child))?);
         }
 
         Ok(depth + 1 + max_child_depth)
@@ -174,10 +238,10 @@ impl TaffyLayoutEngine {
     fn get_edges(&self, parent: LayoutId) -> anyhow::Result<Vec<(LayoutId, LayoutId)>> {
         let mut edges = Vec::new();
 
-        for child in self.taffy.children(parent.0)? {
-            edges.push((parent, LayoutId(child)));
+        for child in self.taffy.children(parent.node)? {
+            edges.push((parent, self.layout_id(child)));
 
-            edges.extend(self.get_edges(LayoutId(child))?);
+            edges.extend(self.get_edges(self.layout_id(child))?);
         }
 
         Ok(edges)
@@ -202,7 +266,10 @@ impl TaffyLayoutEngine {
         // }
         //
 
+        let node = self.node_id(id, || "passed to compute_layout".into());
         if !self.computed_layouts.insert(id) {
+            #[cfg(feature = "layout-id-debug")]
+            let tag = self.tag;
             let stack = &mut self.layout_bounds_scratch_space;
             stack.push(id);
             while let Some(id) = stack.pop() {
@@ -210,10 +277,14 @@ impl TaffyLayoutEngine {
                 self.absolute_outer_origins.remove(&id);
                 stack.extend(
                     self.taffy
-                        .children(id.into())
+                        .children(id.node)
                         .expect(EXPECT_MESSAGE)
                         .into_iter()
-                        .map(LayoutId::from),
+                        .map(|node| LayoutId {
+                            node,
+                            #[cfg(feature = "layout-id-debug")]
+                            tag,
+                        }),
                 );
             }
         }
@@ -234,7 +305,7 @@ impl TaffyLayoutEngine {
 
         self.taffy
             .compute_layout_with_measure(
-                id.into(),
+                node,
                 available_space.into(),
                 |input, _id, node_context, style| {
                     taffy::compute_leaf_layout(
@@ -354,18 +425,19 @@ impl TaffyLayoutEngine {
     // 1dp residual into descendants.
 
     pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
+        let node = self.node_id(id, || "passed to layout_bounds".into());
         if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
             return layout;
         }
 
-        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+        let layout = self.taffy.layout(node).expect(EXPECT_MESSAGE);
         let layout_location = layout.location;
         let layout_size = layout.size;
-        let parent = self.taffy.parent(id.0);
+        let parent = self.taffy.parent(node);
 
         let absolute_outer_origin = match parent {
             Some(parent_id) => {
-                let parent_id = LayoutId::from(parent_id);
+                let parent_id = self.layout_id(parent_id);
                 self.layout_bounds(parent_id, scale_factor);
                 let parent_origin = *self
                     .absolute_outer_origins
@@ -390,33 +462,22 @@ impl TaffyLayoutEngine {
     }
 }
 
-/// A unique identifier for a layout node, generated when requesting a layout from Taffy
+/// A unique identifier for a layout node, generated when requesting a layout from Taffy.
+///
+/// It is only valid in the window and frame that requested it. The
+/// `layout-id-debug` feature checks this on every use.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-#[repr(transparent)]
-pub struct LayoutId(NodeId);
-
-impl LayoutId {
-    fn to_taffy_slice(node_ids: &[Self]) -> &[taffy::NodeId] {
-        // SAFETY: LayoutId is repr(transparent) to taffy::tree::NodeId.
-        unsafe { std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(node_ids) }
-    }
+#[cfg_attr(not(feature = "layout-id-debug"), repr(transparent))]
+pub struct LayoutId {
+    node: NodeId,
+    #[cfg(feature = "layout-id-debug")]
+    tag: LayoutIdTag,
 }
 
 impl std::hash::Hash for LayoutId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        u64::from(self.0).hash(state);
-    }
-}
-
-impl From<NodeId> for LayoutId {
-    fn from(node_id: NodeId) -> Self {
-        Self(node_id)
-    }
-}
-
-impl From<LayoutId> for NodeId {
-    fn from(layout_id: LayoutId) -> NodeId {
-        layout_id.0
+        // IDs stored together always share a tag.
+        u64::from(self.node).hash(state);
     }
 }
 
