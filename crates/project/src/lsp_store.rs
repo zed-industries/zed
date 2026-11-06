@@ -13443,6 +13443,10 @@ impl LspStore {
                 .tags
                 .as_ref()
                 .is_some_and(|tags| tags.contains(&DiagnosticTag::UNNECESSARY));
+            let is_deprecated = diagnostic
+                .tags
+                .as_ref()
+                .is_some_and(|tags| tags.contains(&DiagnosticTag::DEPRECATED));
 
             let underline = self
                 .language_server_adapter_for_id(server_id)
@@ -13454,6 +13458,7 @@ impl LspStore {
                     (
                         diagnostic.severity,
                         is_unnecessary,
+                        is_deprecated,
                         related_information_from_lsp(diagnostic, &lsp_diagnostics.uri),
                     ),
                 );
@@ -13500,6 +13505,7 @@ impl LspStore {
                         is_primary: true,
                         is_disk_based,
                         is_unnecessary,
+                        is_deprecated,
                         underline,
                         data: diagnostic.data.clone(),
                         registration_id: registration_id.clone(),
@@ -13535,6 +13541,7 @@ impl LspStore {
                                     is_primary: false,
                                     is_disk_based,
                                     is_unnecessary: false,
+                                    is_deprecated: false,
                                     underline,
                                     data: diagnostic.data.clone(),
                                     registration_id: registration_id.clone(),
@@ -13549,7 +13556,7 @@ impl LspStore {
         for entry in &mut diagnostics {
             if !entry.diagnostic.is_primary {
                 let source = *sources_by_group_id.get(&entry.diagnostic.group_id).unwrap();
-                if let Some((severity, is_unnecessary, related_information)) =
+                if let Some((severity, is_unnecessary, is_deprecated, related_information)) =
                     supporting_diagnostics.get(&(
                         source,
                         entry.diagnostic.code.clone(),
@@ -13560,6 +13567,7 @@ impl LspStore {
                         entry.diagnostic.severity = *severity;
                     }
                     entry.diagnostic.is_unnecessary = *is_unnecessary;
+                    entry.diagnostic.is_deprecated = *is_deprecated;
                     entry.related_information = related_information.clone();
                 }
             }

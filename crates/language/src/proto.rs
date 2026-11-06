@@ -251,6 +251,7 @@ pub fn serialize_diagnostics<'a>(
                     .map(|s| s.to_string()),
                 is_disk_based: entry.diagnostic.is_disk_based,
                 is_unnecessary: entry.diagnostic.is_unnecessary,
+                is_deprecated: entry.diagnostic.is_deprecated,
                 data: entry.diagnostic.data.as_ref().map(|data| data.to_string()),
                 registration_id: entry
                     .diagnostic
@@ -508,6 +509,7 @@ pub fn deserialize_diagnostics(
                     is_primary: diagnostic.is_primary,
                     is_disk_based: diagnostic.is_disk_based,
                     is_unnecessary: diagnostic.is_unnecessary,
+                    is_deprecated: diagnostic.is_deprecated,
                     underline: diagnostic.underline,
                     registration_id: diagnostic.registration_id.map(SharedString::from),
                     source_kind: match proto::diagnostic::SourceKind::try_from(

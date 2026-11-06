@@ -1496,8 +1496,13 @@ pub struct Chunk<'a> {
     pub highlight_style: Option<HighlightStyle>,
     /// The severity of diagnostic associated with this chunk, if any.
     pub diagnostic_severity: Option<lsp::DiagnosticSeverity>,
-    /// Whether this chunk of text is marked as unnecessary.
-    pub is_unnecessary: bool,
+    /// The severity of the diagnostic associated with this chunk that marks it
+    /// as neither unnecessary nor deprecated, if any.
+    pub untagged_diagnostic_severity: Option<lsp::DiagnosticSeverity>,
+    /// The severity of the diagnostic marking this chunk of text as unnecessary, if any.
+    pub unnecessary_severity: Option<lsp::DiagnosticSeverity>,
+    /// The severity of the diagnostic marking this chunk of text as deprecated, if any.
+    pub deprecated_severity: Option<lsp::DiagnosticSeverity>,
     /// Whether this chunk of text should be underlined.
     pub underline: bool,
     /// Whether this chunk of text was originally a tab character.
@@ -1694,7 +1699,9 @@ impl<'a> Iterator for FoldChunks<'a> {
                 syntax_highlight_id: chunk.syntax_highlight_id,
                 highlight_style: chunk.highlight_style,
                 diagnostic_severity: chunk.diagnostic_severity,
-                is_unnecessary: chunk.is_unnecessary,
+                untagged_diagnostic_severity: chunk.untagged_diagnostic_severity,
+                unnecessary_severity: chunk.unnecessary_severity,
+                deprecated_severity: chunk.deprecated_severity,
                 is_tab: chunk.is_tab,
                 is_inlay: chunk.is_inlay,
                 underline: chunk.underline,

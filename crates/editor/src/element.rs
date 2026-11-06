@@ -5762,10 +5762,15 @@ impl EditorElement {
                 continue;
             }
 
+            // A point has no text to fade or strike through, but unlike deprecated ones, which
+            // mark the use of a symbol, unnecessary point diagnostics mostly come from empty lines
+            // of larger unnecessary code, such as clangd's inactive regions, where a marker is noise.
+            if diagnostic.is_unnecessary && diagnostic.severity > lsp::DiagnosticSeverity::WARNING {
+                continue;
+            }
             let Some(underline) = display_snapshot.diagnostic_underline_style(
                 diagnostic.severity,
                 diagnostic.underline,
-                diagnostic.is_unnecessary,
                 &self.style,
             ) else {
                 continue;
@@ -12286,6 +12291,53 @@ mod tests {
         });
 
         assert_painted_point_diagnostics(window, &[], &mut visual_cx.cx);
+    }
+
+    #[gpui::test]
+    fn test_point_diagnostic_painted_for_deprecated_hint(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let point = PointUtf16::new(0, 0);
+        for (is_unnecessary, is_deprecated, expected_painted) in
+            [(false, true, true), (true, false, false)]
+        {
+            let buffer = cx.new(|cx| {
+                let mut buffer = Buffer::local("\nx", cx);
+                let diagnostics = DiagnosticSet::new(
+                    [DiagnosticEntry::new(
+                        point..point,
+                        Diagnostic {
+                            severity: DiagnosticSeverity::HINT,
+                            underline: true,
+                            is_unnecessary,
+                            is_deprecated,
+                            ..Diagnostic::default()
+                        },
+                    )],
+                    &buffer.snapshot(),
+                );
+                buffer.update_diagnostics(lsp::LanguageServerId(0), diagnostics, cx);
+                buffer
+            });
+            let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let (window, _) = point_diagnostic_editor(multi_buffer, cx);
+            let hint = window
+                .read_with(cx, |view, _| view.style.status.hint)
+                .expect("diagnostic colors");
+            let painted = cx
+                .update_window(window.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                    window
+                        .painted_underlines()
+                        .into_iter()
+                        .any(|underline| underline.color == hint)
+                })
+                .expect("completed diagnostic scene");
+            assert_eq!(
+                painted, expected_painted,
+                "unnecessary: {is_unnecessary}, deprecated: {is_deprecated}"
+            );
+        }
     }
 
     #[gpui::test]
