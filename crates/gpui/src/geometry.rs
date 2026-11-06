@@ -1761,6 +1761,22 @@ pub struct Edges<T: Clone + Debug + Default + PartialEq> {
     pub left: T,
 }
 
+impl<T> Add for Edges<T>
+where
+    T: Add<Output = T> + Clone + Debug + Default + PartialEq,
+{
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            top: self.top + rhs.top,
+            right: self.right + rhs.right,
+            bottom: self.bottom + rhs.bottom,
+            left: self.left + rhs.left,
+        }
+    }
+}
+
 impl<T> Mul for Edges<T>
 where
     T: Mul<Output = T> + Clone + Debug + Default + PartialEq,
@@ -1769,9 +1785,9 @@ where
 
     fn mul(self, rhs: Self) -> Self::Output {
         Self {
-            top: self.top.clone() * rhs.top,
-            right: self.right.clone() * rhs.right,
-            bottom: self.bottom.clone() * rhs.bottom,
+            top: self.top * rhs.top,
+            right: self.right * rhs.right,
+            bottom: self.bottom * rhs.bottom,
             left: self.left * rhs.left,
         }
     }

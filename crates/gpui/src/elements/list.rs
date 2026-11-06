@@ -8,10 +8,10 @@
 //! If all of your elements are the same height, see [`crate::UniformList`] for a simpler API
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
-    FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    Overflow, Pixels, Point, ScrollDelta, ScrollEvent, Size, Style, StyleRefinement, Styled,
-    Window, point, px, size,
+    Along as _, AnyElement, App, AvailableSpace, Axis, Bounds, ContentMask, DispatchPhase, Edges,
+    Element, EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
+    IntoElement, Overflow, Pixels, Point, ScrollDelta, ScrollEvent, Size, Style, StyleRefinement,
+    Styled, Window, point, px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -1277,7 +1277,7 @@ impl StateInner {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<LayoutItemsResponse, ListOffset> {
-        let item_width = bounds.size.width - padding.left - padding.right;
+        let item_width = bounds.size.width - padding.along(Axis::Horizontal);
         window.transact(|window| {
             match self.measuring_behavior {
                 ListMeasuringBehavior::Measure(has_measured) if !has_measured => {
@@ -1566,10 +1566,10 @@ impl Element for List {
                 .last_layout_bounds
                 .zip(state.last_padding)
                 .map(|(last_bounds, last_padding)| {
-                    last_bounds.size.width - last_padding.left - last_padding.right
+                    last_bounds.size.width - last_padding.along(Axis::Horizontal)
                 });
         if last_item_width
-            .is_none_or(|width| width != bounds.size.width - padding.left - padding.right)
+            .is_none_or(|width| width != bounds.size.width - padding.along(Axis::Horizontal))
         {
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
@@ -1654,12 +1654,8 @@ impl Element for List {
 fn content_insets(style: &Style, size: Size<Pixels>, rem_size: Pixels) -> Edges<Pixels> {
     let padding = style.padding.to_pixels(size.into(), rem_size);
     let border = style.border_widths.to_pixels(rem_size);
-    Edges {
-        top: padding.top + border.top,
-        right: padding.right + border.right,
-        bottom: padding.bottom + border.bottom,
-        left: padding.left + border.left,
-    }
+
+    padding + border
 }
 
 impl IntoElement for List {
