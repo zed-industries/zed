@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, anyhow};
+use merman::{Engine, OperationControl, RenderOutput, RenderRequest, Renderer, SvgRequest};
 
 use crate::{MermaidTheme, css_color};
 
@@ -9,23 +10,30 @@ pub(super) fn render_mermaid(source: &str, theme: &MermaidTheme) -> Result<Strin
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     let diagram_id = format!("merman-{id}");
 
-    let config = to_merman_config(theme);
-    let renderer = merman::svg::HeadlessRenderer::new()
-        .with_site_config(config)
-        .with_vendored_text_measurer()
-        .with_diagram_id(&diagram_id);
+    let pipeline = merman::svg::SvgPipeline::resvg_safe()
+        .with_postprocessor(merman::svg::CssOverridePostprocessor::strip_existing_important());
     // Apply merman's raster-safe pipeline before Zed-specific styling. The
     // pipeline handles generic rasterizer compatibility cleanup: foreignObject
     // fallback text, unsupported CSS removal, and invalid SVG attribute cleanup.
     // Zed also strips merman's existing `!important` declarations before
     // injecting its own theme CSS so host styling wins consistently in usvg/resvg.
-    let pipeline = merman::svg::SvgPipeline::resvg_safe()
-        .with_postprocessor(merman::svg::CssOverridePostprocessor::strip_existing_important());
-
-    let svg = renderer
-        .render_svg_with_pipeline_sync(source, &pipeline)
-        .context("merman render failed")?
-        .ok_or_else(|| anyhow!("merman returned no SVG for the given input"))?;
+    let request = SvgRequest {
+        environment: merman::SvgEnvironment::deterministic(),
+        options: merman::svg::SvgRenderOptions {
+            diagram_id: Some(diagram_id),
+            ..Default::default()
+        },
+        pipeline: Some(pipeline),
+        ..Default::default()
+    };
+    let output = Renderer::new()
+        .with_engine(Engine::new().with_site_config(to_merman_config(theme)))
+        .render(RenderRequest::svg(source, OperationControl::new(), request))
+        .context("merman render failed")?;
+    let RenderOutput::Svg(Some(svg)) = output else {
+        return Err(anyhow!("merman returned no SVG for the given input"));
+    };
+    let (svg, _) = svg.into_parts();
 
     Ok(svg)
 }
@@ -120,6 +128,8 @@ fn to_merman_config(theme: &MermaidTheme) -> merman::MermaidConfig {
 
     merman::MermaidConfig::from_value(serde_json::json!({
         "theme": "base",
+        // Mermaid 12 defaults to the neo look; Zed's injected CSS targets classic output.
+        "look": "classic",
         "darkMode": theme.dark_mode,
         "fontFamily": theme.font_family,
         // resvg can't rasterize HTML `<foreignObject>` labels, so merman's
@@ -201,6 +211,39 @@ mod tests {
 
         assert_eq!(text_font_size(tree.root(), "User"), Some(16.0));
         assert_eq!(text_font_size(tree.root(), "+String name"), Some(16.0));
+    }
+
+    #[test]
+    fn state_diagram_descriptions_do_not_overlap_title() {
+        // Regression for zed#66582: merman < 0.9.1 dropped foreignObject transforms,
+        // so state descriptions stacked on top of each other at the title position.
+        let source = r#"stateDiagram-v2
+    [*] --> Teardown
+    Teardown : members kicked
+    Teardown : group deleted
+"#;
+        let svg = render_mermaid(source, &MermaidTheme::default()).expect("render failed");
+
+        assert!(
+            svg.contains("members kicked"),
+            "missing first description: {svg}"
+        );
+        assert!(
+            svg.contains("group deleted"),
+            "missing second description: {svg}"
+        );
+        assert!(
+            !svg.contains("<foreignObject"),
+            "expected resvg-safe fallback text, got foreignObject: {svg}"
+        );
+
+        // The second description must keep its vertical offset. In merman < 0.9.1
+        // both labels landed on the same baseline; 0.9.1+ preserves the
+        // foreignObject translate as a matrix(... 33) on the fallback group.
+        assert!(
+            svg.contains("matrix(1 0 0 1 ") && svg.contains(" 33)"),
+            "expected a preserved description transform with a 33px y offset: {svg}"
+        );
     }
 
     #[test]
