@@ -76,8 +76,11 @@ struct ProjectBookmarksDelegate {
 }
 
 impl ProjectBookmarksDelegate {
-    fn new(workspace: WeakEntity<Workspace>, project: Entity<Project>, cx: &App) -> Self {
+    fn new(workspace: WeakEntity<Workspace>, project: Entity<Project>, cx: &mut App) -> Self {
         let bookmark_store = project.read(cx).bookmark_store();
+        bookmark_store.update(cx, |bookmark_store, cx| {
+            bookmark_store.forget_failed_paths(cx)
+        });
 
         let worktree_root_names = project
             .read(cx)
