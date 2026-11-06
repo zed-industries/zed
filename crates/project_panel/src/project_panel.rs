@@ -8310,6 +8310,16 @@ impl Panel for ProjectPanel {
         })
     }
 
+    fn starts_open_pending(&self, _: &Window, cx: &App) -> bool {
+        ProjectPanelSettings::get_global(cx).starts_open
+            && self.project.read(cx).is_via_remote_server()
+            && self
+                .project
+                .read(cx)
+                .visible_worktrees(cx)
+                .any(|worktree| worktree.read(cx).root_entry().is_none())
+    }
+
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         if active {
             cx.defer_in(window, |panel, window, cx| {
