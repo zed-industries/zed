@@ -13962,7 +13962,6 @@ version = "0.1.0"
 dependencies = [
  "ctor",
  "editor",
- "file_icons",
  "futures 0.3.34",
  "fuzzy_nucleo",
  "gpui",

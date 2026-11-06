@@ -42,11 +42,15 @@ async fn test_project_bookmarks_picker_matches_and_confirms(cx: &mut TestAppCont
 
     picker.update(cx, |picker, _| {
         assert_eq!(picker.delegate.matches.len(), 3);
+        assert_eq!(picker.delegate.match_count(), 3);
+        assert_eq!(picker.delegate.selected_index(), 0);
     });
 
     simulate_input(cx, "gamma");
     picker.update(cx, |picker, _| {
         assert_eq!(picker.delegate.matches.len(), 1);
+        assert_eq!(picker.delegate.match_count(), 1);
+        assert_eq!(picker.delegate.selected_index(), 0);
     });
 
     cx.dispatch_action(Confirm);
@@ -68,6 +72,7 @@ async fn test_project_bookmarks_picker_matches_and_confirms(cx: &mut TestAppCont
         assert_eq!(selection.start, Point::new(2, 0));
     });
 }
+
 
 #[gpui::test]
 async fn test_project_bookmarks_confirm_reuses_preview_and_secondary_confirm_opens_new_tabs(
@@ -203,13 +208,7 @@ fn select_bookmark_with_label(
             .iter()
             .position(|search_match| search_match.label.as_ref() == label)
             .expect("bookmark label should be present");
-        let entry_index = picker
-            .delegate
-            .entries
-            .iter()
-            .position(|entry| matches!(entry, Entry::Match(ix) if *ix == match_index))
-            .expect("bookmark entry should be present");
-        picker.set_selected_index(entry_index, None, true, window, cx);
+        picker.set_selected_index(match_index, None, true, window, cx);
     });
 }
 

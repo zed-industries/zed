@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 #[cfg(test)]
 mod project_bookmarks_test;
 
-use file_icons::FileIcons;
+
 use futures::future::{FutureExt, Shared};
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatchCandidate, match_strings};
 use gpui::{
@@ -15,8 +15,7 @@ use picker::{MatchLocation, Picker, PickerDelegate, PreviewUpdate};
 use project::WorktreeId;
 use project::bookmark_store::ProjectBookmark;
 use project::{Project, ProjectPath, bookmark_store::BookmarkStore};
-use ui::{Divider, HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
-
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::rel_path::RelPath;
 use workspace::Workspace;
 
@@ -40,7 +39,8 @@ pub fn init(cx: &mut App) {
                     let delegate =
                         ProjectBookmarksDelegate::new(workspace_handle, project.clone(), cx);
                     let preview = picker_preview::editor_preview(project, window, cx);
-                    Picker::list_with_preview(delegate, preview, window, cx).reopenable(false, cx)
+                    Picker::uniform_list_with_preview(delegate, preview, window, cx)
+                        .reopenable(false, cx)
                 })
             });
         },
@@ -57,20 +57,12 @@ struct Match {
     pub line_number: u32,
 }
 
-enum Entry {
-    Header(ProjectPath),
-    Match(usize),
-    Separator,
-}
 
 struct ProjectBookmarksDelegate {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    group_result_by_path: bool,
-    selected_entry_index: usize,
+    selected_match_index: usize,
     matches: Vec<Match>,
-    max_match_line_number: u32,
-    entries: Vec<Entry>,
     worktree_root_names: HashMap<WorktreeId, Arc<RelPath>>,
     bookmarks: Shared<Task<Arc<Vec<ProjectBookmark>>>>,
 }
@@ -103,13 +95,10 @@ impl ProjectBookmarksDelegate {
         Self {
             workspace,
             project,
-            group_result_by_path: false,
-            selected_entry_index: 0,
+            selected_match_index: 0,
             matches: Vec::new(),
-            entries: Vec::new(),
             worktree_root_names,
             bookmarks,
-            max_match_line_number: 0,
         }
     }
 
@@ -127,12 +116,7 @@ impl ProjectBookmarksDelegate {
         }
     }
 
-    fn labels_for_match(
-        &self,
-        bookmark_match: &Match,
-        _window: &mut Window,
-        cx: &App,
-    ) -> (HighlightedLabel, Div) {
+    fn labels_for_match(&self, bookmark_match: &Match, cx: &App) -> (HighlightedLabel, Div) {
         let path_style = self.project.read(cx).path_style(cx);
         let Match {
             label,
@@ -159,116 +143,37 @@ impl ProjectBookmarksDelegate {
                     .truncate_start(),
                 )
                 .child(
-                    Label::new(format!(":{}", bookmark_match.line_number,))
+                    Label::new(format!(":{}", bookmark_match.line_number))
                         .size(LabelSize::Small)
                         .color(Color::Placeholder),
                 ),
         )
     }
 
-    fn rebuild_entries(&mut self) {
-        let mut entries = Vec::with_capacity(self.matches.len());
-        let mut last_path: Option<&ProjectPath> = None;
-
-        for (match_index, search_match) in self.matches.iter().enumerate() {
-            if last_path != Some(&search_match.path) {
-                if last_path.is_some() {
-                    entries.push(Entry::Separator);
-                }
-                entries.push(Entry::Header(search_match.path.clone()));
-                last_path = Some(&search_match.path);
-            }
-            entries.push(Entry::Match(match_index));
-        }
-
-        self.entries = entries;
-        self.select_first_available()
-    }
-
-    fn select_first_available(&mut self) {
-        for (i, entry) in self.entries.iter().enumerate() {
-            if let Entry::Match(_) = entry {
-                self.selected_entry_index = i;
-                return;
-            }
-        }
-    }
-
-    fn render_header(&self, project_path: &ProjectPath, cx: &mut App) -> AnyElement {
-        let path_style = self.project.read(cx).path_style(cx);
-        let file_name = project_path
-            .path
-            .file_name()
-            .map(|name| name.to_string())
-            .unwrap_or_default();
-        let directory = project_path
-            .path
-            .parent()
-            .and_then(|parent| {
-                self.with_optional_worktree_root_name(project_path.worktree_id, parent)
-            })
-            .map(|parent| SharedString::new(parent.display(path_style)))
-            .unwrap_or_default();
-        let file_icon = FileIcons::get_icon(project_path.path.as_std_path(), cx).map(|icon| {
-            Icon::from_path(icon)
-                .color(Color::Muted)
-                .size(IconSize::Small)
-        });
-
-        h_flex()
-            .w_full()
-            .min_w_0()
-            .px(DynamicSpacing::Base06.rems(cx))
-            .py_1()
-            .gap_1p5()
-            .children(file_icon)
-            .child(
-                h_flex()
-                    .min_w_0()
-                    .gap_1()
-                    .child(Label::new(file_name).size(LabelSize::Small))
-                    .when(!directory.is_empty(), |this| {
-                        this.child(
-                            Label::new(directory)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .truncate_start(),
-                        )
-                    }),
-            )
-            .into_any_element()
-    }
 }
 
 impl PickerDelegate for ProjectBookmarksDelegate {
-    type ListItem = AnyElement;
+    type ListItem = ListItem;
 
     fn name() -> &'static str {
         "bookmarks"
     }
 
     fn match_count(&self) -> usize {
-        self.entries.len()
+        self.matches.len()
     }
 
     fn selected_index(&self) -> usize {
-        self.selected_entry_index
+        self.selected_match_index
     }
 
     fn set_selected_index(
         &mut self,
-        ix: usize,
+        match_index: usize,
         _window: &mut Window,
         _cx: &mut Context<picker::Picker<Self>>,
     ) {
-        self.selected_entry_index = ix;
-    }
-
-    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
-        self.entries
-            .get(ix)
-            .map(|entry| matches!(entry, Entry::Match(_)))
-            .unwrap_or(false)
+        self.selected_match_index = match_index;
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> std::sync::Arc<str> {
@@ -297,7 +202,7 @@ impl PickerDelegate for ProjectBookmarksDelegate {
                 &query,
                 Case::Smart,
                 LengthPenalty::On,
-                100,
+                candidates.len(),
             );
 
             picker
@@ -334,14 +239,7 @@ impl PickerDelegate for ProjectBookmarksDelegate {
                         })
                         .collect();
 
-                    picker.delegate.max_match_line_number = picker
-                        .delegate
-                        .matches
-                        .iter()
-                        .map(|m| m.line_number)
-                        .max()
-                        .unwrap_or(0);
-                    picker.delegate.rebuild_entries();
+                    picker.delegate.selected_match_index = 0;
                 })
                 .ok();
         })
@@ -356,10 +254,7 @@ impl PickerDelegate for ProjectBookmarksDelegate {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let Some(&Entry::Match(ix)) = self.entries.get(self.selected_entry_index) else {
-            return;
-        };
-        let Some(selected_bookmark) = self.matches.get(ix) else {
+        let Some(selected_bookmark) = self.matches.get(self.selected_match_index) else {
             return;
         };
 
@@ -393,73 +288,35 @@ impl PickerDelegate for ProjectBookmarksDelegate {
 
     fn render_match(
         &self,
-        ix: usize,
+        match_index: usize,
         selected: bool,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let entry = self.entries.get(ix)?;
+        let bookmark_match = self.matches.get(match_index)?;
+        let (bookmark_label, full_path_label) = self.labels_for_match(bookmark_match, cx);
         let icon = Icon::new(IconName::Bookmark)
             .size(IconSize::Small)
             .color(Color::Info);
 
-        match entry {
-            Entry::Header(project_path) => self
-                .group_result_by_path
-                .then(|| self.render_header(project_path, cx)),
-            &Entry::Match(ix) => self.matches.get(ix).map(|mat| {
-                let item_base = ListItem::new(ix)
-                    .spacing(ListItemSpacing::Sparse)
-                    .inset(true)
-                    .toggle_state(selected);
-
-                let (bookmark_label, full_path_label) = self.labels_for_match(mat, window, cx);
-
-                if self.group_result_by_path {
-                    item_base.child(
-                        h_flex()
-                            .w_full()
-                            .gap_1p5()
-                            .justify_between()
-                            .overflow_x_hidden()
-                            .child(bookmark_label.truncate().into_any_element())
-                            .child(
-                                Label::new(mat.line_number.to_string())
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            ),
-                    )
-                } else {
-                    item_base.start_slot::<Icon>(Some(icon)).child(
-                        h_flex()
-                            .w_full()
-                            .min_w_0()
-                            .gap_1p5()
-                            .child(bookmark_label.truncate())
-                            .child(full_path_label)
-                            .into_any_element(),
-                    )
-                }
-                .into_any_element()
-            }),
-            Entry::Separator => self.group_result_by_path.then(|| {
-                div()
-                    .py(DynamicSpacing::Base04.rems(cx))
-                    .child(Divider::horizontal())
-                    .into_any_element()
-            }),
-        }
-    }
-
-    fn preview_layout_changed(&mut self, layout_is_horizontal: bool) {
-        self.group_result_by_path = layout_is_horizontal;
+        Some(
+            ListItem::new(match_index)
+                .spacing(ListItemSpacing::Sparse)
+                .inset(true)
+                .toggle_state(selected)
+                .start_slot::<Icon>(Some(icon))
+                .child(
+                    v_flex()
+                        .w_full()
+                        .min_w_0()
+                        .child(bookmark_label.truncate())
+                        .child(full_path_label),
+                ),
+        )
     }
 
     fn try_get_preview_data_for_match(&self, cx: &App) -> Option<PreviewUpdate> {
-        let selected_bookmark = match self.entries.get(self.selected_entry_index)? {
-            &Entry::Match(ix) => self.matches.get(ix),
-            _ => None,
-        }?;
+        let selected_bookmark = self.matches.get(self.selected_match_index)?;
 
         let snapshot = selected_bookmark.buffer.read(cx).snapshot();
         let offset = snapshot.offset_for_anchor(&selected_bookmark.anchor);
