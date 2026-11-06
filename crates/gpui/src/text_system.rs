@@ -701,7 +701,7 @@ impl WindowTextSystem {
             });
         }
 
-        let layout = self.layout_line(&text, font_size, runs, force_width);
+        let layout = self.layout_line_internal(&text, font_size, runs, force_width);
 
         ShapedLine {
             layout,
@@ -856,6 +856,22 @@ impl WindowTextSystem {
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
+        self.layout_line_internal(text, font_size, runs, force_width)
+    }
+
+    /// Takes the text as `&str` or `&SharedString` so that a cache hit doesn't copy it, and a
+    /// miss from `shape_line` shares its `SharedString` with the cache instead of copying it.
+    fn layout_line_internal<Text>(
+        &self,
+        text: Text,
+        font_size: Pixels,
+        runs: &[TextRun],
+        force_width: Option<Pixels>,
+    ) -> Arc<LineLayout>
+    where
+        Text: AsRef<str>,
+        SharedString: From<Text>,
+    {
         let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_buffer.take();
         font_runs.clear();
@@ -888,12 +904,9 @@ impl WindowTextSystem {
             }
         }
 
-        let layout = self.line_layout_cache.layout_line(
-            &SharedString::new(text),
-            font_size,
-            &font_runs,
-            force_width,
-        );
+        let layout = self
+            .line_layout_cache
+            .layout_line(text, font_size, &font_runs, force_width);
 
         self.font_runs_buffer.set(font_runs);
 
