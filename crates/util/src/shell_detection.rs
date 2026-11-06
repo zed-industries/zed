@@ -130,7 +130,9 @@ fn detect_available_shells_blocking() -> Vec<DetectedShell> {
         shells.extend(wsl);
     }
 
-    dedup_by_program(shells)
+    // Suffix once, after the final (canonicalizing) dedup — see
+    // dedup_by_program for why suffixing earlier breaks the dedup key.
+    apply_duplicate_label_suffixes(dedup_by_program(shells, &canonicalize_path))
 }
 
 /// Pure, testable detector. Walks the supplied inputs without touching the
@@ -227,7 +229,9 @@ fn detect_unix_inner(
         }
     }
 
-    dedup_by_program(shells)
+    // Raw-path dedup only; the blocking entry point re-runs dedup with
+    // real canonicalization, which is where usr-merge duplicates collapse.
+    dedup_by_program(shells, &identity_canonicalize)
 }
 
 /// Resolve a single non-comment line from `/etc/shells` into a
@@ -338,7 +342,7 @@ fn detect_windows_inner(
         }
     }
 
-    dedup_by_program(shells)
+    dedup_by_program(shells, &identity_canonicalize)
 }
 
 /// Enumerate WSL distros via `wsl.exe -l -q`, returning one entry per
@@ -377,19 +381,45 @@ fn enumerate_wsl_distros() -> Vec<DetectedShell> {
     Vec::new()
 }
 
-/// Strip duplicate programs (by raw path equality) and apply VSCode-style
-/// `" (n)"` suffixes to entries sharing a label.
+/// Strip duplicate programs.
 ///
-/// We intentionally dedup on the raw `program` string rather than
-/// canonicalizing: canonicalization requires touching the real filesystem
-/// (which would break the fs-free testable inner fn) and yields
-/// platform-dependent results. `/etc/shells` rarely lists the same path
-/// twice, so raw-path dedup is sufficient in practice. VSCode itself
-/// falls back to raw-path comparison when `realpath` fails.
-fn dedup_by_program(mut shells: Vec<DetectedShell>) -> Vec<DetectedShell> {
-    let mut seen: HashSet<PathBuf> = HashSet::default();
-    shells.retain(|shell| seen.insert(shell.program.clone()));
-    apply_duplicate_label_suffixes(shells)
+/// Dedup compares `(canonicalize(program), label)`, falling back to the
+/// raw path when canonicalization fails (matching VSCode's
+/// `realpath`-with-fallback behavior). Canonicalization collapses
+/// usr-merge duplicates — distros like Arch list both `/bin/bash` and
+/// `/usr/bin/bash` in `/etc/shells` even though `/bin` is a symlink to
+/// `/usr/bin`. The label stays in the key because one binary can back
+/// several distinct shells (`/bin/sh` symlinks to `bash` but runs in sh
+/// mode; `rbash` is likewise the same binary): those entries must all
+/// survive. Callers working against the real filesystem pass
+/// [`canonicalize_path`]; fs-free inner fns pass [`identity_canonicalize`],
+/// which keeps raw-path equality semantics.
+///
+/// Does NOT apply `" (n)"` label suffixes — the blocking entry point
+/// suffixes once, after the final dedup. Suffixing earlier would leak
+/// `" (2)"` into the dedup key and defeat the canonical pass (the inner
+/// identity dedup keeps usr-merge pairs whose labels then differ).
+fn dedup_by_program(
+    mut shells: Vec<DetectedShell>,
+    canonicalize: &dyn Fn(&Path) -> Option<PathBuf>,
+) -> Vec<DetectedShell> {
+    let mut seen: HashSet<(PathBuf, String)> = HashSet::default();
+    shells.retain(|shell| {
+        let canonical = canonicalize(&shell.program).unwrap_or_else(|| shell.program.clone());
+        seen.insert((canonical, shell.label.clone()))
+    });
+    shells
+}
+
+/// Real-filesystem canonicalization used by the production entry point.
+fn canonicalize_path(path: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(path).ok()
+}
+
+/// Identity canonicalization for fs-free inner fns and tests: the
+/// "canonical" form of a path is the path itself.
+fn identity_canonicalize(path: &Path) -> Option<PathBuf> {
+    Some(path.to_path_buf())
 }
 
 fn apply_duplicate_label_suffixes(mut shells: Vec<DetectedShell>) -> Vec<DetectedShell> {
@@ -437,6 +467,22 @@ mod tests {
     fn exists_set(set: &[&str]) -> impl Fn(&Path) -> bool {
         let set: HashSet<PathBuf> = set.iter().map(PathBuf::from).collect();
         move |p| set.contains(p)
+    }
+
+    /// Test canonicalization that simulates a usr-merge filesystem:
+    /// `sh` (both `/bin/sh` and `/usr/bin/sh`) resolves to
+    /// `/usr/bin/bash` (as on Arch, where sh is a symlink to bash), and
+    /// every other `/bin/...` path resolves to its `/usr/bin/...`
+    /// counterpart. All other paths canonicalize to themselves.
+    fn resolve_symlink_pairs(path: &Path) -> Option<PathBuf> {
+        let as_str = path.to_string_lossy();
+        if as_str == "/bin/sh" || as_str == "/usr/bin/sh" {
+            return Some(PathBuf::from("/usr/bin/bash"));
+        }
+        if let Some(rest) = as_str.strip_prefix("/bin/") {
+            return Some(PathBuf::from(format!("/usr/bin/{rest}")));
+        }
+        Some(path.to_path_buf())
     }
 
     /// `/etc/shells` parser: strips comments and blanks, drops nonexistent
@@ -559,15 +605,15 @@ mod tests {
     }
 
     #[test]
-    fn dedup_by_program_uses_raw_path_equality() {
-        // Distinct raw program strings survive even if they would
-        // canonicalize to the same inode on a real filesystem. This
-        // keeps the inner fn fs-free (canonicalize touches the real fs).
+    fn dedup_by_program_identity_keeps_distinct_raw_paths() {
+        // With identity canonicalization (fs-free inner-fn semantics),
+        // distinct raw program strings survive even if they would
+        // canonicalize to the same inode on a real filesystem.
         let shells = vec![
             detected("bash", "/bin/bash", ShellSource::EtcShells),
             detected("bash (2)", "/usr/bin/bash", ShellSource::Path),
         ];
-        let merged = dedup_by_program(shells);
+        let merged = dedup_by_program(shells, &identity_canonicalize);
         assert_eq!(
             merged.len(),
             2,
@@ -576,12 +622,106 @@ mod tests {
     }
 
     #[test]
+    fn dedup_by_program_canonicalize_collapses_usr_merge_duplicates() {
+        // On usr-merge distros /etc/shells lists both /bin/bash and
+        // /usr/bin/bash; /bin is a symlink to /usr/bin so both resolve to
+        // the same binary and only the first entry should survive.
+        let shells = vec![
+            detected("sh", "/bin/sh", ShellSource::EtcShells),
+            detected("sh", "/usr/bin/sh", ShellSource::EtcShells),
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("bash", "/usr/bin/bash", ShellSource::EtcShells),
+            detected("zsh", "/bin/zsh", ShellSource::EtcShells),
+            detected("zsh", "/usr/bin/zsh", ShellSource::EtcShells),
+        ];
+        let merged = dedup_by_program(shells, &resolve_symlink_pairs);
+        let labels: Vec<&str> = merged.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["sh", "bash", "zsh"]);
+    }
+
+    #[test]
+    fn dedup_by_program_canonicalize_keeps_shells_sharing_a_binary() {
+        // On Arch /bin/sh is a symlink to bash, and rbash is the same
+        // binary too. These are distinct shells (different argv[0]
+        // behavior), so canonicalization must NOT collapse them into the
+        // bash entry — only same-basename duplicates do.
+        let shells = vec![
+            detected("sh", "/bin/sh", ShellSource::EtcShells),
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("bash", "/usr/bin/bash", ShellSource::EtcShells),
+            detected("rbash", "/bin/rbash", ShellSource::EtcShells),
+        ];
+        let merged = dedup_by_program(shells, &resolve_symlink_pairs);
+        let labels: Vec<&str> = merged.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["sh", "bash", "rbash"],
+            "sh and rbash share bash's binary but must survive"
+        );
+    }
+
+    #[test]
+    fn dedup_by_program_canonicalize_keeps_genuinely_distinct_shells() {
+        // Two bash builds at unrelated real paths (not symlinks of each
+        // other) must both survive dedup; the blocking entry point then
+        // applies the VSCode-style suffix.
+        let shells = vec![
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("bash", "/usr/local/bin/bash", ShellSource::Path),
+        ];
+        let deduped = dedup_by_program(shells, &resolve_symlink_pairs);
+        let merged = apply_duplicate_label_suffixes(deduped);
+        let labels: Vec<&str> = merged.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["bash", "bash (2)"]);
+    }
+
+    /// Regression test for the real pipeline ordering: the inner identity
+    /// dedup must NOT suffix labels before the blocking canonical dedup
+    /// runs — suffixed labels ("sh" vs "sh (2)") would never match as
+    /// duplicates and usr-merge pairs would survive.
+    #[test]
+    fn blocking_pipeline_suffixes_only_after_canonical_dedup() {
+        // Simulates detect_unix_inner output on an Arch-style usr-merge
+        // host: plain (unsuffixed) labels, one entry per /etc/shells line.
+        let inner_output = vec![
+            detected("sh", "/bin/sh", ShellSource::EtcShells),
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("rbash", "/bin/rbash", ShellSource::EtcShells),
+            detected("sh", "/usr/bin/sh", ShellSource::EtcShells),
+            detected("bash", "/usr/bin/bash", ShellSource::EtcShells),
+            detected("rbash", "/usr/bin/rbash", ShellSource::EtcShells),
+            detected("zsh", "/bin/zsh", ShellSource::EtcShells),
+            detected("zsh", "/usr/bin/zsh", ShellSource::EtcShells),
+        ];
+        let deduped = dedup_by_program(inner_output, &resolve_symlink_pairs);
+        let merged = apply_duplicate_label_suffixes(deduped);
+        let labels: Vec<&str> = merged.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["sh", "bash", "rbash", "zsh"],
+            "usr-merge duplicates must collapse even though the inner pass kept them"
+        );
+    }
+
+    #[test]
+    fn dedup_by_program_canonicalize_failure_falls_back_to_raw_path() {
+        // When canonicalization errors, the raw path is used for the
+        // comparison, so distinct unresolvable paths still both survive.
+        let shells = vec![
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("bash (2)", "/usr/bin/bash", ShellSource::Path),
+        ];
+        let merged = dedup_by_program(shells, &|_| None);
+        assert_eq!(merged.len(), 2, "fallback to raw path keeps both entries");
+    }
+
+    #[test]
     fn dedup_by_program_drops_exact_duplicates() {
         let shells = vec![
             detected("bash", "/bin/bash", ShellSource::EtcShells),
             detected("bash", "/bin/bash", ShellSource::Path),
         ];
-        let merged = dedup_by_program(shells);
+        let merged = dedup_by_program(shells, &identity_canonicalize);
         assert_eq!(merged.len(), 1, "exact raw-path duplicates collapse");
     }
 
