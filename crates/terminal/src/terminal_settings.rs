@@ -166,18 +166,45 @@ pub fn merge_with_configured_profiles(
 
     for shell in detected {
         let program_string = shell.program.to_string_lossy().into_owned();
-        let stem = shell
-            .program
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned());
-        let shadowed = configured_paths.contains(&program_string)
-            || stem.as_ref().is_some_and(|s| configured_stems.contains(s));
+        let shadowed = detected_program_is_shadowed(
+            shell.program.as_ref(),
+            &program_string,
+            &configured_paths,
+            &configured_stems,
+            cfg!(windows),
+        );
         if !shadowed {
             entries.push(MergedShellEntry::Detected(shell));
         }
     }
 
     entries
+}
+
+/// Whether a detected shell's program collides with a configured profile.
+/// `windows_extension_matching` additionally matches the detected
+/// program's file stem (e.g. `pwsh` from `pwsh.exe`) against configured
+/// bare names; it is threaded through as a parameter so the comparison
+/// stays testable from any host.
+fn detected_program_is_shadowed(
+    program: &std::path::Path,
+    program_string: &str,
+    configured_paths: &std::collections::HashSet<String>,
+    configured_stems: &std::collections::HashSet<String>,
+    windows_extension_matching: bool,
+) -> bool {
+    if configured_paths.contains(program_string) {
+        return true;
+    }
+    if let Some(name) = program.file_name()
+        && configured_stems.contains(&name.to_string_lossy().into_owned())
+    {
+        return true;
+    }
+    windows_extension_matching
+        && program
+            .file_stem()
+            .is_some_and(|stem| configured_stems.contains(&stem.to_string_lossy().into_owned()))
 }
 
 /// Single menu entry for the "+" PopoverMenu. Produced by
@@ -738,6 +765,48 @@ mod tests {
             MergedShellEntry::Configured { name, .. } => assert_eq!(name, "MyZsh"),
             MergedShellEntry::Detected(_) => panic!("basename match should shadow detected"),
         }
+    }
+
+    #[test]
+    fn merge_shadows_detected_exe_by_configured_stem_on_windows() {
+        // Windows: detected programs carry `.exe` (e.g. `pwsh.exe`). A
+        // configured bare stem (`pwsh`) must still shadow the entry, or
+        // the menu shows both.
+        let profiles = profile_map(&[("PowerShell", "pwsh")]);
+        let detected = vec![detected("pwsh", r"C:\Windows\System32\pwsh.exe")];
+        let merged = merge_with_configured_profiles(detected, &profiles);
+        match &merged[0] {
+            MergedShellEntry::Configured { name, .. } => assert_eq!(name, "PowerShell"),
+            MergedShellEntry::Detected(_) => panic!("basename match should shadow detected"),
+        }
+        if cfg!(windows) {
+            assert_eq!(merged.len(), 1, "detected pwsh.exe should be shadowed");
+        }
+
+        // Host-independent check of the extension-matching rule itself:
+        // enabled on Windows, disabled elsewhere (a Unix `pwsh.exe`
+        // detection would be a real, distinct program).
+        let configured_paths = std::collections::HashSet::new();
+        let configured_stems: std::collections::HashSet<String> =
+            ["pwsh".to_string()].into_iter().collect();
+        // Forward slashes so the path parses identically on any host
+        // (backslash paths only split into components on Windows).
+        let program = std::path::Path::new("/windows/system32/pwsh.exe");
+        let program_string = program.to_string_lossy().into_owned();
+        assert!(detected_program_is_shadowed(
+            program,
+            &program_string,
+            &configured_paths,
+            &configured_stems,
+            true,
+        ));
+        assert!(!detected_program_is_shadowed(
+            program,
+            &program_string,
+            &configured_paths,
+            &configured_stems,
+            false,
+        ));
     }
 
     #[test]
