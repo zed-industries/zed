@@ -1810,6 +1810,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         Some(
             h_flex()
                 .flex_1()
+                .flex_wrap()
                 .p_1p5()
                 .gap_1()
                 .justify_end()
