@@ -223,7 +223,7 @@ use project::{
         },
         session::{Session, SessionEvent},
     },
-    git_store::GitStoreEvent,
+    git_store::{GitStoreEvent, diff_buffer_list::DiffBufferList},
     lsp_store::{
         BufferSemanticTokens, CacheInlayHints, CompletionDocumentation, FormatTrigger,
         LspFormatTarget, OpenLspBufferHandle,
@@ -786,6 +786,10 @@ impl BufferSerialization {
 
 /// Addons allow storing per-editor state in other crates (e.g. Vim)
 pub trait Addon: 'static {
+    fn git_diff_base_for_open_excerpts(&self, _: &App) -> Option<Entity<DiffBufferList>> {
+        None
+    }
+
     fn extend_key_context(&self, _: &mut KeyContext, _: &App) {}
 
     fn render_buffer_header_controls(
@@ -1194,6 +1198,9 @@ pub struct Editor {
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     language_detection_task: Task<()>,
     load_diff_task: Option<Shared<Task<()>>>,
+    git_diff_base_override: Option<Entity<DiffBufferList>>,
+    git_diff_base_revision: usize,
+    git_diff_base_subscription: Option<Subscription>,
     diff_hunk_renderer: Option<Arc<dyn DiffHunkRenderer>>,
     diff_hunk_action_target: Option<WeakEntity<Editor>>,
     selection_mark_mode: bool,
@@ -1899,13 +1906,14 @@ impl Editor {
     }
 
     pub fn clone(&self, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut clone = Self::new(
-            self.mode.clone(),
-            self.buffer.clone(),
-            self.project.clone(),
-            window,
-            cx,
-        );
+        // Split editors share text, but their gutter comparisons are independent.
+        let buffer = if self.buffer.read(cx).is_singleton() {
+            self.buffer
+                .update(cx, |buffer, cx| cx.new(|cx| buffer.clone(cx)))
+        } else {
+            self.buffer.clone()
+        };
+        let mut clone = Self::new(self.mode.clone(), buffer, self.project.clone(), window, cx);
         let my_snapshot = self.display_map.update(cx, |display_map, cx| {
             let snapshot = display_map.snapshot(cx);
             clone.display_map.update(cx, |display_map, cx| {
@@ -1931,6 +1939,7 @@ impl Editor {
         if let Some(bookmarks_tab_state) = self.bookmarks_tab_state.clone() {
             clone.set_bookmarks_tab_state(bookmarks_tab_state, cx);
         }
+        clone.set_git_diff_base_override(self.git_diff_base_override.clone(), cx);
         clone
     }
 
@@ -2592,6 +2601,9 @@ impl Editor {
             serialize_folds: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: None,
+            git_diff_base_override: None,
+            git_diff_base_revision: 0,
+            git_diff_base_subscription: None,
             diff_hunk_renderer: None,
             diff_hunk_action_target: None,
             minimap: None,
@@ -10674,6 +10686,7 @@ impl Editor {
             workspace.downgrade(),
             new_selections_by_buffer,
             split,
+            self.git_diff_base_for_open_excerpts(cx),
             window,
             cx,
         );
@@ -10686,6 +10699,104 @@ impl Editor {
             (Vec<Range<BufferOffset>>, Option<u32>),
         >,
         split: bool,
+        git_diff_base: Option<Entity<DiffBufferList>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(git_diff_base) = git_diff_base else {
+            Self::open_buffers_in_workspace_internal(
+                workspace,
+                new_selections_by_buffer,
+                split,
+                None,
+                window,
+                cx,
+            );
+            return;
+        };
+        let Ok(project) = workspace.read_with(cx, |workspace, _| workspace.project().clone())
+        else {
+            return;
+        };
+        let workspace_for_error = workspace.clone();
+        window
+            .spawn(cx, async move |cx| {
+                let mut selections = HashMap::default();
+                for (source, (ranges, scroll_offset)) in new_selections_by_buffer {
+                    let path = source
+                        .read_with(cx, |source, cx| {
+                            source.file().map(|file| ProjectPath {
+                                worktree_id: file.worktree_id(cx),
+                                path: file.path().clone(),
+                            })
+                        })
+                        .context("Cannot open a branch comparison without a file path")?;
+                    let buffer = project
+                        .update(cx, |project, cx| project.open_buffer(path, cx))
+                        .await?;
+                    let ranges = if buffer == source {
+                        ranges
+                    } else {
+                        let git_store =
+                            project.read_with(cx, |project, _| project.git_store().clone());
+                        let diff = git_store
+                            .update(cx, |git_store, cx| {
+                                git_store.open_uncommitted_diff(buffer.clone(), cx)
+                            })
+                            .await?;
+                        cx.update(|_, cx| {
+                            let source = source.read(cx).snapshot();
+                            let target = buffer.read(cx).snapshot();
+                            let diff = diff.read(cx).snapshot(cx);
+                            ranges
+                                .into_iter()
+                                .map(|range| {
+                                    let map_offset = |offset: BufferOffset| {
+                                        let point = diff.base_text_point_to_buffer_point(
+                                            source.offset_to_point(offset.0),
+                                            &target,
+                                        );
+                                        BufferOffset(target.point_to_offset(point))
+                                    };
+                                    map_offset(range.start)..map_offset(range.end)
+                                })
+                                .collect()
+                        })?
+                    };
+                    selections.insert(buffer, (ranges, scroll_offset));
+                }
+                cx.update(|window, cx| {
+                    Self::open_buffers_in_workspace_internal(
+                        workspace,
+                        selections,
+                        split,
+                        Some(git_diff_base),
+                        window,
+                        cx,
+                    );
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_notify_err(workspace_for_error, window, cx);
+    }
+
+    pub(crate) fn git_diff_base_for_open_excerpts(
+        &self,
+        cx: &App,
+    ) -> Option<Entity<DiffBufferList>> {
+        self.addons
+            .values()
+            .find_map(|addon| addon.git_diff_base_for_open_excerpts(cx))
+    }
+
+    fn open_buffers_in_workspace_internal(
+        workspace: WeakEntity<Workspace>,
+        new_selections_by_buffer: HashMap<
+            Entity<language::Buffer>,
+            (Vec<Range<BufferOffset>>, Option<u32>),
+        >,
+        split: bool,
+        git_diff_base: Option<Entity<DiffBufferList>>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -10757,6 +10868,9 @@ impl Editor {
                             });
 
                         editor.update(cx, |editor, cx| {
+                            if let Some(git_diff_base) = git_diff_base.clone() {
+                                editor.set_git_diff_base_override(Some(git_diff_base), cx);
+                            }
                             if has_file && !is_project_file {
                                 editor.set_read_only(true);
                             }

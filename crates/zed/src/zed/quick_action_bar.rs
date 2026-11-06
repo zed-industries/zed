@@ -25,6 +25,7 @@ use ui::{
     ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
+use util::ResultExt as _;
 use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::item::ItemBufferKind;
 use workspace::{
@@ -117,6 +118,31 @@ impl Render for QuickActionBar {
             editor.update(cx, |editor, cx| editor.supports_semantic_tokens(cx));
         let supports_code_lens = editor.update(cx, |editor, cx| editor.supports_code_lens(cx));
         let editor_value = editor.read(cx);
+        let git_diff_base_button = editor_value.git_diff_base_name(cx).map(|base_ref| {
+            let editor = editor.downgrade();
+            PopoverMenu::new("file-git-diff-base")
+                .trigger_with_tooltip(
+                    Button::new("file-git-diff-base-trigger", format!("Base: {base_ref}"))
+                        .label_size(LabelSize::Small)
+                        .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
+                    Tooltip::text(format!(
+                        "Compare this file against {base_ref}. Local edits are included."
+                    )),
+                )
+                .anchor(Anchor::TopRight)
+                .menu(move |window, cx| {
+                    let editor = editor.clone();
+                    Some(ContextMenu::build(window, cx, move |menu, _, _| {
+                        menu.entry("Use Default Diff Base", None, move |_, cx| {
+                            editor
+                                .update(cx, |editor, cx| {
+                                    editor.set_git_diff_base_override(None, cx)
+                                })
+                                .log_err();
+                        })
+                    }))
+                })
+        });
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
         let inline_values_enabled = editor_value.inline_values_enabled();
@@ -715,6 +741,7 @@ impl Render for QuickActionBar {
             )
             .children(code_actions_dropdown)
             .children(editor_selections_dropdown)
+            .children(git_diff_base_button)
             .child(editor_settings_dropdown)
     }
 }
@@ -786,11 +813,13 @@ impl ToolbarItemView for QuickActionBar {
                     mut inlay_hints_enabled,
                     mut supports_inlay_hints,
                     mut supports_semantic_tokens,
+                    mut git_diff_base,
                 ) = editor.update(cx, |editor, cx| {
                     (
                         editor.inlay_hints_enabled(),
                         editor.supports_inlay_hints(cx),
                         editor.supports_semantic_tokens(cx),
+                        editor.git_diff_base_name(cx),
                     )
                 });
                 self._inlay_hints_enabled_subscription =
@@ -799,19 +828,23 @@ impl ToolbarItemView for QuickActionBar {
                             new_inlay_hints_enabled,
                             new_supports_inlay_hints,
                             new_supports_semantic_tokens,
+                            new_git_diff_base,
                         ) = editor.update(cx, |editor, cx| {
                             (
                                 editor.inlay_hints_enabled(),
                                 editor.supports_inlay_hints(cx),
                                 editor.supports_semantic_tokens(cx),
+                                editor.git_diff_base_name(cx),
                             )
                         });
                         let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
                             || supports_inlay_hints != new_supports_inlay_hints
-                            || supports_semantic_tokens != new_supports_semantic_tokens;
+                            || supports_semantic_tokens != new_supports_semantic_tokens
+                            || git_diff_base != new_git_diff_base;
                         inlay_hints_enabled = new_inlay_hints_enabled;
                         supports_inlay_hints = new_supports_inlay_hints;
                         supports_semantic_tokens = new_supports_semantic_tokens;
+                        git_diff_base = new_git_diff_base;
                         if should_notify {
                             cx.notify()
                         }

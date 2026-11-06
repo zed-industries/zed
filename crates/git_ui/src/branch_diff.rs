@@ -58,6 +58,13 @@ struct BranchDiffAddon {
 }
 
 impl Addon for BranchDiffAddon {
+    fn git_diff_base_for_open_excerpts(
+        &self,
+        _: &App,
+    ) -> Option<Entity<diff_buffer_list::DiffBufferList>> {
+        Some(self.branch_diff.clone())
+    }
+
     fn to_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -908,7 +915,7 @@ mod tests {
     use editor::test::editor_test_context::assert_state_with_diff;
     use git::status::{FileStatus, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
     use gpui::TestAppContext;
-    use project::FakeFs;
+    use project::{FakeFs, project_settings::ProjectSettings};
     use serde_json::json;
     use settings::{DiffViewStyle, SettingsStore};
     use std::path::Path;
@@ -1187,6 +1194,307 @@ mod tests {
                 )
             ])
         );
+    }
+
+    #[gpui::test]
+    async fn test_open_branch_excerpt_keeps_comparison(cx: &mut TestAppContext) {
+        open_branch_excerpt_keeps_comparison(cx, DiffViewStyle::Unified, false).await;
+    }
+
+    #[gpui::test]
+    async fn test_open_branch_excerpt_from_split_keeps_comparison(cx: &mut TestAppContext) {
+        open_branch_excerpt_keeps_comparison(cx, DiffViewStyle::Split, false).await;
+    }
+
+    #[gpui::test]
+    async fn test_open_historical_branch_excerpt_opens_worktree(cx: &mut TestAppContext) {
+        open_branch_excerpt_keeps_comparison(cx, DiffViewStyle::Unified, true).await;
+    }
+
+    fn editor_diff_base_text(editor: &Editor, cx: &App) -> Option<String> {
+        let multibuffer = editor.buffer().read(cx);
+        let buffer = multibuffer.as_singleton()?;
+        let diff = multibuffer.diff_for(buffer.read(cx).remote_id())?;
+        diff.read(cx).snapshot(cx).base_text_string()
+    }
+
+    async fn open_branch_excerpt_keeps_comparison(
+        cx: &mut TestAppContext,
+        style: DiffViewStyle,
+        historical: bool,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(style)
+                });
+            })
+        });
+        let fs = FakeFs::new(cx.executor());
+        let head = "one\ncommitted\nlast";
+        let working = if historical {
+            "local prefix\none\nlocal edit\nlast"
+        } else {
+            head
+        };
+        fs.insert_tree(path!("/project"), json!({".git": {}, "a.txt": working}))
+            .await;
+        let dot_git = Path::new(path!("/project/.git"));
+        fs.set_head_and_index_for_repo(dot_git, &[("a.txt", head.into())]);
+        fs.set_merge_base_content_for_repo(dot_git, &[("a.txt", "one\nbase\nlast".into())]);
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let normal = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.txt")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let other_view = cx.update(|window, cx| {
+            normal.update(cx, |normal, cx| cx.new(|cx| normal.clone(window, cx)))
+        });
+        let repo = project
+            .read_with(cx, |project, cx| project.active_repository(cx))
+            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            BranchDiff::deploy_branch_diff_with_base_ref(
+                workspace,
+                project.clone(),
+                repo,
+                "review-base".into(),
+                None,
+                None,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let branch = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.active_item_as::<BranchDiff>(cx)
+            })
+            .unwrap();
+        let split_editor = branch.read_with(cx, |branch, cx| branch.editor(cx));
+        if historical {
+            let main_buffer = normal.read_with(cx, |editor, cx| {
+                editor.buffer().read(cx).as_singleton().unwrap()
+            });
+            let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+            let (_, index) = git_store
+                .update(cx, |store, cx| store.open_staged_diff(main_buffer, cx))
+                .await
+                .unwrap();
+            cx.run_until_parked();
+            let path = split_editor.read_with(cx, |editor, cx| {
+                editor
+                    .rhs_editor()
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .buffers_with_paths()
+                    .next()
+                    .unwrap()
+                    .1
+                    .clone()
+            });
+            split_editor.update(cx, |editor, cx| {
+                editor.remove_excerpts_for_path(path.clone(), cx)
+            });
+            cx.run_until_parked();
+            let snapshot = index.read_with(cx, |buffer, _| buffer.snapshot());
+            let diff = cx.new(|cx| buffer_diff::BufferDiff::new(&snapshot, None, None, cx));
+            diff.update(cx, |diff, cx| {
+                diff.set_base_text(Some("one\nbase\nlast".into()), snapshot.text, cx)
+            })
+            .await;
+            split_editor.update(cx, |editor, cx| {
+                let end = index.read(cx).max_point();
+                editor.update_excerpts_for_path(
+                    path,
+                    index,
+                    vec![language::Point::zero()..end],
+                    3,
+                    diff,
+                    cx,
+                );
+                editor
+                    .rhs_editor()
+                    .update(cx, |editor, _| editor.set_read_only(true));
+            });
+            branch.update(cx, |branch, cx| branch.diff.update(cx, |_, cx| cx.notify()));
+        }
+        cx.run_until_parked();
+        let source = split_editor.read_with(cx, |editor, _| {
+            if style == DiffViewStyle::Split {
+                editor.lhs_editor().unwrap().clone()
+            } else {
+                editor.rhs_editor().clone()
+            }
+        });
+        cx.update(|window, cx| {
+            source.update(cx, |editor, cx| {
+                editor.change_selections(
+                    editor::SelectionEffects::no_scroll(),
+                    window,
+                    cx,
+                    |selections| {
+                        selections
+                            .select_ranges([language::Point::zero()..language::Point::zero()]);
+                    },
+                );
+                editor.focus_handle(cx).focus(window, cx);
+            });
+            if style == DiffViewStyle::Split {
+                window.dispatch_action(editor::actions::OpenExcerptsSplit.boxed_clone(), cx);
+            } else {
+                window.dispatch_action(editor::actions::OpenExcerpts.boxed_clone(), cx);
+            }
+        });
+        cx.run_until_parked();
+        let opened = workspace
+            .read_with(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
+            .unwrap();
+        if style == DiffViewStyle::Unified {
+            assert_eq!(
+                opened,
+                normal,
+                "source={source:?}, singleton={}, read_only={}",
+                opened.read_with(cx, |editor, cx| editor.buffer().read(cx).is_singleton()),
+                opened.read_with(cx, |editor, cx| editor.read_only(cx))
+            );
+        }
+        opened.read_with(cx, |editor, cx| {
+            assert!(!editor.read_only(cx));
+            assert_eq!(
+                editor.git_diff_base_name(cx).as_deref(),
+                Some("review-base")
+            );
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            assert_eq!(buffer.read(cx).text(), working);
+            assert!(project::File::from_dyn(buffer.read(cx).file()).is_some());
+            let diff = editor
+                .buffer()
+                .read(cx)
+                .diff_for(buffer.read(cx).remote_id())
+                .unwrap();
+            assert_eq!(
+                diff.read(cx).snapshot(cx).base_text_string().as_deref(),
+                Some("one\nbase\nlast")
+            );
+            assert!(diff.read(cx).operations().is_none());
+        });
+        cx.update(|window, cx| {
+            opened.update(cx, |editor, cx| {
+                editor.restore_diff_hunks_in_ranges(
+                    vec![multi_buffer::Anchor::Min..multi_buffer::Anchor::Max],
+                    window,
+                    cx,
+                );
+            })
+        });
+        cx.run_until_parked();
+        opened.read_with(cx, |editor, cx| {
+            assert_eq!(
+                editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap()
+                    .read(cx)
+                    .text(),
+                working
+            );
+        });
+        cx.update(|window, cx| {
+            opened.update(cx, |editor, cx| {
+                editor.handle_input("typed from branch ", window, cx)
+            })
+        });
+        cx.run_until_parked();
+        opened.read_with(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            assert!(buffer.read(cx).text().contains("typed from branch "));
+            assert!(buffer.read(cx).is_dirty());
+        });
+        other_view.read_with(cx, |editor, cx| {
+            assert!(editor.git_diff_base_name(cx).is_none());
+            assert_eq!(editor_diff_base_text(editor, cx).as_deref(), Some(head));
+        });
+        cx.update(|window, cx| {
+            opened.update(cx, |editor, cx| {
+                editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx)
+            })
+        });
+        opened.read_with(cx, |editor, cx| {
+            assert!(editor.buffer().read(cx).has_expanded_diff_hunks_in_ranges(
+                &[multi_buffer::Anchor::Min..multi_buffer::Anchor::Max],
+                cx
+            ));
+        });
+        cx.update(|window, cx| {
+            opened.update(cx, |editor, cx| {
+                editor.change_selections(
+                    editor::SelectionEffects::no_scroll(),
+                    window,
+                    cx,
+                    |selections| {
+                        let point = language::Point::new(1, 0);
+                        selections.select_ranges([point..point]);
+                    },
+                );
+            });
+        });
+        fs.set_merge_base_content_for_repo(dot_git, &[("a.txt", "one\nother base\nlast".into())]);
+        branch.update(cx, |branch, cx| {
+            branch.set_merge_base("other-base".into(), cx)
+        });
+        cx.run_until_parked();
+        opened.read_with(cx, |editor, cx| {
+            assert_eq!(editor.git_diff_base_name(cx).as_deref(), Some("other-base"));
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some("one\nother base\nlast")
+            );
+        });
+        let inherited_view = cx.update(|window, cx| {
+            opened.update(cx, |editor, cx| cx.new(|cx| editor.clone(window, cx)))
+        });
+        cx.run_until_parked();
+        opened.update(cx, |editor, cx| editor.set_git_diff_base_override(None, cx));
+        cx.run_until_parked();
+        opened.read_with(cx, |editor, cx| {
+            assert!(editor.git_diff_base_name(cx).is_none());
+            assert_eq!(editor_diff_base_text(editor, cx).as_deref(), Some(head));
+        });
+        inherited_view.read_with(cx, |editor, cx| {
+            assert_eq!(editor.git_diff_base_name(cx).as_deref(), Some("other-base"));
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some("one\nother base\nlast")
+            );
+        });
+        fs.with_git_state(dot_git, false, |state| {
+            assert_eq!(
+                state.index_contents.values().next().unwrap().as_slice(),
+                head.as_bytes()
+            );
+        })
+        .unwrap();
+        cx.read(|cx| {
+            assert_eq!(
+                ProjectSettings::get_global(cx).git.diff_base,
+                settings::GitDiffBaseSetting::Head
+            )
+        });
     }
 
     #[gpui::test]

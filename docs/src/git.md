@@ -67,6 +67,14 @@ All of the changes displayed in the Project Diff behave exactly the same as any 
 
 You can stage or unstage each hunk as well as a whole file by hitting the buttons on the tab bar or their corresponding keybindings.
 
+### Opening Files from a Branch Comparison
+
+Use **Open File** or {#action editor::OpenExcerpts} in a branch comparison to open the working file with the same comparison base. Its gutter indicators show changes against the selected branch's merge base, including local edits, and can be expanded like uncommitted changes.
+
+The file remains editable. The **Base: branch** control identifies its comparison base; choose **Use Default Diff Base** to return that editor to your configured Git diff base. Other open editors retain their own comparison bases. The comparison context lasts for the current editor session.
+
+Branch hunks cannot be staged or restored from the gutter. Use the uncommitted changes view for those operations.
+
 ### Word Diff Highlighting
 
 By default, Zed highlights changed words within modified lines to make it easier to spot exactly what changed. To disable this globally, open the Settings Editor and go to **Languages & Tools > Miscellaneous**, then turn off **Word Diff Enabled**.

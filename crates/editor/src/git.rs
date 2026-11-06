@@ -3234,6 +3234,47 @@ pub fn render_diff_hunk_controls(
 }
 
 impl Editor {
+    pub fn git_diff_base_name(&self, cx: &App) -> Option<gpui::SharedString> {
+        match self.git_diff_base_override.as_ref()?.read(cx).diff_base() {
+            project::git_store::diff_buffer_list::DiffBase::Merge { base_ref } => {
+                Some(base_ref.clone())
+            }
+            _ => None,
+        }
+    }
+
+    pub fn set_git_diff_base_override(
+        &mut self,
+        branch_diff: Option<Entity<project::git_store::diff_buffer_list::DiffBufferList>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.git_diff_base_override == branch_diff {
+            return;
+        }
+        self.git_diff_base_override = branch_diff.clone();
+        self.git_diff_base_subscription = branch_diff.map(|branch_diff| {
+            cx.subscribe(
+                &branch_diff,
+                |this, _, _: &project::git_store::diff_buffer_list::BranchDiffEvent, cx| {
+                    this.reload_git_diff(cx);
+                },
+            )
+        });
+        self.reload_git_diff(cx);
+    }
+
+    fn reload_git_diff(&mut self, cx: &mut Context<Self>) {
+        self.git_diff_base_revision = self.git_diff_base_revision.wrapping_add(1);
+        if let Some(project) = self.project.clone() {
+            let buffers = self.buffer.read(cx).all_buffers();
+            self.load_diff_task = Some(
+                self.update_uncommitted_diff_for_buffer(&project, buffers, cx)
+                    .shared(),
+            );
+        }
+        cx.notify();
+    }
+
     pub(super) fn update_uncommitted_diff_for_buffer(
         &mut self,
         project: &Entity<Project>,
@@ -3241,12 +3282,22 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut tasks = Vec::new();
+        let branch_diff = self.git_diff_base_override.clone();
+        let revision = self.git_diff_base_revision;
+        let expected_base = branch_diff
+            .as_ref()
+            .map(|base| base.read(cx).diff_base().clone());
         project.update(cx, |project, cx| {
             let git_store = project.git_store().clone();
             git_store.update(cx, |git_store, cx| {
                 for buffer in buffers {
                     if project::File::from_dyn(buffer.read(cx).file()).is_some() {
-                        tasks.push(git_store.open_display_diff(buffer, cx));
+                        tasks.push(match branch_diff.as_ref() {
+                            Some(branch_diff) => {
+                                git_store.open_diff_against_branch(buffer, branch_diff, cx)
+                            }
+                            None => git_store.open_display_diff(buffer, cx),
+                        });
                     }
                 }
             });
@@ -3256,12 +3307,20 @@ impl Editor {
         let buffer = self.buffer.clone();
         cx.spawn(async move |_, cx| {
             let diffs = future::join_all(tasks).await;
-            if editor.read_with(cx, |editor, _cx| editor.diff_hunk_renderer.is_some()) {
+            if editor.read_with(cx, |editor, cx| {
+                editor.diff_hunk_renderer.is_some()
+                    || editor.git_diff_base_revision != revision
+                    || editor.git_diff_base_override != branch_diff
+                    || branch_diff
+                        .as_ref()
+                        .map(|base| base.read(cx).diff_base().clone())
+                        != expected_base
+            }) {
                 return;
             }
 
             buffer.update(cx, |buffer, cx| {
-                for diff in diffs.into_iter().flatten() {
+                for diff in diffs.into_iter().filter_map(|diff| diff.log_err()) {
                     buffer.add_diff(diff, cx);
                 }
             });
