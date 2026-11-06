@@ -9430,7 +9430,7 @@ fn ai_page(cx: &App) -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Auto-Generate Thread Titles",
-                description: "Whether to automatically generate a title for agent threads using the summary model. When disabled, titles are only created when manually requested.",
+                description: "Whether to automatically generate a title for Zed Agent threads using the summary model. When disabled, titles are only created when manually requested.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("agent.auto_generate_thread_titles"),

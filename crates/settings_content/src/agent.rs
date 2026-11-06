@@ -394,9 +394,9 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub show_merge_conflict_indicator: Option<bool>,
-    /// Whether to automatically generate a title for agent threads using the
+    /// Whether to automatically generate a title for Zed Agent threads using the
     /// summary model. When disabled, titles are only created when manually
-    /// requested (e.g. via the thread's "Generate Title" action).
+    /// requested (e.g. via the thread's "Regenerate Thread Title" action).
     ///
     /// Default: true
     pub auto_generate_thread_titles: Option<bool>,
