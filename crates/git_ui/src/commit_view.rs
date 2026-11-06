@@ -359,7 +359,7 @@ impl CommitView {
 
             // In case there's a file we should scroll to, i.e.,
             // `CommitViewOptions::reveal_file` is set, we'll append that file
-            // first and immediatelly set the scroll anchor to its buffer
+            // first and immediately set the scroll anchor to its buffer
             // header.
             let target_file = reveal_file_clone
                 .as_ref()
