@@ -1,9 +1,11 @@
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
+use github_releases::{
+    AssetKind, GitHubLspBinaryVersion, GithubBinaryMetadata, download_server_binary,
+    latest_github_release,
+};
 use gpui::{App, AsyncApp};
-use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
-use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
@@ -129,7 +131,8 @@ impl LspInstaller for CLspAdapter {
                 }
             }
             download_server_binary(
-                &*delegate.http_client(),
+                &delegate.background_executor(),
+                delegate.http_client(),
                 &url,
                 expected_digest.as_deref(),
                 &container_dir,
@@ -211,8 +214,10 @@ impl super::LspAdapter for CLspAdapter {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
-                let runs = language.highlight_text(&source, 11..11 + text.len());
+                let source = format!("struct S {{ {} }}", text);
+                let runs = language
+                    .highlight_text(source.as_str(), 11..11 + text.len())
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -228,7 +233,9 @@ impl super::LspAdapter for CLspAdapter {
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let runs = language
+                    .highlight_text(text.as_str(), 0..text.len())
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -244,7 +251,9 @@ impl super::LspAdapter for CLspAdapter {
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let runs = language
+                    .highlight_text(text.as_str(), 0..text.len())
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -348,7 +357,9 @@ impl super::LspAdapter for CLspAdapter {
         Some(CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language
+                .highlight_text(text.as_str(), display_range)
+                .collect(),
         ))
     }
 

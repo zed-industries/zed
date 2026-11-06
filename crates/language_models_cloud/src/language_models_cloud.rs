@@ -1,5 +1,6 @@
 use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result};
+use cloud_api_client::ClientApiError;
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME,
     CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
@@ -22,8 +23,9 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelCompletionStream, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRequest, LanguageModelToolChoiceSupport, ModelRateLimiters, OPEN_AI_PROVIDER_ID,
-    OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, RateLimiter, X_AI_PROVIDER_ID,
-    X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME, unavailable_error,
+    OPEN_AI_PROVIDER_NAME, PromptCompactionStrategy, ProviderErrorCategory, RateLimiter,
+    X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    unavailable_error,
 };
 
 use schemars::JsonSchema;
@@ -55,13 +57,98 @@ pub trait CloudLlmTokenProvider: Send + Sync {
     type AuthContext: Clone + Send + 'static;
 
     fn auth_context(&self, cx: &impl AppContext) -> Self::AuthContext;
-    fn cached_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
-    fn refresh_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
+    fn cached_token(
+        &self,
+        auth_context: Self::AuthContext,
+    ) -> BoxFuture<'static, Result<String, ClientApiError>>;
+    fn refresh_token(
+        &self,
+        auth_context: Self::AuthContext,
+    ) -> BoxFuture<'static, Result<String, ClientApiError>>;
 
     /// Whether the user has consented to upstream providers retaining
     /// inference logs for models that require it (see
     /// [`LanguageModel::requires_data_retention`]).
     fn has_data_retention_consent(&self, cx: &impl AppContext) -> bool;
+}
+
+/// Why an authenticated request to the Zed LLM service failed before a
+/// response arrived.
+#[derive(Debug, Error)]
+pub enum LlmRequestError {
+    /// The token provider could not supply an LLM token.
+    #[error("failed to acquire an LLM token")]
+    Token(#[source] ClientApiError),
+    #[error("failed to build the LLM request")]
+    BuildRequest(#[source] anyhow::Error),
+    #[error("failed to send the LLM request")]
+    Send(#[source] anyhow::Error),
+}
+
+impl LlmRequestError {
+    /// Classifies the failure as a completion error for a request to `host`.
+    ///
+    /// Credential and billing failures while acquiring a token become provider
+    /// rejections, so callers can tell them apart from connectivity problems.
+    pub fn into_completion_error(self, host: String) -> LanguageModelCompletionError {
+        match self {
+            Self::Token(ClientApiError::Unauthorized) => {
+                LanguageModelCompletionError::from_provider_response(
+                    PROVIDER_NAME,
+                    Some(StatusCode::UNAUTHORIZED),
+                    None,
+                    "Zed rejected the credentials for this request.".to_string(),
+                    None,
+                    ProviderErrorCategory::Authentication,
+                )
+            }
+            Self::Token(ClientApiError::NotSignedIn) => {
+                LanguageModelCompletionError::from_provider_response(
+                    PROVIDER_NAME,
+                    None,
+                    None,
+                    "Not signed in to Zed.".to_string(),
+                    None,
+                    ProviderErrorCategory::Authentication,
+                )
+            }
+            Self::Token(ClientApiError::ServerError { status, .. })
+                if status == StatusCode::PAYMENT_REQUIRED =>
+            {
+                payment_required_error(status)
+            }
+            Self::Token(ClientApiError::ServerError { status, body, .. }) => {
+                LanguageModelCompletionError::from_http_status(PROVIDER_NAME, status, body, None)
+            }
+            Self::Token(error @ ClientApiError::ConnectionFailed { .. }) => {
+                LanguageModelCompletionError::HttpSend {
+                    provider: PROVIDER_NAME,
+                    host,
+                    error: error.into(),
+                }
+            }
+            Self::Send(error) => LanguageModelCompletionError::HttpSend {
+                provider: PROVIDER_NAME,
+                host,
+                error,
+            },
+            error @ (Self::Token(
+                ClientApiError::InvalidResponse(_) | ClientApiError::RequestBuildFailed(_),
+            )
+            | Self::BuildRequest(_)) => LanguageModelCompletionError::Other(error.into()),
+        }
+    }
+}
+
+fn payment_required_error(status: StatusCode) -> LanguageModelCompletionError {
+    LanguageModelCompletionError::from_provider_response(
+        PROVIDER_NAME,
+        Some(status),
+        None,
+        "payment required to use this language model; please upgrade your account".to_string(),
+        None,
+        ProviderErrorCategory::PaymentRequired,
+    )
 }
 
 /// Sends an authenticated request to the Zed LLM service, retrying once with
@@ -73,15 +160,28 @@ pub async fn authenticated_llm_request<TP: CloudLlmTokenProvider>(
     token_provider: &TP,
     auth_context: TP::AuthContext,
     build_request: impl Fn(&str) -> Result<http_client::Request<AsyncBody>>,
-) -> Result<Response<AsyncBody>> {
-    let token = token_provider.cached_token(auth_context.clone()).await?;
-    let response = http_client.send(build_request(&token)?).await?;
+) -> Result<Response<AsyncBody>, LlmRequestError> {
+    let send = async |token: String| {
+        let request = build_request(&token).map_err(LlmRequestError::BuildRequest)?;
+        http_client
+            .send(request)
+            .await
+            .map_err(LlmRequestError::Send)
+    };
+    let token = token_provider
+        .cached_token(auth_context.clone())
+        .await
+        .map_err(LlmRequestError::Token)?;
+    let response = send(token).await?;
     if !needs_llm_token_refresh(&response) && response.status() != StatusCode::UNAUTHORIZED {
         return Ok(response);
     }
     log::info!("LLM token rejected; refreshing and retrying request");
-    let token = token_provider.refresh_token(auth_context).await?;
-    http_client.send(build_request(&token)?).await
+    let token = token_provider
+        .refresh_token(auth_context)
+        .await
+        .map_err(LlmRequestError::Token)?;
+    send(token).await
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -109,6 +209,11 @@ pub struct PerformLlmCompletionResponse {
     pub includes_status_messages: bool,
 }
 
+enum StatusMessages {
+    Request,
+    Omit,
+}
+
 impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
     pub async fn perform_llm_completion(
         http_client: &HttpClientWithUrl,
@@ -119,7 +224,7 @@ impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
     ) -> Result<PerformLlmCompletionResponse, LanguageModelCompletionError> {
         Self::perform_llm_request(
             "/completions",
-            true,
+            StatusMessages::Request,
             http_client,
             token_provider,
             auth_context,
@@ -138,7 +243,7 @@ impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
     ) -> Result<PerformLlmCompletionResponse, LanguageModelCompletionError> {
         Self::perform_llm_request(
             "/completions/compact",
-            false,
+            StatusMessages::Request,
             http_client,
             token_provider,
             auth_context,
@@ -150,7 +255,7 @@ impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
 
     async fn perform_llm_request(
         path: &str,
-        request_status_messages: bool,
+        status_messages: StatusMessages,
         http_client: &HttpClientWithUrl,
         token_provider: &TP,
         auth_context: TP::AuthContext,
@@ -177,7 +282,7 @@ impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
                     })
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {token}"));
-                if request_status_messages {
+                if matches!(status_messages, StatusMessages::Request) {
                     request = request
                         .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
                         .header(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME, "true");
@@ -185,15 +290,11 @@ impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
                 Ok(request.body(body.clone().into())?)
             })
             .await
-            .map_err(|error| LanguageModelCompletionError::HttpSend {
-                provider: PROVIDER_NAME,
-                host,
-                error,
-            })?;
+            .map_err(|error| error.into_completion_error(host))?;
 
         let status = response.status();
         if status.is_success() {
-            let includes_status_messages = request_status_messages
+            let includes_status_messages = matches!(status_messages, StatusMessages::Request)
                 && response
                     .headers()
                     .get(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME)
@@ -206,15 +307,7 @@ impl<TP: CloudLlmTokenProvider> CloudModelProvider<TP> {
         }
 
         if status == StatusCode::PAYMENT_REQUIRED {
-            return Err(LanguageModelCompletionError::from_provider_response(
-                PROVIDER_NAME,
-                Some(status),
-                None,
-                "payment required to use this language model; please upgrade your account"
-                    .to_string(),
-                None,
-                ProviderErrorCategory::PaymentRequired,
-            ));
+            return Err(payment_required_error(status));
         }
 
         let mut body = String::new();
@@ -450,6 +543,7 @@ pub fn language_model(model: &cloud_llm_client::LanguageModel) -> LanguageModel 
                 name: effort_level.name.clone().into(),
                 value: effort_level.value.clone().into(),
                 is_default: effort_level.is_default.unwrap_or(false),
+                supports_disabling_thinking: effort_level.supports_disabling_thinking,
             })
             .collect(),
         supports_streaming_tools: model.supports_streaming_tools,
@@ -457,6 +551,11 @@ pub fn language_model(model: &cloud_llm_client::LanguageModel) -> LanguageModel 
             auto: true,
             none: true,
             any: model.provider != Anthropic || anthropic::supports_forced_tool_use(&model.id.0),
+        },
+        // Anthropic invalidates cached messages when `tool_choice` changes.
+        prompt_compaction_strategy: match model.provider {
+            OpenAi | XAi => PromptCompactionStrategy::PreserveRequestPrefix,
+            Anthropic | Google => PromptCompactionStrategy::RebuildPrompt,
         },
         supports_split_token_display: matches!(model.provider, OpenAi | XAi),
         max_output_tokens: Some(model.max_output_tokens as u64),
@@ -765,6 +864,20 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
                             .map_err(LanguageModelCompletionError::Other)?;
                         return Ok(CompactionResult { context, usage });
                     }
+                    CompletionEvent::Status(CompletionRequestStatus::StreamEnded) => break,
+                    CompletionEvent::Status(CompletionRequestStatus::Failed {
+                        code,
+                        message,
+                        retry_after,
+                        ..
+                    }) => {
+                        return Err(LanguageModelCompletionError::from_cloud_failure(
+                            provider_name,
+                            code,
+                            message,
+                            retry_after.map(Duration::from_secs_f64),
+                        ));
+                    }
                     CompletionEvent::Status(_) => {}
                 }
             }
@@ -861,7 +974,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             .run(async move {
                 let mut response = Self::perform_llm_request(
                     "/count_tokens",
-                    false,
+                    StatusMessages::Omit,
                     &http_client,
                     &*token_provider,
                     auth_context,
@@ -1074,11 +1187,17 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             cloud_llm_client::LanguageModelProvider::Google => {
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
-                let request =
-                    match into_google(request, config.id.to_string(), GoogleModelMode::Default) {
-                        Ok(request) => request,
-                        Err(error) => return async move { Err(error.into()) }.boxed(),
-                    };
+                let mode = if config.supports_thinking {
+                    GoogleModelMode::Thinking {
+                        budget_tokens: None,
+                    }
+                } else {
+                    GoogleModelMode::Default
+                };
+                let request = match into_google(request, config.id.to_string(), mode) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let auth_context = token_provider.auth_context(cx);
                 let future = request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
@@ -1272,6 +1391,7 @@ pub fn response_lines<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::TryStreamExt as _;
     use http_client::FakeHttpClient;
     use http_client::http::{HeaderMap, StatusCode};
     use language_model::{
@@ -1293,6 +1413,7 @@ mod tests {
                 json!({"event": {"candidates": [{
                     "content": {"role": "model", "parts": [{"text": "Hello"}]}
                 }]}}),
+                json!({"status": CompletionRequestStatus::KeepAlive}),
                 json!({"event": {
                     "candidates": [{
                         "content": {"role": "model", "parts": [{"text": " world"}]},
@@ -1335,12 +1456,15 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         for stream_ended in [false, true] {
-            let mut events = vec![json!({"event": {"candidates": [{
-                "content": {"role": "model", "parts": [{
-                    "functionCall": {"name": "list_directory", "args": {"path": "."}}
-                }]},
-                "finishReason": "STOP"
-            }]}})];
+            let mut events = vec![
+                json!({"event": {"candidates": [{
+                    "content": {"role": "model", "parts": [{
+                        "functionCall": {"name": "list_directory", "args": {"path": "."}}
+                    }]},
+                    "finishReason": "STOP"
+                }]}}),
+                json!({"status": CompletionRequestStatus::KeepAlive}),
+            ];
             if stream_ended {
                 events.push(json!({"status": "stream_ended"}));
             }
@@ -1410,118 +1534,222 @@ mod tests {
     async fn cloud_explicit_compaction_forwards_supported_request_fields(
         cx: &mut gpui::TestAppContext,
     ) {
-        let captured_request = Arc::new(Mutex::new(None));
-        let captured_request_for_handler = captured_request.clone();
-        let http_client = FakeHttpClient::create(move |request| {
-            let captured_request = captured_request_for_handler.clone();
-            async move {
-                let method = request.method().clone();
-                let uri = request.uri().to_string();
-                let authorization = request
-                    .headers()
-                    .get("Authorization")
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::to_string);
-                let requested_status_messages = request
-                    .headers()
-                    .contains_key(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME);
-                let requested_stream_end = request
-                    .headers()
-                    .contains_key(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME);
-                let mut body = request.into_body();
-                let mut body_text = String::new();
-                body.read_to_string(&mut body_text).await?;
-                *captured_request.lock().unwrap() = Some((
-                    method,
-                    uri,
-                    authorization,
-                    requested_status_messages,
-                    requested_stream_end,
-                    body_text,
-                ));
-
-                Ok(http_client::Response::builder()
-                    .status(200)
-                    .body(AsyncBody::from(format!(
-                        "{}\n",
-                        json!({
-                            "id": "resp_compact",
-                            "created_at": 1_700_000_000,
-                            "object": "response.compaction",
-                            "output": [{
-                                "type": "compaction",
-                                "id": "cmp_manual",
-                                "encrypted_content": "opaque-state"
-                            }],
-                            "usage": {
-                                "input_tokens": 100,
-                                "input_tokens_details": {"cached_tokens": 20},
-                                "output_tokens": 10,
-                                "output_tokens_details": {"reasoning_tokens": 5},
-                                "total_tokens": 110
-                            }
-                        })
-                    )))?)
-            }
-        });
         let language_model = language_model(&cloud_test_config());
         assert!(language_model.supports_explicit_compaction());
         assert!(!language_model.supports_explicit_compaction_output_limit());
+
+        for includes_status_messages in [false, true] {
+            let captured_request = Arc::new(Mutex::new(None));
+            let captured_request_for_handler = captured_request.clone();
+            let http_client = FakeHttpClient::create(move |request| {
+                let captured_request = captured_request_for_handler.clone();
+                async move {
+                    let method = request.method().clone();
+                    let uri = request.uri().to_string();
+                    let authorization = request
+                        .headers()
+                        .get("Authorization")
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_string);
+                    let requested_status_messages = request
+                        .headers()
+                        .contains_key(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME);
+                    let requested_stream_end = request
+                        .headers()
+                        .contains_key(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME);
+                    let mut body = request.into_body();
+                    let mut body_text = String::new();
+                    body.read_to_string(&mut body_text).await?;
+                    *captured_request.lock().unwrap() = Some((
+                        method,
+                        uri,
+                        authorization,
+                        requested_status_messages,
+                        requested_stream_end,
+                        body_text,
+                    ));
+
+                    let result = json!({
+                        "id": "resp_compact",
+                        "created_at": 1_700_000_000,
+                        "object": "response.compaction",
+                        "output": [{
+                            "type": "compaction",
+                            "id": "cmp_manual",
+                            "encrypted_content": "opaque-state"
+                        }],
+                        "usage": {
+                            "input_tokens": 100,
+                            "input_tokens_details": {"cached_tokens": 20},
+                            "output_tokens": 10,
+                            "output_tokens_details": {"reasoning_tokens": 5},
+                            "total_tokens": 110
+                        }
+                    });
+                    let mut response = http_client::Response::builder().status(200);
+                    let body = if includes_status_messages {
+                        response =
+                            response.header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true");
+                        [
+                            json!({"status": "keep_alive"}),
+                            json!({"status": "future_transport_status"}),
+                            json!({"event": result}),
+                            json!({"status": "stream_ended"}),
+                        ]
+                        .into_iter()
+                        .map(|event| format!("{event}\n"))
+                        .collect::<String>()
+                    } else {
+                        format!("{result}\n")
+                    };
+                    Ok(response.body(AsyncBody::from(body))?)
+                }
+            });
+            let (provider, model) = cloud_test_model(http_client);
+            let request = compact_test_request();
+
+            let result = cx
+                .update(|cx| provider.compact(&model, request, cx))
+                .await
+                .unwrap();
+
+            assert_eq!(
+                result.usage,
+                language_model::TokenUsage {
+                    input_tokens: 80,
+                    output_tokens: 10,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 20,
+                }
+            );
+            let language_model::CompactedContext::ProviderState(state) = result.context else {
+                panic!("expected provider compaction state");
+            };
+            assert_eq!(
+                open_ai::responses::provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID)
+                    .unwrap(),
+                Some(vec![json!({
+                    "type": "compaction",
+                    "id": "cmp_manual",
+                    "encrypted_content": "opaque-state"
+                })])
+            );
+            let (method, uri, authorization, requested_status_messages, requested_stream_end, body) =
+                captured_request.lock().unwrap().take().unwrap();
+            assert_eq!(method, Method::POST);
+            assert_eq!(uri, "http://test.example/completions/compact?");
+            assert_eq!(authorization.as_deref(), Some("Bearer test-token"));
+            assert!(requested_status_messages);
+            assert!(requested_stream_end);
+            let body = serde_json::from_str::<serde_json::Value>(&body).unwrap();
+            assert_eq!(body["thread_id"], "thread-123");
+            assert_eq!(body["provider"], "open_ai");
+            assert_eq!(body["model"], "gpt-5.4");
+            assert_eq!(
+                body["provider_request"],
+                json!({
+                    "model": "gpt-5.4",
+                    "input": [{
+                        "type": "message",
+                        "role": "user",
+                        "content": [{
+                            "type": "input_text",
+                            "text": "Retain this context."
+                        }]
+                    }],
+                    "prompt_cache_key": "thread-123",
+                    "service_tier": "priority"
+                })
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn cloud_explicit_compaction_preserves_streamed_failure(cx: &mut gpui::TestAppContext) {
+        let http_client = FakeHttpClient::create(|_| async move {
+            Ok(Response::builder()
+                .status(200)
+                .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                .body(AsyncBody::from(format!(
+                    "{}\n{}\n",
+                    json!({"status": "keep_alive"}),
+                    json!({"status": {"failed": {
+                        "code": "upstream_http_429",
+                        "message": "Compaction rate limit exceeded.",
+                        "request_id": "00000000-0000-0000-0000-000000000000",
+                        "retry_after": 1.5
+                    }}}),
+                )))?)
+        });
         let (provider, model) = cloud_test_model(http_client);
-        let request = compact_test_request();
 
-        let result = cx
-            .update(|cx| provider.compact(&model, request, cx))
+        let error = cx
+            .update(|cx| provider.compact(&model, compact_test_request(), cx))
             .await
-            .unwrap();
+            .unwrap_err();
 
-        assert_eq!(
-            result.usage,
-            language_model::TokenUsage {
-                input_tokens: 80,
-                output_tokens: 10,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 20,
-            }
-        );
-        let language_model::CompactedContext::ProviderState(state) = result.context else {
-            panic!("expected provider compaction state");
+        let LanguageModelCompletionError::ProviderRejection {
+            provider,
+            status,
+            code,
+            message,
+            retry_after,
+            category,
+        } = error
+        else {
+            panic!("expected the streamed provider rejection, got {error:?}");
         };
-        assert_eq!(
-            open_ai::responses::provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
-            Some(vec![json!({
-                "type": "compaction",
-                "id": "cmp_manual",
-                "encrypted_content": "opaque-state"
-            })])
-        );
-        let (method, uri, authorization, requested_status_messages, requested_stream_end, body) =
-            captured_request.lock().unwrap().take().unwrap();
-        assert_eq!(method, Method::POST);
-        assert_eq!(uri, "http://test.example/completions/compact?");
-        assert_eq!(authorization.as_deref(), Some("Bearer test-token"));
-        assert!(!requested_status_messages);
-        assert!(!requested_stream_end);
-        let body = serde_json::from_str::<serde_json::Value>(&body).unwrap();
-        assert_eq!(body["thread_id"], "thread-123");
-        assert_eq!(body["provider"], "open_ai");
-        assert_eq!(body["model"], "gpt-5.4");
-        assert_eq!(
-            body["provider_request"],
-            json!({
-                "model": "gpt-5.4",
-                "input": [{
-                    "type": "message",
-                    "role": "user",
-                    "content": [{
-                        "type": "input_text",
-                        "text": "Retain this context."
-                    }]
-                }],
-                "prompt_cache_key": "thread-123",
-                "service_tier": "priority"
-            })
-        );
+        assert_eq!(provider, OPEN_AI_PROVIDER_NAME);
+        assert_eq!(status, Some(StatusCode::TOO_MANY_REQUESTS));
+        assert_eq!(code.as_deref(), Some("upstream_http_429"));
+        assert_eq!(message, "Compaction rate limit exceeded.");
+        assert_eq!(retry_after, Some(Duration::from_secs_f64(1.5)));
+        assert_eq!(category, ProviderErrorCategory::RateLimit);
+    }
+
+    #[gpui::test]
+    async fn cloud_explicit_compaction_rejects_stream_ending_without_result(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for stream_ended in [false, true] {
+            let http_client = FakeHttpClient::create(move |_| async move {
+                let mut body = format!("{}\n", json!({"status": "keep_alive"}));
+                if stream_ended {
+                    body.push_str(&format!("{}\n", json!({"status": "stream_ended"})));
+                }
+                let body = stream::iter([Ok::<_, std::io::Error>(body.into_bytes())])
+                    .chain(stream::poll_fn(move |_| {
+                        if stream_ended {
+                            Poll::Pending
+                        } else {
+                            Poll::Ready(None)
+                        }
+                    }))
+                    .into_async_read();
+                Ok(Response::builder()
+                    .status(200)
+                    .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                    .body(AsyncBody::from_reader(body))?)
+            });
+            let (provider, model) = cloud_test_model(http_client);
+
+            let error = cx
+                .update(|cx| provider.compact(&model, compact_test_request(), cx))
+                .now_or_never()
+                .expect(
+                    "compaction should stop at EOF or StreamEnded without waiting for more bytes",
+                )
+                .unwrap_err();
+
+            assert!(
+                matches!(
+                    &error,
+                    LanguageModelCompletionError::StreamEndedUnexpectedly { provider }
+                        if provider == &OPEN_AI_PROVIDER_NAME
+                ),
+                "expected a missing compaction result error, got {error:?}"
+            );
+        }
     }
 
     #[gpui::test]
@@ -1918,6 +2146,94 @@ mod tests {
         ));
     }
 
+    #[gpui::test]
+    async fn token_acquisition_failures_are_classified(_cx: &mut gpui::TestAppContext) {
+        async fn token_failure(error: fn() -> ClientApiError) -> LanguageModelCompletionError {
+            let http_client = FakeHttpClient::create(|_| async move {
+                panic!("no request should be sent without a token")
+            });
+            let http_client = HttpClientWithUrl::new(http_client, "https://test.example", None);
+            authenticated_llm_request(
+                &http_client,
+                &FailingTokenProvider { error },
+                (),
+                |_token| unreachable!("no request should be built without a token"),
+            )
+            .await
+            .err()
+            .expect("token acquisition should fail")
+            .into_completion_error("test.example".to_string())
+        }
+
+        for error in [
+            (|| ClientApiError::Unauthorized) as fn() -> ClientApiError,
+            || ClientApiError::NotSignedIn,
+        ] {
+            let error = token_failure(error).await;
+            assert!(
+                matches!(
+                    &error,
+                    LanguageModelCompletionError::ProviderRejection {
+                        provider,
+                        category: ProviderErrorCategory::Authentication,
+                        ..
+                    } if *provider == PROVIDER_NAME
+                ),
+                "{error:?}"
+            );
+            assert!(!error.is_transient());
+        }
+
+        let error = token_failure(|| ClientApiError::ServerError {
+            host: "test.example".to_string(),
+            status: StatusCode::PAYMENT_REQUIRED,
+            body: "no subscription".to_string(),
+        })
+        .await;
+        assert!(
+            matches!(
+                error,
+                LanguageModelCompletionError::ProviderRejection {
+                    category: ProviderErrorCategory::PaymentRequired,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+
+        let error = token_failure(|| ClientApiError::ServerError {
+            host: "test.example".to_string(),
+            status: StatusCode::FORBIDDEN,
+            body: "no model access".to_string(),
+        })
+        .await;
+        assert!(
+            matches!(
+                &error,
+                LanguageModelCompletionError::ProviderRejection {
+                    category: ProviderErrorCategory::Permission,
+                    message,
+                    ..
+                } if message == "no model access"
+            ),
+            "{error:?}"
+        );
+
+        let error = token_failure(|| ClientApiError::ConnectionFailed {
+            host: "test.example".to_string(),
+            source: anyhow::anyhow!("offline"),
+        })
+        .await;
+        assert!(
+            matches!(
+                &error,
+                LanguageModelCompletionError::HttpSend { host, .. } if host == "test.example"
+            ),
+            "{error:?}"
+        );
+        assert!(error.is_transient());
+    }
+
     #[test]
     fn test_response_stream_error_maps_to_structured_variant() {
         // Read/deserialize failures mid-stream must keep their structured
@@ -1955,6 +2271,18 @@ mod tests {
         assert_eq!(
             model.minimum_explicit_compaction_input_tokens(),
             Some(anthropic::MIN_COMPACTION_TRIGGER_TOKENS)
+        );
+    }
+
+    #[test]
+    fn prompt_compaction_preserves_prefix_only_for_supported_upstreams() {
+        assert_eq!(
+            language_model(&cloud_test_config()).prompt_compaction_strategy,
+            PromptCompactionStrategy::PreserveRequestPrefix
+        );
+        assert_eq!(
+            language_model(&cloud_anthropic_test_config()).prompt_compaction_strategy,
+            PromptCompactionStrategy::RebuildPrompt
         );
     }
 
@@ -2215,6 +2543,62 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    async fn hosted_google_requests_summaries_using_catalog_thinking_support(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut config = cloud_test_config();
+        config.provider = cloud_llm_client::LanguageModelProvider::Google;
+        config.id = cloud_llm_client::LanguageModelId("future-google-model".into());
+        config.supports_thinking = true;
+        let (provider, model) = bind_test_model(
+            FakeHttpClient::create(|mut request| async move {
+                let mut body = String::new();
+                request.body_mut().read_to_string(&mut body).await?;
+                let body: serde_json::Value = serde_json::from_str(&body)?;
+                assert_eq!(
+                    body["provider_request"]["generationConfig"]["thinkingConfig"],
+                    json!({"thinkingLevel": "MEDIUM", "includeThoughts": true})
+                );
+                let completed = CompletionEvent::Event(json!({
+                    "candidates": [{
+                        "content": {
+                            "role": "model",
+                            "parts": [{"text": "Summary", "thought": true}, {"text": "Answer"}]
+                        },
+                        "finishReason": "STOP"
+                    }]
+                }));
+                let ended = CompletionEvent::<serde_json::Value>::Status(
+                    CompletionRequestStatus::StreamEnded,
+                );
+                Ok(Response::builder()
+                    .status(200)
+                    .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                    .body(AsyncBody::from(format!(
+                        "{}\n{}\n",
+                        serde_json::to_string(&completed)?,
+                        serde_json::to_string(&ended)?,
+                    )))?)
+            }),
+            config,
+        );
+        let mut request = compact_test_request();
+        request.thinking_allowed = true;
+        request.thinking_effort = Some("medium".into());
+        let mut stream = cx
+            .update(|cx| provider.stream_completion(&model, request, cx))
+            .await
+            .unwrap();
+        let mut summaries = Vec::new();
+        while let Some(event) = stream.next().await {
+            if let LanguageModelCompletionEvent::Thinking { text, .. } = event.unwrap() {
+                summaries.push(text);
+            }
+        }
+        assert_eq!(summaries, ["Summary"]);
+    }
+
     fn cloud_google_test_model(
         events: Vec<serde_json::Value>,
     ) -> (CloudModelProvider<TestTokenProvider>, LanguageModel) {
@@ -2289,6 +2673,32 @@ mod tests {
         (test_provider(http_client, vec![config]), model)
     }
 
+    #[test]
+    fn test_disabling_thinking_support_uses_effort_level_override() {
+        let mut config = cloud_anthropic_test_config();
+        config.supports_disabling_thinking = false;
+        config.supported_effort_levels = vec![
+            cloud_llm_client::SupportedEffortLevel {
+                name: Arc::from("High"),
+                value: Arc::from("high"),
+                is_default: Some(true),
+                supports_disabling_thinking: Some(true),
+            },
+            cloud_llm_client::SupportedEffortLevel {
+                name: Arc::from("Max"),
+                value: Arc::from("max"),
+                is_default: None,
+                supports_disabling_thinking: None,
+            },
+        ];
+        let model = language_model(&config);
+
+        assert!(model.supports_disabling_thinking_at_effort(None));
+        assert!(model.supports_disabling_thinking_at_effort(Some("high")));
+        assert!(!model.supports_disabling_thinking_at_effort(Some("max")));
+        assert!(!model.supports_disabling_thinking_at_effort(Some("unknown")));
+    }
+
     fn cloud_anthropic_test_config() -> cloud_llm_client::LanguageModel {
         cloud_llm_client::LanguageModel {
             provider: cloud_llm_client::LanguageModelProvider::Anthropic,
@@ -2348,19 +2758,48 @@ mod tests {
         fn cached_token(
             &self,
             _auth_context: Self::AuthContext,
-        ) -> BoxFuture<'static, Result<String>> {
+        ) -> BoxFuture<'static, Result<String, ClientApiError>> {
             async { Ok("test-token".to_string()) }.boxed()
         }
 
         fn refresh_token(
             &self,
             _auth_context: Self::AuthContext,
-        ) -> BoxFuture<'static, Result<String>> {
+        ) -> BoxFuture<'static, Result<String, ClientApiError>> {
             async { Ok("refreshed-test-token".to_string()) }.boxed()
         }
 
         fn has_data_retention_consent(&self, _cx: &impl AppContext) -> bool {
             self.data_retention_consent.load(Ordering::SeqCst)
+        }
+    }
+
+    struct FailingTokenProvider {
+        error: fn() -> ClientApiError,
+    }
+
+    impl CloudLlmTokenProvider for FailingTokenProvider {
+        type AuthContext = ();
+
+        fn auth_context(&self, _cx: &impl AppContext) -> Self::AuthContext {}
+
+        fn cached_token(
+            &self,
+            _auth_context: Self::AuthContext,
+        ) -> BoxFuture<'static, Result<String, ClientApiError>> {
+            let error = (self.error)();
+            async move { Err(error) }.boxed()
+        }
+
+        fn refresh_token(
+            &self,
+            auth_context: Self::AuthContext,
+        ) -> BoxFuture<'static, Result<String, ClientApiError>> {
+            self.cached_token(auth_context)
+        }
+
+        fn has_data_retention_consent(&self, _cx: &impl AppContext) -> bool {
+            false
         }
     }
 }

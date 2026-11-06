@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+from functools import cache
 
 import requests
 
@@ -8,6 +9,7 @@ GITHUB_API_URL = "https://api.github.com"
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 MAX_ATTEMPTS = 4
 REQUEST_TIMEOUT_SECONDS = 30
+NON_COMMUNITY_LABELS = {"staff", "bot"}
 
 
 def _github_headers():
@@ -107,6 +109,24 @@ def post_github_comment(owner, repository, issue_number, body):
     )
 
 
+@cache
+def is_staff_member(login):
+    try:
+        membership = github_rest_api(
+            "GET", f"orgs/zed-industries/teams/staff/memberships/{login}"
+        )
+    except requests.HTTPError as error:
+        if error.response.status_code == 404:
+            return False
+        raise
+    return membership["state"] == "active"
+
+
+def is_community_pull_request(label_names):
+    # The PR Issue Labeler workflow labels pull requests by staff and bots.
+    return not NON_COMMUNITY_LABELS & {name.lower() for name in label_names}
+
+
 def github_graphql(query, variables=None, *, partial_errors_ok=False):
     # GraphQL uses POST for reads and writes, so classify the operation before retrying.
     retry = not query.lstrip().startswith("mutation")
@@ -180,7 +200,8 @@ def set_github_project_field(project, item_id, field_name, option_name):
         (
             option["id"]
             for option in field.get("options", [])
-            if option["name"] == option_name
+            # Case-insensitive mainly for Track, which has a mapping maintained manually
+            if option["name"].casefold() == option_name.casefold()
         ),
         None,
     )

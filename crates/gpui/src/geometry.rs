@@ -48,7 +48,7 @@ pub trait Along {
     fn along(&self, axis: Axis) -> Self::Unit;
 
     /// Applies the given function to the unit along the given axis and returns a new value.
-    fn apply_along(&self, axis: Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self;
+    fn apply_along(&self, axis: Axis, f: impl Fn(Self::Unit) -> Self::Unit) -> Self;
 }
 
 /// Describes a location in a 2D cartesian space.
@@ -169,7 +169,7 @@ impl<T: Clone + Debug + Default + PartialEq> Along for Point<T> {
         }
     }
 
-    fn apply_along(&self, axis: Axis, f: impl FnOnce(T) -> T) -> Point<T> {
+    fn apply_along(&self, axis: Axis, f: impl Fn(T) -> T) -> Point<T> {
         match axis {
             Axis::Horizontal => Point {
                 x: f(self.x.clone()),
@@ -516,7 +516,7 @@ where
     }
 
     /// Returns the value of this size along the given axis.
-    fn apply_along(&self, axis: Axis, f: impl FnOnce(T) -> T) -> Self {
+    fn apply_along(&self, axis: Axis, f: impl Fn(T) -> T) -> Self {
         match axis {
             Axis::Horizontal => Size {
                 width: f(self.width.clone()),
@@ -2145,6 +2145,37 @@ impl Edges<Pixels> {
     }
 }
 
+impl<T> Along for Edges<T>
+where
+    T: Clone + Debug + Default + PartialEq + Add<Output = T>,
+{
+    type Unit = T;
+
+    fn along(&self, axis: Axis) -> Self::Unit {
+        match axis {
+            Axis::Horizontal => self.left.clone() + self.right.clone(),
+            Axis::Vertical => self.top.clone() + self.bottom.clone(),
+        }
+    }
+
+    fn apply_along(&self, axis: Axis, f: impl Fn(Self::Unit) -> Self::Unit) -> Self {
+        match axis {
+            Axis::Horizontal => Edges {
+                top: self.top.clone(),
+                bottom: self.bottom.clone(),
+                right: f(self.right.clone()),
+                left: f(self.left.clone()),
+            },
+            Axis::Vertical => Edges {
+                top: f(self.top.clone()),
+                bottom: f(self.bottom.clone()),
+                right: self.right.clone(),
+                left: self.left.clone(),
+            },
+        }
+    }
+}
+
 impl From<f32> for Edges<Pixels> {
     fn from(val: f32) -> Self {
         let val: Pixels = val.into();
@@ -2801,6 +2832,12 @@ impl Pixels {
     /// Returns the raw `f32` value of this `Pixels`.
     pub fn as_f32(self) -> f32 {
         self.0
+    }
+
+    /// Converts to `i32`, truncating toward zero.
+    /// Out-of-range values saturate, and NaN becomes zero.
+    pub fn to_i32(self) -> i32 {
+        self.0 as i32
     }
 
     /// Floors the `Pixels` value to the nearest whole number.
@@ -3983,6 +4020,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_pixels_to_i32() {
+        for (value, expected) in [
+            (12.9, 12),
+            (-12.9, -12),
+            (f32::MAX, i32::MAX),
+            (f32::MIN, i32::MIN),
+            (f32::INFINITY, i32::MAX),
+            (f32::NEG_INFINITY, i32::MIN),
+            (f32::NAN, 0),
+        ] {
+            assert_eq!(px(value).to_i32(), expected);
+        }
+    }
 
     #[test]
     fn test_bounds_intersects() {

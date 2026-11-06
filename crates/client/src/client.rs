@@ -1609,20 +1609,16 @@ impl Client {
         &self,
         llm_token: &LlmApiToken,
         organization_id: OrganizationId,
-    ) -> Result<String> {
+    ) -> Result<String, ClientApiError> {
         let system_id = self.telemetry().system_id().map(|x| x.to_string());
         let cloud_client = self.cloud_client();
-        match llm_token
+        let result = llm_token
             .cached(&cloud_client, system_id, organization_id)
-            .await
-        {
-            Ok(token) => Ok(token),
-            Err(ClientApiError::Unauthorized) => {
-                self.request_sign_out();
-                Err(ClientApiError::Unauthorized).context("Failed to create LLM token")
-            }
-            Err(err) => Err(anyhow::Error::from(err)),
+            .await;
+        if let Err(ClientApiError::Unauthorized) = result {
+            self.request_sign_out();
         }
+        result
     }
 
     /// Sends an authenticated request to the Zed LLM service, retrying once
@@ -1654,40 +1650,32 @@ impl Client {
         &self,
         llm_token: &LlmApiToken,
         organization_id: OrganizationId,
-    ) -> Result<String> {
+    ) -> Result<String, ClientApiError> {
         let system_id = self.telemetry().system_id().map(|x| x.to_string());
         let cloud_client = self.cloud_client();
-        match llm_token
+        let result = llm_token
             .refresh(&cloud_client, system_id, organization_id)
-            .await
-        {
-            Ok(token) => Ok(token),
-            Err(ClientApiError::Unauthorized) => {
-                self.request_sign_out();
-                return Err(ClientApiError::Unauthorized).context("Failed to create LLM token");
-            }
-            Err(err) => return Err(anyhow::Error::from(err)),
+            .await;
+        if let Err(ClientApiError::Unauthorized) = result {
+            self.request_sign_out();
         }
+        result
     }
 
     pub async fn clear_and_refresh_llm_token(
         &self,
         llm_token: &LlmApiToken,
         organization_id: OrganizationId,
-    ) -> Result<String> {
+    ) -> Result<String, ClientApiError> {
         let system_id = self.telemetry().system_id().map(|x| x.to_string());
         let cloud_client = self.cloud_client();
-        match llm_token
+        let result = llm_token
             .clear_and_refresh(&cloud_client, system_id, organization_id)
-            .await
-        {
-            Ok(token) => Ok(token),
-            Err(ClientApiError::Unauthorized) => {
-                self.request_sign_out();
-                return Err(ClientApiError::Unauthorized).context("Failed to create LLM token");
-            }
-            Err(err) => return Err(anyhow::Error::from(err)),
+            .await;
+        if let Err(ClientApiError::Unauthorized) = result {
+            self.request_sign_out();
         }
+        result
     }
 
     pub async fn sign_out(self: &Arc<Self>, cx: &AsyncApp) {

@@ -143,6 +143,16 @@ impl StreamingFuzzyMatcher {
         SearchMatches::Fuzzy(self.matches.clone())
     }
 
+    pub(super) fn refresh(&mut self, snapshot: TextBufferSnapshot) {
+        if self.snapshot.version == snapshot.version {
+            return;
+        }
+        let query = std::mem::take(&mut self.raw_query);
+        let line_hint = self.line_hint;
+        *self = Self::new(snapshot);
+        self.push(&query, line_hint);
+    }
+
     fn resolve_location_fuzzy(&mut self) -> Vec<SearchMatch> {
         let new_query_line_count = self.query_lines.len();
         let old_query_line_count = self.matrix.rows.saturating_sub(1);

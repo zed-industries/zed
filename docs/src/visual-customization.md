@@ -78,6 +78,10 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   // and any other snippet of code.
   "agent_buffer_font_size": 12,
 
+  // Controls the font family for Mermaid diagrams in the agent panel and
+  // markdown preview. If not specified, it falls back to the UI font family.
+  "mermaid_font_family": "Inter",
+
   "markdown_preview": {
     // Controls the font size for the markdown preview.
     // If not specified, it falls back to the editor font size.
@@ -87,7 +91,10 @@ If you would like to use distinct themes for light mode/dark mode that can be se
     "font_family": null,
     // Controls the font family for code blocks in the markdown preview.
     // If not specified, it falls back to the editor font family.
-    "code_font_family": null
+    "code_font_family": null,
+    // Controls the font weight for headings (H1 through H6) in the markdown preview,
+    // in CSS units from 100 to 900. Defaults to 600.
+    "heading_font_weight": 600
   }
 ```
 
@@ -508,6 +515,7 @@ TBD: Centered layout related settings
     // "upper":   Uppercase names grouped before lowercase, natural sort within.
     // "lower":   Lowercase names grouped before uppercase, natural sort within.
     // "unicode":  Pure Unicode codepoint comparison, no case folding.
+    // "extension": Files grouped by extension, extensionless files (including dotfiles like ".gitignore") first.
     "sort_order": "default",
     // Whether to hide the root entry when only one folder is open in the window;
     // this also affects how file paths appear in the file finder history.

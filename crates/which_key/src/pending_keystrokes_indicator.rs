@@ -354,6 +354,7 @@ impl Render for PendingKeystrokesIndicator {
                                         popover_render_state.keystrokes.clone(),
                                         popover_render_state.bindings.clone(),
                                         self.popover_scroll_handle.clone(),
+                                        max_panel_width,
                                         max_content_height,
                                     ),
                                 )
@@ -459,12 +460,12 @@ mod tests {
         ]
     }
 
-    fn binding(keystrokes: &str, action: impl gpui::Action) -> KeyBinding {
+    fn binding(keystrokes: &'static str, action: impl gpui::Action) -> KeyBinding {
         KeyBinding::new(keystrokes, action, Some("PendingKeystrokesIndicatorTest"))
     }
 
     /// Binds each keystroke sequence to the action the test view counts.
-    fn counted_bindings<const N: usize>(keystrokes: [&str; N]) -> [KeyBinding; N] {
+    fn counted_bindings<const N: usize>(keystrokes: [&'static str; N]) -> [KeyBinding; N] {
         keystrokes.map(|keystrokes| binding(keystrokes, zed_actions::dev::OpenKeyContextView))
     }
 
@@ -562,7 +563,7 @@ mod tests {
                 keystrokes: render_state
                     .keystrokes
                     .iter()
-                    .map(|keystroke| keystroke.inner().unparse())
+                    .map(|keystroke| keystroke.inner().unparse(gpui::OperatingSystem::Mac))
                     .collect(),
                 generation: render_state.pending_input_generation,
                 bindings: render_state
@@ -573,7 +574,9 @@ mod tests {
                             binding
                                 .keystrokes
                                 .iter()
-                                .map(|keystroke| keystroke.inner().unparse())
+                                .map(|keystroke| {
+                                    keystroke.inner().unparse(gpui::OperatingSystem::Mac)
+                                })
                                 .collect(),
                             binding.action_name.to_string(),
                         )
@@ -777,7 +780,7 @@ mod tests {
             assert_eq!(
                 pending_keystrokes
                     .iter()
-                    .map(Keystroke::unparse)
+                    .map(|keystroke| keystroke.unparse(gpui::OperatingSystem::Mac))
                     .collect::<Vec<_>>(),
                 ["j"]
             );
@@ -930,7 +933,7 @@ mod tests {
         assert_eq!(
             window_pending_keystrokes(cx)
                 .iter()
-                .map(Keystroke::unparse)
+                .map(|keystroke| keystroke.unparse(gpui::OperatingSystem::Mac))
                 .collect::<Vec<_>>(),
             ["ctrl-b"]
         );
@@ -1175,7 +1178,16 @@ mod tests {
         assert_eq!(first_render_state.keystrokes, vec!["ctrl-b"]);
         assert_eq!(
             first_render_state.bindings,
-            vec![(vec!["h".to_string()], "+2 keybinds".to_string())]
+            vec![
+                (
+                    vec!["h".to_string()],
+                    humanize_action_name(LongerBinding.name()),
+                ),
+                (
+                    vec!["h".to_string(), "j".to_string()],
+                    humanize_action_name(LongestBinding.name()),
+                ),
+            ]
         );
 
         cx.simulate_keystrokes("h");

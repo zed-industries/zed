@@ -66,34 +66,26 @@ pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
     });
 }
 
-fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &App) {
+fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &mut App) {
     let foreground_thread = thread::current().id();
     let monitor_interval = Duration::from_secs(1);
     let started = Instant::now();
     let startup = *STARTUP_TIME.get().unwrap_or(&started);
-    let hang_telemetry = Arc::new(spin::Mutex::new(HangTelemetry::new(
-        cx.foreground_journal(),
-        startup,
-    )));
+    // GPUI's final `Flush` poll runs during shutdown, concurrently with this
+    // handler and within `SHUTDOWN_TIMEOUT`, so the last batch may miss this
+    // flush.
+    match HangTelemetry::new(startup, telemetry::send_event).start(cx) {
+        Ok(()) => cx
+            .on_app_quit(move |_| client.telemetry().flush_events())
+            .detach(),
+        Err(error) => log::error!("failed to start hang reporting: {error}"),
+    }
+
     let mut log = logging::Reporter::new(monitor_interval, report_longer_then, foreground_thread);
-
-    cx.on_app_quit({
-        let hang_telemetry = Arc::clone(&hang_telemetry);
-        move |_| {
-            let mut hang_telemetry = hang_telemetry.lock();
-            hang_telemetry.collect();
-            let event = hang_telemetry.take_event();
-            drop(hang_telemetry);
-            telemetry::send_event(event);
-            client.telemetry().flush_events()
-        }
-    })
-    .detach();
-
-    // an OS thread to insulate detection and reporting from hangs on the fore
-    // or background.
+    // An OS thread keeps the legacy hang logs and task traces working while
+    // the foreground or background executors are hung.
     thread::Builder::new()
-        .name("HangDetection".to_string())
+        .name("HangLogging".to_string())
         .spawn(move || {
             // allow "bad" tasks during startup. Not because we should but since here
             // they are not observed by the user and to lower on clutter from the reporter
@@ -102,15 +94,6 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
                 thread::sleep(monitor_interval);
                 let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
                 let action_stats = profiler::take_action_stats();
-
-                let event = {
-                    let mut hang_telemetry = hang_telemetry.lock();
-                    hang_telemetry.collect();
-                    hang_telemetry.take_event_if_due()
-                };
-                if let Some(event) = event {
-                    telemetry::send_event(event);
-                }
 
                 let should_write_trace = log.check_and_report(&task_stats, &action_stats);
                 if should_write_trace {

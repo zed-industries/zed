@@ -45,6 +45,15 @@ use settings_json::{infer_json_indent_size, update_value_in_json_text};
 
 pub const LSP_SETTINGS_SCHEMA_URL_PREFIX: &str = "zed://schemas/settings/lsp/";
 
+// GPUI resolves these aliases, but they are not part of the platform font inventory.
+const VIRTUAL_FONT_NAMES: [&str; 5] = [
+    ".SystemUIFont",
+    ".ZedMono",
+    ".ZedSans",
+    "Zed Plex Mono",
+    "Zed Plex Sans",
+];
+
 pub trait SettingsKey: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
     /// be deserialized. If this is `None`, then the setting will be deserialized
@@ -1032,27 +1041,17 @@ impl SettingsStore {
     /// or by third-party extensions (via `semantic_token_rules.json` in their language
     /// directories). They are stored separately from the global rules and are only
     /// applied to buffers of the matching language by the `SemanticTokenStylizer`.
-    ///
-    /// This triggers a settings recomputation so that observers (e.g. `LspStore`)
-    /// are notified and can invalidate cached stylizers.
     pub fn set_language_semantic_token_rules(
         &mut self,
         language: SharedString,
         rules: SemanticTokenRules,
-        cx: &mut App,
     ) {
         self.language_semantic_token_rules.insert(language, rules);
-        self.recompute_values(None, cx);
     }
 
     /// Removes language-specific semantic token rules for the given language.
-    ///
-    /// This should be called when an extension that registered rules for a language
-    /// is unloaded. Triggers a settings recomputation so that observers (e.g.
-    /// `LspStore`) are notified and can invalidate cached stylizers.
-    pub fn remove_language_semantic_token_rules(&mut self, language: &str, cx: &mut App) {
+    pub fn remove_language_semantic_token_rules(&mut self, language: &str) {
         self.language_semantic_token_rules.remove(language);
-        self.recompute_values(None, cx);
     }
 
     /// Returns the language-specific semantic token rules for the given language,
@@ -1305,9 +1304,14 @@ impl SettingsStore {
 
         if !params.font_names.is_empty() {
             replace_subschema::<FontFamilyName>(&mut generator, || {
+                let mut font_names = params.font_names.to_vec();
+                font_names.extend(VIRTUAL_FONT_NAMES.map(str::to_string));
+                font_names.sort_unstable();
+                font_names.dedup();
+
                 json_schema!({
                      "type": "string",
-                     "enum": params.font_names,
+                     "enum": font_names,
                 })
             });
         }
@@ -3167,6 +3171,104 @@ mod tests {
                 &SettingsFile::Default,
             ]
         )
+    }
+
+    #[test]
+    fn test_virtual_font_names_are_resolved() {
+        let system = "System Font";
+        let system_shared = SharedString::new_static(system);
+        for name in VIRTUAL_FONT_NAMES {
+            assert_ne!(
+                gpui::font_name_with_fallbacks(name, system),
+                name,
+                "{name} is listed in VIRTUAL_FONT_NAMES but not resolved by font_name_with_fallbacks"
+            );
+            let name_shared = SharedString::new_static(name);
+            assert_ne!(
+                gpui::font_name_with_fallbacks_shared(&name_shared, &system_shared),
+                &name_shared,
+                "{name} is listed in VIRTUAL_FONT_NAMES but not resolved by font_name_with_fallbacks_shared"
+            );
+        }
+    }
+
+    #[test]
+    fn test_font_family_schema_accepts_virtual_aliases() -> Result<()> {
+        let schema = SettingsStore::json_schema(&SettingsJsonSchemaParams {
+            language_names: &[],
+            font_names: &["IBM Plex Sans".to_string(), "Lilex".to_string()],
+            theme_names: &[],
+            icon_theme_names: &[],
+            lsp_adapter_names: &[],
+            action_names: &[],
+            action_documentation: &HashMap::default(),
+            deprecations: &HashMap::default(),
+            deprecation_messages: &HashMap::default(),
+        });
+
+        let font_names = schema
+            .pointer("/$defs/FontFamilyName/enum")
+            .and_then(Value::as_array)
+            .context("FontFamilyName schema should contain allowed font names")?;
+
+        for font_name in ["IBM Plex Sans", "Lilex"]
+            .into_iter()
+            .chain(VIRTUAL_FONT_NAMES)
+        {
+            assert!(
+                font_names
+                    .iter()
+                    .any(|value| value.as_str() == Some(font_name)),
+                "FontFamilyName schema should accept {font_name}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[gpui::test]
+    fn test_agent_profile_tool_schema(cx: &mut App) {
+        SettingsStore::test(cx);
+
+        let schema = SettingsStore::json_schema(&SettingsJsonSchemaParams {
+            language_names: &[],
+            font_names: &[],
+            theme_names: &[],
+            icon_theme_names: &[],
+            lsp_adapter_names: &[],
+            action_names: &[],
+            action_documentation: &HashMap::default(),
+            deprecations: &HashMap::default(),
+            deprecation_messages: &HashMap::default(),
+        });
+        let tools = schema
+            .pointer("/$defs/AgentProfileContent/properties/tools")
+            .expect("agent profile tools schema should exist");
+        let properties = tools
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("agent profile tools should have named properties");
+        let boolean_schema = serde_json::json!({ "type": "boolean" });
+        for tool_schema in properties.values() {
+            assert_eq!(tool_schema, &boolean_schema);
+        }
+        assert_eq!(tools.get("additionalProperties"), Some(&Value::Bool(false)));
+
+        let defaults: Value = crate::parse_json_with_comments(default_settings().as_ref())
+            .expect("default settings should parse");
+        for profile in ["write", "ask"] {
+            let path = format!("/agent/profiles/{profile}/tools");
+            let default_tools = defaults
+                .pointer(&path)
+                .and_then(Value::as_object)
+                .expect("built-in profile should have tools");
+            for tool_name in default_tools.keys() {
+                assert!(
+                    properties.contains_key(tool_name),
+                    "{profile} tool {tool_name} should be suggested in the schema"
+                );
+            }
+        }
     }
 
     #[gpui::test]
