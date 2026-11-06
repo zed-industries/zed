@@ -671,6 +671,7 @@ impl TerminalPanel {
         let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
         };
+        let working_directory = default_working_directory(workspace, cx);
         let shell = Shell::WithArguments {
             program: action.program.clone(),
             args: action.args.clone(),
@@ -682,7 +683,7 @@ impl TerminalPanel {
                 // through persistence (the detected set varies per host).
                 panel.add_terminal_shell_with(
                     action.local,
-                    None,
+                    working_directory,
                     Some(shell),
                     None,
                     RevealStrategy::Always,
@@ -2075,7 +2076,7 @@ fn inline_shell_entries(
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZero;
+    use std::{num::NonZero, path::Path};
 
     use super::*;
     use crate::persistence::{SerializedPane, SerializedPaneGroup};
@@ -3771,6 +3772,55 @@ mod tests {
                 "force_local spawn should still apply the title override"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_spawn_detected_shell_uses_project_working_directory(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        // A workspace with a real project root: the spawned terminal must
+        // start in the project directory (via default_working_directory)
+        // rather than inheriting the host process's working directory,
+        // which is $HOME when Zed is launched from a desktop launcher.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({})).await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                    workspace.add_panel(panel.clone(), window, cx);
+                    panel
+                })
+            })
+            .expect("Failed to initialize workspace with terminal panel");
+
+        let detected = crate::SpawnDetectedShell {
+            program: if cfg!(unix) {
+                "/bin/sh".to_string()
+            } else {
+                "cmd.exe".to_string()
+            },
+            args: Vec::new(),
+            label: "Detected Shell".to_string(),
+            local: false,
+        };
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::spawn_detected_shell(workspace, &detected, window, cx);
+                })
+            })
+            .expect("Failed to dispatch SpawnDetectedShell");
+        cx.run_until_parked();
+
+        let count =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        assert_eq!(count, 1, "detected-shell spawn should produce a terminal");
     }
 
     #[test]
