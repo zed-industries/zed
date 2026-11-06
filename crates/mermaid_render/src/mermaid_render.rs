@@ -63,6 +63,7 @@
 //! 3. `postprocess::inject_css` injects CSS rules for the classes applied by
 //!    `accent_colors`
 
+mod native_typography;
 mod postprocess;
 mod render;
 

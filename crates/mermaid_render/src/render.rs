@@ -14,18 +14,11 @@ pub(super) fn render_mermaid(source: &str, theme: &MermaidTheme) -> Result<Strin
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     let diagram_id = format!("merman-{id}");
 
-    // Prefer IBM Plex metrics. If merman rejects typography it cannot measure,
-    // retry with deterministic sizing so the diagram still renders.
-    let native = SvgEnvironment::deterministic()
+    let source = crate::native_typography::prepare_source(source);
+    let environment = SvgEnvironment::deterministic()
         .with_native_font_context(shared_native_font_context()?.clone())
         .context("configure native Mermaid text measurement")?;
-    match render_with_environment(source, theme, &diagram_id, native) {
-        Ok(svg) => Ok(svg),
-        Err(error) if should_retry_without_native_fonts(&error) => {
-            render_with_environment(source, theme, &diagram_id, SvgEnvironment::deterministic())
-        }
-        Err(error) => Err(error),
-    }
+    render_with_environment(source.as_ref(), theme, &diagram_id, environment)
 }
 
 fn render_with_environment(
@@ -62,48 +55,36 @@ fn render_with_environment(
     Ok(svg)
 }
 
-fn should_retry_without_native_fonts(error: &anyhow::Error) -> bool {
-    use merman::svg::export::NativeFontError;
-
-    // RenderError::NativeFont is #[error(transparent)], so the chain exposes
-    // RenderError itself rather than a separate NativeFontError cause.
-    error.chain().any(|cause| {
-        matches!(
-            cause.downcast_ref::<merman::RenderError>(),
-            Some(merman::RenderError::NativeFont(
-                NativeFontError::Measurement(_)
-            ))
-        )
-    })
-}
-
 fn shared_native_font_context() -> Result<&'static NativeFontContext> {
     static CONTEXT: OnceLock<NativeFontContext> = OnceLock::new();
     if let Some(context) = CONTEXT.get() {
         return Ok(context);
     }
 
-    // Load the bundled regular, semibold, and italic faces once.
+    // Same faces and order as `gpui::BUNDLED_SVG_FONT_PATHS`, so a requested
+    // family such as Lilex is measured with the face usvg paints.
     const REGULAR: &[u8] =
         include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
-    const SEMIBOLD: &[u8] =
-        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf");
     const ITALIC: &[u8] =
         include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf");
+    const SEMIBOLD: &[u8] =
+        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf");
     const SEMIBOLD_ITALIC: &[u8] =
         include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf");
+    const LILEX: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
 
     let context = NativeFontContext::from_font_bytes(
         [
             REGULAR.to_vec(),
-            SEMIBOLD.to_vec(),
             ITALIC.to_vec(),
+            SEMIBOLD.to_vec(),
             SEMIBOLD_ITALIC.to_vec(),
+            LILEX.to_vec(),
         ],
         NativeFontLimits::default(),
         &OperationControl::new(),
     )
-    .context("load IBM Plex Sans for Mermaid label measurement")?;
+    .context("load bundled fonts for Mermaid label measurement")?;
 
     Ok(CONTEXT.get_or_init(|| context))
 }
@@ -467,8 +448,8 @@ class User {
     }
 
     #[test]
-    fn unsupported_native_typography_falls_back_instead_of_failing() {
-        // Native measurement rejects these styles; render must still succeed.
+    fn unsupported_text_styles_still_render_labels() {
+        // These declarations are removed so measurement can stay on real font metrics.
         let theme = MermaidTheme::default();
         for source in [
             "flowchart LR\n    A[ABC]\n    style A letter-spacing:1px\n",
@@ -485,25 +466,110 @@ class User {
     }
 
     #[test]
-    fn class_diagram_non_px_font_size_still_renders() {
-        // Native Class measurement only admits positive px strings (and bare 16).
-        let theme = MermaidTheme::default();
-        for size in ["24", r#""24""#, r#""1.5em""#] {
+    fn class_diagram_non_px_font_size_matches_painted_glyphs() {
+        let member = "+String WWWWWWWWWWWWWWWWWWWW";
+        let theme = ibm_plex_theme();
+        for (size, painted) in [("24", 16.0), (r#""24""#, 16.0), (r#""1.5em""#, 24.0)] {
             let source = format!(
                 r#"classDiagram
 %%{{init: {{"themeVariables": {{"fontSize": {size}}}}}}}%%
 class User {{
-    +String id
+    {member}
+    {member}
 }}
 "#
             );
-            let svg = render_mermaid(&source, &theme)
+            let svg = crate::render_to_svg(&source, &theme)
                 .unwrap_or_else(|error| panic!("expected render for fontSize {size}: {error:#}"));
-            assert!(
-                svg.contains(">User</text>"),
-                "missing class label for fontSize {size}: {svg}"
+            let tree = parse_svg_with_ibm_plex(&svg);
+            assert_eq!(
+                text_font_size(tree.root(), "User"),
+                Some(painted),
+                "fontSize {size}"
             );
+            assert_label_matches_fallback_viewport(&svg, "User");
+            let mut labels = Vec::new();
+            collect_text_labels(tree.root(), &mut labels);
+            let member_lines: Vec<_> = labels
+                .into_iter()
+                .filter(|label| label.contains('W'))
+                .collect();
+            assert!(
+                !member_lines.is_empty(),
+                "fontSize {size} dropped the member label"
+            );
+            for label in member_lines {
+                assert_label_fits_fallback_viewport(&svg, &label);
+                assert_text_inside_widest_path(&svg, &label);
+            }
         }
+    }
+
+    #[test]
+    fn flowchart_noop_letter_spacing_keeps_neighbor_label_inside_node() {
+        let label = "W".repeat(160);
+        let source =
+            format!("flowchart LR\n    A[{label}] --> B[OK]\n    style B letter-spacing:0px\n");
+        let svg = crate::render_to_svg(&source, &ibm_plex_theme()).expect("render failed");
+        assert_label_matches_fallback_viewport(&svg, &label);
+        assert_text_inside_widest_path(&svg, &label);
+    }
+
+    #[test]
+    fn class_diagram_lilex_title_uses_lilex_metrics() {
+        let source = r#"classDiagram
+class iiiiiiiiii {
+    +WWWWWWWW()
+}
+"#;
+        let mut lilex = ibm_plex_theme();
+        lilex.font_family = "Lilex, sans-serif".to_string();
+        let lilex_svg = crate::render_to_svg(source, &lilex).expect("render failed");
+        let ibm_svg = crate::render_to_svg(source, &ibm_plex_theme()).expect("render failed");
+        assert_label_matches_fallback_viewport(&lilex_svg, "iiiiiiiiii");
+        let lilex_width = fallback_viewport_width_for_label(&lilex_svg, "iiiiiiiiii")
+            .expect("lilex title viewport");
+        let ibm_width =
+            fallback_viewport_width_for_label(&ibm_svg, "iiiiiiiiii").expect("ibm title viewport");
+        assert!(
+            lilex_width > ibm_width + 20.0,
+            "Lilex title viewport {lilex_width} should exceed IBM Plex {ibm_width}"
+        );
+    }
+
+    #[test]
+    fn class_diagram_wrapped_member_clears_title() {
+        let source = r#"classDiagram
+%%{init: {"themeVariables": {"fontSize": "64px"}}}%%
+class User {
+    +String identifier
+    +signIn()
+}
+"#;
+        let svg = crate::render_to_svg(source, &ibm_plex_theme()).expect("render failed");
+        let tree = parse_svg_with_ibm_plex(&svg);
+        assert_eq!(text_font_size(tree.root(), "User"), Some(64.0));
+        let title = text_abs_bounds(tree.root(), "User").expect("title bounds");
+        let member = text_abs_bounds_trimmed(tree.root(), "+String").expect("member bounds");
+        let identifier = text_abs_bounds(tree.root(), "identifier").expect("identifier bounds");
+        let method = text_abs_bounds(tree.root(), "+signIn()").expect("method bounds");
+        let title_bottom = f64::from(title.y() + title.height());
+        let member_top = f64::from(member.y());
+        assert!(
+            member_top + 1.0 >= title_bottom,
+            "wrapped member overlaps title: title bottom {title_bottom} member top {member_top}"
+        );
+        let identifier_bottom = f64::from(identifier.y() + identifier.height());
+        let method_top = f64::from(method.y());
+        assert!(
+            method_top + 1.0 >= identifier_bottom,
+            "wrapped member overlaps the next row: member bottom {identifier_bottom} method top {method_top}"
+        );
+        let line_gap = f64::from(identifier.y() - member.y());
+        assert!(
+            (line_gap - 96.0).abs() < 2.0,
+            "wrapped lines should stay a 96px line apart, gap {line_gap}"
+        );
     }
 
     #[test]
@@ -521,15 +587,16 @@ class User {{
         for path in gpui::BUNDLED_SVG_FONT_PATHS {
             db.load_font_data(font_bytes_for_bundled_path(path).to_vec());
         }
-        let italic = db.query(&usvg::fontdb::Query {
-            families: &[usvg::fontdb::Family::Name("IBM Plex Sans")],
-            style: usvg::fontdb::Style::Italic,
-            ..Default::default()
-        });
-        assert!(
-            italic.is_some(),
-            "BUNDLED_SVG_FONT_PATHS must include a loadable IBM Plex Sans Italic face"
-        );
+        let id = db
+            .query(&usvg::fontdb::Query {
+                families: &[usvg::fontdb::Family::Name("IBM Plex Sans")],
+                style: usvg::fontdb::Style::Italic,
+                ..Default::default()
+            })
+            .expect("BUNDLED_SVG_FONT_PATHS must resolve IBM Plex Sans Italic");
+        let face = db.face(id).expect("italic face");
+        assert_eq!(face.style, usvg::fontdb::Style::Italic);
+        assert_eq!(face.weight, usvg::fontdb::Weight(400));
     }
 
     #[test]
@@ -689,14 +756,44 @@ class User {{
     }
 
     fn assert_label_fits_fallback_viewport(svg: &str, label: &str) {
+        let (glyph_width, viewport_width) = label_and_viewport_widths(svg, label);
+        assert!(
+            glyph_width <= viewport_width + 1.0,
+            "{label}: glyph width {glyph_width} overflows fallback viewport {viewport_width}"
+        );
+    }
+
+    fn assert_label_matches_fallback_viewport(svg: &str, label: &str) {
+        let (glyph_width, viewport_width) = label_and_viewport_widths(svg, label);
+        assert!(
+            (glyph_width - viewport_width).abs() <= 1.0,
+            "{label}: glyph width {glyph_width} does not match fallback viewport {viewport_width}"
+        );
+    }
+
+    fn label_and_viewport_widths(svg: &str, label: &str) -> (f64, f64) {
         let tree = parse_svg_with_ibm_plex(svg);
         let glyph_width = text_glyph_width(tree.root(), label)
             .unwrap_or_else(|| panic!("missing glyph metrics for {label}"));
         let viewport_width = fallback_viewport_width_for_label(svg, label)
             .unwrap_or_else(|| panic!("missing fallback viewport for {label}"));
+        (glyph_width, viewport_width)
+    }
+
+    fn assert_text_inside_widest_path(svg: &str, label: &str) {
+        let tree = parse_svg_with_ibm_plex(svg);
+        let text_box = text_abs_bounds(tree.root(), label)
+            .unwrap_or_else(|| panic!("missing bounds for {label}"));
+        let path_box =
+            widest_path_overlapping_y(tree.root(), text_box.y() + text_box.height() / 2.0)
+                .unwrap_or_else(|| panic!("missing path around {label}"));
+        let text_left = f64::from(text_box.x());
+        let text_right = f64::from(text_box.x() + text_box.width());
+        let path_left = f64::from(path_box.x());
+        let path_right = f64::from(path_box.x() + path_box.width());
         assert!(
-            glyph_width <= viewport_width + 1.0,
-            "{label}: glyph width {glyph_width} overflows fallback viewport {viewport_width}"
+            text_left >= path_left - 0.5 && text_right <= path_right + 0.5,
+            "{label} glyphs {text_left}..{text_right} outside node {path_left}..{path_right}"
         );
     }
 
@@ -732,6 +829,77 @@ class User {{
         let w0 = tag.find(width_key)? + width_key.len();
         let w1 = tag[w0..].find('"')? + w0;
         tag[w0..w1].parse().ok()
+    }
+
+    fn collect_text_labels(group: &usvg::Group, labels: &mut Vec<String>) {
+        for node in group.children() {
+            match node {
+                usvg::Node::Group(group) => collect_text_labels(group, labels),
+                usvg::Node::Text(text) => {
+                    for chunk in text.chunks() {
+                        labels.push(chunk.text().to_string());
+                    }
+                }
+                usvg::Node::Path(_) | usvg::Node::Image(_) => {}
+            }
+        }
+    }
+
+    fn text_abs_bounds(group: &usvg::Group, expected_text: &str) -> Option<usvg::Rect> {
+        text_abs_bounds_matching(group, &|text| text == expected_text)
+    }
+
+    fn text_abs_bounds_trimmed(group: &usvg::Group, expected_text: &str) -> Option<usvg::Rect> {
+        text_abs_bounds_matching(group, &|text| text.trim() == expected_text)
+    }
+
+    fn text_abs_bounds_matching<F>(group: &usvg::Group, predicate: &F) -> Option<usvg::Rect>
+    where
+        F: Fn(&str) -> bool,
+    {
+        for node in group.children() {
+            match node {
+                usvg::Node::Group(group) => {
+                    if let Some(bounds) = text_abs_bounds_matching(group, predicate) {
+                        return Some(bounds);
+                    }
+                }
+                usvg::Node::Text(text) => {
+                    for chunk in text.chunks() {
+                        if predicate(chunk.text()) {
+                            return Some(text.abs_bounding_box());
+                        }
+                    }
+                }
+                usvg::Node::Path(_) | usvg::Node::Image(_) => {}
+            }
+        }
+        None
+    }
+
+    fn widest_path_overlapping_y(group: &usvg::Group, y: f32) -> Option<usvg::Rect> {
+        fn walk(group: &usvg::Group, y: f32, best: &mut Option<usvg::Rect>) {
+            for node in group.children() {
+                match node {
+                    usvg::Node::Group(group) => walk(group, y, best),
+                    usvg::Node::Path(path) => {
+                        let bounds = path.abs_bounding_box();
+                        let overlaps = y >= bounds.y() && y <= bounds.y() + bounds.height();
+                        if overlaps
+                            && best
+                                .as_ref()
+                                .is_none_or(|current| bounds.width() > current.width())
+                        {
+                            *best = Some(bounds);
+                        }
+                    }
+                    usvg::Node::Text(_) | usvg::Node::Image(_) => {}
+                }
+            }
+        }
+        let mut best = None;
+        walk(group, y, &mut best);
+        best
     }
 
     fn text_glyph_width(group: &usvg::Group, expected_text: &str) -> Option<f64> {

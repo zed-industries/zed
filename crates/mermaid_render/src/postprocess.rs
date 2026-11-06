@@ -12,6 +12,7 @@
 //! details.
 
 mod accent_colors;
+mod class_rows;
 mod element_fixup;
 mod inject_css;
 mod strip_foreignobject;
@@ -26,6 +27,8 @@ use crate::MermaidTheme;
 pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
     // merman 0.6 already applies the generic resvg-safe cleanup before this point.
     // The remaining passes are Zed-specific theme and accent adjustments.
+    let svg = class_rows::shift_wrapped_class_rows(svg);
+    let svg = svg.as_ref();
     let svg_id = extract_svg_id(svg);
 
     let mut reader = Reader::from_str(svg);

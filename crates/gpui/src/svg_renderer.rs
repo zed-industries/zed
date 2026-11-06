@@ -365,7 +365,7 @@ fn fix_generic_font_families(db: &mut usvg::fontdb::Database) {
 mod tests {
     use super::*;
     use std::borrow::Cow;
-    use usvg::fontdb::{Database, Family, Query, Style};
+    use usvg::fontdb::{Database, Family, Query, Style, Weight};
 
     const IBM_PLEX_REGULAR: &[u8] =
         include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
@@ -410,15 +410,16 @@ mod tests {
         }
         let mut db = Database::new();
         load_bundled_fonts(&assets, &mut db);
-        let italic = db.query(&Query {
-            families: &[Family::Name("IBM Plex Sans")],
-            style: Style::Italic,
-            ..Default::default()
-        });
-        assert!(
-            italic.is_some(),
-            "load_bundled_fonts must register IBM Plex Sans Italic"
-        );
+        let id = db
+            .query(&Query {
+                families: &[Family::Name("IBM Plex Sans")],
+                style: Style::Italic,
+                ..Default::default()
+            })
+            .expect("load_bundled_fonts must resolve IBM Plex Sans Italic");
+        let face = db.face(id).expect("italic face");
+        assert_eq!(face.style, Style::Italic);
+        assert_eq!(face.weight, Weight(400));
     }
 
     #[test]
