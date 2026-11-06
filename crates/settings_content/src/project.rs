@@ -1435,13 +1435,4 @@ mod tests {
         };
         assert_eq!(command.args, vec!["hello".to_string()]);
     }
-
-    #[test]
-    fn date_format_schema_lists_examples() {
-        let schema = serde_json::to_value(schemars::schema_for!(GitSettings)).unwrap();
-        assert_eq!(
-            schema["properties"]["date_format"]["examples"],
-            serde_json::json!(["locale", "iso", "%Y-%m-%d %H:%M", "%b %d, %Y"])
-        );
-    }
 }

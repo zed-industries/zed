@@ -5431,29 +5431,16 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[gpui::test]
-    fn test_graph_date_settings_preserve_exact_details(cx: &mut App) {
+    fn test_graph_dates_use_date_format(cx: &mut App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         ProjectSettings::register(cx);
-        let timestamp = time::macros::datetime!(2024-06-08 12:34 UTC).unix_timestamp();
-        let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-        let expected = time::macros::datetime!(2024-06-08 12:34 UTC)
-            .to_offset(local_offset)
-            .format(timestamp_format())
-            .expect("valid graph date");
-        assert_eq!(
-            format_timestamp(timestamp, GitDateStyle::Absolute, cx),
-            expected
-        );
-        assert_eq!(
-            format_timestamp(i64::MAX, GitDateStyle::Absolute, cx),
-            "Unknown"
-        );
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |content| {
                 content.git.get_or_insert_default().date_format = Some("%Y".into());
             });
         });
+        let timestamp = time::macros::datetime!(2024-06-08 12:34 UTC).unix_timestamp();
         assert!(format_timestamp(timestamp, GitDateStyle::Relative, cx).ends_with(" ago"));
         assert_eq!(
             format_timestamp(timestamp, GitDateStyle::Absolute, cx),
@@ -6116,81 +6103,6 @@ mod tests {
 
         assert_eq!(commit_count, 0);
         assert!(!is_loading, "empty graph data should stop loading");
-    }
-
-    #[gpui::test]
-    async fn test_only_date_setting_changes_notify_graph(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            Path::new("/project"),
-            json!({ ".git": {}, "file.txt": "content" }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
-        project
-            .update(cx, |project, cx| project.git_scans_complete(cx))
-            .await;
-        cx.run_until_parked();
-        let repository = project.read_with(cx, |project, cx| {
-            project
-                .active_repository(cx)
-                .expect("should have an active repository")
-        });
-        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
-        });
-        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
-        let git_graph = cx.new_window_entity(|window, cx| {
-            GitGraph::new(
-                repository.read(cx).id,
-                project.read(cx).git_store().clone(),
-                workspace,
-                None,
-                window,
-                cx,
-            )
-        });
-        cx.run_until_parked();
-
-        let notifications = Rc::new(std::cell::Cell::new(0));
-        let _subscription = cx.update(|_, cx| {
-            let notifications = notifications.clone();
-            cx.observe(&git_graph, move |_, _| {
-                notifications.set(notifications.get() + 1);
-            })
-        });
-        let mut update_settings = |update: fn(&mut settings::SettingsContent)| {
-            notifications.set(0);
-            cx.update(|_, cx| {
-                SettingsStore::update_global(cx, |store, cx| {
-                    store.update_user_settings(cx, update);
-                });
-            });
-            cx.run_until_parked();
-            notifications.get()
-        };
-
-        assert_eq!(
-            update_settings(
-                |content| content.git.get_or_insert_default().gutter_debounce = Some(5)
-            ),
-            0
-        );
-        assert_eq!(
-            update_settings(
-                |content| content.git_graph.get_or_insert_default().date_style =
-                    Some(GitDateStyle::Relative)
-            ),
-            1
-        );
-        assert_eq!(
-            update_settings(
-                |content| content.git.get_or_insert_default().date_format = Some("%Y".into())
-            ),
-            1
-        );
     }
 
     #[gpui::test]

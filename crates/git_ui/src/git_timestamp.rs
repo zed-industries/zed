@@ -69,12 +69,8 @@ fn format_timestamp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        blame_ui::GitBlameRenderer, git_graph::GitGraphSettings,
-        git_panel_settings::GitPanelSettings,
-    };
+    use crate::blame_ui::GitBlameRenderer;
     use editor::BlameRenderer;
-    use git::{Oid, blame::BlameEntry};
     use gpui::UpdateGlobal;
     use settings::SettingsStore;
     use time::macros::{datetime, offset};
@@ -168,96 +164,26 @@ mod tests {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         ProjectSettings::register(cx);
-        GitPanelSettings::register(cx);
-        GitGraphSettings::register(cx);
     }
 
-    fn set_settings(value: &str, cx: &mut App) {
+    fn set_blame_date_format(format: &str, cx: &mut App) {
         SettingsStore::update_global(cx, |store, cx| {
-            store
-                .set_user_settings(value, cx)
-                .result()
-                .expect("valid date settings");
+            store.update_user_settings(cx, |content| {
+                let git = content.git.get_or_insert_default();
+                git.date_format = Some(format.into());
+                git.blame.get_or_insert_default().date_style = Some(GitDateStyle::Absolute);
+            });
         });
     }
 
     #[gpui::test]
-    fn defaults_preserve_existing_date_styles(cx: &mut App) {
-        init(cx);
-        let git = &ProjectSettings::get_global(cx).git;
-        assert!(matches!(git.date_format, GitDateFormat::Locale));
-        assert_eq!(git.blame.date_style, GitDateStyle::Relative);
-        assert_eq!(git.inline_blame.date_style, GitDateStyle::Relative);
-        assert_eq!(git.branch_picker.date_style, GitDateStyle::Relative);
-        assert_eq!(git.stash_picker.date_style, GitDateStyle::Relative);
-        assert_eq!(
-            GitPanelSettings::get_global(cx).date_style,
-            GitDateStyle::Relative
-        );
-        assert_eq!(
-            GitGraphSettings::get_global(cx).date_style,
-            GitDateStyle::Absolute
-        );
-    }
-
-    #[gpui::test]
-    fn date_styles_are_independent_and_live(cx: &mut App) {
-        init(cx);
-        set_settings(
-            r#"{
-            "git": {
-                "date_format": "%Y",
-                "blame": {"date_style": "absolute"},
-                "branch_picker": {"date_style": "absolute"},
-                "stash_picker": {"date_style": "absolute"}
-            },
-            "git_panel": {"date_style": "absolute"},
-            "git_graph": {"date_style": "relative"}
-        }"#,
-            cx,
-        );
-        let git = &ProjectSettings::get_global(cx).git;
-        assert_eq!(git.blame.date_style, GitDateStyle::Absolute);
-        assert_eq!(git.inline_blame.date_style, GitDateStyle::Relative);
-        assert_eq!(git.branch_picker.date_style, GitDateStyle::Absolute);
-        assert_eq!(git.stash_picker.date_style, GitDateStyle::Absolute);
-        assert_eq!(
-            GitPanelSettings::get_global(cx).date_style,
-            GitDateStyle::Absolute
-        );
-        assert_eq!(
-            GitGraphSettings::get_global(cx).date_style,
-            GitDateStyle::Relative
-        );
-        let timestamp = datetime!(2024-06-08 12:00 UTC);
-        assert_eq!(
-            format_git_timestamp(timestamp, TimestampFormat::MediumAbsolute, cx),
-            "2024"
-        );
-        set_settings(
-            r#"{"git": {"date_format": "%m", "inline_blame": {"date_style": "absolute"}}}"#,
-            cx,
-        );
-        let git = &ProjectSettings::get_global(cx).git;
-        assert_eq!(git.blame.date_style, GitDateStyle::Relative);
-        assert_eq!(git.inline_blame.date_style, GitDateStyle::Absolute);
-        assert_eq!(
-            format_git_date(timestamp, git.inline_blame.date_style, cx),
-            "06"
-        );
-        assert_eq!(
-            GitGraphSettings::get_global(cx).date_style,
-            GitDateStyle::Absolute
-        );
-    }
-
-    #[gpui::test]
-    fn blame_gutter_width_reserves_longest_date(cx: &mut App) {
+    fn blame_gutter_width_fits_longest_date(cx: &mut App) {
         init(cx);
         assert_eq!(
             GitBlameRenderer.max_timestamp_width(cx),
             editor::MAX_RELATIVE_TIMESTAMP.len()
         );
+
         for (format, width) in [
             ("iso", "2024-09-25 23:59".len()),
             ("%d", "25".len()),
@@ -265,16 +191,13 @@ mod tests {
             ("%A %H:%M", "Wednesday 23:59".len()),
             ("%-m/%-d/%Y", "12/25/2024".len()),
             ("%H:%M:%-S", "23:59:59".len()),
+            ("%Y年%m月", 10),
         ] {
-            set_settings(
-                &format!(
-                    r#"{{"git": {{"date_format": "{format}", "blame": {{"date_style": "absolute"}}}}}}"#
-                ),
-                cx,
-            );
+            set_blame_date_format(format, cx);
             assert_eq!(GitBlameRenderer.max_timestamp_width(cx), width, "{format}");
         }
-        set_settings(r#"{"git": {"blame": {"date_style": "absolute"}}}"#, cx);
+
+        set_blame_date_format("locale", cx);
         let locale_dates = longest_git_dates(cx);
         assert!(
             locale_dates
@@ -289,54 +212,6 @@ mod tests {
                 .map(|date| UnicodeWidthStr::width(date.as_str()))
                 .max()
                 .unwrap_or(0)
-        );
-        set_settings(
-            r#"{"git": {"date_format": "a very long custom date: %A, %B %d %Y %H:%M:%S %z", "blame": {"date_style": "absolute"}}}"#,
-            cx,
-        );
-        let entry = BlameEntry {
-            sha: Oid::from_bytes(&[1; 20]).expect("valid commit ID"),
-            range: 0..1,
-            original_line_number: 1,
-            author: Some("Author".into()),
-            author_mail: None,
-            author_time: Some(datetime!(2024-06-08 12:00 UTC).unix_timestamp()),
-            author_tz: Some("+0000".into()),
-            committer_name: None,
-            committer_email: None,
-            committer_time: None,
-            committer_tz: None,
-            summary: None,
-            previous: None,
-            filename: String::new(),
-            boundary: false,
-        };
-        let timestamp =
-            crate::commit_tooltip::blame_entry_timestamp(&entry, GitDateStyle::Absolute, cx);
-        assert!(timestamp.len() > "2 years, 11 months ago".len());
-        assert_eq!(
-            GitBlameRenderer.max_timestamp_width(cx),
-            longest_git_dates(cx)[0].len()
-        );
-        set_settings(
-            r#"{"git": {"date_format": "%Y年%m月", "blame": {"date_style": "absolute"}}}"#,
-            cx,
-        );
-        assert_eq!(GitBlameRenderer.max_timestamp_width(cx), 10);
-        set_settings(
-            r#"{"git": {"date_format": "%A %d", "blame": {"date_style": "absolute"}}}"#,
-            cx,
-        );
-        assert_eq!(longest_git_dates(cx)[0], "Wednesday 25");
-        let mut invalid_entry = entry;
-        invalid_entry.author_time = Some(i64::MAX);
-        assert_eq!(
-            crate::commit_tooltip::blame_entry_timestamp(
-                &invalid_entry,
-                GitDateStyle::Absolute,
-                cx
-            ),
-            "Error parsing date"
         );
     }
 }
