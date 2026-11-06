@@ -109,6 +109,10 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) parent_hwnd: Option<HWND>,
+    /// A per-window icon applied with `WM_SETICON`, built from
+    /// `WindowParams::icon`. Destroyed with the window: it is not
+    /// `LR_SHARED`, so we own it. The window-class icon stays the fallback.
+    pub(crate) window_icon: std::cell::Cell<Option<HICON>>,
 }
 
 impl WindowsWindowState {
@@ -300,6 +304,7 @@ impl WindowsWindowInner {
             platform_window_handle: context.platform_window_handle,
             system_settings: WindowsSystemSettings::new(),
             parent_hwnd: context.parent_hwnd,
+            window_icon: std::cell::Cell::new(None),
         }))
     }
 
@@ -590,6 +595,28 @@ impl WindowsWindow {
             }));
         }
 
+        // The per-window product icon for the title bar, taskbar and alt-tab.
+        // Placed after the fallible steps above so a failure there cannot leak
+        // the `HICON`, whose only release is this window's `Drop`.
+        if let Some(rgba) = params.icon.as_deref() {
+            match create_icon_from_rgba(rgba) {
+                Ok(icon) => {
+                    unsafe {
+                        for kind in [ICON_SMALL, ICON_BIG] {
+                            SendMessageW(
+                                hwnd,
+                                WM_SETICON,
+                                Some(WPARAM(kind as usize)),
+                                Some(LPARAM(icon.0 as isize)),
+                            );
+                        }
+                    }
+                    this.window_icon.set(Some(icon));
+                }
+                Err(err) => log::warn!("failed to build a window icon from the image: {err}"),
+            }
+        }
+
         Ok(Self(this))
     }
 }
@@ -627,6 +654,9 @@ impl Drop for WindowsWindow {
                 unsafe {
                     RevokeDragDrop(handle).log_err();
                     DestroyWindow(handle).log_err();
+                    if let Some(icon) = this.window_icon.take() {
+                        DestroyIcon(icon).log_err();
+                    }
                 }
             })
             .detach();
@@ -1425,6 +1455,159 @@ enum WindowOpenState {
 
 const WINDOW_CLASS_NAME: PCWSTR = w!("Zed::Window");
 
+/// The pixel bytes and the 1bpp AND mask of an icon, in the layout GDI wants.
+/// Packing is split out of [`create_icon_from_rgba`] so it can be tested
+/// without touching GDI.
+struct IconBuffers {
+    /// Premultiplied BGRA, top-down rows.
+    bgra: Vec<u8>,
+    /// The AND mask, top-down rows padded to a DWORD.
+    mask: Vec<u8>,
+    /// A row of `mask`, in bytes.
+    mask_row_bytes: usize,
+}
+
+/// Packs an RGBA image into [`IconBuffers`].
+///
+/// The mask sets a bit for every pixel whose alpha is zero. Windows falls back
+/// to the mask where the color bitmap has no alpha to blend, and an all-zero
+/// mask would turn those pixels into an opaque black square.
+fn pack_icon_buffers(rgba: &image::RgbaImage) -> IconBuffers {
+    let (width, height) = (rgba.width() as usize, rgba.height() as usize);
+
+    // `as_raw().len()` is already `width * height * 4` in `usize`, so the
+    // capacity cannot overflow the way `width * height * 4` as `i32` can.
+    let mut bgra = Vec::with_capacity(rgba.as_raw().len());
+    for pixel in rgba.pixels() {
+        let a = u32::from(pixel[3]);
+        bgra.push((u32::from(pixel[2]) * a / 255) as u8);
+        bgra.push((u32::from(pixel[1]) * a / 255) as u8);
+        bgra.push((u32::from(pixel[0]) * a / 255) as u8);
+        bgra.push(pixel[3]);
+    }
+
+    let mask_row_bytes = (width + 31) / 32 * 4;
+    let mut mask = vec![0u8; mask_row_bytes * height];
+    for (x, y, pixel) in rgba.enumerate_pixels() {
+        if pixel[3] == 0 {
+            let byte = y as usize * mask_row_bytes + x as usize / 8;
+            mask[byte] |= 1 << (7 - (x % 8));
+        }
+    }
+
+    IconBuffers {
+        bgra,
+        mask,
+        mask_row_bytes,
+    }
+}
+
+/// A 1bpp `BI_RGB` DIB whose `biClrUsed` is zero needs the two palette entries
+/// that follow the header, black and white. `BITMAPINFO` only carries room for
+/// one `RGBQUAD`, so this is what hands GDI both.
+#[repr(C)]
+struct MaskBitmapInfo {
+    header: BITMAPINFOHEADER,
+    palette: [RGBQUAD; 2],
+}
+
+/// Builds the `HICON` a `WM_SETICON` wants from an RGBA image: a 32bpp
+/// premultiplied BGRA color bitmap and a 1bpp mask marking the transparent
+/// pixels, combined by `CreateIconIndirect`.
+fn create_icon_from_rgba(rgba: &image::RgbaImage) -> Result<HICON> {
+    let (width, height) = (rgba.width() as i32, rgba.height() as i32);
+    if width <= 0 || height <= 0 {
+        return Err(anyhow::anyhow!("an icon has no dimensions"));
+    }
+
+    let IconBuffers {
+        bgra,
+        mask: mask_bits,
+        ..
+    } = pack_icon_buffers(rgba);
+
+    let header = |bit_count| BITMAPINFOHEADER {
+        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+        biWidth: width,
+        // Negative: top-down rows, as both the color bitmap and the mask hold them.
+        biHeight: -height,
+        biPlanes: 1,
+        biBitCount: bit_count,
+        biCompression: BI_RGB.0,
+        ..Default::default()
+    };
+
+    let color_info = BITMAPINFO {
+        bmiHeader: header(32),
+        ..Default::default()
+    };
+    let mut color_bits: *mut std::ffi::c_void = std::ptr::null_mut();
+    let color =
+        unsafe { CreateDIBSection(None, &color_info, DIB_RGB_COLORS, &mut color_bits, None, 0) }
+            .context("creating an icon's color bitmap")?;
+    let mask_info = MaskBitmapInfo {
+        header: header(1),
+        palette: [
+            RGBQUAD::default(),
+            RGBQUAD {
+                rgbBlue: 0xFF,
+                rgbGreen: 0xFF,
+                rgbRed: 0xFF,
+                rgbReserved: 0,
+            },
+        ],
+    };
+    let mut mask_bits_dest: *mut std::ffi::c_void = std::ptr::null_mut();
+    let mask = unsafe {
+        CreateDIBSection(
+            None,
+            std::ptr::from_ref(&mask_info).cast::<BITMAPINFO>(),
+            DIB_RGB_COLORS,
+            &mut mask_bits_dest,
+            None,
+            0,
+        )
+    }
+    // GDI handles have no RAII here, so neither bitmap may outlive a failure.
+    .map_err(|err| {
+        unsafe {
+            let _ = DeleteObject(HGDIOBJ(color.0));
+        }
+        anyhow::anyhow!("creating an icon's mask bitmap: {err}")
+    })?;
+    unsafe {
+        std::ptr::copy_nonoverlapping(bgra.as_ptr(), color_bits.cast::<u8>(), bgra.len());
+        std::ptr::copy_nonoverlapping(
+            mask_bits.as_ptr(),
+            mask_bits_dest.cast::<u8>(),
+            mask_bits.len(),
+        );
+    }
+
+    let icon = unsafe {
+        CreateIconIndirect(&ICONINFO {
+            fIcon: true.into(),
+            xHotspot: 0,
+            yHotspot: 0,
+            hbmMask: mask,
+            hbmColor: color,
+        })
+    }
+    .map_err(|err| {
+        unsafe {
+            let _ = DeleteObject(HGDIOBJ(color.0));
+            let _ = DeleteObject(HGDIOBJ(mask.0));
+        }
+        anyhow::anyhow!("creating a window icon: {err}")
+    })?;
+    // `CreateIconIndirect` copies both bitmaps, so ours are ours to free.
+    unsafe {
+        let _ = DeleteObject(HGDIOBJ(color.0));
+        let _ = DeleteObject(HGDIOBJ(mask.0));
+    }
+    Ok(icon)
+}
+
 fn register_window_class(icon_handle: HICON) {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -1687,7 +1870,7 @@ fn set_non_rude_hwnd(hwnd: HWND, non_rude: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::ClickState;
+    use super::{ClickState, pack_icon_buffers};
     use gpui::{DevicePixels, MouseButton, point};
     use std::time::Duration;
 
@@ -1737,6 +1920,80 @@ mod tests {
         assert_eq!(
             state.update(MouseButton::Right, point(DevicePixels(10), DevicePixels(0))),
             1
+        );
+    }
+
+    #[test]
+    fn icon_mask_rows_are_padded_to_a_dword() {
+        for (width, height) in [(1u32, 3u32), (9, 2), (33, 2)] {
+            let buffers = pack_icon_buffers(&image::RgbaImage::new(width, height));
+            let row_bytes = ((width + 31) / 32 * 4) as usize;
+            assert_eq!(buffers.mask_row_bytes, row_bytes);
+            assert_eq!(buffers.mask.len(), row_bytes * height as usize);
+            assert_eq!(buffers.bgra.len(), (width * height * 4) as usize);
+            // Past `width` a row is padding, and GDI reads those bytes, so they
+            // have to stay clear rather than flip a mask bit.
+            let used = (width as usize + 7) / 8;
+            for row in 0..height as usize {
+                let start = row * row_bytes;
+                for byte in &buffers.mask[start + used..start + row_bytes] {
+                    assert_eq!(*byte, 0, "padding of row {row} at width {width}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn icon_mask_marks_the_transparent_pixels_of_every_row() {
+        let mut rgba = image::RgbaImage::from_pixel(9, 3, image::Rgba([0, 0, 0, 255]));
+        rgba.get_pixel_mut(0, 0).0[3] = 0;
+        rgba.get_pixel_mut(8, 1).0[3] = 0;
+
+        let buffers = pack_icon_buffers(&rgba);
+        let row = buffers.mask_row_bytes;
+        // The leftmost pixel of a row is the high bit of its first byte.
+        assert_eq!(buffers.mask[0], 0b1000_0000);
+        assert!(buffers.mask[1..row].iter().all(|byte| *byte == 0));
+        assert_eq!(buffers.mask[row], 0);
+        assert_eq!(buffers.mask[row + 1], 0b1000_0000);
+        assert!(buffers.mask[2 * row..].iter().all(|byte| *byte == 0));
+        assert_eq!(
+            buffers
+                .mask
+                .iter()
+                .map(|byte| byte.count_ones())
+                .sum::<u32>(),
+            2
+        );
+    }
+
+    #[test]
+    fn a_fully_transparent_icon_stays_transparent() {
+        let buffers = pack_icon_buffers(&image::RgbaImage::new(32, 32));
+        assert_eq!(
+            buffers
+                .mask
+                .iter()
+                .map(|byte| byte.count_ones())
+                .sum::<u32>(),
+            32 * 32
+        );
+        // Premultiplying a zero alpha zeroes every channel with it.
+        assert!(buffers.bgra.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn icon_colors_premultiply_into_bgra() {
+        let rgba = image::RgbaImage::from_pixel(1, 1, image::Rgba([200, 100, 50, 128]));
+        let buffers = pack_icon_buffers(&rgba);
+        assert_eq!(
+            buffers.bgra,
+            vec![
+                (50 * 128 / 255) as u8,
+                (100 * 128 / 255) as u8,
+                (200 * 128 / 255) as u8,
+                128
+            ]
         );
     }
 }
