@@ -280,6 +280,80 @@ mod tests {
         );
     }
 
+    #[test]
+    fn class_diagram_respects_non_default_font_size() {
+        // Regression for the merman upgrade: layout honors themeVariables.fontSize,
+        // so Zed must not force fallback text back to 16px in CSS.
+        let source = r#"classDiagram
+%%{init: {"themeVariables": {"fontSize": "8px"}}}%%
+class User {
+    +String WWWWWWWWWWWWWWWWWWWW
+    +String WWWWWWWWWWWWWWWWWWWW
+    +String WWWWWWWWWWWWWWWWWWWW
+}
+"#;
+        let theme = MermaidTheme::default();
+        let svg = render_mermaid(source, &theme).expect("render failed");
+        let svg = crate::postprocess::postprocess(&svg, &theme).expect("postprocess failed");
+        let mut options = usvg::Options::default();
+        options.fontdb_mut().load_system_fonts();
+        let tree = usvg::Tree::from_str(&svg, &options).expect("SVG parsing failed");
+
+        assert_eq!(text_font_size(tree.root(), "User"), Some(8.0));
+        assert_eq!(
+            text_font_size(tree.root(), "+String WWWWWWWWWWWWWWWWWWWW"),
+            Some(8.0)
+        );
+    }
+
+    #[test]
+    fn mindmap_fallback_text_recovers_section_classes() {
+        // merman parks section-* tokens on data-merman-source-classes for
+        // foreignObject fallback labels. Promote them back onto class so the
+        // injected section text-color CSS can win over gitBranchLabel fills.
+        let source = r##"mindmap
+%%{init: {"themeVariables": {"gitBranchLabel0": "#101010"}}}%%
+    root[First<br/>Second]
+"##;
+        let theme = MermaidTheme::default();
+        let svg = render_mermaid(source, &theme).expect("render failed");
+        let svg = crate::postprocess::postprocess(&svg, &theme).expect("postprocess failed");
+
+        for label in ["First", "Second"] {
+            let needle_start = svg.find(&format!(">{label}</text>")).expect(label);
+            let tag_start = svg[..needle_start].rfind("<text").expect("text tag");
+            let tag = &svg[tag_start..needle_start];
+            assert!(
+                tag.contains("section-root") && tag.contains("section--1"),
+                "{label} text should carry recovered section classes, got: {tag}"
+            );
+            assert!(
+                tag.contains("class=\"")
+                    && tag.contains("section-root")
+                    && tag.contains("section--1"),
+                "{label} section classes should be live class tokens, got: {tag}"
+            );
+        }
+
+        let mut options = usvg::Options::default();
+        options.fontdb_mut().load_system_fonts();
+        let tree = usvg::Tree::from_str(&svg, &options).expect("SVG parsing failed");
+        let expected = {
+            let rgba = gpui::Rgba::from(theme.text_color);
+            // usvg exposes fills; compare via re-rendered fill on the text span.
+            (rgba.r, rgba.g, rgba.b)
+        };
+        for label in ["First", "Second"] {
+            let fill = text_fill_rgb(tree.root(), label).expect(label);
+            assert!(
+                (fill.0 - expected.0).abs() < 0.02
+                    && (fill.1 - expected.1).abs() < 0.02
+                    && (fill.2 - expected.2).abs() < 0.02,
+                "{label} fill should follow theme text color, got {fill:?} expected {expected:?}"
+            );
+        }
+    }
+
     fn text_font_size(group: &usvg::Group, expected_text: &str) -> Option<f32> {
         for node in group.children() {
             match node {
@@ -292,6 +366,39 @@ mod tests {
                     for chunk in text.chunks() {
                         if chunk.text() == expected_text {
                             return chunk.spans().first().map(|span| span.font_size().get());
+                        }
+                    }
+                }
+                usvg::Node::Path(_) | usvg::Node::Image(_) => {}
+            }
+        }
+
+        None
+    }
+
+    fn text_fill_rgb(group: &usvg::Group, expected_text: &str) -> Option<(f32, f32, f32)> {
+        for node in group.children() {
+            match node {
+                usvg::Node::Group(group) => {
+                    if let Some(fill) = text_fill_rgb(group, expected_text) {
+                        return Some(fill);
+                    }
+                }
+                usvg::Node::Text(text) => {
+                    for chunk in text.chunks() {
+                        if chunk.text() == expected_text {
+                            let span = chunk.spans().first()?;
+                            return match span.fill() {
+                                Some(paint) => match paint.paint() {
+                                    usvg::Paint::Color(c) => Some((
+                                        c.red as f32 / 255.0,
+                                        c.green as f32 / 255.0,
+                                        c.blue as f32 / 255.0,
+                                    )),
+                                    _ => None,
+                                },
+                                None => None,
+                            };
                         }
                     }
                 }

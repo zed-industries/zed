@@ -69,13 +69,19 @@ impl MindmapAccents {
             Event::Start(e) | Event::Empty(e)
                 if e.name().as_ref() == b"text" || e.name().as_ref() == b"tspan" =>
             {
-                let section_idx = self.current_section_accent().or_else(|| {
-                    if e.name().as_ref() == b"text" {
-                        self.nodes.lookup_accent(e)
-                    } else {
-                        None
-                    }
-                });
+                // merman keeps section-* tokens on data-merman-source-classes for
+                // foreignObject fallback text (often parked in <defs>/<use>), so
+                // recover section identity from that metadata before geometry.
+                let section_idx = self
+                    .parse_section_from_source_classes(e)?
+                    .or_else(|| self.current_section_accent())
+                    .or_else(|| {
+                        if e.name().as_ref() == b"text" {
+                            self.nodes.lookup_accent(e)
+                        } else {
+                            None
+                        }
+                    });
 
                 if e.name().as_ref() == b"text" {
                     self.current_text_section = section_idx;
@@ -107,9 +113,26 @@ impl MindmapAccents {
             None => return Ok(None),
         };
         let class = class_attr.normalized_value(XmlVersion::Implicit1_0)?;
-        let is_root = class.split_whitespace().any(|t| t == "section-root");
+        Ok(self.remember_section_tokens(class.split_whitespace()))
+    }
 
-        for token in class.split_whitespace() {
+    fn parse_section_from_source_classes(&mut self, e: &BytesStart<'_>) -> Result<Option<usize>> {
+        let attr = match e.try_get_attribute("data-merman-source-classes")? {
+            Some(attr) => attr,
+            None => return Ok(None),
+        };
+        let classes = attr.normalized_value(XmlVersion::Implicit1_0)?;
+        Ok(self.remember_section_tokens(classes.split_whitespace()))
+    }
+
+    fn remember_section_tokens<'b>(
+        &mut self,
+        tokens: impl Iterator<Item = &'b str>,
+    ) -> Option<usize> {
+        let tokens: Vec<&str> = tokens.collect();
+        let is_root = tokens.iter().any(|t| *t == "section-root");
+
+        for token in &tokens {
             if let Some(rest) = token.strip_prefix("section-") {
                 if rest == "-1" || rest.parse::<u32>().is_ok() {
                     let class_name = if is_root {
@@ -117,13 +140,22 @@ impl MindmapAccents {
                     } else {
                         format!("section-{rest}")
                     };
+                    // Reuse an existing slot when we see the same section again
+                    // (e.g. both lines of a multi-line fallback label).
+                    if let Some(idx) = self
+                        .section_classes
+                        .iter()
+                        .position(|existing| existing == &class_name)
+                    {
+                        return Some(idx);
+                    }
                     let idx = self.section_classes.len();
                     self.section_classes.push(class_name);
-                    return Ok(Some(idx));
+                    return Some(idx);
                 }
             }
         }
-        Ok(None)
+        None
     }
 
     fn current_section_accent(&self) -> Option<usize> {
