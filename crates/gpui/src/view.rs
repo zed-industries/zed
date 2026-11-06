@@ -323,6 +323,7 @@ impl<V: View> IntoElement for ViewElement<V> {
 struct ViewElementState {
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
+    painted: bool,
     cache_key: ViewElementCacheKey,
     /// The entities the view accessed while it was last drawn, in any phase,
     /// restored when its prepaint is reused so the window stays subscribed.
@@ -554,6 +555,7 @@ fn prepaint_view(
                     && element_state.cache_key.content_mask == content_mask
                     && element_state.cache_key.text_style == text_style
                     && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
+                    && element_state.painted
                     && !window.dirty_views.contains(&entity_id)
                     && !window.refreshing
                 {
@@ -563,6 +565,8 @@ fn prepaint_view(
                         .extend_accessed(element_state.accessed_entities.iter().copied());
                     let prepaint_end = window.prepaint_index();
                     element_state.prepaint_range = prepaint_start..prepaint_end;
+                    // An invisible ancestor can skip paint, leaving no output to replay.
+                    element_state.painted = false;
 
                     return (None, element_state);
                 }
@@ -585,6 +589,7 @@ fn prepaint_view(
                         accessed_entities,
                         prepaint_range: prepaint_start..prepaint_end,
                         paint_range: PaintIndex::default()..PaintIndex::default(),
+                        painted: false,
                         cache_key: ViewElementCacheKey {
                             bounds,
                             content_mask,
@@ -652,6 +657,7 @@ fn paint_view(
 
                     let paint_end = window.paint_index();
                     element_state.paint_range = paint_start..paint_end;
+                    element_state.painted = true;
 
                     ((), element_state)
                 },

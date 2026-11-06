@@ -1656,7 +1656,7 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, Background, BorderStyle, Bounds, ContentMask, Corners, Edges, Pixels,
-        ScaledPixels, Size, TestAppContext, size,
+        ScaledPixels, Size, TestAppContext, point, size,
     };
     use proptest::prelude::*;
     use std::collections::BTreeSet;
@@ -1664,6 +1664,56 @@ mod tests {
     const ELEMENT_COUNT: usize = 64;
     const MUTATION_COUNT: usize = 32;
     const WINDOW_SIZE: Size<Pixels> = size(px(1200.0), px(900.0));
+
+    #[gpui::test]
+    fn cached_scroll_without_notify(cx: &mut TestAppContext) {
+        let mut rng = StdRng::seed_from_u64(0);
+        for topology in RandomizedElementTreeTopology::ALL {
+            let config = RandomizedElementTreeConfig::new(0, 32)
+                .with_topology(topology)
+                .with_entity_density(1.0)
+                .with_cached_views(true);
+            let actual = cx.open_window(WINDOW_SIZE, move |_, cx| {
+                RandomizedElementTree::new_with_config(config, cx)
+            });
+            let reference = cx.open_window(WINDOW_SIZE, move |_, cx| {
+                RandomizedElementTree::new_with_config(config, cx)
+            });
+            assert_eq!(
+                draw_window(actual.into(), cx),
+                draw_window(reference.into(), cx)
+            );
+            for frame in 1..=12 {
+                let offset = if frame == 1 {
+                    point(px(-17.0), px(-31.0))
+                } else {
+                    point(
+                        px(rng.random_range(-500.0..0.0)),
+                        px(rng.random_range(-500.0..0.0)),
+                    )
+                };
+                for window in [actual, reference] {
+                    window.root(cx).unwrap().read_with(cx, |tree, _| {
+                        for handle in tree.scroll_handles.borrow().values() {
+                            handle.set_offset(offset);
+                        }
+                    });
+                    if frame % 3 == 0 {
+                        window.root(cx).unwrap().update(cx, |tree, cx| {
+                            tree.apply_mutation(RandomizedElementTreeMutationKind::ChildColor, cx);
+                        });
+                    }
+                }
+                cx.update_window(reference.into(), |_, window, _| window.refresh())
+                    .unwrap();
+                assert_eq!(
+                    draw_window(actual.into(), cx),
+                    draw_window(reference.into(), cx),
+                    "topology {topology:?}, frame {frame}"
+                );
+            }
+        }
+    }
 
     #[derive(Debug, PartialEq)]
     struct SceneSnapshot {
