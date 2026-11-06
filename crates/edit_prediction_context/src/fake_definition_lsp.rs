@@ -44,6 +44,7 @@ pub fn register_fake_definition_server(
                 ..Default::default()
             },
             label_for_completion: None,
+            label_for_symbol: None,
             initializer: Some(Box::new({
                 move |server| {
                     server.handle_notification::<lsp::notification::DidOpenTextDocument, _>({
