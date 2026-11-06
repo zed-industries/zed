@@ -2141,7 +2141,7 @@ impl CodeActionsMenu {
             window.text_style().font(),
             window.text_style().font_size.to_pixels(window.rem_size()),
         );
-        let is_truncated = line_wrapper.should_truncate_line(
+        let is_truncated = line_wrapper.truncation_range(
             &label,
             CODE_ACTION_MENU_MAX_WIDTH,
             "…",

@@ -1,6 +1,6 @@
 use crate::{FontId, Pixels, SharedString, TextRun, TextSystem, px};
 use collections::HashMap;
-use std::{borrow::Cow, iter, sync::Arc};
+use std::{borrow::Cow, iter, ops::Range, sync::Arc};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Determines whether to truncate text from the start or end.
@@ -235,16 +235,15 @@ impl LineWrapper {
         })
     }
 
-    /// Determines if a line should be truncated based on its width.
-    ///
-    /// Returns the truncation index in `line`.
-    pub fn should_truncate_line(
+    /// Returns the byte range to replace with the truncation affix, or `None`
+    /// if the line fits. Both endpoints are grapheme boundaries.
+    pub fn truncation_range(
         &mut self,
         line: &str,
         truncate_width: Pixels,
         truncation_affix: &str,
         truncate_from: TruncateFrom,
-    ) -> Option<usize> {
+    ) -> Option<Range<usize>> {
         let mut width = px(0.);
         let suffix_width = truncation_affix
             .chars()
@@ -254,94 +253,80 @@ impl LineWrapper {
 
         match truncate_from {
             TruncateFrom::Start => {
-                for (ix, c) in line.char_indices().rev() {
+                truncate_ix = line.len();
+                for (ix, grapheme) in line.grapheme_indices(true).rev() {
                     if width + suffix_width < truncate_width {
-                        truncate_ix = ix;
+                        truncate_ix = ix + grapheme.len();
                     }
 
-                    let char_width = self.width_for_char(c);
-                    width += char_width;
+                    width += self.width_for_grapheme(grapheme);
 
                     if width.floor() > truncate_width {
-                        return Some(truncate_ix);
+                        return Some(0..truncate_ix);
                     }
                 }
             }
             TruncateFrom::End => {
-                for (ix, c) in line.char_indices() {
+                for (ix, grapheme) in line.grapheme_indices(true) {
                     if width + suffix_width < truncate_width {
                         truncate_ix = ix;
                     }
 
-                    let char_width = self.width_for_char(c);
-                    width += char_width;
+                    width += self.width_for_grapheme(grapheme);
 
                     if width.floor() > truncate_width {
-                        return Some(truncate_ix);
+                        return Some(trim_truncation_end(&line[..truncate_ix]).len()..line.len());
                     }
                 }
             }
-            TruncateFrom::Middle => {}
+            TruncateFrom::Middle => {
+                let total_width: Pixels = line
+                    .chars()
+                    .map(|character| self.width_for_char(character))
+                    .sum();
+                if total_width <= truncate_width {
+                    return None;
+                }
+
+                let content_budget = truncate_width - suffix_width;
+                if content_budget <= px(0.) {
+                    return Some(0..line.len());
+                }
+
+                let front_budget = content_budget * (2.0 / 3.0);
+                let back_budget = content_budget - front_budget;
+
+                let mut front_width = px(0.);
+                let mut front_end_ix = 0usize;
+                for (ix, grapheme) in line.grapheme_indices(true) {
+                    let grapheme_width = self.width_for_grapheme(grapheme);
+                    if front_width + grapheme_width > front_budget {
+                        break;
+                    }
+                    front_width += grapheme_width;
+                    front_end_ix = ix + grapheme.len();
+                }
+
+                let mut back_width = px(0.);
+                let mut back_start_ix = line.len();
+                for (ix, grapheme) in line.grapheme_indices(true).rev() {
+                    let grapheme_width = self.width_for_grapheme(grapheme);
+                    if back_width + grapheme_width > back_budget {
+                        break;
+                    }
+                    back_width += grapheme_width;
+                    back_start_ix = ix;
+                }
+
+                if front_end_ix >= back_start_ix {
+                    return Some(0..line.len());
+                }
+
+                return Some(front_end_ix..back_start_ix);
+            }
         }
 
         None
-    }
-
-    fn should_truncate_line_middle(
-        &mut self,
-        line: &str,
-        truncate_width: Pixels,
-        truncation_affix: &str,
-    ) -> Option<(usize, usize)> {
-        let suffix_width = truncation_affix
-            .chars()
-            .map(|c| self.width_for_char(c))
-            .fold(px(0.0), |a, x| a + x);
-
-        let total_width: Pixels = line
-            .chars()
-            .map(|c| self.width_for_char(c))
-            .fold(px(0.0), |a, x| a + x);
-
-        if total_width <= truncate_width {
-            return None;
-        }
-
-        let content_budget = truncate_width - suffix_width;
-        if content_budget <= px(0.) {
-            return Some((0, line.len()));
-        }
-
-        let front_budget = content_budget * (2.0 / 3.0);
-        let back_budget = content_budget - front_budget;
-
-        let mut front_width = px(0.);
-        let mut front_end_ix = 0usize;
-        for (ix, c) in line.char_indices() {
-            let char_width = self.width_for_char(c);
-            if front_width + char_width > front_budget {
-                break;
-            }
-            front_width += char_width;
-            front_end_ix = ix + c.len_utf8();
-        }
-
-        let mut back_width = px(0.);
-        let mut back_start_ix = line.len();
-        for (ix, c) in line.char_indices().rev() {
-            let char_width = self.width_for_char(c);
-            if back_width + char_width > back_budget {
-                break;
-            }
-            back_width += char_width;
-            back_start_ix = ix;
-        }
-
-        if front_end_ix >= back_start_ix {
-            return Some((0, line.len()));
-        }
-
-        Some((front_end_ix, back_start_ix))
     }
 
     /// Truncate a line of text to the given width with this wrapper's font and font size.
@@ -353,45 +338,15 @@ impl LineWrapper {
         runs: &'a [TextRun],
         truncate_from: TruncateFrom,
     ) -> (SharedString, Cow<'a, [TextRun]>) {
-        if truncate_from == TruncateFrom::Middle {
-            if let Some((front_end_ix, back_start_ix)) =
-                self.should_truncate_line_middle(&line, truncate_width, truncation_affix)
-            {
-                let result = SharedString::from(format!(
-                    "{}{truncation_affix}{}",
-                    &line[..front_end_ix],
-                    &line[back_start_ix..]
-                ));
-                let mut runs = runs.to_vec();
-                update_runs_after_middle_truncation(
-                    truncation_affix,
-                    &mut runs,
-                    front_end_ix,
-                    back_start_ix,
-                );
-                return (result, Cow::Owned(runs));
-            } else {
-                return (line, Cow::Borrowed(runs));
-            }
-        }
-
-        if let Some(truncate_ix) =
-            self.should_truncate_line(&line, truncate_width, truncation_affix, truncate_from)
+        if let Some(removed) =
+            self.truncation_range(&line, truncate_width, truncation_affix, truncate_from)
         {
-            let result = match truncate_from {
-                TruncateFrom::Start => SharedString::from(format!(
-                    "{truncation_affix}{}",
-                    &line[line.ceil_char_boundary(truncate_ix + 1)..]
-                )),
-                TruncateFrom::End => SharedString::from(format!(
-                    "{}{truncation_affix}",
-                    line[..truncate_ix]
-                        .trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
-                )),
-                TruncateFrom::Middle => unreachable!("Middle truncation is handled above"),
-            };
-            let mut runs = runs.to_vec();
-            update_runs_after_truncation(&result, truncation_affix, &mut runs, truncate_from);
+            let result = SharedString::from(format!(
+                "{}{truncation_affix}{}",
+                &line[..removed.start],
+                &line[removed.end..],
+            ));
+            let runs = truncate_runs(runs, removed, truncation_affix, truncate_from);
             (result, Cow::Owned(runs))
         } else {
             (line, Cow::Borrowed(runs))
@@ -402,7 +357,7 @@ impl LineWrapper {
     ///
     /// Unlike `truncate_line` which treats the text as a flat width budget
     /// (`width * max_lines`), this method accounts for word-boundary wrapping:
-    /// it walks through characters once, tracking wrap boundaries and the
+    /// it walks through graphemes, tracking wrap boundaries and the
     /// truncation point simultaneously. When text overflows on the last
     /// allowed line, it truncates there and appends the affix.
     ///
@@ -444,22 +399,21 @@ impl LineWrapper {
         let mut truncate_ix = 0usize;
 
         let mut break_indices = Self::break_indices(&text).peekable();
-        for (ix, c) in text.char_indices() {
+        for (ix, grapheme) in text.grapheme_indices(true) {
             // Consume boundaries on newlines too, so skipping an empty line does not
             // leave the iterator stuck before subsequent text.
+            while break_indices.next_if(|index| *index < ix).is_some() {}
             let is_break = break_indices.next_if_eq(&ix).is_some();
-            if c == '\n' {
-                if line >= max_lines - 1 && !text[ix + 1..].trim().is_empty() {
+            if grapheme == "\n" || grapheme == "\r\n" {
+                if line >= max_lines - 1 && !text[ix + grapheme.len()..].trim().is_empty() {
                     // Newline on the last allowed line with real content
                     // below. Truncate here.
-                    let truncated = text[..truncate_ix]
-                        .trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation());
+                    let truncated = trim_truncation_end(&text[..truncate_ix]);
                     let result = SharedString::from(format!("{truncated}{truncation_affix}"));
-                    let mut runs = runs.to_vec();
-                    update_runs_after_truncation(
-                        &result,
+                    let runs = truncate_runs(
+                        runs,
+                        truncated.len()..text.len(),
                         truncation_affix,
-                        &mut runs,
                         TruncateFrom::End,
                     );
                     return (result, Cow::Owned(runs));
@@ -471,40 +425,44 @@ impl LineWrapper {
                 first_non_whitespace_ix = None;
                 last_candidate_ix = 0;
                 last_candidate_width = px(0.);
-                last_wrap_ix = ix + 1;
+                last_wrap_ix = ix + grapheme.len();
                 indent = None;
-                truncate_ix = ix + 1;
+                truncate_ix = ix + grapheme.len();
                 continue;
             }
 
-            let char_width = self.width_for_char(c);
+            let grapheme_width = self.width_for_grapheme(grapheme);
 
             if is_break && first_non_whitespace_ix.is_some() {
                 last_candidate_ix = ix;
                 last_candidate_width = width;
             }
 
-            if c != ' ' && first_non_whitespace_ix.is_none() {
+            if !grapheme.starts_with(' ') && first_non_whitespace_ix.is_none() {
                 first_non_whitespace_ix = Some(ix);
             }
 
-            width += char_width;
+            width += grapheme_width;
 
             if line < max_lines - 1 {
                 // Before the last line: replicate wrap_line's boundary logic.
                 if width > wrap_width && ix > last_wrap_ix {
                     if let (None, Some(first_nw)) = (indent, first_non_whitespace_ix) {
-                        indent = Some(Self::MAX_INDENT.min((first_nw - last_wrap_ix) as u32));
+                        indent = Some(
+                            Self::MAX_INDENT.min(first_nw.saturating_sub(last_wrap_ix) as u32),
+                        );
                     }
 
-                    if last_candidate_ix > last_wrap_ix {
+                    if last_candidate_ix > last_wrap_ix
+                        && width - last_candidate_width <= wrap_width
+                    {
                         last_wrap_ix = last_candidate_ix;
                         width -= last_candidate_width;
-                        last_candidate_ix = 0;
                     } else {
                         last_wrap_ix = ix;
-                        width = char_width;
+                        width = grapheme_width;
                     }
+                    last_candidate_ix = 0;
 
                     if let Some(ind) = indent {
                         width += self.width_for_char(' ') * ind as f32;
@@ -512,27 +470,40 @@ impl LineWrapper {
 
                     line += 1;
                     truncate_ix = last_wrap_ix;
+                    if line == max_lines - 1 {
+                        // A preferred break can carry several already-measured graphemes
+                        // onto the last line. Recover its fitting prefix before truncating.
+                        let mut prefix_width =
+                            self.width_for_char(' ') * indent.unwrap_or(0) as f32;
+                        for (offset, carried_grapheme) in
+                            text[last_wrap_ix..ix + grapheme.len()].grapheme_indices(true)
+                        {
+                            prefix_width += self.width_for_grapheme(carried_grapheme);
+                            if prefix_width + affix_width > wrap_width {
+                                break;
+                            }
+                            truncate_ix = last_wrap_ix + offset + carried_grapheme.len();
+                        }
+                    }
                 }
             } else {
                 // On the last line: track the furthest point where the affix
                 // still fits, and stop as soon as the line overflows.
                 if width + affix_width <= wrap_width {
-                    truncate_ix = ix + c.len_utf8();
+                    truncate_ix = ix + grapheme.len();
                 }
+            }
 
-                if width > wrap_width {
-                    let truncated = text[..truncate_ix]
-                        .trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation());
-                    let result = SharedString::from(format!("{truncated}{truncation_affix}"));
-                    let mut runs = runs.to_vec();
-                    update_runs_after_truncation(
-                        &result,
-                        truncation_affix,
-                        &mut runs,
-                        TruncateFrom::End,
-                    );
-                    return (result, Cow::Owned(runs));
-                }
+            if line >= max_lines - 1 && width > wrap_width {
+                let truncated = trim_truncation_end(&text[..truncate_ix]);
+                let result = SharedString::from(format!("{truncated}{truncation_affix}"));
+                let runs = truncate_runs(
+                    runs,
+                    truncated.len()..text.len(),
+                    truncation_affix,
+                    TruncateFrom::End,
+                );
+                return (result, Cow::Owned(runs));
             }
         }
 
@@ -557,6 +528,26 @@ impl LineWrapper {
             self.font_size,
         )
     }
+
+    fn width_for_grapheme(&mut self, grapheme: &str) -> Pixels {
+        grapheme
+            .chars()
+            .map(|character| self.width_for_char(character))
+            .sum()
+    }
+}
+
+fn trim_truncation_end(text: &str) -> &str {
+    let end = text
+        .grapheme_indices(true)
+        .rev()
+        .find(|(_, grapheme)| {
+            !grapheme
+                .chars()
+                .all(|character| character.is_whitespace() || character.is_ascii_punctuation())
+        })
+        .map_or(0, |(index, grapheme)| index + grapheme.len());
+    &text[..end]
 }
 
 #[inline(always)]
@@ -584,101 +575,40 @@ fn width_for_char(
     }
 }
 
-fn update_runs_after_truncation(
-    result: &str,
-    ellipsis: &str,
-    runs: &mut Vec<TextRun>,
+fn truncate_runs(
+    runs: &[TextRun],
+    removed: Range<usize>,
+    affix: &str,
     truncate_from: TruncateFrom,
-) {
-    let mut truncate_at = result.len() - ellipsis.len();
-    match truncate_from {
-        TruncateFrom::Start => {
-            for (run_index, run) in runs.iter_mut().enumerate().rev() {
-                if run.len <= truncate_at {
-                    truncate_at -= run.len;
-                } else {
-                    run.len = truncate_at + ellipsis.len();
-                    runs.splice(..run_index, std::iter::empty());
-                    break;
-                }
-            }
-        }
-        TruncateFrom::End => {
-            for (run_index, run) in runs.iter_mut().enumerate() {
-                if run.len <= truncate_at {
-                    truncate_at -= run.len;
-                } else {
-                    run.len = truncate_at + ellipsis.len();
-                    runs.truncate(run_index + 1);
-                    break;
-                }
-            }
-        }
-        TruncateFrom::Middle => {
-            unreachable!("Middle truncation calls this function with TruncateFrom::End directly")
-        }
-    }
-}
-
-fn update_runs_after_middle_truncation(
-    ellipsis: &str,
-    runs: &mut Vec<TextRun>,
-    front_end_ix: usize,
-    back_start_ix: usize,
-) {
-    let original_runs = std::mem::take(runs);
-    let mut result_runs: Vec<TextRun> = Vec::with_capacity(original_runs.len());
-
-    // Front segment [0, front_end_ix) + ellipsis: walk forward until the run
-    // that straddles or ends at front_end_ix, then extend that run's length
-    // to include the ellipsis.
-    let mut front_remaining = front_end_ix;
-    let mut front_done = false;
-    for run in &original_runs {
-        if front_done {
-            break;
-        }
-        if run.len <= front_remaining {
-            result_runs.push(run.clone());
-            front_remaining -= run.len;
-        } else {
-            let mut partial = run.clone();
-            partial.len = front_remaining + ellipsis.len();
-            result_runs.push(partial);
-            front_done = true;
-        }
-    }
-    if !front_done {
-        // front_end_ix landed exactly on a run boundary; append ellipsis to
-        // the last front run (or, if the front is empty, to the first back run).
-        if let Some(last) = result_runs.last_mut() {
-            last.len += ellipsis.len();
-        } else if let Some(first) = original_runs.first() {
-            let mut affix_run = first.clone();
-            affix_run.len = ellipsis.len();
-            result_runs.push(affix_run);
-        }
-    }
-
-    // Back segment [back_start_ix, original.len()): skip runs entirely in the
-    // removed middle, keep the rest.
-    let mut byte_pos = 0usize;
-    for run in &original_runs {
-        let run_end = byte_pos + run.len;
-        if run_end > back_start_ix {
-            if byte_pos < back_start_ix {
-                // Run straddles back_start_ix; keep only the tail.
-                let mut partial = run.clone();
-                partial.len = run_end - back_start_ix;
-                result_runs.push(partial);
+) -> Vec<TextRun> {
+    // Preserve the style on the removed side of the cut, including when the
+    // cut falls exactly between differently styled runs.
+    let affix_index = match truncate_from {
+        TruncateFrom::Start => removed.end.saturating_sub(1),
+        TruncateFrom::End | TruncateFrom::Middle => removed.start,
+    };
+    let mut result_runs = Vec::new();
+    let mut run_start = 0;
+    for run in runs {
+        let run_end = run_start + run.len;
+        let mut prefix_len = removed.start.saturating_sub(run_start).min(run.len);
+        let mut suffix_len = run_end.saturating_sub(removed.end).min(run.len);
+        if (run_start..run_end).contains(&affix_index) {
+            if truncate_from == TruncateFrom::Start {
+                suffix_len += affix.len();
             } else {
-                result_runs.push(run.clone());
+                prefix_len += affix.len();
             }
         }
-        byte_pos = run_end;
+        for len in [prefix_len, suffix_len] {
+            if len > 0 {
+                result_runs.push(TextRun { len, ..run.clone() });
+            }
+        }
+        run_start = run_end;
     }
 
-    *runs = result_runs;
+    result_runs
 }
 
 /// A fragment of a line that can be wrapped.
@@ -1139,6 +1069,137 @@ mod tests {
     }
 
     #[test]
+    fn test_truncation_preserves_graphemes() {
+        let mut wrapper = build_wrapper();
+        wrapper.char_widths.ascii.fill(Some(px(1.)));
+        wrapper.char_widths.other.insert('…', px(1.));
+
+        for cluster in [
+            "e\u{301}",
+            "か\u{3099}",
+            "👍🏽",
+            "🇯🇵",
+            "👩\u{200d}💻",
+            "\u{600}!",
+        ] {
+            for character in cluster.chars() {
+                wrapper.char_widths.other.insert(character, px(1.));
+            }
+            let cluster_width = cluster.chars().count() as f32;
+            for (text, width, direction, expected) in [
+                (format!("x{cluster}yz"), 3., TruncateFrom::End, "x…".into()),
+                (
+                    format!("yz{cluster}x"),
+                    3.,
+                    TruncateFrom::Start,
+                    "…x".into(),
+                ),
+                (
+                    format!("x{cluster}abcdefgh{cluster}y"),
+                    5.,
+                    TruncateFrom::Middle,
+                    "x…y".into(),
+                ),
+                (
+                    format!("a{cluster}zzzz"),
+                    cluster_width + 3.,
+                    TruncateFrom::End,
+                    format!("a{cluster}…"),
+                ),
+                (
+                    format!("zzzz{cluster}a"),
+                    cluster_width + 3.,
+                    TruncateFrom::Start,
+                    format!("…{cluster}a"),
+                ),
+                (
+                    cluster.repeat(12),
+                    cluster_width * 3. + 1.,
+                    TruncateFrom::Middle,
+                    format!("{cluster}{cluster}…{cluster}"),
+                ),
+            ] {
+                // Styling can split a cluster, but must not create a truncation opportunity.
+                let lengths: Vec<_> = text.chars().map(char::len_utf8).collect();
+                let runs = generate_test_runs(&lengths);
+                let (result, result_runs) =
+                    wrapper.truncate_line(text.clone().into(), px(width), "…", &runs, direction);
+                assert_eq!(result.as_ref(), expected, "{text:?}, {direction:?}");
+                assert_eq!(
+                    result_runs.iter().map(|run| run.len).sum::<usize>(),
+                    result.len(),
+                );
+            }
+
+            for direction in [TruncateFrom::Start, TruncateFrom::End, TruncateFrom::Middle] {
+                let runs = generate_test_runs(&[cluster.len()]);
+                let (result, result_runs) =
+                    wrapper.truncate_line(cluster.into(), px(1.), "…", &runs, direction);
+                assert_eq!(result.as_ref(), "…", "{cluster:?}, {direction:?}");
+                assert_eq!(
+                    result_runs.iter().map(|run| run.len).sum::<usize>(),
+                    result.len(),
+                );
+                let (result, _) =
+                    wrapper.truncate_line(cluster.into(), px(cluster_width), "…", &runs, direction);
+                assert_eq!(result.as_ref(), cluster);
+            }
+
+            for (text, width, expected) in [
+                (format!("a\nx{cluster}yz"), 3., "a\nx…".into()),
+                (format!("{cluster}x"), 1., format!("{cluster}x")),
+            ] {
+                let runs = generate_test_runs(&[text.len()]);
+                let (result, _) = wrapper.truncate_wrapped_line(
+                    text.clone().into(),
+                    px(width),
+                    2,
+                    "…",
+                    &runs,
+                    TruncateFrom::End,
+                );
+                assert_eq!(result.as_ref(), expected, "{text:?}, {width}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_multiline_truncation_preserves_graphemes() {
+        let mut wrapper = build_wrapper();
+        wrapper.char_widths.ascii.fill(Some(px(1.)));
+        wrapper.char_widths.other.insert('…', px(1.));
+        wrapper.char_widths.other.insert('\u{301}', px(1.));
+
+        for (text, width, max_lines, expected) in [
+            ("xe\u{301}yz", 2., 2, "x…"),
+            ("abxe\u{301}", 2., 2, "abx…"),
+            ("xe\u{301}", 1., 2, "x…"),
+            ("e\u{301}x", 1., 2, "e\u{301}x"),
+            ("xe\u{301}y", 2., 3, "xe\u{301}y"),
+            ("x abcde", 4., 2, "x abc…"),
+            ("abc\nxe\u{301}yz", 3., 2, "abc\nx…"),
+            ("abc\r\nxe\u{301}yz", 3., 2, "abc\r\nx…"),
+            ("abc\n\ne\u{301}xyz", 3., 3, "abc\n\ne\u{301}…"),
+        ] {
+            let lengths: Vec<_> = text.chars().map(char::len_utf8).collect();
+            let runs = generate_test_runs(&lengths);
+            let (result, result_runs) = wrapper.truncate_wrapped_line(
+                text.into(),
+                px(width),
+                max_lines,
+                "…",
+                &runs,
+                TruncateFrom::End,
+            );
+            assert_eq!(result.as_ref(), expected, "{text:?}, {width}, {max_lines}");
+            assert_eq!(
+                result_runs.iter().map(|run| run.len).sum::<usize>(),
+                result.len(),
+            );
+        }
+    }
+
+    #[test]
     fn test_truncate_line_end() {
         let mut wrapper = build_wrapper();
 
@@ -1362,37 +1423,87 @@ mod tests {
     }
 
     #[test]
-    fn test_update_run_after_truncation_end() {
-        fn perform_test(result: &str, run_lens: &[usize], result_run_lens: &[usize]) {
-            let mut dummy_runs = generate_test_runs(run_lens);
-            update_runs_after_truncation(result, "…", &mut dummy_runs, TruncateFrom::End);
-            for (run, result_len) in dummy_runs.iter().zip(result_run_lens) {
-                assert_eq!(run.len, *result_len);
-            }
+    fn test_truncate_runs_preserves_affix_style() {
+        let runs = [
+            TextRun {
+                len: 4,
+                color: crate::Hsla::red(),
+                ..Default::default()
+            },
+            TextRun {
+                len: 4,
+                color: crate::Hsla::blue(),
+                ..Default::default()
+            },
+            TextRun {
+                len: 4,
+                color: crate::Hsla::green(),
+                ..Default::default()
+            },
+        ];
+        let red = crate::Hsla::red();
+        let blue = crate::Hsla::blue();
+        let green = crate::Hsla::green();
+        for (removed, direction, affix, expected) in [
+            (
+                0..4,
+                TruncateFrom::Start,
+                "…",
+                vec![(3, red), (4, blue), (4, green)],
+            ),
+            (6..12, TruncateFrom::End, "…", vec![(4, red), (5, blue)]),
+            (
+                8..12,
+                TruncateFrom::End,
+                "…",
+                vec![(4, red), (4, blue), (3, green)],
+            ),
+            (
+                4..8,
+                TruncateFrom::Middle,
+                "…",
+                vec![(4, red), (3, blue), (4, green)],
+            ),
+            (2..10, TruncateFrom::Middle, "…", vec![(5, red), (2, green)]),
+            (
+                1..3,
+                TruncateFrom::Middle,
+                "…",
+                vec![(4, red), (1, red), (4, blue), (4, green)],
+            ),
+            (4..8, TruncateFrom::Middle, "", vec![(4, red), (4, green)]),
+            (0..12, TruncateFrom::Start, "…", vec![(3, green)]),
+            (0..12, TruncateFrom::End, "…", vec![(3, red)]),
+            (0..12, TruncateFrom::Middle, "…", vec![(3, red)]),
+        ] {
+            let result = truncate_runs(&runs, removed.clone(), affix, direction);
+            assert_eq!(
+                result
+                    .iter()
+                    .map(|run| (run.len, run.color))
+                    .collect::<Vec<_>>(),
+                expected,
+                "{removed:?}, {direction:?}, {affix:?}",
+            );
         }
-        // Case 0: Normal
-        // Text: abcdefghijkl
-        // Runs: Run0 { len: 12, ... }
-        //
-        // Truncate res: abcd… (truncate_at = 4)
-        // Run res: Run0 { string: abcd…, len: 7, ... }
-        perform_test("abcd…", &[12], &[7]);
-        // Case 1: Drop some runs
-        // Text: abcdefghijkl
-        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
-        //
-        // Truncate res: abcdef… (truncate_at = 6)
-        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
-        // 5, ... }
-        perform_test("abcdef…", &[4, 4, 4], &[4, 5]);
-        // Case 2: Truncate at start of some run
-        // Text: abcdefghijkl
-        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
-        //
-        // Truncate res: abcdefgh… (truncate_at = 8)
-        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
-        // 4, ... }, Run2 { string: …, len: 3, ... }
-        perform_test("abcdefgh…", &[4, 4, 4], &[4, 4, 3]);
+
+        let single_run = TextRun {
+            len: 12,
+            color: red,
+            ..Default::default()
+        };
+        assert_eq!(
+            truncate_runs(
+                std::slice::from_ref(&single_run),
+                4..12,
+                "…",
+                TruncateFrom::End
+            ),
+            vec![TextRun {
+                len: 7,
+                ..single_run
+            }],
+        );
     }
 
     // For compatibility with the test macro
