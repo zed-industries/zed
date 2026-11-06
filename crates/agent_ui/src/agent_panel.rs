@@ -3527,10 +3527,15 @@ impl AgentPanel {
             .read(cx)
             .entries()
             .find(|t| t.id == session_id)?;
+        // The native thread store has no title for threads whose title was
+        // never generated, e.g. with `auto_generate_thread_titles` off.
+        let title = ThreadMetadataStore::try_global(cx)
+            .and_then(|store| store.read(cx).entry_by_session(&session_id)?.title())
+            .unwrap_or(thread.title);
 
         Some(AgentInitialContent::ThreadSummary {
             session_id: thread.id,
-            title: Some(thread.title),
+            title: Some(title),
         })
     }
 
@@ -11855,6 +11860,36 @@ mod tests {
             }
             _ => panic!("expected AgentInitialContent::ThreadSummary"),
         }
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(
+                    crate::thread_metadata_store::ThreadMetadata {
+                        thread_id: ThreadId::new(),
+                        session_id: Some(source_session_id.clone()),
+                        agent_id: Agent::NativeAgent.id(),
+                        title: Some("Sidebar title".into()),
+                        title_override: None,
+                        updated_at: Utc::now(),
+                        created_at: Some(Utc::now()),
+                        interacted_at: None,
+                        worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
+                        remote_connection: None,
+                        archived: false,
+                    },
+                    cx,
+                );
+            });
+        });
+        let content = cx
+            .update(|cx| {
+                AgentPanel::initial_content_for_thread_summary(source_session_id.clone(), cx)
+            })
+            .expect("initial content should be produced for a root thread");
+        let AgentInitialContent::ThreadSummary { title, .. } = content else {
+            panic!("expected AgentInitialContent::ThreadSummary");
+        };
+        assert_eq!(title, Some("Sidebar title".into()));
 
         // Unknown session ids should still produce no content.
         let missing = cx.update(|cx| {
