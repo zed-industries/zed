@@ -1,6 +1,10 @@
-use std::sync::Arc;
+use std::{
+    hash::{DefaultHasher, Hash as _, Hasher as _},
+    sync::Arc,
+};
 
 use crate::TaskContexts;
+use collections::HashMap;
 use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -11,7 +15,7 @@ use gpui::{
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{TaskSourceKind, task_store::TaskStore};
-use task::{DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
+use task::{DebugScenario, ResolvedTask, RevealTarget, SpawnInTerminal, TaskContext, TaskTemplate};
 use ui::{
     ActiveTheme, Clickable, FluentBuilder as _, IconButtonShape, IconWithIndicator, Indicator,
     IntoElement, KeyBinding, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, div,
@@ -307,12 +311,7 @@ impl PickerDelegate for TasksModalDelegate {
                         let lsp_tasks = lsp_tasks.await;
                         picker
                             .update(cx, |picker, _| {
-                                picker.delegate.last_used_candidate_index = if used.is_empty() {
-                                    None
-                                } else {
-                                    Some(used.len() - 1)
-                                };
-
+                                let used_count = used.len();
                                 let mut new_candidates = used;
                                 let add_current_language_tasks =
                                     !prefer_lsp || lsp_tasks.is_empty();
@@ -335,6 +334,12 @@ impl PickerDelegate for TasksModalDelegate {
                                             || !matches!(task_kind, TaskSourceKind::Language { .. })
                                     },
                                 ));
+                                let used_count = remove_tasks_spawning_the_same_process(
+                                    &mut new_candidates,
+                                    used_count,
+                                );
+                                picker.delegate.last_used_candidate_index =
+                                    used_count.checked_sub(1);
                                 let match_candidates = string_match_candidates(&new_candidates);
                                 let _ = picker.delegate.candidates.insert(new_candidates);
                                 match_candidates
@@ -720,6 +725,96 @@ impl PickerDelegate for TasksModalDelegate {
                 .into_any_element(),
         )
     }
+}
+
+/// Different templates from the same source may resolve into the same process, e.g. a package.json
+/// script listed by its name and the same script resolved from the runnable under the cursor.
+/// Such tasks are indistinguishable in the list, so only the first one of them is kept.
+/// This is done here rather than in the inventory, as debugger locators inspect the original
+/// templates of all tasks.
+///
+/// Returns how many of the first `used_count` candidates are kept.
+fn remove_tasks_spawning_the_same_process(
+    candidates: &mut Vec<(TaskSourceKind, ResolvedTask)>,
+    used_count: usize,
+) -> usize {
+    let mut kept_indices_by_hash = HashMap::<u64, Vec<usize>>::default();
+    let mut is_kept = Vec::with_capacity(candidates.len());
+    for (index, (kind, task)) in candidates.iter().enumerate() {
+        let kept_indices = kept_indices_by_hash
+            .entry(process_hash(&task.resolved))
+            .or_default();
+        let is_duplicate = kept_indices.iter().any(|kept_index| {
+            candidates
+                .get(*kept_index)
+                .is_some_and(|(kept_kind, kept_task)| {
+                    kept_kind == kind && spawns_same_process(&kept_task.resolved, &task.resolved)
+                })
+        });
+        if !is_duplicate {
+            kept_indices.push(index);
+        }
+        is_kept.push(!is_duplicate);
+    }
+
+    let kept_used_count = is_kept
+        .iter()
+        .take(used_count)
+        .filter(|is_kept| **is_kept)
+        .count();
+    let mut is_kept = is_kept.into_iter();
+    candidates.retain(|_| is_kept.next().unwrap_or(true));
+    kept_used_count
+}
+
+fn process_hash(spawn: &SpawnInTerminal) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    spawn.command.hash(&mut hasher);
+    spawn.args.hash(&mut hasher);
+    spawn.cwd.hash(&mut hasher);
+    for variable in spawn.env.iter().sorted() {
+        variable.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Labels are display-only and may differ for the same process, e.g. when one of them is truncated.
+fn spawns_same_process(a: &SpawnInTerminal, b: &SpawnInTerminal) -> bool {
+    let SpawnInTerminal {
+        id: _,
+        full_label: _,
+        label: _,
+        command_label: _,
+        command,
+        args,
+        cwd,
+        env,
+        use_new_terminal,
+        allow_concurrent_runs,
+        reveal,
+        reveal_target,
+        hide,
+        shell,
+        show_summary,
+        show_command,
+        show_rerun,
+        save,
+    } = a;
+
+    *command == b.command
+        && *args == b.args
+        && *cwd == b.cwd
+        && *env == b.env
+        && *use_new_terminal == b.use_new_terminal
+        && *allow_concurrent_runs == b.allow_concurrent_runs
+        && *reveal == b.reveal
+        && *reveal_target == b.reveal_target
+        && *hide == b.hide
+        && *shell == b.shell
+        && *show_summary == b.show_summary
+        && *show_command == b.show_command
+        && *show_rerun == b.show_rerun
+        && *save == b.save
 }
 
 fn string_match_candidates<'a>(
@@ -1319,6 +1414,130 @@ mod tests {
             "After closing all but *.rs tabs, running a Rust task and switching back to TS tasks, \
             same TS spawn history should be restored"
         );
+    }
+
+    #[gpui::test]
+    async fn test_tasks_spawning_the_same_process_are_listed_once(cx: &mut TestAppContext) {
+        init_test(cx);
+        let long_script = "x".repeat(50);
+        let long_script_file = format!("{long_script}.ts");
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "dev.ts": "" })).await;
+        fs.insert_file(
+            PathBuf::from(path!("/dir")).join(&long_script_file),
+            Vec::new(),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(Arc::new(
+                Language::new(
+                    LanguageConfig {
+                        name: "TypeScript".into(),
+                        matcher: (LanguageMatcher {
+                            path_suffixes: vec!["ts".into()],
+                            ..LanguageMatcher::default()
+                        })
+                        .into(),
+                        ..LanguageConfig::default()
+                    },
+                    None,
+                )
+                .with_context_provider(Some(Arc::new(
+                    ContextProviderWithTasks::new(TaskTemplates(vec![
+                        TaskTemplate {
+                            label: "package.json > dev".to_string(),
+                            command: "npm".to_string(),
+                            args: vec!["run".to_string(), "dev".to_string()],
+                            ..TaskTemplate::default()
+                        },
+                        // Resolves into the same process as a literal script template, like the
+                        // runnable template for the script under the cursor does.
+                        TaskTemplate {
+                            label: "package.json > $ZED_STEM".to_string(),
+                            command: "npm".to_string(),
+                            args: vec!["run".to_string(), "$ZED_STEM".to_string()],
+                            ..TaskTemplate::default()
+                        },
+                        TaskTemplate {
+                            label: "package.json > dev".to_string(),
+                            command: "pnpm".to_string(),
+                            args: vec!["run".to_string(), "dev".to_string()],
+                            ..TaskTemplate::default()
+                        },
+                        TaskTemplate {
+                            label: format!("package.json > {long_script}"),
+                            command: "npm".to_string(),
+                            args: vec!["run".to_string(), long_script.clone()],
+                            ..TaskTemplate::default()
+                        },
+                    ])),
+                ))),
+            ))
+        });
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/dev.ts")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![
+                "package.json > dev".to_string(),
+                "package.json > dev".to_string(),
+                format!("package.json > {long_script}"),
+            ],
+            "Tasks spawning the same process should be listed once, tasks with the same label but a different command should stay"
+        );
+
+        tasks_picker.update(cx, |_, cx| cx.emit(DismissEvent));
+        drop(tasks_picker);
+        cx.executor().run_until_parked();
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir")).join(&long_script_file),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        let long_script_suffix = "x".repeat(15);
+        let long_script_tasks = task_names(&tasks_picker, cx)
+            .into_iter()
+            .filter(|name| name.ends_with(&long_script_suffix))
+            .collect::<Vec<_>>();
+        assert_eq!(
+                      long_script_tasks.len(),
+                      1,
+                      "Tasks spawning the same process should be listed once even when only one of their labels is truncated, got:
+          {long_script_tasks:?}"
+                  );
+        tasks_picker.update(cx, |_, cx| cx.emit(DismissEvent));
+        drop(tasks_picker);
+        cx.executor().run_until_parked();
     }
 
     const TEST_LSP_NAME: &str = "test-lsp";

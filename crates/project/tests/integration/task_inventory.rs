@@ -6,6 +6,7 @@ use serde_json::json;
 use settings::SettingsLocation;
 use std::path::Path;
 use std::sync::Arc;
+use task::{TaskContext, TaskVariables, VariableName};
 use util::rel_path::rel_path;
 
 use project::task_store::{TaskSettingsLocation, TaskStore};
@@ -605,6 +606,74 @@ async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
     assert!(
         !resolved.iter().any(|name| name == "vscode_task"),
         "Previously used .vscode tasks should not appear when .zed tasks exist, got: {resolved:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_tasks_with_the_same_launch_from_different_templates_are_kept(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Global(tasks_file()),
+                Some(
+                    &json!([
+                        {
+                            "label": "probe",
+                            "command": "python",
+                            "args": ["\"$ZED_WORKTREE_ROOT/a.py\""],
+                        },
+                        {
+                            "label": "probe",
+                            "command": "python",
+                            "args": ["\"$ZED_FILE\""],
+                        }
+                    ])
+                    .to_string(),
+                ),
+            )
+            .unwrap();
+    });
+
+    let task_contexts = TaskContexts {
+        active_item_context: Some((
+            None,
+            None,
+            TaskContext {
+                task_variables: TaskVariables::from_iter([
+                    (VariableName::WorktreeRoot, "/project".to_owned()),
+                    (VariableName::File, "/project/a.py".to_owned()),
+                ]),
+                ..TaskContext::default()
+            },
+        )),
+        ..TaskContexts::default()
+    };
+
+    let (used, current) = inventory
+        .update(cx, |inventory, cx| {
+            inventory.used_and_current_resolved_tasks(Arc::new(task_contexts), cx)
+        })
+        .await;
+
+    let original_args = used
+        .into_iter()
+        .chain(current)
+        .map(|(_, task)| task.original_task().args.clone())
+        .sorted()
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        original_args,
+        vec![
+            vec!["\"$ZED_FILE\"".to_string()],
+            vec!["\"$ZED_WORKTREE_ROOT/a.py\"".to_string()],
+        ],
+        "Debugger locators inspect the original templates, so tasks with the same launch from different templates must all be listed"
     );
 }
 
