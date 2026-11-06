@@ -14,10 +14,8 @@ pub(super) fn render_mermaid(source: &str, theme: &MermaidTheme) -> Result<Strin
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     let diagram_id = format!("merman-{id}");
 
-    // Prefer IBM Plex metrics so layout matches what Zed paints. When merman
-    // rejects a diagram for typography it cannot measure (letter-spacing,
-    // non-px fontSize, etc.), fall back to deterministic measurement so the
-    // diagram still renders the way it did before native fonts.
+    // Prefer IBM Plex metrics. If merman rejects typography it cannot measure,
+    // retry with deterministic sizing so the diagram still renders.
     let native = SvgEnvironment::deterministic()
         .with_native_font_context(shared_native_font_context()?.clone())
         .context("configure native Mermaid text measurement")?;
@@ -67,16 +65,15 @@ fn render_with_environment(
 fn should_retry_without_native_fonts(error: &anyhow::Error) -> bool {
     use merman::svg::export::NativeFontError;
 
+    // RenderError::NativeFont is #[error(transparent)], so the chain exposes
+    // RenderError itself rather than a separate NativeFontError cause.
     error.chain().any(|cause| {
-        if let Some(NativeFontError::Measurement(_)) = cause.downcast_ref::<NativeFontError>() {
-            return true;
-        }
-        if let Some(merman::RenderError::NativeFont(NativeFontError::Measurement(_))) =
-            cause.downcast_ref::<merman::RenderError>()
-        {
-            return true;
-        }
-        false
+        matches!(
+            cause.downcast_ref::<merman::RenderError>(),
+            Some(merman::RenderError::NativeFont(
+                NativeFontError::Measurement(_)
+            ))
+        )
     })
 }
 
@@ -471,8 +468,7 @@ class User {
 
     #[test]
     fn unsupported_native_typography_falls_back_instead_of_failing() {
-        // Native measurement rejects letter-spacing / word-spacing / text-transform.
-        // Those diagrams used to render on main; keep them working via deterministic.
+        // Native measurement rejects these styles; render must still succeed.
         let theme = MermaidTheme::default();
         for source in [
             "flowchart LR\n    A[ABC]\n    style A letter-spacing:1px\n",
@@ -480,18 +476,17 @@ class User {
             "flowchart LR\n    A[ABC]\n    style A text-transform:uppercase\n",
         ] {
             let svg = render_mermaid(source, &theme)
-                .unwrap_or_else(|error| panic!("expected fallback render for {source}: {error:#}"));
+                .unwrap_or_else(|error| panic!("expected render for {source}: {error:#}"));
             assert!(
-                svg.contains("ABC") || svg.contains("abc"),
-                "missing label for {source}: {svg}"
+                svg.contains(">ABC</text>"),
+                "missing label text for {source}: {svg}"
             );
         }
     }
 
     #[test]
     fn class_diagram_non_px_font_size_still_renders() {
-        // Native Class measurement only admits positive px strings (plus bare 16).
-        // Numeric / unitless / em sizes must keep the pre-native rendering path.
+        // Native Class measurement only admits positive px strings (and bare 16).
         let theme = MermaidTheme::default();
         for size in ["24", r#""24""#, r#""1.5em""#] {
             let source = format!(
@@ -502,11 +497,10 @@ class User {{
 }}
 "#
             );
-            let svg = render_mermaid(&source, &theme).unwrap_or_else(|error| {
-                panic!("expected fallback render for fontSize {size}: {error:#}")
-            });
+            let svg = render_mermaid(&source, &theme)
+                .unwrap_or_else(|error| panic!("expected render for fontSize {size}: {error:#}"));
             assert!(
-                svg.contains("User"),
+                svg.contains(">User</text>"),
                 "missing class label for fontSize {size}: {svg}"
             );
         }
@@ -514,13 +508,28 @@ class User {{
 
     #[test]
     fn italic_flowchart_label_fits_with_bundled_faces() {
-        // Measurement loads Italic; painting must use the same bundled face or
-        // long italic labels overflow the node when only Regular is available.
         let label = "W".repeat(160);
         let source = format!("flowchart LR\n    A[{label}]\n    style A font-style:italic\n");
         let theme = ibm_plex_theme();
         let svg = crate::render_to_svg(&source, &theme).expect("render failed");
         assert_label_fits_fallback_viewport(&svg, &label);
+    }
+
+    #[test]
+    fn bundled_svg_fonts_resolve_ibm_plex_italic() {
+        let mut db = usvg::fontdb::Database::new();
+        for path in gpui::BUNDLED_SVG_FONT_PATHS {
+            db.load_font_data(font_bytes_for_bundled_path(path).to_vec());
+        }
+        let italic = db.query(&usvg::fontdb::Query {
+            families: &[usvg::fontdb::Family::Name("IBM Plex Sans")],
+            style: usvg::fontdb::Style::Italic,
+            ..Default::default()
+        });
+        assert!(
+            italic.is_some(),
+            "BUNDLED_SVG_FONT_PATHS must include a loadable IBM Plex Sans Italic face"
+        );
     }
 
     #[test]
@@ -644,21 +653,33 @@ class User {{
         theme
     }
 
+    fn font_bytes_for_bundled_path(path: &str) -> &'static [u8] {
+        match path {
+            "fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf" => {
+                include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf")
+            }
+            "fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf" => {
+                include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf")
+            }
+            "fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf" => {
+                include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf")
+            }
+            "fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf" => {
+                include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf")
+            }
+            "fonts/lilex/Lilex-Regular.ttf" => {
+                include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf")
+            }
+            other => panic!("update font_bytes_for_bundled_path for {other}"),
+        }
+    }
+
     fn parse_svg_with_ibm_plex(svg: &str) -> usvg::Tree {
-        // Match the faces mermaid_render measures with and SvgRenderer bundles.
-        const REGULAR: &[u8] =
-            include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
-        const ITALIC: &[u8] =
-            include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf");
-        const SEMIBOLD: &[u8] =
-            include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf");
-        const SEMIBOLD_ITALIC: &[u8] =
-            include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf");
+        // Use the same face list the SVG renderer bundles.
         let mut db = usvg::fontdb::Database::new();
-        db.load_font_data(REGULAR.to_vec());
-        db.load_font_data(ITALIC.to_vec());
-        db.load_font_data(SEMIBOLD.to_vec());
-        db.load_font_data(SEMIBOLD_ITALIC.to_vec());
+        for path in gpui::BUNDLED_SVG_FONT_PATHS {
+            db.load_font_data(font_bytes_for_bundled_path(path).to_vec());
+        }
         db.set_sans_serif_family("IBM Plex Sans");
         let options = usvg::Options {
             fontdb: std::sync::Arc::new(db),
