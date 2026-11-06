@@ -96,8 +96,9 @@ pub(super) fn process<'a>(
     events: impl Iterator<Item = Result<Event<'a>>>,
     theme: &MermaidTheme,
     svg_id: &str,
+    is_flowchart: bool,
 ) -> impl Iterator<Item = Result<Event<'a>>> {
-    let injected_css = build_injected_css(theme, svg_id);
+    let injected_css = build_injected_css(theme, svg_id, is_flowchart);
     InjectCss {
         inner: events,
         injected_css,
@@ -200,9 +201,11 @@ fn blend_over_background(
     gpui::Hsla::from(blended)
 }
 
-fn accent_css(theme: &MermaidTheme) -> String {
+fn accent_css(theme: &MermaidTheme, is_flowchart: bool) -> String {
     let mut css = String::with_capacity(theme.accent_colors.len() * 420);
     let text = crate::css_color(theme.text_color);
+    // Flowchart classDef and style declarations are emitted as inline styles.
+    let priority = if is_flowchart { "" } else { " !important" };
 
     for (i, accent) in theme.accent_colors.iter().enumerate() {
         let stroke = crate::css_color(accent.foreground);
@@ -216,7 +219,7 @@ fn accent_css(theme: &MermaidTheme) -> String {
             css,
             "{class} rect, {class} path, {class} circle, {class} polygon, {class} ellipse, \
              rect{class}, path{class}, circle{class}, polygon{class}, ellipse{class} \
-             {{ fill: {fill} !important; stroke: {stroke} !important; }}\n\
+             {{ fill: {fill}{priority}; stroke: {stroke}{priority}; }}\n\
              {class} text, {class} tspan, text{class}, tspan{class} \
              {{ fill: {text} !important; }}\n",
         )
@@ -332,7 +335,7 @@ fn scope_css(raw_css: &str, svg_id: &str) -> String {
     result
 }
 
-fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
+fn build_injected_css(theme: &MermaidTheme, svg_id: &str, is_flowchart: bool) -> String {
     let font = &theme.font_family;
     let text = crate::css_color(theme.text_color);
     let line = crate::css_color(theme.line_color);
@@ -489,7 +492,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         "#,
         mindmap_css = mindmap_section_css(theme),
         git_branch_css = git_branch_css(theme),
-        accent_css = accent_css(theme),
+        accent_css = accent_css(theme, is_flowchart),
         chart_color_css = chart_color_css(theme),
         timeline_css = timeline_css(theme),
     );
