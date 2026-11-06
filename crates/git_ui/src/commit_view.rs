@@ -364,10 +364,10 @@ impl CommitView {
             if let Some(file) = target_file {
                 let is_binary = file.is_binary;
                 let (buffer_id, file_status) = Self::append_commit_file(
-                    this.clone(),
+                    &this,
                     file,
-                    repository_clone.clone(),
-                    project_clone.clone(),
+                    &repository_clone,
+                    &project_clone,
                     &commit_sha,
                     &language_registry,
                     cx,
@@ -380,68 +380,20 @@ impl CommitView {
                     binary_buffer_ids.insert(buffer_id);
                 }
 
-                // Update the editor's scroll anchor to the file's buffer
-                // header, ensuring that the buffer header is kept at the top
-                // when `reveal_file` is set.
-                //
-                // The editor's selections are also updated to ensure that the
-                // cursor is at the first hunk of the file, otherwise it'll get
-                // pushed to the end of the diff. Navigation history is set to
-                // `false`, ensuring that going back returns to where the commit
-                // was opened from.
+                // Establish the scroll anchor before inserting files that may
+                // end up being sorted before it.
                 this.update_in(cx, |this, window, cx| {
-                    this.editor.update(cx, |editor, cx| {
-                        editor.rhs_editor().update(cx, |editor, cx| {
-                            let display_snapshot = editor.display_snapshot(cx);
-                            let header_height = display_snapshot.buffer_header_height();
-
-                            // Since we're guaranteed that the file we're
-                            // dealing with is the first one for which excerpts
-                            // are added, we can constrain our search range to
-                            // simply
-                            // `DisplayRow(0)..DisplayRow(header_height)`, as
-                            // the block should always be found within that.
-                            let header = display_snapshot
-                                .blocks_in_range(DisplayRow(0)..DisplayRow(header_height))
-                                .find_map(|(row, block)| match block {
-                                    Block::BufferHeader { excerpt, .. }
-                                        if excerpt.buffer_id() == buffer_id =>
-                                    {
-                                        Some((row, excerpt.start_anchor))
-                                    }
-                                    _ => None,
-                                });
-
-                            if let Some((header_row, anchor)) = header {
-                                editor.change_selections(
-                                    SelectionEffects::no_scroll().nav_history(false),
-                                    window,
-                                    cx,
-                                    |selections| selections.select_ranges([anchor..anchor]),
-                                );
-
-                                let anchor_row =
-                                    anchor.to_display_point(&display_snapshot).row().as_f64();
-                                let offset = gpui::point(0.0, header_row.as_f64() - anchor_row);
-
-                                editor.set_scroll_anchor(
-                                    ScrollAnchor { offset, anchor },
-                                    window,
-                                    cx,
-                                );
-                            }
-                        });
-                    });
+                    this.reveal_first_file(buffer_id, window, cx);
                 })?;
             }
 
             for file in files {
                 let is_binary = file.is_binary;
                 let (buffer_id, file_status) = Self::append_commit_file(
-                    this.clone(),
+                    &this,
                     file,
-                    repository_clone.clone(),
-                    project_clone.clone(),
+                    &repository_clone,
+                    &project_clone,
                     &commit_sha,
                     &language_registry,
                     cx,
@@ -459,21 +411,17 @@ impl CommitView {
                 let commit_view = cx.weak_entity();
 
                 this.editor.update(cx, |editor, cx| {
-                    editor.rhs_editor().update(cx, |editor, _cx| {
+                    editor.rhs_editor().update(cx, |editor, cx| {
                         editor.register_addon(CommitDiffAddon {
                             file_statuses,
                             commit_view,
                         });
+
+                        if !binary_buffer_ids.is_empty() {
+                            editor.fold_buffers(binary_buffer_ids, cx);
+                        }
                     });
                 });
-
-                if !binary_buffer_ids.is_empty() {
-                    this.editor.update(cx, |editor, cx| {
-                        editor.rhs_editor().update(cx, |editor, cx| {
-                            editor.fold_buffers(binary_buffer_ids, cx);
-                        });
-                    });
-                }
             })?;
 
             anyhow::Ok(())
@@ -514,11 +462,11 @@ impl CommitView {
     }
 
     async fn append_commit_file(
-        commit_view: WeakEntity<CommitView>,
+        commit_view: &WeakEntity<Self>,
         file: CommitFile,
-        repository: Entity<Repository>,
-        project: Entity<Project>,
-        commit_sha: &Arc<str>,
+        repository: &Entity<Repository>,
+        project: &Entity<Project>,
+        commit_sha: &str,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut AsyncWindowContext,
     ) -> Result<(BufferId, FileStatus)> {
@@ -557,13 +505,13 @@ impl CommitView {
             display_name,
         }) as Arc<dyn language::File>;
 
-        let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
+        let buffer = build_buffer(new_text, file, language_registry, cx).await?;
         let buffer_id = cx.update(|_window, cx| buffer.read(cx).remote_id())?;
 
         let status_code = match (is_created, is_deleted) {
             (true, _) => StatusCode::Added,
             (_, true) => StatusCode::Deleted,
-            (_, _) => StatusCode::Unmodified,
+            (_, _) => StatusCode::Modified,
         };
         let file_status = FileStatus::Tracked(TrackedStatus {
             index_status: status_code,
@@ -642,6 +590,61 @@ impl CommitView {
         }
 
         Ok((buffer_id, file_status))
+    }
+
+    /// Positions the file's header at the top of the viewport and places the cursor
+    /// at the start of its first excerpt, without adding a navigation history entry.
+    ///
+    /// The buffer must be the first file inserted into the view, with its header
+    /// within the initial header-height display rows. Call this before appending
+    /// other files so the scroll anchor preserves its position as they are inserted.
+    fn reveal_first_file(
+        &mut self,
+        buffer_id: BufferId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.rhs_editor().update(cx, |editor, cx| {
+                let display_snapshot = editor.display_snapshot(cx);
+                let header_height = display_snapshot.buffer_header_height();
+
+                // Since we're guaranteed that the file we're
+                // dealing with is the first one for which excerpts
+                // are added, we can constrain our search range to
+                // simply
+                // `DisplayRow(0)..DisplayRow(header_height)`, as
+                // the block should always be found within that.
+                let header = display_snapshot
+                    .blocks_in_range(DisplayRow(0)..DisplayRow(header_height))
+                    .find_map(|(row, block)| match block {
+                        Block::BufferHeader { excerpt, .. } if excerpt.buffer_id() == buffer_id => {
+                            Some((row, excerpt.start_anchor))
+                        }
+                        _ => None,
+                    });
+
+                if let Some((header_row, anchor)) = header {
+                    editor.change_selections(
+                        SelectionEffects::no_scroll().nav_history(false),
+                        window,
+                        cx,
+                        |selections| selections.select_ranges([anchor..anchor]),
+                    );
+
+                    // The excerpt's anchor points to its first text line, below the file header.
+                    // Scrolling to that anchor alone would leave the header above the viewport.
+                    //
+                    // As such, we use the difference between the header and text display rows as an
+                    // offset so the viewport starts at the header while following the text anchor
+                    // as other files might be inserted before it.
+                    let anchor_row = anchor.to_display_point(&display_snapshot).row().as_f64();
+                    let offset = gpui::point(0.0, header_row.as_f64() - anchor_row);
+
+                    editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, window, cx);
+                }
+            });
+        });
     }
 
     fn render_shallow_boundary_notice(&self, cx: &App) -> impl IntoElement {
@@ -1789,92 +1792,4 @@ mod tests {
         .with_highlights_query("(emphasis) @emphasis")
         .unwrap()
     }
-
-    // #[gpui::test]
-    // async fn test_scroll_to_row_outside_of_hunks(cx: &mut TestAppContext) {
-    //     cx.update(|cx| {
-    //         let store = SettingsStore::test(cx);
-    //         cx.set_global(store);
-    //         theme_settings::init(theme::LoadThemes::JustBase, cx);
-    //         editor::init(cx);
-    //         crate::init(cx);
-    //     });
-
-    //     let fs = project::FakeFs::new(cx.executor());
-    //     fs.insert_tree(
-    //         util::path!("/project"),
-    //         serde_json::json!({ ".git": {}, "file.txt": "" }),
-    //     )
-    //     .await;
-    //     let project = Project::test(fs, [std::path::Path::new(util::path!("/project"))], cx).await;
-    //     let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-    //         workspace::MultiWorkspace::test_new(project.clone(), window, cx)
-    //     });
-    //     let workspace =
-    //         multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
-    //     cx.run_until_parked();
-    //     let repository = project
-    //         .read_with(cx, |project, cx| project.active_repository(cx))
-    //         .expect("project should have a repository");
-
-    //     let old_text = (0..100)
-    //         .map(|row| format!("line {row}\n"))
-    //         .collect::<String>();
-    //     let new_text = old_text.replace("line 1\n", "changed line 1\n");
-    //     let path = RepoPath::new("file.txt").unwrap();
-    //     let commit_diff = CommitDiff {
-    //         files: vec![project::git_store::CommitFile {
-    //             path: path.clone(),
-    //             old_text: Some(old_text),
-    //             new_text: Some(new_text),
-    //             is_binary: false,
-    //         }],
-    //         is_shallow_boundary: false,
-    //     };
-    //     let commit = CommitDetails {
-    //         sha: "a".repeat(40).into(),
-    //         message: "Change line 1".into(),
-    //         commit_timestamp: 0,
-    //         author_email: "".into(),
-    //         author_name: "".into(),
-    //     };
-
-    //     let commit_view = workspace.update_in(cx, |workspace, window, cx| {
-    //         let project = workspace.project().clone();
-    //         let workspace_entity = cx.entity();
-    //         let workspace_handle = cx.weak_entity();
-    //         cx.new(|cx| {
-    //             CommitView::new(
-    //                 commit,
-    //                 commit_diff,
-    //                 repository,
-    //                 project,
-    //                 workspace_entity,
-    //                 workspace_handle,
-    //                 CommitViewOptions {
-    //                     scroll_to: Some((path, 80)),
-    //                     ..Default::default()
-    //                 },
-    //                 window,
-    //                 cx,
-    //             )
-    //         })
-    //     });
-    //     cx.run_until_parked();
-
-    //     let line_at_cursor = commit_view.update(cx, |commit_view, cx| {
-    //         let editor = commit_view.editor.read(cx).rhs_editor().read(cx);
-    //         let snapshot = editor.buffer().read(cx).snapshot(cx);
-    //         let head = multi_buffer::ToPoint::to_point(
-    //             &editor.selections.newest_anchor().head(),
-    //             &snapshot,
-    //         );
-    //         snapshot
-    //             .text_for_range(
-    //                 language::Point::new(head.row, 0)..language::Point::new(head.row + 1, 0),
-    //             )
-    //             .collect::<String>()
-    //     });
-    //     assert_eq!(line_at_cursor, "line 80\n");
-    // }
 }
