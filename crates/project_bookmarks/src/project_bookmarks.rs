@@ -53,7 +53,6 @@ struct Match {
     pub line_number: u32,
 }
 
-
 struct ProjectBookmarksDelegate {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
@@ -145,7 +144,6 @@ impl ProjectBookmarksDelegate {
                 ),
         )
     }
-
 }
 
 impl PickerDelegate for ProjectBookmarksDelegate {
@@ -347,7 +345,6 @@ mod tests {
     use util::{path, rel_path::rel_path};
     use workspace::{AppState, MultiWorkspace};
 
-
     #[gpui::test]
     async fn test_project_bookmarks_picker_matches_and_confirms(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
@@ -406,7 +403,6 @@ mod tests {
             assert_eq!(selection.start, Point::new(2, 0));
         });
     }
-
 
     #[gpui::test]
     async fn test_project_bookmarks_confirm_reuses_preview_and_secondary_confirm_opens_new_tabs(
