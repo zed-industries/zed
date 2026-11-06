@@ -20,6 +20,7 @@ doctest = false
 anyhow.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
+derive_more = { workspace = true, features = ["display"] }
 futures.workspace = true
 http_client.workspace = true
 itertools.workspace = true
