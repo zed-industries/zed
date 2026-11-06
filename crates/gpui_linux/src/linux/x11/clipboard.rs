@@ -250,7 +250,11 @@ impl Inner {
         // changes.
         self.server
             .conn
-            .set_selection_owner(server_win, self.atom_of(selection), Time::CURRENT_TIME)
+            .set_selection_owner(
+                server_win,
+                self.atoms.atom_of(selection),
+                Time::CURRENT_TIME,
+            )
             .map_err(|_| Error::ClipboardOccupied)?;
 
         self.server.conn.flush().map_err(into_unknown)?;
@@ -305,7 +309,10 @@ impl Inner {
         let reader = XContext::new(&self.display)?;
 
         let highest_precedence_format =
-            match self.read_single(&reader, selection, self.atoms.TARGETS) {
+            match self
+                .atoms
+                .read_single(&reader, selection, self.atoms.TARGETS)
+            {
                 Err(err) => {
                     log::trace!("Clipboard TARGETS query failed with {err:?}");
                     None
@@ -327,7 +334,7 @@ impl Inner {
             };
 
         if let Some(&format) = highest_precedence_format {
-            let data = self.read_single(&reader, selection, format)?;
+            let data = self.atoms.read_single(&reader, selection, format)?;
             if !formats.contains(&data.format) {
                 // This shouldn't happen since the format is from the TARGETS list.
                 log::trace!(
@@ -342,7 +349,7 @@ impl Inner {
 
         log::trace!("Falling back on attempting to convert clipboard to each format.");
         for format in formats {
-            match self.read_single(&reader, selection, *format) {
+            match self.atoms.read_single(&reader, selection, *format) {
                 Ok(data) => {
                     if formats.contains(&data.format) {
                         return Ok(data);
@@ -375,6 +382,59 @@ impl Inner {
             .collect()
     }
 
+    fn selection_of(&self, selection: ClipboardKind) -> &Selection {
+        match selection {
+            ClipboardKind::Clipboard => &self.clipboard,
+            ClipboardKind::Primary => &self.primary,
+            ClipboardKind::Secondary => &self.secondary,
+        }
+    }
+
+    fn is_owner(&self, selection: ClipboardKind) -> Result<bool> {
+        let current = self
+            .server
+            .conn
+            .get_selection_owner(self.atoms.atom_of(selection))
+            .map_err(into_unknown)?
+            .reply()
+            .map_err(into_unknown)?
+            .owner;
+
+        Ok(current == self.server.win_id)
+    }
+
+    fn query_atom_name(&self, atom: x11rb::protocol::xproto::Atom) -> Result<String> {
+        String::from_utf8(
+            self.server
+                .conn
+                .get_atom_name(atom)
+                .map_err(into_unknown)?
+                .reply()
+                .map_err(into_unknown)?
+                .name,
+        )
+        .map_err(into_unknown)
+    }
+
+    fn atom_name(&self, atom: x11rb::protocol::xproto::Atom) -> &'static str {
+        ATOM_NAME_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            match cache.entry(atom) {
+                Entry::Occupied(entry) => *entry.get(),
+                Entry::Vacant(entry) => {
+                    let s = self
+                        .query_atom_name(atom)
+                        .map(|s| Box::leak(s.into_boxed_str()) as &str)
+                        .unwrap_or("FAILED-TO-GET-THE-ATOM-NAME");
+                    entry.insert(s);
+                    s
+                }
+            }
+        })
+    }
+}
+
+impl Atoms {
     fn read_single(
         &self,
         reader: &XContext,
@@ -385,7 +445,7 @@ impl Inner {
         // when the selection owner receives our request.
         reader
             .conn
-            .delete_property(reader.win_id, self.atoms.ARBOARD_CLIPBOARD)
+            .delete_property(reader.win_id, self.ARBOARD_CLIPBOARD)
             .map_err(into_unknown)?;
 
         // request to convert the clipboard selection to our data type(s)
@@ -395,7 +455,7 @@ impl Inner {
                 reader.win_id,
                 self.atom_of(selection),
                 target_format,
-                self.atoms.ARBOARD_CLIPBOARD,
+                self.ARBOARD_CLIPBOARD,
                 Time::CURRENT_TIME,
             )
             .map_err(into_unknown)?;
@@ -470,70 +530,19 @@ impl Inner {
 
     fn atom_of(&self, selection: ClipboardKind) -> Atom {
         match selection {
-            ClipboardKind::Clipboard => self.atoms.CLIPBOARD,
-            ClipboardKind::Primary => self.atoms.PRIMARY,
-            ClipboardKind::Secondary => self.atoms.SECONDARY,
-        }
-    }
-
-    fn selection_of(&self, selection: ClipboardKind) -> &Selection {
-        match selection {
-            ClipboardKind::Clipboard => &self.clipboard,
-            ClipboardKind::Primary => &self.primary,
-            ClipboardKind::Secondary => &self.secondary,
+            ClipboardKind::Clipboard => self.CLIPBOARD,
+            ClipboardKind::Primary => self.PRIMARY,
+            ClipboardKind::Secondary => self.SECONDARY,
         }
     }
 
     fn kind_of(&self, atom: Atom) -> Option<ClipboardKind> {
         match atom {
-            a if a == self.atoms.CLIPBOARD => Some(ClipboardKind::Clipboard),
-            a if a == self.atoms.PRIMARY => Some(ClipboardKind::Primary),
-            a if a == self.atoms.SECONDARY => Some(ClipboardKind::Secondary),
+            a if a == self.CLIPBOARD => Some(ClipboardKind::Clipboard),
+            a if a == self.PRIMARY => Some(ClipboardKind::Primary),
+            a if a == self.SECONDARY => Some(ClipboardKind::Secondary),
             _ => None,
         }
-    }
-
-    fn is_owner(&self, selection: ClipboardKind) -> Result<bool> {
-        let current = self
-            .server
-            .conn
-            .get_selection_owner(self.atom_of(selection))
-            .map_err(into_unknown)?
-            .reply()
-            .map_err(into_unknown)?
-            .owner;
-
-        Ok(current == self.server.win_id)
-    }
-
-    fn query_atom_name(&self, atom: x11rb::protocol::xproto::Atom) -> Result<String> {
-        String::from_utf8(
-            self.server
-                .conn
-                .get_atom_name(atom)
-                .map_err(into_unknown)?
-                .reply()
-                .map_err(into_unknown)?
-                .name,
-        )
-        .map_err(into_unknown)
-    }
-
-    fn atom_name(&self, atom: x11rb::protocol::xproto::Atom) -> &'static str {
-        ATOM_NAME_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            match cache.entry(atom) {
-                Entry::Occupied(entry) => *entry.get(),
-                Entry::Vacant(entry) => {
-                    let s = self
-                        .query_atom_name(atom)
-                        .map(|s| Box::leak(s.into_boxed_str()) as &str)
-                        .unwrap_or("FAILED-TO-GET-THE-ATOM-NAME");
-                    entry.insert(s);
-                    s
-                }
-            }
-        })
     }
 
     fn handle_read_selection_notify(
@@ -584,7 +593,7 @@ impl Inner {
             .map_err(into_unknown)?;
 
         // we found something
-        if reply.type_ == self.atoms.INCR {
+        if reply.type_ == self.INCR {
             // Note that we call the get_property again because we are
             // indicating that we are ready to receive the data by deleting the
             // property, however deleting only works if the type matches the
@@ -595,7 +604,7 @@ impl Inner {
                     true,
                     event.requestor,
                     event.property,
-                    self.atoms.INCR,
+                    self.INCR,
                     0,
                     u32::MAX / 4,
                 )
@@ -630,7 +639,7 @@ impl Inner {
         timeout_end: &mut Instant,
         event: PropertyNotifyEvent,
     ) -> Result<bool> {
-        if event.atom != self.atoms.ARBOARD_CLIPBOARD || event.state != Property::NEW_VALUE {
+        if event.atom != self.ARBOARD_CLIPBOARD || event.state != Property::NEW_VALUE {
             return Ok(false);
         }
         if !using_incr {
@@ -644,8 +653,8 @@ impl Inner {
                 true,
                 event.window,
                 event.atom,
-                if target_format == self.atoms.TARGETS {
-                    self.atoms.ATOM
+                if target_format == self.TARGETS {
+                    self.ATOM
                 } else {
                     target_format
                 },
@@ -670,8 +679,24 @@ impl Inner {
         Ok(false)
     }
 
+    fn image_format_atom(&self, format: ImageFormat) -> Atom {
+        match format {
+            ImageFormat::Png => self.PNG__MIME,
+            ImageFormat::Jpeg => self.JPEG_MIME,
+            ImageFormat::Webp => self.WEBP_MIME,
+            ImageFormat::Gif => self.GIF__MIME,
+            ImageFormat::Svg => self.SVG__MIME,
+            ImageFormat::Bmp => self.BMP__MIME,
+            ImageFormat::Tiff => self.TIFF_MIME,
+            ImageFormat::Ico => self.ICO__MIME,
+            ImageFormat::Pnm => self.PNM__MIME,
+        }
+    }
+}
+
+impl Inner {
     fn handle_selection_request(&self, event: SelectionRequestEvent) -> Result<()> {
-        let selection = match self.kind_of(event.selection) {
+        let selection = match self.atoms.kind_of(event.selection) {
             Some(kind) => kind,
             None => {
                 log::warn!(
@@ -869,7 +894,7 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
                 // notifying us that we should delete our data now.
                 log::trace!("Somebody else owns the clipboard now");
 
-                if let Some(selection) = context.kind_of(event.selection) {
+                if let Some(selection) = context.atoms.kind_of(event.selection) {
                     let selection = context.selection_of(selection);
                     let mut data_guard = selection.data.write();
                     *data_guard = None;
@@ -996,20 +1021,6 @@ impl Clipboard {
         self.inner.write(data, selection, wait)
     }
 
-    fn image_format_atom(&self, format: ImageFormat) -> Atom {
-        match format {
-            ImageFormat::Png => self.inner.atoms.PNG__MIME,
-            ImageFormat::Jpeg => self.inner.atoms.JPEG_MIME,
-            ImageFormat::Webp => self.inner.atoms.WEBP_MIME,
-            ImageFormat::Gif => self.inner.atoms.GIF__MIME,
-            ImageFormat::Svg => self.inner.atoms.SVG__MIME,
-            ImageFormat::Bmp => self.inner.atoms.BMP__MIME,
-            ImageFormat::Tiff => self.inner.atoms.TIFF_MIME,
-            ImageFormat::Ico => self.inner.atoms.ICO__MIME,
-            ImageFormat::Pnm => self.inner.atoms.PNM__MIME,
-        }
-    }
-
     #[allow(unused)]
     pub(crate) fn set_image(
         &self,
@@ -1017,7 +1028,7 @@ impl Clipboard {
         selection: ClipboardKind,
         wait: WaitConfig,
     ) -> Result<()> {
-        let format = self.image_format_atom(image.format);
+        let format = self.inner.atoms.image_format_atom(image.format);
         let data = vec![ClipboardData {
             bytes: image.bytes,
             format: self.inner.atoms.PNG__MIME,
@@ -1027,7 +1038,7 @@ impl Clipboard {
 
     pub(crate) fn get_any(&self, selection: ClipboardKind) -> Result<ClipboardItem> {
         let image_entries = ImageFormat::iter()
-            .map(|format| (self.image_format_atom(format), format))
+            .map(|format| (self.inner.atoms.image_format_atom(format), format))
             .collect::<Vec<_>>();
 
         let text_format_atoms: &[Atom] = &[
