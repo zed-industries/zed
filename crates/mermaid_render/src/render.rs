@@ -1,7 +1,11 @@
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, anyhow};
-use merman::{Engine, OperationControl, RenderOutput, RenderRequest, Renderer, SvgRequest};
+use merman::svg::export::{NativeFontContext, NativeFontLimits};
+use merman::{
+    Engine, OperationControl, RenderOutput, RenderRequest, Renderer, SvgEnvironment, SvgRequest,
+};
 
 use crate::{MermaidTheme, css_color};
 
@@ -17,8 +21,16 @@ pub(super) fn render_mermaid(source: &str, theme: &MermaidTheme) -> Result<Strin
     // fallback text, unsupported CSS removal, and invalid SVG attribute cleanup.
     // Zed also strips merman's existing `!important` declarations before
     // injecting its own theme CSS so host styling wins consistently in usvg/resvg.
+    //
+    // Text measurement must use real font metrics (IBM Plex Sans, matching the
+    // fonts usvg loads for `.ZedSans`). `SvgEnvironment::deterministic()` alone
+    // is font-agnostic and under-sizes labels relative to final glyphs — the
+    // 0.8 `with_vendored_text_measurer()` / parity path we used to rely on.
+    let environment = SvgEnvironment::deterministic()
+        .with_native_font_context(shared_native_font_context()?.clone())
+        .context("configure native Mermaid text measurement")?;
     let request = SvgRequest {
-        environment: merman::SvgEnvironment::deterministic(),
+        environment,
         options: merman::svg::SvgRenderOptions {
             diagram_id: Some(diagram_id),
             ..Default::default()
@@ -36,6 +48,37 @@ pub(super) fn render_mermaid(source: &str, theme: &MermaidTheme) -> Result<Strin
     let (svg, _) = svg.into_parts();
 
     Ok(svg)
+}
+
+fn shared_native_font_context() -> Result<&'static NativeFontContext> {
+    static CONTEXT: OnceLock<NativeFontContext> = OnceLock::new();
+    if let Some(context) = CONTEXT.get() {
+        return Ok(context);
+    }
+
+    // Same faces gpui/usvg use for `.ZedSans` / default Mermaid labels.
+    const REGULAR: &[u8] =
+        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
+    const SEMIBOLD: &[u8] =
+        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf");
+    const ITALIC: &[u8] =
+        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf");
+    const SEMIBOLD_ITALIC: &[u8] =
+        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf");
+
+    let context = NativeFontContext::from_font_bytes(
+        [
+            REGULAR.to_vec(),
+            SEMIBOLD.to_vec(),
+            ITALIC.to_vec(),
+            SEMIBOLD_ITALIC.to_vec(),
+        ],
+        NativeFontLimits::default(),
+        &OperationControl::new(),
+    )
+    .context("load IBM Plex Sans for Mermaid label measurement")?;
+
+    Ok(CONTEXT.get_or_init(|| context))
 }
 
 fn to_merman_config(theme: &MermaidTheme) -> merman::MermaidConfig {
@@ -354,6 +397,123 @@ class User {
         }
     }
 
+    #[test]
+    fn class_method_label_fits_fallback_viewport() {
+        // Reviewer repro: deterministic measurer clipped +MMMMMMMMMMMMMMMM() inside
+        // the foreignObject fallback viewport when final glyphs used IBM Plex Sans.
+        let source = r#"classDiagram
+    class User {
+        +MMMMMMMMMMMMMMMM()
+    }
+"#;
+        let theme = ibm_plex_theme();
+        let svg = crate::render_to_svg(source, &theme).expect("render failed");
+        assert_label_fits_fallback_viewport(&svg, "+MMMMMMMMMMMMMMMM()", &theme);
+    }
+
+    #[test]
+    fn sequence_participant_label_fits_box() {
+        // Reviewer repro: participant MMMMMMMMMMMMMMMM overflowed a shrunken box
+        // under deterministic measurement (~174px). Native IBM Plex metrics keep
+        // the actor box near main's ~233px and the glyphs inside it.
+        let source = "sequenceDiagram\n    participant MMMMMMMMMMMMMMMM";
+        let theme = ibm_plex_theme();
+        let svg = crate::render_to_svg(source, &theme).expect("render failed");
+        let tree = parse_svg_with_ibm_plex(&svg);
+        let glyph_width =
+            text_glyph_width(tree.root(), "MMMMMMMMMMMMMMMM").expect("missing participant glyphs");
+        let box_width =
+            actor_box_width_for_label(&svg, "MMMMMMMMMMMMMMMM").expect("missing actor box");
+        assert!(
+            box_width >= 200.0,
+            "actor box shrank too far: {box_width} (main was ~233, broken PR was ~174)"
+        );
+        assert!(
+            glyph_width <= box_width + 1.0,
+            "participant glyphs {glyph_width} overflow actor box {box_width}"
+        );
+    }
+
+    #[test]
+    fn state_description_fits_fallback_viewport() {
+        // Reviewer note on our own fixture: "group deleted" was wider than its
+        // overflow:hidden fallback viewport under deterministic measurement.
+        let source = r#"stateDiagram-v2
+    [*] --> Teardown
+    Teardown : members kicked
+    Teardown : group deleted
+"#;
+        let theme = ibm_plex_theme();
+        let svg = crate::render_to_svg(source, &theme).expect("render failed");
+        assert_label_fits_fallback_viewport(&svg, "group deleted", &theme);
+        assert_label_fits_fallback_viewport(&svg, "members kicked", &theme);
+    }
+
+    #[test]
+    fn class_diagram_custom_fontsize_keeps_visible_labels() {
+        // Reviewer repro: fontSize 8px layout must agree with final paint size.
+        let source = r#"classDiagram
+%%{init: {"themeVariables": {"fontSize": "8px"}}}%%
+class User {
+    +String WWWWWWWWWWWWWWWWWWWW
+    +String WWWWWWWWWWWWWWWWWWWW
+    +String WWWWWWWWWWWWWWWWWWWW
+}
+"#;
+        let theme = ibm_plex_theme();
+        let svg = crate::render_to_svg(source, &theme).expect("render failed");
+        let tree = parse_svg_with_ibm_plex(&svg);
+        assert_eq!(text_font_size(tree.root(), "User"), Some(8.0));
+        assert_eq!(
+            text_font_size(tree.root(), "+String WWWWWWWWWWWWWWWWWWWW"),
+            Some(8.0)
+        );
+        assert_label_fits_fallback_viewport(&svg, "User", &theme);
+        assert_label_fits_fallback_viewport(&svg, "+String WWWWWWWWWWWWWWWWWWWW", &theme);
+    }
+
+    #[test]
+    fn mindmap_rectangular_child_uses_theme_text_color() {
+        // Reviewer dark-palette repro: rectangular AB / multiline A<br/>B must
+        // pick up section text-color CSS (#dce0e5), not gitBranchLabel fills.
+        let theme = dark_review_theme();
+        for source in [
+            r#"mindmap
+    root((Root))
+        First
+        second[AB]
+"#,
+            r#"mindmap
+    root((Root))
+        First
+        second[A<br/>B]
+"#,
+        ] {
+            let svg = crate::render_to_svg(source, &theme).expect("render failed");
+            let tree = parse_svg_with_ibm_plex(&svg);
+            let expected = {
+                let rgba = gpui::Rgba::from(theme.text_color);
+                (rgba.r, rgba.g, rgba.b)
+            };
+            for label in ["AB", "A", "B"] {
+                if let Some(fill) = text_fill_rgb(tree.root(), label) {
+                    assert!(
+                        (fill.0 - expected.0).abs() < 0.05
+                            && (fill.1 - expected.1).abs() < 0.05
+                            && (fill.2 - expected.2).abs() < 0.05,
+                        "{label} fill {fill:?} should be theme text {expected:?} in:\n{source}"
+                    );
+                }
+            }
+            // At least one of AB or A must be present
+            assert!(
+                text_fill_rgb(tree.root(), "AB").is_some()
+                    || text_fill_rgb(tree.root(), "A").is_some(),
+                "missing rectangular child label in: {source}\n{svg}"
+            );
+        }
+    }
+
     fn text_font_size(group: &usvg::Group, expected_text: &str) -> Option<f32> {
         for node in group.children() {
             match node {
@@ -406,6 +566,115 @@ class User {
             }
         }
 
+        None
+    }
+
+    fn ibm_plex_theme() -> MermaidTheme {
+        let mut theme = MermaidTheme::default();
+        theme.font_family = "IBM Plex Sans, sans-serif".to_string();
+        theme
+    }
+
+    fn dark_review_theme() -> MermaidTheme {
+        use gpui::rgb;
+        let mut theme = MermaidTheme::default();
+        theme.dark_mode = true;
+        theme.font_family = "IBM Plex Sans, sans-serif".to_string();
+        theme.background = rgb(0x282c33).into();
+        theme.primary_color = rgb(0x2f343e).into();
+        theme.primary_text_color = rgb(0xdce0e5).into();
+        theme.text_color = rgb(0xdce0e5).into();
+        theme.secondary_color = rgb(0x2e343e).into();
+        theme.tertiary_color = rgb(0x363c46).into();
+        theme.line_color = rgb(0x464b57).into();
+        theme.primary_border_color = rgb(0x464b57).into();
+        theme.git_branch_label_colors = theme
+            .git_branch_colors
+            .map(crate::text_color_for_background);
+        theme
+    }
+
+    fn parse_svg_with_ibm_plex(svg: &str) -> usvg::Tree {
+        const REGULAR: &[u8] =
+            include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
+        const SEMIBOLD: &[u8] =
+            include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf");
+        let mut db = usvg::fontdb::Database::new();
+        db.load_font_data(REGULAR.to_vec());
+        db.load_font_data(SEMIBOLD.to_vec());
+        db.set_sans_serif_family("IBM Plex Sans");
+        let options = usvg::Options {
+            fontdb: std::sync::Arc::new(db),
+            ..Default::default()
+        };
+        usvg::Tree::from_str(svg, &options).expect("SVG parsing failed")
+    }
+
+    fn assert_label_fits_fallback_viewport(svg: &str, label: &str, _theme: &MermaidTheme) {
+        let tree = parse_svg_with_ibm_plex(svg);
+        let glyph_width = text_glyph_width(tree.root(), label)
+            .unwrap_or_else(|| panic!("missing glyph metrics for {label}"));
+        let viewport_width = fallback_viewport_width_for_label(svg, label)
+            .unwrap_or_else(|| panic!("missing fallback viewport for {label}"));
+        assert!(
+            glyph_width <= viewport_width + 1.0,
+            "{label}: glyph width {glyph_width} overflows fallback viewport {viewport_width}; svg snippet nearby should not clip"
+        );
+    }
+
+    fn actor_box_width_for_label(svg: &str, label: &str) -> Option<f64> {
+        let marker = format!("name=\"{label}\"");
+        let mut search = svg;
+        while let Some(idx) = search.find(&marker) {
+            let abs = svg.len() - search.len() + idx;
+            if let Some(rect_start) = svg[..abs].rfind("<rect") {
+                let tag_end = svg[rect_start..].find('>')? + rect_start;
+                let tag = &svg[rect_start..tag_end];
+                if tag.contains("class=\"actor") {
+                    let width_key = "width=\"";
+                    let w0 = tag.find(width_key)? + width_key.len();
+                    let w1 = tag[w0..].find('"')? + w0;
+                    return tag[w0..w1].parse().ok();
+                }
+            }
+            search = &svg[abs + marker.len()..];
+        }
+        None
+    }
+
+    fn fallback_viewport_width_for_label(svg: &str, label: &str) -> Option<f64> {
+        let needle = format!(">{label}</text>");
+        let end = svg.find(&needle)?;
+        let text_start = svg[..end].rfind("<text")?;
+        // Walk back to the enclosing <svg ... width="..."> inside the foreignobject label def.
+        let def_svg_start = svg[..text_start].rfind("<svg ")?;
+        let def_svg_tag_end = svg[def_svg_start..].find('>')? + def_svg_start;
+        let tag = &svg[def_svg_start..def_svg_tag_end];
+        let width_key = "width=\"";
+        let w0 = tag.find(width_key)? + width_key.len();
+        let w1 = tag[w0..].find('"')? + w0;
+        tag[w0..w1].parse().ok()
+    }
+
+    fn text_glyph_width(group: &usvg::Group, expected_text: &str) -> Option<f64> {
+        for node in group.children() {
+            match node {
+                usvg::Node::Group(group) => {
+                    if let Some(width) = text_glyph_width(group, expected_text) {
+                        return Some(width);
+                    }
+                }
+                usvg::Node::Text(text) => {
+                    for chunk in text.chunks() {
+                        if chunk.text() == expected_text {
+                            let bbox = text.bounding_box();
+                            return Some(f64::from(bbox.width()));
+                        }
+                    }
+                }
+                usvg::Node::Path(_) | usvg::Node::Image(_) => {}
+            }
+        }
         None
     }
 }

@@ -34,6 +34,8 @@ merman = { workspace = true, features = [
     "diagram-timeline",
     "diagram-xychart",
     "layout-cytoscape",
+    # Real font metrics for label layout (replaces 0.8's vendored/parity measurer).
+    "native-fonts",
     "svg",
 ] }
 quick-xml.workspace = true
