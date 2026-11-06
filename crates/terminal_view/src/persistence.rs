@@ -450,6 +450,9 @@ impl Domain for TerminalDb {
         sql! (
             ALTER TABLE terminals ADD COLUMN custom_title TEXT;
         ),
+        sql!(
+            ALTER TABLE terminals ADD COLUMN profile_name TEXT;
+        ),
     ];
 }
 
@@ -540,5 +543,78 @@ impl TerminalDb {
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }
+    }
+
+    pub async fn save_profile_name(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        profile_name: Option<String>,
+    ) -> Result<()> {
+        self.write(move |connection| {
+            let mut statement = Statement::prepare(
+                connection,
+                "INSERT INTO terminals (item_id, workspace_id, profile_name)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT (workspace_id, item_id) DO UPDATE SET
+                     profile_name = excluded.profile_name",
+            )?;
+            let next_index = statement.bind(&item_id, 1)?;
+            let next_index = statement.bind(&workspace_id, next_index)?;
+            statement.bind(&profile_name, next_index)?;
+            statement.exec()
+        })
+        .await
+    }
+
+    query! {
+        pub fn get_profile_name(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<String>> {
+            SELECT profile_name
+            FROM terminals
+            WHERE item_id = ? AND workspace_id = ? AND profile_name IS NOT NULL
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_terminal_profiles_persist_without_overwriting_terminal_state(
+        cx: &mut TestAppContext,
+    ) {
+        let result = async {
+            let workspace_database = cx.update(|cx| WorkspaceDb::global(cx));
+            let workspace_id = workspace_database.next_id().await?;
+            let database = cx.update(|cx| TerminalDb::global(cx));
+            database
+                .save_profile_name(1, workspace_id, Some("JavaScript".into()))
+                .await?;
+            database
+                .save_custom_title(1, workspace_id, Some("Custom title".into()))
+                .await?;
+            database
+                .save_working_directory(1, workspace_id, PathBuf::from("project"))
+                .await?;
+            assert_eq!(
+                database.get_profile_name(1, workspace_id)?.as_deref(),
+                Some("JavaScript")
+            );
+            database.save_profile_name(1, workspace_id, None).await?;
+            assert_eq!(database.get_profile_name(1, workspace_id)?, None);
+            assert_eq!(
+                database.get_custom_title(1, workspace_id)?.as_deref(),
+                Some("Custom title")
+            );
+            assert_eq!(
+                database.get_working_directory(1, workspace_id)?,
+                Some(PathBuf::from("project"))
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        assert!(result.is_ok(), "{result:?}");
     }
 }
