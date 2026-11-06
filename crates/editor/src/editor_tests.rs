@@ -45202,6 +45202,39 @@ async fn test_no_duplicated_sticky_headers(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_autoscroll_sticky_headers_with_expanded_diff(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.sticky_scroll = Some(settings::StickyScrollContent {
+            enabled: Some(true),
+        });
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("fn demo() {\n    ˇwork();\n}\n");
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.set_head_text(
+        "fn demo() {\n    very_long_removed_call();\n    another_removed_call();\n}\n",
+    );
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        for point in [
+            DisplayPoint::new(DisplayRow(2), 20),
+            DisplayPoint::new(DisplayRow(3), 5),
+        ] {
+            assert_eq!(
+                editor.visible_sticky_header_count_for_point(&snapshot.display_snapshot, point, cx),
+                1,
+            );
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_autoscroll_margin_reserves_sticky_header_space(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     update_test_editor_settings(cx, &|settings| {
