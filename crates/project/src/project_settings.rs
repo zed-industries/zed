@@ -634,21 +634,19 @@ pub enum GitDateFormat {
 }
 
 impl GitDateFormat {
-    pub fn try_parse(format: &str) -> Result<Self, time::error::InvalidFormatDescription> {
-        match format {
-            "locale" => Ok(Self::Locale),
-            format if format.trim().is_empty() => Ok(Self::Locale),
-            "iso" => Ok(Self::Iso),
-            format => time::format_description::parse_strftime_owned(format)
-                .map(|format| Self::Custom(Arc::new(format))),
-        }
-    }
-
     pub fn parse(format: &str) -> Self {
-        Self::try_parse(format).unwrap_or_else(|error| {
-            log::warn!("Invalid git.date_format: {error}");
-            Self::Locale
-        })
+        match format {
+            "locale" => Self::Locale,
+            format if format.trim().is_empty() => Self::Locale,
+            "iso" => Self::Iso,
+            format => match time::format_description::parse_strftime_owned(format) {
+                Ok(format) => Self::Custom(Arc::new(format)),
+                Err(error) => {
+                    log::warn!("Invalid git.date_format: {error}");
+                    Self::Locale
+                }
+            },
+        }
     }
 
     pub fn format(&self, timestamp: time::OffsetDateTime) -> Option<String> {
