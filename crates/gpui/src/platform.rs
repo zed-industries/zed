@@ -1460,6 +1460,26 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
 }
 
+/// GPU work attributed to one submitted frame.
+///
+/// Durations describe GPU execution and completion, not CPU scene encoding.
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GpuFrameStats {
+    /// GPU execution time, or `None` when GPU timestamps are unavailable.
+    pub gpu_duration: Option<Duration>,
+    /// CPU-observed time from submission/commit to completion.
+    pub submit_to_complete: Option<Duration>,
+}
+
+/// Completed frame measurements returned by a renderer drain.
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GpuStats {
+    /// One entry per completed submission since the previous drain, in submission order.
+    pub frames: Vec<GpuFrameStats>,
+}
+
 /// A renderer for headless windows that can produce real rendered output.
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub trait PlatformHeadlessRenderer {
@@ -1479,6 +1499,25 @@ pub trait PlatformHeadlessRenderer {
 
     /// Returns the sprite atlas used by this renderer.
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+
+    /// Enables optional GPU measurements. Disabled by default; repeated calls with
+    /// the same value must preserve pending statistics. Disabling clears pending
+    /// statistics and avoids measurement overhead, including timestamp queries.
+    fn set_gpu_metrics_enabled(&mut self, _enabled: bool) {}
+
+    /// Waits for all previously submitted work and its measurement callbacks/readbacks.
+    /// Called outside benchmark timing, before draining statistics.
+    fn wait_for_gpu_idle(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Drains completed frames since the previous call.
+    ///
+    /// Callers wait for idle first. Return `None` when disabled or unsupported;
+    /// supported renderers may return an empty frame list.
+    fn take_gpu_stats(&mut self) -> Option<GpuStats> {
+        None
+    }
 }
 
 /// Type alias for runnables with metadata.

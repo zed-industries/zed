@@ -11,13 +11,15 @@ use std::{
 
 use anyhow::{Result, anyhow};
 pub use bench_metrics::{BenchMeasurement, CountingAllocator, MetricReport};
+use gpui_util::ResultExt as _;
 use hdrhistogram::Histogram;
 
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds, Context, Empty,
-    Entity, EntityId, Focusable, ForegroundExecutor, Global, Pixels, Platform,
+    Entity, EntityId, Focusable, ForegroundExecutor, Global, GpuStats, Pixels, Platform,
     PlatformHeadlessRenderer, PlatformTextSystem, Render, Reservation, Size, Task, TestPlatform,
-    ThreadedDispatcher, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
+    TestWindow, ThreadedDispatcher, VisualContext, Window, WindowBounds, WindowHandle,
+    WindowOptions,
     app::GpuiBorrow,
     profiler::{
         self, FrameEvent, FrameTimingCollector,
@@ -41,9 +43,8 @@ use crate::{
 /// `gpui_platform::current_headless_renderer`. When present, scenes drawn by
 /// benchmarks are rasterized through the real sprite atlas and submitted to
 /// the GPU on present, so quad/sprite regressions show up in measurements.
-/// When `None`, presenting discards the scene. Currently only macOS provides
-/// a headless renderer (Metal), so GPU submission is excluded from benchmark
-/// measurements on other platforms.
+/// When `None`, presenting discards the scene. Headless renderers use Metal on
+/// macOS and wgpu on Linux; GPU submission is excluded on unsupported platforms.
 pub fn bench_platform(
     headless_renderer_factory: Option<
         Box<dyn Fn() -> anyhow::Result<Option<Box<dyn PlatformHeadlessRenderer>>>>,
@@ -71,6 +72,95 @@ pub fn bench_platform(
 const DEFAULT_FPS: u64 = 120;
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
+
+fn gpu_metrics_enabled_from_env() -> Result<bool> {
+    let setting = std::env::var("GPUI_BENCH_GPU_METRICS");
+    let setting = match &setting {
+        Ok(value) => Some(value.as_str()),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => {
+            return Err(anyhow!(
+                "GPUI_BENCH_GPU_METRICS is not valid Unicode: {error}"
+            ));
+        }
+    };
+    let wall_time_only = std::env::var(bench_metrics::BENCH_MEASUREMENT_ENV_VAR)
+        .is_ok_and(|value| value == "wall-time");
+    gpu_metrics_enabled(setting, wall_time_only)
+}
+
+fn gpu_metrics_enabled(setting: Option<&str>, wall_time_only: bool) -> Result<bool> {
+    let enabled = match setting {
+        None | Some("on" | "1" | "true") => true,
+        Some("off" | "0" | "false") => false,
+        Some(value) => anyhow::bail!(
+            "unsupported GPUI_BENCH_GPU_METRICS value {value:?}; expected \
+             \"on\", \"1\", \"true\", \"off\", \"0\", or \"false\""
+        ),
+    };
+    Ok(enabled && !wall_time_only)
+}
+
+/// Distribution of available GPU duration samples (histogram precision: three digits).
+#[derive(Clone, Copy, Debug)]
+pub struct GpuDurationSummary {
+    /// Number of frames with this duration available.
+    pub count: u64,
+    /// Median duration.
+    pub p50: Duration,
+    /// 90th percentile duration.
+    pub p90: Duration,
+    /// 95th percentile duration.
+    pub p95: Duration,
+    /// 99th percentile duration.
+    pub p99: Duration,
+    /// Maximum duration.
+    pub max: Duration,
+}
+
+impl GpuDurationSummary {
+    fn from_histogram(histogram: &Histogram<u64>) -> Option<Self> {
+        (!histogram.is_empty()).then(|| Self {
+            count: histogram.len(),
+            p50: Duration::from_nanos(histogram.value_at_quantile(0.50)),
+            p90: Duration::from_nanos(histogram.value_at_quantile(0.90)),
+            p95: Duration::from_nanos(histogram.value_at_quantile(0.95)),
+            p99: Duration::from_nanos(histogram.value_at_quantile(0.99)),
+            max: Duration::from_nanos(histogram.max()),
+        })
+    }
+}
+
+/// GPU results across all measured iterations, including Criterion warmup/calibration.
+#[derive(Clone, Debug, Default)]
+pub struct GpuSummary {
+    /// Number of submitted frames recorded.
+    pub frames: u64,
+    /// Execution-time distribution, or `None` when no frame could be timed.
+    pub gpu_duration: Option<GpuDurationSummary>,
+    /// CPU-observed submission-to-completion distribution.
+    pub submit_to_complete: Option<GpuDurationSummary>,
+    /// Number of timed frames strictly exceeding the configured frame budget.
+    pub frames_over_budget: u64,
+}
+
+struct GpuSnapshot {
+    summary: GpuSummary,
+    gpu_duration: DurationHistogram,
+    submit_to_complete: DurationHistogram,
+    recorded: bool,
+}
+
+impl GpuSnapshot {
+    fn new() -> Self {
+        Self {
+            summary: GpuSummary::default(),
+            gpu_duration: DurationHistogram::new(),
+            submit_to_complete: DurationHistogram::new(),
+            recorded: false,
+        }
+    }
+}
 
 /// Aggregate statistics for total foreground executor work observed during a
 /// measured interval, returned by [`BenchReport::foreground_work`].
@@ -102,6 +192,7 @@ pub struct ForegroundWorkSummary {
 #[derive(Clone)]
 pub struct BenchReport {
     frame_snapshot: Rc<RefCell<WindowFrameSnapshot>>,
+    gpu_snapshot: Rc<RefCell<GpuSnapshot>>,
     metrics: MetricReport,
     frame_budget_nanos: u128,
 }
@@ -129,6 +220,7 @@ impl BenchReport {
         );
         Self {
             frame_snapshot: Rc::new(RefCell::new(WindowFrameSnapshot::new())),
+            gpu_snapshot: Rc::new(RefCell::new(GpuSnapshot::new())),
             metrics: MetricReport::new(),
             frame_budget_nanos,
         }
@@ -139,6 +231,36 @@ impl BenchReport {
     /// measurement.
     pub fn metrics(&self) -> &MetricReport {
         &self.metrics
+    }
+
+    /// Returns GPU results, or `None` when no renderer supplied statistics.
+    pub fn gpu(&self) -> Option<GpuSummary> {
+        let snapshot = self.gpu_snapshot.borrow();
+        if !snapshot.recorded {
+            return None;
+        }
+        let mut summary = snapshot.summary.clone();
+        summary.gpu_duration = GpuDurationSummary::from_histogram(&snapshot.gpu_duration.histogram);
+        summary.submit_to_complete =
+            GpuDurationSummary::from_histogram(&snapshot.submit_to_complete.histogram);
+        Some(summary)
+    }
+
+    fn record_gpu_stats(&self, stats: GpuStats) {
+        let mut snapshot = self.gpu_snapshot.borrow_mut();
+        snapshot.recorded = true;
+        for frame in stats.frames {
+            if let Some(duration) = frame.gpu_duration {
+                snapshot.gpu_duration.record(duration);
+                if duration.as_nanos() > self.frame_budget_nanos {
+                    snapshot.summary.frames_over_budget += 1;
+                }
+            }
+            if let Some(duration) = frame.submit_to_complete {
+                snapshot.submit_to_complete.record(duration);
+            }
+            snapshot.summary.frames += 1;
+        }
     }
 
     fn record_frame_timings<'i>(&self, events: impl IntoIterator<Item = &'i FrameEvent>) {
@@ -251,7 +373,7 @@ impl BenchReport {
     /// Prints this report to stderr.
     pub fn print(&self, benchmark_name: &str) {
         let frame_snapshot = self.frame_snapshot.borrow();
-        if frame_snapshot.is_empty() && self.metrics.is_empty() {
+        if frame_snapshot.is_empty() && self.metrics.is_empty() && self.gpu().is_none() {
             return;
         }
 
@@ -269,6 +391,41 @@ impl BenchReport {
             );
         }
         self.print_foreground_work(&frame_snapshot.foreground_work);
+        self.print_gpu();
+    }
+
+    fn print_gpu(&self) {
+        self.write_gpu(&mut std::io::stderr().lock()).log_err();
+    }
+
+    fn write_gpu(&self, output: &mut impl std::io::Write) -> std::io::Result<()> {
+        let Some(summary) = self.gpu() else {
+            return Ok(());
+        };
+        let snapshot = self.gpu_snapshot.borrow();
+        writeln!(output, "  GPU:")?;
+        writeln!(output, "    frames: {}", summary.frames)?;
+        if summary.frames > 0 && summary.gpu_duration.is_none() {
+            writeln!(output, "    GPU timing unavailable")?;
+        }
+        writeln!(
+            output,
+            "    GPU-timed frames over budget: {}",
+            summary.frames_over_budget
+        )?;
+        for (name, histogram) in [
+            ("GPU execution time", &snapshot.gpu_duration.histogram),
+            (
+                "GPU submit-to-complete",
+                &snapshot.submit_to_complete.histogram,
+            ),
+        ] {
+            if !histogram.is_empty() {
+                writeln!(output, "    {name}:")?;
+                write_duration_histogram(output, histogram, "      ")?;
+            }
+        }
+        Ok(())
     }
 
     fn print_histogram(&self, name: &str, histogram: &Histogram<u64>) {
@@ -296,28 +453,7 @@ impl BenchReport {
 
     fn print_histogram_body(&self, histogram: &Histogram<u64>) {
         let max_foreground_time = Duration::from_nanos(histogram.max());
-        eprintln!("    samples: {}", histogram.len());
-        eprintln!(
-            "    mean: {}",
-            format_duration(Duration::from_nanos(histogram.mean() as u64))
-        );
-        eprintln!(
-            "    p50: {}",
-            format_duration(Duration::from_nanos(histogram.value_at_quantile(0.50)))
-        );
-        eprintln!(
-            "    p90: {}",
-            format_duration(Duration::from_nanos(histogram.value_at_quantile(0.90)))
-        );
-        eprintln!(
-            "    p95: {}",
-            format_duration(Duration::from_nanos(histogram.value_at_quantile(0.95)))
-        );
-        eprintln!(
-            "    p99: {}",
-            format_duration(Duration::from_nanos(histogram.value_at_quantile(0.99)))
-        );
-        eprintln!("    max: {}", format_duration(max_foreground_time));
+        write_duration_histogram(&mut std::io::stderr().lock(), histogram, "    ").log_err();
         eprintln!(
             "    frame budget overruns total: {}",
             self.total_budget_overruns(histogram)
@@ -327,6 +463,29 @@ impl BenchReport {
             self.budget_overruns(max_foreground_time)
         );
     }
+}
+
+fn write_duration_histogram(
+    output: &mut impl std::io::Write,
+    histogram: &Histogram<u64>,
+    indent: &str,
+) -> std::io::Result<()> {
+    writeln!(output, "{indent}samples: {}", histogram.len())?;
+    for (name, nanos) in [
+        ("mean", histogram.mean() as u64),
+        ("p50", histogram.value_at_quantile(0.50)),
+        ("p90", histogram.value_at_quantile(0.90)),
+        ("p95", histogram.value_at_quantile(0.95)),
+        ("p99", histogram.value_at_quantile(0.99)),
+        ("max", histogram.max()),
+    ] {
+        writeln!(
+            output,
+            "{indent}{name}: {}",
+            format_duration(Duration::from_nanos(nanos))
+        )?;
+    }
+    Ok(())
 }
 
 struct WindowFrameSnapshot {
@@ -442,9 +601,59 @@ struct MeasuredTaskInput<Input> {
     trace_scope: Option<TraceScope>,
 }
 
+struct GpuMeasurement {
+    windows: Vec<TestWindow>,
+}
+
+#[derive(Clone)]
+pub(super) struct BenchGpuMetrics {
+    enabled: bool,
+    measurement: Rc<RefCell<Option<GpuMeasurement>>>,
+}
+
+impl BenchGpuMetrics {
+    pub(super) fn window_opened(&self, window: &mut Window) {
+        if let Some(window) = window.platform_window.as_test() {
+            window.set_gpu_metrics_enabled(self.enabled);
+            if let Some(measurement) = self.measurement.borrow_mut().as_mut() {
+                measurement.include(window);
+            }
+        }
+    }
+}
+
+fn drain_gpu_stats(window: &TestWindow) -> Result<Option<GpuStats>> {
+    window.wait_for_gpu_idle()?;
+    Ok(window.take_gpu_stats())
+}
+
+impl GpuMeasurement {
+    fn include(&mut self, window: &TestWindow) {
+        if !self
+            .windows
+            .iter()
+            .any(|existing| Rc::ptr_eq(&existing.0, &window.0))
+        {
+            // Retain the renderer until the untimed drain even if its window closes.
+            self.windows.push(window.clone());
+        }
+    }
+
+    fn finish(self, report: &BenchReport) {
+        for window in &self.windows {
+            if let Some(stats) =
+                drain_gpu_stats(window).expect("failed to wait for benchmark GPU work")
+            {
+                report.record_gpu_stats(stats);
+            }
+        }
+    }
+}
+
 struct MeasuredTaskOutput<Output> {
     trace_scope: Option<TraceScope>,
     report: BenchReport,
+    gpu_measurement: Rc<RefCell<Option<GpuMeasurement>>>,
     _output: Output,
 }
 
@@ -458,6 +667,9 @@ impl<Output> Drop for MeasuredTaskOutput<Output> {
         self.report.record_frame_timings(events.frame_events.iter());
         self.report
             .record_foreground_events(events.foreground_events());
+        if let Some(measurement) = self.gpu_measurement.borrow_mut().take() {
+            measurement.finish(&self.report);
+        }
     }
 }
 
@@ -492,6 +704,15 @@ where
 /// benchmark app instance and exposes only the app/window operations needed by
 /// benchmark setup. Criterion remains responsible for the measured loop via its
 /// `Bencher` API.
+///
+/// GPU metrics default to enabled. Set `GPUI_BENCH_GPU_METRICS` to `off`, `0`,
+/// or `false` to disable them (`on`, `1`, and `true` explicitly enable them).
+/// `BENCH_MEASUREMENT=wall-time` always disables GPU metrics as well as CPU
+/// counters. Unsupported GPU renderers contribute no GPU report section.
+/// Setup and final GPU waits and report aggregation run outside measured
+/// intervals; submission may still encounter GPU backpressure during measurement.
+/// Bench-support builds retain timestamp infrastructure even when runtime GPU
+/// metrics are disabled.
 #[derive(Clone)]
 pub struct BenchAppContext<'a, 'measurement> {
     app: Rc<AppCell>,
@@ -500,6 +721,7 @@ pub struct BenchAppContext<'a, 'measurement> {
     benchmark_name: Option<&'static str>,
     bencher: Rc<RefCell<Option<&'a mut criterion::Bencher<'measurement, BenchMeasurement>>>>,
     report: BenchReport,
+    gpu_metrics: BenchGpuMetrics,
 }
 
 impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
@@ -553,6 +775,15 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let http_client: Arc<dyn http_client::HttpClient> =
             Arc::new(http_client::BlockedHttpClient::new());
         let app = App::new_app(platform, asset_source, http_client);
+        let gpu_metrics_enabled = gpu_metrics_enabled_from_env().unwrap_or_else(|error| {
+            eprintln!("failed to select benchmark GPU measurements: {error:#}");
+            std::process::exit(2);
+        });
+        let gpu_metrics = BenchGpuMetrics {
+            enabled: gpu_metrics_enabled,
+            measurement: Rc::new(RefCell::new(None)),
+        };
+        app.borrow_mut().benchmark_gpu_metrics = Some(gpu_metrics.clone());
 
         Self {
             app,
@@ -561,6 +792,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             benchmark_name,
             bencher: Rc::new(RefCell::new(Some(bencher))),
             report,
+            gpu_metrics,
         }
     }
 
@@ -671,6 +903,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     pub fn bench_iter(&mut self, mut benchmark: impl FnMut(&mut Self)) {
         let bencher = self.take_bencher("bench_iter");
         self.dispatch_pending_frames(|| true);
+        self.begin_gpu_measurement();
         let collector = TraceScope::start(self.foreground_journal_collector());
         self.report.metrics.discard_pending();
         let mut iterations = 0;
@@ -685,6 +918,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         self.report.record_frame_timings(events.frame_events.iter());
         self.report
             .record_foreground_events(events.foreground_events());
+        self.finish_gpu_measurement();
         self.replace_bencher(bencher);
     }
 
@@ -748,6 +982,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                 setup_context.settle();
                 let input = setup(&mut setup_context);
                 setup_context.dispatch_pending_frames(|| true);
+                setup_context.begin_gpu_measurement();
                 MeasuredTaskInput {
                     input,
                     trace_scope: Some(TraceScope::start(
@@ -771,6 +1006,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                 MeasuredTaskOutput {
                     trace_scope: measured_input.trace_scope.take(),
                     report: report.clone(),
+                    gpu_measurement: benchmark_context.gpu_metrics.measurement.clone(),
                     _output: output,
                 }
             },
@@ -806,6 +1042,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let bencher = self.take_bencher("bench_renderer");
         let dispatcher = self.background_executor.dispatcher().clone();
         self.dispatch_pending_frames(|| true);
+        self.begin_gpu_measurement();
         let collector = TraceScope::start(self.foreground_journal_collector());
         self.report.metrics.discard_pending();
         let mut iterations = 0;
@@ -833,6 +1070,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         self.report.record_frame_timings(events.frame_events.iter());
         self.report
             .record_foreground_events(events.foreground_events());
+        self.finish_gpu_measurement();
         self.replace_bencher(bencher);
     }
 
@@ -883,6 +1121,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                 setup_context.settle();
                 let input = setup(&mut setup_context);
                 setup_context.dispatch_pending_frames(|| true);
+                setup_context.begin_gpu_measurement();
                 MeasuredTaskInput {
                     input,
                     trace_scope: Some(TraceScope::start(
@@ -952,6 +1191,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                 MeasuredTaskOutput {
                     trace_scope: measured_input.trace_scope.take(),
                     report: report.clone(),
+                    gpu_measurement: benchmark_context.gpu_metrics.measurement.clone(),
                     _output: (),
                 }
             },
@@ -959,6 +1199,32 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         );
         report.metrics.record_sample(iterations.get());
         self.replace_bencher(bencher);
+    }
+
+    fn begin_gpu_measurement(&self) {
+        if !self.gpu_metrics.enabled {
+            return;
+        }
+        let windows: Vec<_> = self
+            .app
+            .borrow_mut()
+            .windows
+            .values_mut()
+            .filter_map(|window| window.as_deref_mut()?.platform_window.as_test().cloned())
+            .collect();
+        for window in &windows {
+            window.set_gpu_metrics_enabled(true);
+        }
+        for window in &windows {
+            drain_gpu_stats(window).expect("failed to wait for benchmark GPU setup");
+        }
+        *self.gpu_metrics.measurement.borrow_mut() = Some(GpuMeasurement { windows });
+    }
+
+    fn finish_gpu_measurement(&self) {
+        if let Some(measurement) = self.gpu_metrics.measurement.borrow_mut().take() {
+            measurement.finish(&self.report);
+        }
     }
 
     fn dispatch_pending_frames(&self, mut should_continue: impl FnMut() -> bool) -> bool {
@@ -1377,6 +1643,420 @@ mod tests {
 
     use super::*;
     use crate::profiler::journal::install_test_foreground_journal;
+
+    #[derive(Default)]
+    struct FakeGpuState {
+        enabled: bool,
+        measured: bool,
+        measured_frames: u64,
+        pending: Vec<crate::GpuFrameStats>,
+        completed: Vec<crate::GpuFrameStats>,
+        waits: usize,
+        drains: usize,
+        fail_next_wait: bool,
+    }
+
+    struct FakeGpuRenderer {
+        state: Rc<RefCell<FakeGpuState>>,
+        timing: Rc<std::cell::Cell<bool>>,
+    }
+
+    struct GpuTestMeasurement(Rc<std::cell::Cell<bool>>);
+
+    impl criterion::measurement::Measurement for GpuTestMeasurement {
+        type Intermediate = Instant;
+        type Value = Duration;
+
+        fn start(&self) -> Instant {
+            self.0.set(true);
+            Instant::now()
+        }
+
+        fn end(&self, started: Instant) -> Duration {
+            self.0.set(false);
+            started.elapsed()
+        }
+
+        fn add(&self, left: &Duration, right: &Duration) -> Duration {
+            *left + *right
+        }
+
+        fn zero(&self) -> Duration {
+            Duration::ZERO
+        }
+
+        fn to_f64(&self, value: &Duration) -> f64 {
+            value.as_nanos() as f64
+        }
+
+        fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter {
+            criterion::measurement::WallTime.formatter()
+        }
+    }
+
+    impl PlatformHeadlessRenderer for FakeGpuRenderer {
+        fn render_scene_to_image(
+            &mut self,
+            _: &crate::Scene,
+            _: crate::Size<crate::DevicePixels>,
+        ) -> Result<image::RgbaImage> {
+            anyhow::bail!("fake GPU renderer has no pixels")
+        }
+
+        fn render_scene(
+            &mut self,
+            _: &crate::Scene,
+            _: crate::Size<crate::DevicePixels>,
+        ) -> Result<()> {
+            let mut state = self.state.borrow_mut();
+            if state.enabled {
+                let measured = state.measured;
+                state.measured_frames += u64::from(measured);
+                state.pending.push(crate::GpuFrameStats {
+                    gpu_duration: Some(Duration::from_millis(if measured { 10 } else { 1000 })),
+                    submit_to_complete: Some(Duration::from_millis(12)),
+                });
+            }
+            Ok(())
+        }
+
+        fn sprite_atlas(&self) -> Arc<dyn crate::PlatformAtlas> {
+            Arc::new(crate::HeadlessAtlas::default())
+        }
+
+        fn set_gpu_metrics_enabled(&mut self, enabled: bool) {
+            let mut state = self.state.borrow_mut();
+            state.enabled = enabled;
+            if !enabled {
+                state.pending.clear();
+                state.completed.clear();
+            }
+        }
+
+        fn wait_for_gpu_idle(&mut self) -> Result<()> {
+            assert!(
+                !self.timing.get(),
+                "GPU waits must be outside Criterion timing"
+            );
+            let mut state = self.state.borrow_mut();
+            state.waits += 1;
+            if std::mem::take(&mut state.fail_next_wait) {
+                anyhow::bail!("simulated GPU wait failure");
+            }
+            let pending = std::mem::take(&mut state.pending);
+            state.completed.extend(pending);
+            Ok(())
+        }
+
+        fn take_gpu_stats(&mut self) -> Option<GpuStats> {
+            assert!(
+                !self.timing.get(),
+                "GPU drains must be outside Criterion timing"
+            );
+            let mut state = self.state.borrow_mut();
+            assert!(state.pending.is_empty(), "must wait before draining");
+            state.drains += 1;
+            state.enabled.then(|| GpuStats {
+                frames: std::mem::take(&mut state.completed),
+            })
+        }
+    }
+
+    fn gpu_benchmark(
+        name: &'static str,
+        enabled: bool,
+        benchmark: impl Fn(&mut BenchAppContext, Rc<RefCell<FakeGpuState>>),
+    ) -> BenchReport {
+        let report = BenchReport::default();
+        let timing = Rc::new(std::cell::Cell::new(false));
+        let mut criterion = criterion::Criterion::default()
+            .with_measurement(BenchMeasurement::new(GpuTestMeasurement(timing.clone())))
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function(name, |bencher| {
+            let state = Rc::new(RefCell::new(FakeGpuState::default()));
+            let platform = bench_platform(
+                Some(Box::new({
+                    let state = state.clone();
+                    let timing = timing.clone();
+                    move || {
+                        Ok(Some(Box::new(FakeGpuRenderer {
+                            state: state.clone(),
+                            timing: timing.clone(),
+                        })))
+                    }
+                })),
+                Arc::new(crate::NoopTextSystem::new()),
+            );
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform,
+                Some(name),
+                bencher,
+                report.clone(),
+            );
+            // Inject parsed configuration without mutating process-wide environment.
+            cx.gpu_metrics.enabled = enabled;
+            cx.app.borrow_mut().benchmark_gpu_metrics = Some(cx.gpu_metrics.clone());
+            let frames_before = report.gpu().map_or(0, |summary| summary.frames);
+            benchmark(&mut cx, state.clone());
+            if enabled {
+                let state = state.borrow();
+                let summary = report.gpu().expect("GPU frames should be recorded");
+                assert!(state.measured_frames > 0);
+                assert_eq!(summary.frames - frames_before, state.measured_frames);
+                assert!(
+                    summary.gpu_duration.expect("GPU timestamps").max < Duration::from_millis(11),
+                    "setup frames must be discarded"
+                );
+                assert_eq!(state.waits, state.drains);
+                assert!(state.pending.is_empty());
+                assert!(state.completed.is_empty());
+            } else {
+                assert!(report.gpu().is_none());
+                assert!(!state.borrow().enabled);
+                assert_eq!(state.borrow().waits, 0);
+                assert_eq!(state.borrow().drains, 0);
+            }
+            cx.teardown();
+        });
+        report
+    }
+
+    #[test]
+    fn gpu_renderer_records_completed_frames_and_discards_setup() {
+        let report = gpu_benchmark("gpu_renderer", true, |cx, state| {
+            let mut window = cx.add_empty_window();
+            let view = window.update(|window, cx| window.replace_root(cx, |_, _| Empty));
+            cx.bench_renderer(view, |_, _, cx| {
+                state.borrow_mut().measured = true;
+                cx.notify();
+            });
+        });
+        let summary = report.gpu().expect("GPU summary");
+        assert_eq!(summary.frames_over_budget, summary.frames);
+        assert_eq!(
+            summary.gpu_duration.expect("GPU timestamps").count,
+            summary.frames
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "failed to wait for benchmark GPU setup")]
+    fn gpu_failed_baseline_wait_fails_benchmark() {
+        gpu_benchmark("gpu_failed_wait", true, |cx, state| {
+            let _window = cx.add_empty_window();
+            state.borrow_mut().fail_next_wait = true;
+            cx.begin_gpu_measurement();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "failed to wait for benchmark GPU work")]
+    fn gpu_failed_completion_wait_fails_benchmark() {
+        gpu_benchmark("gpu_failed_completion_wait", true, |cx, state| {
+            let _window = cx.add_empty_window();
+            cx.begin_gpu_measurement();
+            state.borrow_mut().fail_next_wait = true;
+            cx.finish_gpu_measurement();
+        });
+    }
+
+    #[test]
+    fn gpu_renderer_opt_out_disables_collection() {
+        for setting in ["off", "0", "false"] {
+            gpu_benchmark(
+                "gpu_renderer_disabled",
+                gpu_metrics_enabled(Some(setting), false).unwrap(),
+                |cx, _| {
+                    let mut window = cx.add_empty_window();
+                    let view = window.update(|window, cx| window.replace_root(cx, |_, _| Empty));
+                    cx.bench_renderer(view, |_, _, cx| cx.notify());
+                },
+            );
+        }
+        assert!(gpu_metrics_enabled(None, false).unwrap());
+        for setting in [None, Some("on"), Some("true"), Some("1")] {
+            assert!(!gpu_metrics_enabled(setting, true).unwrap());
+        }
+        assert!(gpu_metrics_enabled(Some("invalid"), false).is_err());
+        assert!(gpu_metrics_enabled(Some("invalid"), true).is_err());
+    }
+
+    #[test]
+    fn gpu_metrics_without_renderer_are_unavailable() {
+        let platform = bench_platform(None, Arc::new(crate::NoopTextSystem::new()));
+        let report = BenchReport::default();
+        let mut criterion = criterion::Criterion::default()
+            .with_measurement(BenchMeasurement::new(criterion::measurement::WallTime))
+            .without_plots()
+            .sample_size(10)
+            .warm_up_time(Duration::from_millis(1))
+            .measurement_time(Duration::from_millis(1));
+        criterion.bench_function("gpu_without_renderer", |bencher| {
+            let mut cx = BenchAppContext::new_with_platform_and_report(
+                platform.clone(),
+                Some("gpu_without_renderer"),
+                bencher,
+                report.clone(),
+            );
+            let _window = cx.add_empty_window();
+            cx.bench_iter(|_| {});
+            assert!(report.gpu().is_none());
+            cx.teardown();
+        });
+    }
+
+    #[test]
+    fn gpu_renderer_session_drains_after_timing() {
+        gpu_benchmark("gpu_renderer_session", true, |cx, state| {
+            let mut window = cx.add_empty_window();
+            let view = window.update(|window, cx| window.replace_root(cx, |_, _| Empty));
+            let handle = window.window_handle();
+            cx.bench_renderer_session(
+                Duration::from_secs(1),
+                |_| {
+                    state.borrow_mut().measured = false;
+                    let stopped = Arc::new(AtomicBool::new(false));
+                    ((view.clone(), stopped.clone()), handle, stopped)
+                },
+                |(view, stopped), _, _, cx| {
+                    state.borrow_mut().measured = true;
+                    view.update(cx, |_, cx| cx.notify());
+                    stopped.store(true, Ordering::Release);
+                },
+            );
+            drop(view);
+        });
+    }
+
+    #[test]
+    fn gpu_task_and_iteration_paths_record_frames() {
+        for kind in ["iter", "task", "batched_task"] {
+            gpu_benchmark(kind, true, |cx, state| {
+                let mut window = cx.add_empty_window();
+                let view = window.update(|window, cx| window.replace_root(cx, |_, _| Empty));
+                let render = |cx: &mut BenchAppContext| {
+                    state.borrow_mut().measured = true;
+                    view.update(cx, |_, cx| cx.notify());
+                };
+                match kind {
+                    "iter" => cx.bench_iter(render),
+                    "task" => cx.bench_task(|cx| {
+                        render(cx);
+                        Task::ready(())
+                    }),
+                    "batched_task" => cx.bench_batched_task(
+                        |cx| {
+                            state.borrow_mut().measured = false;
+                            view.update(cx, |_, cx| cx.notify());
+                        },
+                        |(), cx| {
+                            render(cx);
+                            Task::ready(())
+                        },
+                    ),
+                    _ => unreachable!(),
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn gpu_tracks_windows_opened_and_closed_inside_measurement() {
+        gpu_benchmark("gpu_window_lifetime", true, |cx, state| {
+            cx.bench_iter(|cx| {
+                state.borrow_mut().measured = true;
+                let handle = cx.update(|cx| {
+                    cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| Empty))
+                        .expect("open benchmark window")
+                });
+                cx.dispatch_pending_frames(|| true);
+                cx.update(|cx| {
+                    handle
+                        .update(cx, |_, window, _| window.remove_window())
+                        .expect("close benchmark window");
+                });
+            });
+        });
+    }
+
+    #[test]
+    fn gpu_summary_aggregates_optional_durations() {
+        let report = BenchReport::with_frame_budget_nanos(100);
+        assert!(report.gpu().is_none());
+        report.record_gpu_stats(GpuStats {
+            frames: vec![
+                crate::GpuFrameStats {
+                    gpu_duration: Some(Duration::from_nanos(100)),
+                    submit_to_complete: Some(Duration::from_nanos(150)),
+                },
+                crate::GpuFrameStats::default(),
+            ],
+        });
+        report.record_gpu_stats(GpuStats {
+            frames: vec![crate::GpuFrameStats {
+                gpu_duration: Some(Duration::from_nanos(200)),
+                ..Default::default()
+            }],
+        });
+        let summary = report.gpu().unwrap();
+        assert_eq!(summary.frames, 3);
+        assert_eq!(summary.frames_over_budget, 1);
+        let durations = summary.gpu_duration.unwrap();
+        assert_eq!(durations.count, 2);
+        assert_eq!(durations.p50, Duration::from_nanos(100));
+        assert_eq!(durations.p90, Duration::from_nanos(200));
+        assert_eq!(durations.p95, durations.p90);
+        assert_eq!(durations.p99, durations.p90);
+        assert_eq!(durations.max, durations.p90);
+        assert_eq!(summary.submit_to_complete.unwrap().count, 1);
+        let report = BenchReport::default();
+        report.record_gpu_stats(GpuStats {
+            frames: vec![crate::GpuFrameStats::default()],
+        });
+        let summary = report.gpu().unwrap();
+        assert!(summary.gpu_duration.is_none());
+        assert!(summary.submit_to_complete.is_none());
+    }
+
+    #[test]
+    fn gpu_report_prints_duration_histograms() {
+        let report = BenchReport::default();
+        report.record_gpu_stats(GpuStats {
+            frames: vec![crate::GpuFrameStats {
+                gpu_duration: Some(Duration::from_micros(500)),
+                submit_to_complete: Some(Duration::from_millis(2)),
+            }],
+        });
+        let mut output = Vec::new();
+        report.write_gpu(&mut output).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output,
+            "  GPU:
+    frames: 1
+    GPU-timed frames over budget: 0
+    GPU execution time:
+      samples: 1
+      mean: 0.500ms
+      p50: 0.500ms
+      p90: 0.500ms
+      p95: 0.500ms
+      p99: 0.500ms
+      max: 0.500ms
+    GPU submit-to-complete:
+      samples: 1
+      mean: 2.000ms
+      p50: 2.001ms
+      p90: 2.001ms
+      p95: 2.001ms
+      p99: 2.001ms
+      max: 2.001ms
+"
+        );
+    }
 
     /// Runs `benchmark` under a wall-time primary with a fake counter as the
     /// secondary metric and returns the per-iteration values the report

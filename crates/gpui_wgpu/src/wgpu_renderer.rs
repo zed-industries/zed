@@ -225,6 +225,11 @@ struct WgpuRendererCore {
     adapter_info: wgpu::AdapterInfo,
     target_format: wgpu::TextureFormat,
     max_texture_size: u32,
+    #[cfg(all(
+        not(target_family = "wasm"),
+        any(test, feature = "bench-support", feature = "test-support")
+    ))]
+    metrics: Option<crate::wgpu_metrics::GpuMetrics>,
 }
 
 /// GPU resources of a windowed renderer. A surface is only ever configured against the
@@ -1391,6 +1396,11 @@ impl WgpuRendererCore {
             adapter_info: context.adapter.get_info(),
             target_format,
             max_texture_size,
+            #[cfg(all(
+                not(target_family = "wasm"),
+                any(test, feature = "bench-support", feature = "test-support")
+            ))]
+            metrics: None,
         }
     }
 
@@ -1522,6 +1532,15 @@ impl WgpuRendererCore {
             })?;
         self.prepare_texture_bind_groups(scene);
 
+        #[cfg(all(
+            not(target_family = "wasm"),
+            any(test, feature = "bench-support", feature = "test-support")
+        ))]
+        let timestamps = if let Some(metrics) = &mut self.metrics {
+            metrics.acquire(&self.resources.device)?
+        } else {
+            None
+        };
         let mut encoder =
             self.resources()
                 .device
@@ -1532,6 +1551,13 @@ impl WgpuRendererCore {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main_pass"),
+                #[cfg(all(
+                    not(target_family = "wasm"),
+                    any(test, feature = "bench-support", feature = "test-support")
+                ))]
+                timestamp_writes: timestamps
+                    .as_ref()
+                    .map(|timestamps| timestamps.writes(true, true)),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: frame_view,
                     resolve_target: None,
@@ -1574,6 +1600,16 @@ impl WgpuRendererCore {
 
                         pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("main_pass_continued"),
+                            #[cfg(all(
+                                not(target_family = "wasm"),
+                                any(test, feature = "bench-support", feature = "test-support")
+                            ))]
+                            timestamp_writes: timestamps
+                                .as_ref()
+                                // wgpu resets queries per pass, not per encoder.
+                                // Rewriting only the end query preserves the first
+                                // start timestamp and leaves the final pass's end.
+                                .map(|timestamps| timestamps.writes(false, true)),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: frame_view,
                                 resolve_target: None,
@@ -1640,10 +1676,37 @@ impl WgpuRendererCore {
             }
         }
 
+        #[cfg(all(
+            not(target_family = "wasm"),
+            any(test, feature = "bench-support", feature = "test-support")
+        ))]
+        if let Some(timestamps) = &timestamps {
+            timestamps.resolve(&mut encoder);
+        }
+        let command_buffer = encoder.finish();
+        #[cfg(all(
+            not(target_family = "wasm"),
+            any(test, feature = "bench-support", feature = "test-support")
+        ))]
+        let started = self.metrics.as_ref().map(|_| std::time::Instant::now());
         let submission = self
             .resources()
             .queue
-            .submit(std::iter::once(encoder.finish()));
+            .submit(std::iter::once(command_buffer));
+        #[cfg(all(
+            not(target_family = "wasm"),
+            any(test, feature = "bench-support", feature = "test-support")
+        ))]
+        if let Some(metrics) = &mut self.metrics {
+            if let Some(started) = started {
+                metrics.submitted(
+                    &self.resources.queue,
+                    submission.clone(),
+                    started,
+                    timestamps,
+                );
+            }
+        }
         Ok(submission)
     }
 
@@ -2428,6 +2491,10 @@ impl WgpuHeadlessRenderer {
 
     fn render(&mut self, scene: &Scene, size: Size<DevicePixels>) -> anyhow::Result<()> {
         self.check_gpu_errors()?;
+        if let Some(metrics) = &mut self.core.metrics {
+            self.context.device.poll(wgpu::PollType::Poll)?;
+            metrics.collect(false)?;
+        }
         self.ensure_render_target(size)?;
         let view = self
             .render_target
@@ -2573,6 +2640,37 @@ impl gpui::PlatformHeadlessRenderer for WgpuHeadlessRenderer {
     fn sprite_atlas(&self) -> Arc<dyn gpui::PlatformAtlas> {
         self.core.atlas.clone()
     }
+
+    fn set_gpu_metrics_enabled(&mut self, enabled: bool) {
+        if enabled == self.core.metrics.is_some() {
+            return;
+        }
+        self.core.metrics = enabled.then(|| {
+            crate::wgpu_metrics::GpuMetrics::new(&self.context.device, &self.context.queue)
+        });
+    }
+
+    fn wait_for_gpu_idle(&mut self) -> anyhow::Result<()> {
+        // Queue writes are staged until submit, including setup atlas uploads.
+        // Flush them before waiting so no setup work reaches a measured submission.
+        self.core.atlas.before_frame();
+        self.context.queue.submit(std::iter::empty());
+        // Waiting for the device rather than one submission also covers atlas
+        // writes, image readbacks, and other renderers sharing the headless queue.
+        self.context.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(30)),
+        })?;
+        if let Some(metrics) = &mut self.core.metrics {
+            metrics.collect(true)?;
+        }
+        self.check_gpu_errors()
+    }
+
+    fn take_gpu_stats(&mut self) -> Option<gpui::GpuStats> {
+        let metrics = self.core.metrics.as_mut()?;
+        Some(metrics.drain())
+    }
 }
 
 fn instance_range(range: Range<usize>) -> Range<u32> {
@@ -2640,6 +2738,150 @@ impl RenderingParameters {
     }
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod gpu_metrics_tests {
+    use super::*;
+    use gpui::PlatformHeadlessRenderer;
+
+    fn size(width: i32, height: i32) -> Size<DevicePixels> {
+        Size {
+            width: DevicePixels(width),
+            height: DevicePixels(height),
+        }
+    }
+
+    fn quad_scene(count: usize) -> Scene {
+        let mut scene = Scene::default();
+        for _ in 0..count {
+            scene.insert_primitive(super::tests::solid_quad(0., 0., 16., 16., gpui::red()));
+        }
+        scene.finish();
+        scene
+    }
+
+    fn drain(renderer: &mut WgpuHeadlessRenderer) -> Result<gpui::GpuStats> {
+        renderer.wait_for_gpu_idle()?;
+        renderer
+            .take_gpu_stats()
+            .context("metrics should be enabled")
+    }
+
+    #[test]
+    fn frames_are_timed_and_disabled_by_default() -> Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        renderer.render_scene(&quad_scene(1), size(32, 32))?;
+        renderer.wait_for_gpu_idle()?;
+        assert!(renderer.take_gpu_stats().is_none());
+        renderer.set_gpu_metrics_enabled(true);
+        let initial = drain(&mut renderer)?;
+        assert!(initial.frames.is_empty());
+        let timestamps = renderer
+            .context
+            .device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY);
+        eprintln!(
+            "wgpu metrics adapter: {:?}, timestamps: {timestamps}",
+            renderer.context.adapter.get_info()
+        );
+        for count in 1..=20 {
+            renderer.render_scene(&quad_scene(count), size(32, 32))?;
+            renderer.set_gpu_metrics_enabled(true);
+        }
+        let stats = drain(&mut renderer)?;
+        assert_eq!(stats.frames.len(), 20);
+        for frame in &stats.frames {
+            assert_eq!(frame.gpu_duration.is_some(), timestamps);
+            assert!(frame.submit_to_complete.is_some());
+        }
+        let empty = drain(&mut renderer)?;
+        assert!(empty.frames.is_empty());
+        renderer.render_scene(&quad_scene(1), size(32, 32))?;
+        renderer.set_gpu_metrics_enabled(false);
+        renderer.render_scene(&quad_scene(1), size(32, 32))?;
+        renderer.wait_for_gpu_idle()?;
+        assert!(renderer.take_gpu_stats().is_none());
+        renderer.set_gpu_metrics_enabled(true);
+        assert!(drain(&mut renderer)?.frames.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn timestamps_span_multiple_path_passes() -> Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        renderer.set_gpu_metrics_enabled(true);
+        let mut path = gpui::Path::new(gpui::point(gpui::px(0.), gpui::px(0.)));
+        path.line_to(gpui::point(gpui::px(8.), gpui::px(0.)));
+        path.line_to(gpui::point(gpui::px(8.), gpui::px(8.)));
+        path.content_mask = gpui::ContentMask {
+            bounds: path.bounds,
+        };
+        path.color = gpui::red().into();
+        let mut scene = Scene::default();
+        let path = path.scale(1.);
+        for _ in 0..3 {
+            scene.push_layer(path.bounds);
+            scene.insert_primitive(path.clone());
+            scene.pop_layer();
+            let quad = super::tests::solid_quad(0., 0., 8., 8., gpui::red());
+            scene.push_layer(quad.bounds);
+            scene.insert_primitive(quad);
+            scene.pop_layer();
+        }
+        scene.finish();
+        assert_eq!(
+            scene
+                .batches()
+                .filter(|batch| matches!(batch, PrimitiveBatch::Paths(_)))
+                .count(),
+            3
+        );
+        renderer.render_scene(&scene, size(32, 32))?;
+        let stats = drain(&mut renderer)?;
+        let [frame] = stats.frames.as_slice() else {
+            anyhow::bail!("expected one frame")
+        };
+        assert!(frame.submit_to_complete.is_some());
+        assert_eq!(
+            frame.gpu_duration.is_some(),
+            renderer
+                .context
+                .device
+                .features()
+                .contains(wgpu::Features::TIMESTAMP_QUERY)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn shared_device_waits_for_both_renderers_and_untimed_frames() -> Result<()> {
+        let mut first = WgpuHeadlessRenderer::new()?;
+        let mut second = WgpuHeadlessRenderer::new()?;
+        first.set_gpu_metrics_enabled(true);
+        second.set_gpu_metrics_enabled(true);
+        second
+            .core
+            .metrics
+            .as_mut()
+            .context("metrics")?
+            .disable_timestamps_for_test();
+        for _ in 0..4 {
+            first.render_scene(&quad_scene(1), size(16, 16))?;
+            second.render_scene(&quad_scene(2), size(16, 16))?;
+        }
+        assert_eq!(drain(&mut first)?.frames.len(), 4);
+        let second = drain(&mut second)?;
+        assert_eq!(second.frames.len(), 4);
+        assert!(
+            second
+                .frames
+                .iter()
+                .all(|frame| frame.gpu_duration.is_none() && frame.submit_to_complete.is_some())
+        );
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2660,7 +2902,7 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    fn solid_quad(x: f32, y: f32, width: f32, height: f32, color: Hsla) -> Quad {
+    pub(super) fn solid_quad(x: f32, y: f32, width: f32, height: f32, color: Hsla) -> Quad {
         let bounds = Bounds {
             origin: Point {
                 x: x.into(),

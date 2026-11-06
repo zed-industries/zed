@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+cd "$(dirname "$0")/.."
+for target in aarch64-apple-darwin x86_64-unknown-linux-gnu; do
+    tree=$(cargo tree -p gpui_platform --features bench-support \
+        --target "$target" -e normal,build,dev,features)
+    if printf '%s\n' "$tree" | grep -F 'feature "test-support"'; then
+        echo "test-support leaked into the $target benchmark graph" >&2
+        exit 1
+    fi
+done
+
+echo "GPU benchmark feature isolation passed"

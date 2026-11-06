@@ -23,7 +23,7 @@ pub use async_context::*;
 #[cfg(feature = "bench-support")]
 pub use bench_context::{
     BenchAppContext, BenchMeasurement, BenchReport, BenchWindowContext, CountingAllocator,
-    MetricReport, bench_platform,
+    GpuDurationSummary, GpuSummary, MetricReport, bench_platform,
 };
 use collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque};
 pub use context::*;
@@ -927,6 +927,8 @@ pub struct App {
     pub(crate) quit_observers: SingleSubscriberSet<QuitHandler>,
     pub(crate) restart_observers: SingleSubscriberSet<Handler>,
     pub(crate) window_closed_observers: SingleSubscriberSet<WindowClosedHandler>,
+    #[cfg(feature = "bench-support")]
+    benchmark_gpu_metrics: Option<bench_context::BenchGpuMetrics>,
 
     /// Per-App element arena. This isolates element allocations between different
     /// App instances (important for tests where multiple Apps run concurrently).
@@ -1076,6 +1078,8 @@ impl App {
                 restart_path: None,
                 restart_arguments: Vec::new(),
                 window_closed_observers: SingleSubscriberSet::new(),
+                #[cfg(feature = "bench-support")]
+                benchmark_gpu_metrics: None,
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
@@ -1612,6 +1616,12 @@ impl App {
             let handle = WindowHandle::new(id);
             match Window::new(handle.into(), options, cx) {
                 Ok(mut window) => {
+                    // Initial paint can upload atlas data before the benchmark
+                    // harness gets its first platform frame callback.
+                    #[cfg(feature = "bench-support")]
+                    if let Some(metrics) = &cx.benchmark_gpu_metrics {
+                        metrics.window_opened(&mut window);
+                    }
                     cx.window_update_stack.push(id);
                     let root_view = build_root_view(&mut window, cx);
                     cx.window_update_stack.pop();

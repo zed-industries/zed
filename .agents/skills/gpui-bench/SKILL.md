@@ -270,11 +270,26 @@ On platforms without a headless renderer, GPUI still performs CPU-side window wo
 - invalidations per frame;
 - foreground task, action, and input-dispatch durations;
 - p50, p90, p95, p99, and maximum durations;
-- total and maximum frame-budget overruns.
+- total and maximum CPU frame-budget overruns;
+- GPU execution and submit-to-complete distributions and timed frames over budget.
 
 Frame-budget overruns are a synthetic missed-deadline proxy because the headless harness has no display vsync. Do not call them literal display-dropped frames. Supplement important results with app automation and an Instruments, xctrace, miniprof, or equivalent profile.
 
 The report may include Criterion warmup and calibration events even though Criterion's timing estimate uses its measurement phase. Read the current `BenchReport` implementation before interpreting its sample count or percentiles.
+
+### GPU measurements
+
+The `GPU:` section of `BenchReport` (also available through `BenchReport::gpu`) covers completed submissions from supported headless renderers. Setup work is drained before measurement; final GPU waits and report aggregation happen outside timing. Submission can still encounter GPU backpressure, including wgpu's bounded timestamp-query pool.
+
+- **Frames** counts submissions; **GPU-timed frames over budget** counts available execution times strictly above the configured budget.
+- **GPU execution time** comes from Metal `GPUStartTime`/`GPUEndTime`, or `TIMESTAMP_QUERY` on wgpu's headless device when supported. The wgpu timestamps span render passes, excluding earlier queue uploads and later query resolution. Histograms report samples, mean, p50/p90/p95/p99, and max. Missing timestamps mean unavailable, not zero.
+- **GPU submit-to-complete** is CPU-observed submission-to-completion latency. It includes queueing, pipelining, and callback delivery; do not interpret it as GPU execution time or a display deadline.
+
+GPU metrics default to on. Set `GPUI_BENCH_GPU_METRICS=off` to disable collection, or `BENCH_MEASUREMENT=wall-time` to disable both GPU and CPU counters. Run `./script/check-bench-features` to check benchmark feature isolation.
+
+GPU collection retains windows until the measured interval's final drain so frames from closed windows are not lost. For window-creation/destruction workloads, disable GPU metrics to avoid extending renderer lifetimes across iterations.
+
+GPU clocks ramp with load, so execution times are noisier than instruction counts. Use GPU timings as supporting evidence alongside CPU and frame metrics.
 
 ## Responsiveness benchmarks
 
