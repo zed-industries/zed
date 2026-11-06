@@ -10515,7 +10515,7 @@ mod tests {
                 panic!("patch");
             };
             assert!(render.fallback.is_none());
-            let buffer = render.files[0].hunks[0].buffer.clone();
+            let buffer = render.files[0].hunks[0].buffer(cx);
             source.meta = Some(acp_v2::Meta::from_iter([("revision".into(), 2.into())]));
             source.changes[0].meta = source.meta.clone();
             source.changes[0].mime_type = Some(acp_v2::MediaType::new("text/x-rust"));
@@ -10532,7 +10532,7 @@ mod tests {
                 panic!("patch");
             };
             assert_eq!(retained, &source);
-            assert_eq!(render.files[0].hunks[0].buffer, buffer);
+            assert_eq!(render.files[0].hunks[0].buffer(cx), buffer);
             assert!(
                 content.markdown().is_none(),
                 "no hidden Markdown copy of a rendered patch"
@@ -10552,7 +10552,7 @@ mod tests {
                 panic!("patch");
             };
             assert_eq!(retained, &source);
-            assert_ne!(render.files[0].hunks[0].buffer, buffer);
+            assert_ne!(render.files[0].hunks[0].buffer(cx), buffer);
         });
     }
 
