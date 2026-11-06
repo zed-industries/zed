@@ -100,14 +100,12 @@ mod test {
     };
 
     #[gpui::test]
-    async fn test_go_to_last_edit_location_sets_previous_context_mark(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_go_to_previous_change_sets_previous_context_mark(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.set_state("ˇone\ntwo\nthree\nfour", Mode::Normal);
         cx.simulate_keystrokes("j j i x escape g g");
         cx.assert_state("ˇone\ntwo\nxthree\nfour", Mode::Normal);
-        cx.dispatch_action(workspace::pane::GoToLastEditLocation);
+        cx.dispatch_action(editor::actions::GoToPreviousChange);
         cx.run_until_parked();
         cx.assert_state("one\ntwo\nxˇthree\nfour", Mode::Normal);
         cx.simulate_keystrokes("\' \'");

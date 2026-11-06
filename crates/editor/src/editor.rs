@@ -1674,7 +1674,7 @@ pub(crate) struct NavigationData {
     scroll_anchor: ScrollAnchor,
     scroll_top_row: u32,
     /// Reveals the location even if the cursor is already there, and records the one it leaves.
-    is_last_edit_jump: bool,
+    is_change_jump: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2671,7 +2671,6 @@ impl Editor {
                     editor.refresh_sticky_headers(&editor.snapshot(window, cx), cx);
                 }
                 EditorEvent::Edited { .. } => {
-                    editor.record_last_edit_location(cx);
                     let vim_mode = vim_mode_setting::VimModeSetting::try_get(cx)
                         .map(|vim_mode| vim_mode.0)
                         .unwrap_or(false);
@@ -8037,6 +8036,7 @@ impl Editor {
                 window,
                 cx,
             );
+            self.record_change_location(cx);
             cx.emit(EditorEvent::Edited { transaction_id });
             cx.emit(EditorEvent::TransactionUndone { transaction_id });
         }
@@ -8066,6 +8066,7 @@ impl Editor {
                 window,
                 cx,
             );
+            self.record_change_location(cx);
             cx.emit(EditorEvent::Edited { transaction_id });
         }
     }
@@ -8837,6 +8838,7 @@ impl Editor {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
 
+            self.record_change_location(cx);
             cx.emit(EditorEvent::Edited { transaction_id });
             Some(transaction_id)
         } else {

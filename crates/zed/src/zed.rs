@@ -2877,7 +2877,9 @@ mod tests {
     use assets::Assets;
     use collections::HashSet;
     use editor::{
-        DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
+        DisplayPoint, Editor, MultiBufferOffset, SelectionEffects,
+        actions::{GoToNextChange, GoToPreviousChange},
+        display_map::DisplayRow,
     };
     use extension::ExtensionHostProxy;
     use fs::FakeFs;
@@ -5640,7 +5642,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_go_to_last_edit_location(cx: &mut TestAppContext) {
+    async fn test_go_to_change_across_files(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         app_state
             .fs
@@ -5693,8 +5695,8 @@ mod tests {
             editor.update_in(cx, |editor, window, cx| editor.insert("x", window, cx));
         }
 
-        fn go_to_last_edit(cx: &mut VisualTestContext) {
-            cx.dispatch_action(pane::GoToLastEditLocation);
+        fn go_to_change(action: impl Action, cx: &mut VisualTestContext) {
+            cx.dispatch_action(action);
             cx.run_until_parked();
         }
 
@@ -5714,11 +5716,12 @@ mod tests {
         }
 
         let editor1 = open(&workspace, &file1, cx).await;
-        let editor1_location = (file1.clone(), DisplayPoint::new(DisplayRow(10), 1));
+        let editor1_location = (file1.clone(), DisplayPoint::new(DisplayRow(10), 2));
         insert_at_row(&editor1, 10, cx);
+        editor1.update_in(cx, |editor, window, cx| editor.insert("x", window, cx));
         move_to_row(&editor1, 15, cx);
         open(&workspace, &file2, cx).await;
-        go_to_last_edit(cx);
+        go_to_change(GoToPreviousChange, cx);
         assert_eq!(active_location(&workspace, cx), editor1_location);
 
         let scroll_y = |cx: &mut VisualTestContext| {
@@ -5728,7 +5731,7 @@ mod tests {
         editor1.update_in(cx, |editor, window, cx| {
             editor.set_scroll_position(point(0., edit_scroll_y + 5.), window, cx);
         });
-        go_to_last_edit(cx);
+        go_to_change(GoToPreviousChange, cx);
         assert_eq!(scroll_y(cx), edit_scroll_y);
 
         let editor2 = open(&workspace, &file2, cx).await;
@@ -5748,7 +5751,7 @@ mod tests {
             .unwrap();
         drop(editor2);
         cx.run_until_parked();
-        go_to_last_edit(cx);
+        go_to_change(GoToPreviousChange, cx);
         assert_eq!(
             active_location(&workspace, cx),
             (file2.clone(), DisplayPoint::new(DisplayRow(7), 1))
@@ -5764,36 +5767,42 @@ mod tests {
             window.focus(&pane.focus_handle(cx), cx);
         });
         cx.run_until_parked();
-        go_to_last_edit(cx);
+        go_to_change(GoToPreviousChange, cx);
         workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.active_pane(), &second_pane);
         });
 
-        let split_edit = workspace.read_with(cx, |workspace, _| workspace.last_edit_data());
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(file2.clone(), cx))
-            .await
-            .unwrap();
-        let multi_buffer = cx.new(|cx| {
-            let mut multi_buffer = MultiBuffer::new(language::Capability::ReadWrite);
-            multi_buffer.set_excerpts_for_path(
-                editor::PathKey::sorted(0),
-                buffer,
-                [language::Point::new(10, 0)..language::Point::new(15, 0)],
-                0,
-                cx,
+        let editor2_location = (file2.clone(), DisplayPoint::new(DisplayRow(7), 1));
+        go_to_change(GoToPreviousChange, cx);
+        assert_eq!(active_location(&workspace, cx), editor2_location);
+        go_to_change(GoToPreviousChange, cx);
+        assert_eq!(active_location(&workspace, cx), editor1_location);
+        go_to_change(GoToPreviousChange, cx);
+        assert_eq!(active_location(&workspace, cx), editor1_location);
+        go_to_change(GoToNextChange, cx);
+        assert_eq!(active_location(&workspace, cx), editor2_location);
+
+        cx.dispatch_action(workspace::NewFile);
+        cx.run_until_parked();
+        let untitled = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<Editor>(cx).unwrap()
+        });
+        untitled.update_in(cx, |editor, window, cx| editor.insert("x", window, cx));
+        open(&workspace, &file2, cx).await;
+        go_to_change(GoToPreviousChange, cx);
+        workspace.update(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item(cx).unwrap().item_id(),
+                untitled.entity_id()
             );
-            multi_buffer
         });
-        let multi_buffer_editor = workspace.update_in(cx, |workspace, window, cx| {
-            let editor = cx
-                .new(|cx| Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx));
-            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
-            editor
-        });
-        insert_at_row(&multi_buffer_editor, 1, cx);
-        let last_edit = workspace.read_with(cx, |workspace, _| workspace.last_edit_data());
-        assert!(Arc::ptr_eq(&last_edit.unwrap(), &split_edit.unwrap()));
+
+        untitled.update_in(cx, |editor, window, cx| editor.insert("x", window, cx));
+        go_to_change(GoToPreviousChange, cx);
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(DisplayRow(12), 1))
+        );
     }
 
     #[gpui::test]

@@ -289,8 +289,6 @@ actions!(
         GoBack,
         /// Navigates forward in history.
         GoForward,
-        /// Navigates to the location of the most recent edit, reopening the file if needed.
-        GoToLastEditLocation,
         /// Navigates back in the tag stack.
         GoToOlderTag,
         /// Navigates forward in the tag stack.

@@ -1204,31 +1204,18 @@ fn test_toggle_breadcrumb_does_not_change_settings(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_last_edit_location_ignores_non_user_edits(cx: &mut TestAppContext) {
+async fn test_change_history_records_only_user_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_file(path!("/file.rs"), "one\ntwo\nthree\n".into())
         .await;
-    let project = Project::test(fs.clone(), [path!("/").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                document_formatting_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-    );
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
     let cx = &mut VisualTestContext::from_window(*window, cx);
-
     let editor = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_abs_path(
@@ -1242,105 +1229,59 @@ async fn test_last_edit_location_ignores_non_user_edits(cx: &mut TestAppContext)
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
-    let fake_server = fake_servers.next().await.unwrap();
-    cx.run_until_parked();
-    let buffer = editor.read_with(cx, |editor, cx| {
-        editor.buffer().read(cx).as_singleton().unwrap()
-    });
-    let last_edit = |cx: &mut VisualTestContext| {
-        workspace.read_with(cx, |workspace, _| workspace.last_edit_data())
+    let last_change = |cx: &mut VisualTestContext| {
+        workspace.read_with(cx, |workspace, _| {
+            workspace
+                .last_change_location()
+                .map(|(_, _, data)| data.clone())
+        })
     };
-    let is_last_edit = |expected: &Arc<dyn Any + Send + Sync>, cx: &mut VisualTestContext| {
-        Arc::ptr_eq(&last_edit(cx).unwrap(), expected)
+    let move_to = |row: u32, cx: &mut VisualTestContext| {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([Point::new(row, 0)..Point::new(row, 0)])
+            });
+        });
     };
+
+    move_to(1, cx);
+    assert!(last_change(cx).is_none());
 
     editor.update_in(cx, |editor, window, cx| {
+        editor.insert("x", window, cx);
+        // Like Replace Next, which selects the next match right after replacing.
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
+            s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
         });
     });
-    assert!(last_edit(cx).is_none());
-
-    editor.update_in(cx, |editor, window, cx| editor.insert("x", window, cx));
-    let user_edit = last_edit(cx).unwrap();
+    let user_edit = last_change(cx).unwrap();
     let data = user_edit.downcast_ref::<NavigationData>().unwrap();
     assert_eq!(data.cursor_position, Point::new(1, 1));
 
+    move_to(2, cx);
+    let buffer = editor.read_with(cx, |editor, cx| {
+        editor.buffer().read(cx).as_singleton().unwrap()
+    });
     buffer.update(cx, |buffer, cx| {
         buffer.start_transaction();
         buffer.edit([(0..0, "agent ")], None, cx);
         buffer.end_transaction_with_source(language::BufferEditSource::Agent, cx);
     });
-    assert!(buffer.read_with(cx, |buffer, _| buffer.text().contains("agent ")));
-    assert!(is_last_edit(&user_edit, cx));
+    assert!(Arc::ptr_eq(&last_change(cx).unwrap(), &user_edit));
 
-    let replica = cx.new(|cx| {
-        Buffer::from_proto(
-            ReplicaId::new(1),
-            Capability::ReadWrite,
-            buffer.read(cx).to_proto(cx),
-            None,
+    editor.update_in(cx, |editor, window, cx| {
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                snippet: Some("snippet$0".to_string()),
+                ..Default::default()
+            },
+            window,
             cx,
         )
-        .unwrap()
     });
-    let replica_ops = Arc::new(Mutex::new(Vec::new()));
-    let _subscription = cx.update(|_, cx| {
-        let replica_ops = replica_ops.clone();
-        cx.subscribe(&replica, move |_, event, _| {
-            if let language::BufferEvent::Operation { operation, .. } = event {
-                replica_ops.lock().push(operation.clone());
-            }
-        })
-    });
-    replica.update(cx, |replica, cx| {
-        replica.edit([(0..0, "remote ")], None, cx)
-    });
-    cx.run_until_parked();
-    buffer.update(cx, |buffer, cx| {
-        buffer.apply_ops(replica_ops.lock().drain(..), cx)
-    });
-    assert!(buffer.read_with(cx, |buffer, _| buffer.text().contains("remote ")));
-    assert!(is_last_edit(&user_edit, cx));
-
-    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async move {
-        Ok(Some(vec![lsp::TextEdit::new(
-            lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-            "formatted ".to_string(),
-        )]))
-    });
-    editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(
-                SaveOptions {
-                    format: true,
-                    force_format: false,
-                    autosave: false,
-                },
-                project.clone(),
-                window,
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-    cx.run_until_parked();
-    assert!(buffer.read_with(cx, |buffer, _| buffer.text().contains("formatted ")));
-    assert!(is_last_edit(&user_edit, cx));
-
-    fs.save(
-        path!("/file.rs").as_ref(),
-        &"reloaded\n".into(),
-        text::LineEnding::Unix,
-    )
-    .await
-    .unwrap();
-    cx.run_until_parked();
-    assert_eq!(
-        buffer.read_with(cx, |buffer, _| buffer.text()),
-        "reloaded\n"
-    );
-    assert!(is_last_edit(&user_edit, cx));
+    let snippet_edit = last_change(cx).unwrap();
+    let data = snippet_edit.downcast_ref::<NavigationData>().unwrap();
+    assert_eq!(data.cursor_position, Point::new(2, 7));
 }
 
 #[gpui::test]
@@ -1475,7 +1416,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                         offset: Default::default(),
                     },
                     scroll_top_row: invalid_point.row,
-                    is_last_edit_jump: false,
+                    is_change_jump: false,
                 }),
                 window,
                 cx,
@@ -32286,7 +32227,7 @@ async fn test_jumps_unfold_enclosing_sections(cx: &mut TestAppContext) {
                                 offset: Default::default(),
                             },
                             scroll_top_row: 0,
-                            is_last_edit_jump: false,
+                            is_change_jump: false,
                         }),
                         window,
                         cx,

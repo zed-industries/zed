@@ -169,9 +169,11 @@ use crate::{
         SerializedAxis,
         model::{SerializedItem, SerializedPane, SerializedPaneGroup},
     },
+    searchable::Direction,
     security_modal::SecurityModal,
 };
 
+const MAX_CHANGE_HISTORY_LEN: usize = 1024;
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 pub const MAX_RECENT_SELECTIONS: usize = 20;
 
@@ -1569,9 +1571,10 @@ struct DispatchingKeystrokes {
 }
 
 #[derive(Clone)]
-struct LastEditLocation {
+struct ChangeLocation {
     item_id: EntityId,
-    project_path: ProjectPath,
+    /// `None` for an untitled buffer, which can only be found by its `item_id`.
+    project_path: Option<ProjectPath>,
     data: Arc<dyn Any + Send + Sync>,
 }
 
@@ -1628,7 +1631,8 @@ pub struct Workspace {
     _serialize_workspace_task: Option<Task<()>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
-    last_edit_location: Option<LastEditLocation>,
+    change_history: Vec<ChangeLocation>,
+    change_history_position: Option<usize>,
     bounds: Bounds<Pixels>,
     pub centered_layout: bool,
     bounds_save_task_queued: Option<Task<()>>,
@@ -2136,7 +2140,8 @@ impl Workspace {
             leader_updates_tx,
             _subscriptions: subscriptions,
             pane_history_timestamp,
-            last_edit_location: None,
+            change_history: Vec::new(),
+            change_history_position: None,
             workspace_actions: Default::default(),
             // This data will be incorrect, but it will be overwritten by the time it needs to be used.
             bounds: Default::default(),
@@ -3090,7 +3095,8 @@ impl Workspace {
     }
 
     pub fn clear_navigation_history(&mut self, window: &mut Window, cx: &mut Context<Workspace>) {
-        self.last_edit_location = None;
+        self.change_history.clear();
+        self.change_history_position = None;
         for pane in &self.panes {
             pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
         }
@@ -3424,30 +3430,66 @@ impl Workspace {
         self.navigate_history(pane, NavigationMode::GoingForward, window, cx)
     }
 
-    pub fn set_last_edit_location(
+    pub fn push_change_location(
         &mut self,
         item_id: EntityId,
-        project_path: ProjectPath,
+        project_path: Option<ProjectPath>,
         data: Arc<dyn Any + Send + Sync>,
+        replace_last: bool,
     ) {
-        self.last_edit_location = Some(LastEditLocation {
+        self.change_history_position = None;
+        if replace_last {
+            self.change_history.pop();
+        } else if self.change_history.len() >= MAX_CHANGE_HISTORY_LEN {
+            self.change_history.remove(0);
+        }
+        self.change_history.push(ChangeLocation {
             item_id,
             project_path,
             data,
         });
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn last_edit_data(&self) -> Option<Arc<dyn Any + Send + Sync>> {
-        Some(self.last_edit_location.as_ref()?.data.clone())
+    pub fn last_change_location(
+        &self,
+    ) -> Option<(EntityId, Option<&ProjectPath>, &Arc<dyn Any + Send + Sync>)> {
+        let last = self.change_history.last()?;
+        Some((last.item_id, last.project_path.as_ref(), &last.data))
     }
 
-    pub fn go_to_last_edit_location(
+    /// `is_at_change` tells whether the cursor is already on a change, which is then skipped
+    /// so that the jump is never a no-op.
+    pub fn go_to_change(
         &mut self,
+        direction: Direction,
+        is_at_change: impl Fn(EntityId, Option<&ProjectPath>, &Arc<dyn Any + Send + Sync>) -> bool,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
-        let Some(last_edit) = self.last_edit_location.clone() else {
+        let Some(last_index) = self.change_history.len().checked_sub(1) else {
+            return Task::ready(Ok(()));
+        };
+        let step = |index: usize| match direction {
+            Direction::Prev => index.saturating_sub(1),
+            Direction::Next => (index + 1).min(last_index),
+        };
+        let mut index = step(
+            self.change_history_position
+                .unwrap_or(self.change_history.len()),
+        );
+        while step(index) != index
+            && self.change_history.get(index).is_some_and(|location| {
+                is_at_change(
+                    location.item_id,
+                    location.project_path.as_ref(),
+                    &location.data,
+                )
+            })
+        {
+            index = step(index);
+        }
+        self.change_history_position = Some(index);
+        let Some(location) = self.change_history.get(index).cloned() else {
             return Task::ready(Ok(()));
         };
 
@@ -3456,13 +3498,14 @@ impl Workspace {
             .iter()
             .flat_map(|pane| pane.read(cx).items().map(move |item| (pane, item)))
             .filter(|(_, item)| {
-                item.item_id() == last_edit.item_id
-                    || (item.buffer_kind(cx) == ItemBufferKind::Singleton
-                        && item.project_path(cx).as_ref() == Some(&last_edit.project_path))
+                item.item_id() == location.item_id
+                    || (location.project_path.is_some()
+                        && item.buffer_kind(cx) == ItemBufferKind::Singleton
+                        && item.project_path(cx) == location.project_path)
             })
             .max_by_key(|(pane, item)| {
                 (
-                    item.item_id() == last_edit.item_id,
+                    item.item_id() == location.item_id,
                     *pane == &self.active_pane,
                 )
             })
@@ -3474,14 +3517,17 @@ impl Workspace {
                     pane.activate_item(index, true, true, window, cx);
                 }
             });
-            item.navigate(last_edit.data, window, cx);
+            item.navigate(location.data, window, cx);
             return Task::ready(Ok(()));
         }
 
-        let open_path = self.open_path(last_edit.project_path, None, true, window, cx);
+        let Some(project_path) = location.project_path else {
+            return Task::ready(Ok(()));
+        };
+        let open_path = self.open_path(project_path, None, true, window, cx);
         cx.spawn_in(window, async move |_, cx| {
             let item = open_path.await?;
-            cx.update(|window, cx| item.navigate(last_edit.data, window, cx))?;
+            cx.update(|window, cx| item.navigate(location.data, window, cx))?;
             Ok(())
         })
     }
@@ -8545,13 +8591,6 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ReopenClosedItem, window, cx| {
                     workspace.reopen_closed_item(window, cx).detach();
-                },
-            ))
-            .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &GoToLastEditLocation, window, cx| {
-                    workspace
-                        .go_to_last_edit_location(window, cx)
-                        .detach_and_log_err(cx);
                 },
             ))
             .on_action(cx.listener(
