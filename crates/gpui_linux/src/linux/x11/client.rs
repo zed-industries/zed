@@ -1866,7 +1866,23 @@ impl X11Client {
     pub(crate) fn clipboard_content_types(
         &self,
     ) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
-        Task::ready(Err(ClipboardReadError::Unavailable))
+        let state = self.0.borrow();
+        if state
+            .clipboard
+            .is_owner(clipboard::ClipboardKind::Clipboard)
+        {
+            return Task::ready(Ok(state
+                .clipboard_item
+                .as_ref()
+                .map_or(ClipboardContentTypes::empty(), ClipboardItem::content_types)));
+        }
+
+        let query = state.clipboard.content_types_query();
+        state
+            .common
+            .borrow()
+            .background_executor
+            .spawn(async move { query.run() })
     }
 
     pub(crate) fn active_window(&self) -> Option<AnyWindowHandle> {
