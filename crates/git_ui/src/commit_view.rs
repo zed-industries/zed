@@ -22,7 +22,7 @@ use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
     ReplicaId, Rope, TextBuffer,
 };
-use markdown::{Markdown, MarkdownElement};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::PathKey;
 use project::{
     Project, ProjectPath, WorktreeId,
@@ -878,7 +878,10 @@ impl CommitView {
             return None;
         }
 
-        let markdown_style = hover_markdown_style(window, cx);
+        let markdown_style = MarkdownStyle {
+            soft_break_as_hard_break: true,
+            ..hover_markdown_style(window, cx)
+        };
 
         let is_expanded = self.message_expanded;
 
