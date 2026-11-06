@@ -18033,6 +18033,7 @@ dependencies = [
  "shellexpand",
  "shlex 2.0.1",
  "task",
+ "tempfile",
  "terminal",
  "theme",
  "theme_settings",

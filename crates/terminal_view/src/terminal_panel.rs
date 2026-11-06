@@ -788,9 +788,13 @@ impl TerminalPanel {
             RevealTarget::Center => self
                 .workspace
                 .update(cx, |workspace, cx| {
-                    Self::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_task(spawn_task, cx)
-                    })
+                    Self::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, cx| project.create_terminal_task(spawn_task, cx),
+                        None,
+                    )
                 })
                 .unwrap_or_else(|e| Task::ready(Err(e))),
             RevealTarget::Dock => self.add_terminal_task(spawn_task, reveal, window, cx),
@@ -798,7 +802,7 @@ impl TerminalPanel {
     }
 
     /// Create a new Terminal in the current working directory or the user's home directory
-    fn new_terminal(
+    pub(crate) fn new_terminal(
         workspace: &mut Workspace,
         action: &workspace::NewTerminal,
         window: &mut Window,
@@ -817,13 +821,28 @@ impl TerminalPanel {
         if center_pane_has_focus && active_center_item_is_terminal {
             let working_directory = default_working_directory(workspace, cx);
             let local = action.local;
-            Self::add_center_terminal(workspace, window, cx, move |project, cx| {
-                if local {
-                    project.create_local_terminal_with(shell_override, cx)
-                } else {
-                    project.create_terminal_shell_with(working_directory, shell_override, cx)
-                }
-            })
+            // When the project is remote and the action isn't
+            // force-local, the override is dropped at spawn time — pass
+            // no profile tag so restore won't flip the terminal to local.
+            let is_remote = workspace.project().read(cx).is_via_remote_server();
+            let tag = if local || !is_remote {
+                profile_name
+            } else {
+                None
+            };
+            Self::add_center_terminal(
+                workspace,
+                window,
+                cx,
+                move |project, cx| {
+                    if local {
+                        project.create_local_terminal_with(shell_override, cx)
+                    } else {
+                        project.create_terminal_shell_with(working_directory, shell_override, cx)
+                    }
+                },
+                tag,
+            )
             .detach_and_log_err(cx);
             return;
         }
@@ -911,6 +930,7 @@ impl TerminalPanel {
             &mut Context<Project>,
         ) -> Task<Result<Entity<Terminal>>>
         + 'static,
+        profile_name: Option<String>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
         if !is_enabled_in_workspace(workspace, cx) {
             return Task::ready(Err(anyhow!(
@@ -923,14 +943,30 @@ impl TerminalPanel {
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = cx.new(|cx| {
-                    TerminalView::new(
+                    let mut view = TerminalView::new(
                         terminal.clone(),
                         workspace.weak_handle(),
                         workspace.database_id(),
                         workspace.project().downgrade(),
                         window,
                         cx,
-                    )
+                    );
+                    // Same tagging rule as add_terminal_shell_with: only
+                    // tag when the override actually applied. A remote
+                    // project drops the override in
+                    // create_terminal_shell_with, so the view must stay
+                    // untagged or restore would flip it to a local
+                    // terminal.
+                    let override_applies = profile_name.is_some()
+                        && !workspace
+                            .project()
+                            .read(cx)
+                            .is_via_remote_server();
+                    if override_applies {
+                        view.profile_name = profile_name;
+                        view.needs_serialize = true;
+                    }
+                    view
                 });
                 // Don't steal focus from an open modal (e.g. the command palette):
                 // a background terminal can finish starting up after the user has
@@ -1056,7 +1092,18 @@ impl TerminalPanel {
                             window,
                             cx,
                         );
-                        if profile_name.is_some() {
+                        // Only tag the view when the override actually
+                        // applies. A remote, non-force_local spawn drops
+                        // the override (create_terminal_shell_internal
+                        // warns); tagging anyway would make restore spawn
+                        // a local terminal where the user had a remote one.
+                        let override_applies = profile_name.is_some()
+                            && (force_local
+                                || !workspace
+                                    .project()
+                                    .read(cx)
+                                    .is_via_remote_server());
+                        if override_applies {
                             view.profile_name = profile_name;
                             view.needs_serialize = true;
                         }
@@ -2724,7 +2771,7 @@ mod tests {
                         .subscribe(cx)
                     });
                     gpui::Task::ready(Ok(terminal))
-                })
+                }, None)
             })
             .await
             .unwrap();
@@ -3214,9 +3261,13 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_shell(None, cx)
-                    })
+                    TerminalPanel::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, cx| project.create_terminal_shell(None, cx),
+                        None,
+                    )
                 })
             })
             .expect("Failed to update workspace")
@@ -3383,9 +3434,13 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_shell(None, cx)
-                    })
+                    TerminalPanel::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, cx| project.create_terminal_shell(None, cx),
+                        None,
+                    )
                 })
             })
             .expect("Failed to update workspace")
@@ -3476,9 +3531,13 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
-                        project.create_terminal_shell(None, cx)
-                    })
+                    TerminalPanel::add_center_terminal(
+                        workspace,
+                        window,
+                        cx,
+                        |project, cx| project.create_terminal_shell(None, cx),
+                        None,
+                    )
                 })
             })
             .expect("Failed to update workspace")
