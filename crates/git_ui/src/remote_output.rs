@@ -12,31 +12,37 @@ enum PullRequestLinkKind {
     View,
 }
 
-const PULL_REQUEST_HINTS: &[(&str, &str, PullRequestLinkKind)] = &[
+struct PullRequestHint {
+    needle: &'static str,
+    label: &'static str,
+    kind: PullRequestLinkKind,
+}
+
+const PULL_REQUEST_HINTS: &[PullRequestHint] = &[
     // GitHub: "Create a pull request for 'branch' on GitHub by visiting:"
-    (
-        "Create a pull request",
-        "Create Pull Request",
-        PullRequestLinkKind::Create,
-    ),
+    PullRequestHint {
+        needle: "Create a pull request",
+        label: "Create Pull Request",
+        kind: PullRequestLinkKind::Create,
+    },
     // Bitbucket: "Create pull request for branch:"
-    (
-        "Create pull request",
-        "Create Pull Request",
-        PullRequestLinkKind::Create,
-    ),
+    PullRequestHint {
+        needle: "Create pull request",
+        label: "Create Pull Request",
+        kind: PullRequestLinkKind::Create,
+    },
     // GitLab: "To create a merge request for branch, visit:"
-    (
-        "create a merge request",
-        "Create Merge Request",
-        PullRequestLinkKind::Create,
-    ),
+    PullRequestHint {
+        needle: "create a merge request",
+        label: "Create Merge Request",
+        kind: PullRequestLinkKind::Create,
+    },
     // GitLab: "View merge request for branch:"
-    (
-        "View merge request",
-        "View Merge Request",
-        PullRequestLinkKind::View,
-    ),
+    PullRequestHint {
+        needle: "View merge request",
+        label: "View Merge Request",
+        kind: PullRequestLinkKind::View,
+    },
 ];
 
 #[derive(Clone)]
@@ -82,10 +88,15 @@ pub struct SuccessMessage {
     pub style: SuccessStyle,
 }
 
-fn extract_pull_request_link(
-    output: &RemoteCommandOutput,
-) -> Option<(&'static str, String, PullRequestLinkKind)> {
-    let mut pending_hint: Option<(&'static str, PullRequestLinkKind)> = None;
+#[derive(Debug, PartialEq, Eq)]
+struct PullRequestLink {
+    label: &'static str,
+    url: String,
+    kind: PullRequestLinkKind,
+}
+
+fn extract_pull_request_link(output: &RemoteCommandOutput) -> Option<PullRequestLink> {
+    let mut pending_hint: Option<&'static PullRequestHint> = None;
 
     for line in output.stderr.lines() {
         let Some(remote_line) = line.trim_start().strip_prefix("remote:") else {
@@ -93,17 +104,21 @@ fn extract_pull_request_link(
             continue;
         };
 
-        if let Some((_, label, kind)) = PULL_REQUEST_HINTS
+        if let Some(hint) = PULL_REQUEST_HINTS
             .iter()
-            .find(|(hint, _, _)| remote_line.contains(hint))
+            .find(|hint| remote_line.contains(hint.needle))
         {
-            pending_hint = Some((label, *kind));
+            pending_hint = Some(hint);
         }
 
         if let Some(url) = extract_url(remote_line)
-            && let Some((label, kind)) = pending_hint
+            && let Some(hint) = pending_hint
         {
-            return Some((label, url, kind));
+            return Some(PullRequestLink {
+                label: hint.label,
+                url,
+                kind: hint.kind,
+            });
         }
     }
 
@@ -211,7 +226,9 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                     message: "Push: Everything is up-to-date".to_string(),
                     style: SuccessStyle::Toast,
                 }
-            } else if let Some((label, url, kind)) = extract_pull_request_link(&output) {
+            } else if let Some(PullRequestLink { label, url, kind }) =
+                extract_pull_request_link(&output)
+            {
                 let style = match kind {
                     PullRequestLinkKind::Create => SuccessStyle::CreatePullRequest {
                         label,
@@ -330,11 +347,11 @@ mod tests {
 
         assert_eq!(
             extract_pull_request_link(&output),
-            Some((
-                "Create Pull Request",
-                "https://bitbucket.example.com/projects/TEST/repos/test/pull-requests?create&sourceBranch=refs/heads/test".to_string(),
-                PullRequestLinkKind::Create,
-            ))
+            Some(PullRequestLink {
+                label: "Create Pull Request",
+                url: "https://bitbucket.example.com/projects/TEST/repos/test/pull-requests?create&sourceBranch=refs/heads/test".to_string(),
+                kind: PullRequestLinkKind::Create,
+            })
         );
     }
 
