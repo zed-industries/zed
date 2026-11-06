@@ -351,10 +351,10 @@ impl WindowsWindowInner {
         self.start_tracking_mouse(handle, TME_LEAVE);
         self.restore_cursor_after_hide();
 
-        let Some(mut func) = self.state.callbacks.input.take() else {
-            return Some(1);
-        };
+        let x = lparam.signed_loword() as f32;
+        let y = lparam.signed_hiword() as f32;
         let scale_factor = self.state.scale_factor.get();
+        let new_position = logical_point(x, y, scale_factor);
 
         let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
             flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
@@ -368,16 +368,27 @@ impl WindowsWindowInner {
             }
             _ => None,
         };
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
+
+        // Suppress synthetic WM_MOUSEMOVE events that Windows fires when a window
+        // repaints under the cursor (e.g. command palette opening). These are not
+        // real mouse movements and should not move the editor cursor or clobber
+        // selections. A real move always has a different position OR a button held.
+        if pressed_button.is_none() && new_position == self.state.mouse_position.get() {
+            return Some(1);
+        }
+        self.state.mouse_position.set(new_position);
+
+        let Some(mut func) = self.state.callbacks.input.take() else {
+            return Some(1);
+        };
+
         let input = PlatformInput::MouseMove(MouseMoveEvent {
-            position: logical_point(x, y, scale_factor),
+            position: new_position,
             pressed_button,
             modifiers: current_modifiers(),
         });
         let handled = !func(input).propagate;
         self.state.callbacks.input.set(Some(func));
-
         if handled { Some(0) } else { Some(1) }
     }
 
@@ -570,7 +581,7 @@ impl WindowsWindowInner {
             y: lparam.signed_hiword().into(),
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        let input = PlatformInput::Scroll(ScrollEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             delta: ScrollDelta::Lines(match modifiers.shift {
                 true => Point {
@@ -584,6 +595,7 @@ impl WindowsWindowInner {
             }),
             modifiers,
             touch_phase: TouchPhase::Moved,
+            source: ScrollSource::Pointer,
         });
         let handled = !func(input).propagate;
         self.state.callbacks.input.set(Some(func));
@@ -614,7 +626,7 @@ impl WindowsWindowInner {
             y: lparam.signed_hiword().into(),
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        let event = PlatformInput::Scroll(ScrollEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             delta: ScrollDelta::Lines(Point {
                 x: wheel_distance,
@@ -622,6 +634,7 @@ impl WindowsWindowInner {
             }),
             modifiers: current_modifiers(),
             touch_phase: TouchPhase::Moved,
+            source: ScrollSource::Pointer,
         });
         let handled = !func(event).propagate;
         self.state.callbacks.input.set(Some(func));
