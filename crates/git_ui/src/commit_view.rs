@@ -25,7 +25,7 @@ use language::{
     Buffer, BufferId, Capability, DiskState, File, LanguageRegistry, LineEnding,
     OffsetRangeExt as _, ReplicaId, Rope, TextBuffer,
 };
-use markdown::{Markdown, MarkdownElement};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::PathKey;
 use project::{
     Project, ProjectPath, WorktreeId,
@@ -210,6 +210,14 @@ impl CommitView {
         cx: &mut App,
     ) {
         Self::open_with_options(commit_sha, repo, workspace, options, false, window, cx)
+    }
+
+    pub(crate) fn commit_sha(&self) -> &SharedString {
+        &self.commit.sha
+    }
+
+    pub(crate) fn repository(&self) -> &Entity<Repository> {
+        &self.repository
     }
 
     fn open_with_options(
@@ -843,12 +851,10 @@ impl CommitView {
         let commit_sha = commit.sha.clone();
         let commit_date = time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
             .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
-        let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-        let date_string = time_format::format_localized_timestamp(
+        let date_string = crate::git_timestamp::format_git_timestamp(
             commit_date,
-            time::OffsetDateTime::now_utc(),
-            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
+            cx,
         );
 
         let avatar_size = rems_from_px(40_f32);
@@ -1000,7 +1006,10 @@ impl CommitView {
             return None;
         }
 
-        let markdown_style = hover_markdown_style(window, cx);
+        let markdown_style = MarkdownStyle {
+            soft_break_as_hard_break: true,
+            ..hover_markdown_style(window, cx)
+        };
 
         let is_expanded = self.message_expanded;
 

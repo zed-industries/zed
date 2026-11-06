@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use editor::{Editor, EditorMode, MultiBuffer, SizingBehavior};
-use futures::future::Shared;
+use futures::{StreamExt as _, future::Shared};
 use gpui::{
     App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, RetainAllImageCache,
     StatefulInteractiveElement, Task, prelude::*,
@@ -224,6 +224,7 @@ impl Cell {
                         id.clone(),
                         metadata.clone(),
                         text,
+                        languages.clone(),
                         notebook_language,
                         window,
                         cx,
@@ -382,6 +383,40 @@ pub trait RunnableCell: RenderableCell {
     fn run(&mut self, window: &mut Window, cx: &mut Context<Self>) -> ();
 }
 
+/// Creates a cell's buffer along with a task that keeps its injections resolved.
+/// This task is subscribed to `LanguageRegistry`'s changes, so that the cell is re-parsed
+/// whenever loaded languages change. This is a simpler version of what
+/// `LspStore::maintain_buffer_languages` does for other project buffers, but this way does not
+/// require registering each cell as a project buffer.
+fn new_cell_buffer(
+    source: &str,
+    languages: Arc<LanguageRegistry>,
+    cx: &mut App,
+) -> (Entity<Buffer>, Task<()>) {
+    let buffer = cx.new(|cx| {
+        let buffer = Buffer::local(source, cx);
+        buffer.set_language_registry(languages.clone());
+        buffer
+    });
+
+    let weak_buffer = buffer.downgrade();
+    let mut registry_changes = languages.subscribe();
+    let reparse_task = cx.spawn(async move |cx| {
+        while registry_changes.next().await.is_some() {
+            let updated = weak_buffer.update(cx, |buffer, cx| {
+                if buffer.contains_unknown_injections() {
+                    buffer.reparse(cx, false);
+                }
+            });
+            if updated.is_err() {
+                break;
+            }
+        }
+    });
+
+    (buffer, reparse_task)
+}
+
 pub struct MarkdownCell {
     id: CellId,
     metadata: CellMetadata,
@@ -393,6 +428,7 @@ pub struct MarkdownCell {
     selected: bool,
     cell_position: Option<CellPosition>,
     _editor_subscription: gpui::Subscription,
+    _reparse_task: Task<()>,
 }
 
 impl EventEmitter<MarkdownCellEvent> for MarkdownCell {}
@@ -406,7 +442,7 @@ impl MarkdownCell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let buffer = cx.new(|cx| Buffer::local(source.clone(), cx));
+        let (buffer, reparse_task) = new_cell_buffer(&source, languages.clone(), cx);
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
         let markdown_language = languages.language_for_name("Markdown");
@@ -465,6 +501,7 @@ impl MarkdownCell {
             selected: false,
             cell_position: None,
             _editor_subscription: editor_subscription,
+            _reparse_task: reparse_task,
         }
     }
 
@@ -655,6 +692,7 @@ pub struct CodeCell {
     selected: bool,
     cell_position: Option<CellPosition>,
     _language_task: Task<()>,
+    _reparse_task: Task<()>,
     execution_start_time: Option<Instant>,
     execution_duration: Option<Duration>,
     is_executing: bool,
@@ -690,11 +728,12 @@ impl CodeCell {
         id: CellId,
         metadata: CellMetadata,
         source: String,
+        languages: Arc<LanguageRegistry>,
         notebook_language: Shared<Task<Option<Arc<Language>>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let buffer = cx.new(|cx| Buffer::local(source.clone(), cx));
+        let (buffer, reparse_task) = new_cell_buffer(&source, languages, cx);
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
         let editor = cx.new(|cx| {
@@ -740,6 +779,7 @@ impl CodeCell {
             execution_duration: None,
             is_executing: false,
             _language_task: language_task,
+            _reparse_task: reparse_task,
         }
     }
 
@@ -1319,5 +1359,196 @@ impl Render for RawCell {
             )
             // TODO: Move base cell render into trait impl so we don't have to repeat this
             .children(self.cell_position_spacer(false, window, cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use collections::HashSet;
+    use futures::FutureExt as _;
+    use gpui::TestAppContext;
+    use indoc::indoc;
+    use language::LanguageConfig;
+    use settings::SettingsStore;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+    }
+
+    /// Returns markdown-inline language for immediate registration into a buffer's language repo.
+    fn markdown_inline_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Markdown-Inline".into(),
+                hidden: true,
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_md::INLINE_LANGUAGE.into()),
+        )
+        .with_highlights_query("(emphasis) @emphasis")
+        .unwrap()
+    }
+
+    /// Registers Markdown-Inline the way the app does: available by name, but
+    /// only loaded once a buffer's injection first asks for it.
+    fn register_markdown_inline_lazily(languages: &LanguageRegistry) {
+        languages.register_native_grammars([("markdown-inline", tree_sitter_md::INLINE_LANGUAGE)]);
+        languages.register_test_language(LanguageConfig {
+            name: "Markdown-Inline".into(),
+            grammar: Some("markdown-inline".into()),
+            hidden: true,
+            ..LanguageConfig::default()
+        });
+    }
+
+    fn assert_layer_languages(editor: &Entity<Editor>, expected_langs: &[&str], cx: &App) {
+        let buffer = editor.read(cx).buffer().read(cx).as_singleton().unwrap();
+        let snapshot = buffer.read(cx).snapshot();
+        let actual = snapshot
+            .syntax_layers_languages()
+            .map(|language| language.name().to_string())
+            .collect::<HashSet<String>>();
+
+        let expected = expected_langs
+            .iter()
+            .map(|name| name.to_string())
+            .collect::<HashSet<String>>();
+        assert_eq!(
+            expected, actual,
+            "cell languages mismatch: expected {expected:?}, got {actual:?}"
+        )
+    }
+
+    fn run_cell_language_test(cx: &mut TestAppContext, cell_source: &str, expected_langs: &[&str]) {
+        init_test(cx);
+
+        let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+
+        languages.add(languages::json_lang());
+        languages.add(languages::rust_lang());
+        languages.add(languages::markdown_lang());
+        languages.add(Arc::new(markdown_inline_lang()));
+
+        let metadata: CellMetadata = serde_json::from_str("{}").unwrap();
+
+        let cx = cx.add_empty_window();
+        let cell = cx.update(|window, cx| {
+            cx.new(|cx| {
+                MarkdownCell::new(
+                    uuid::Uuid::new_v4().into(),
+                    metadata,
+                    cell_source.to_string(),
+                    languages,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        cell.read_with(cx, |cell, cx| {
+            assert_layer_languages(&cell.editor, expected_langs, cx)
+        });
+    }
+
+    #[gpui::test]
+    fn test_markdown_cell_parses_injections(cx: &mut TestAppContext) {
+        run_cell_language_test(cx, "Hello, World!", &["Markdown", "Markdown-Inline"]);
+        run_cell_language_test(
+            cx,
+            indoc! {r#"
+                Some *emphasized* text
+                ```json
+                { "foo": "bar" }
+                ```
+            "#},
+            &["Markdown", "Markdown-Inline", "JSON"],
+        );
+        run_cell_language_test(
+            cx,
+            indoc! {r#"
+                ```json
+                [ "a", "b", { "foo": "bar" }]
+                ```
+                ```rs
+                fn main() {
+                    println!("Hello, World!");
+                }
+                ```
+            "#},
+            &["Markdown", "JSON", "Rust"],
+        );
+    }
+
+    #[gpui::test]
+    fn test_markdown_cell_parses_lazily_loaded_injections(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+        languages.add(languages::markdown_lang());
+        register_markdown_inline_lazily(&languages);
+
+        let metadata: CellMetadata = serde_json::from_str("{}").unwrap();
+
+        let cx = cx.add_empty_window();
+        let cell = cx.update(|window, cx| {
+            cx.new(|cx| {
+                MarkdownCell::new(
+                    uuid::Uuid::new_v4().into(),
+                    metadata,
+                    "Some *emphasized* text".to_string(),
+                    languages,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        cell.read_with(cx, |cell, cx| {
+            assert_layer_languages(&cell.editor, &["Markdown", "Markdown-Inline"], cx)
+        });
+    }
+
+    #[gpui::test]
+    fn test_code_cell_parses_lazily_loaded_injections(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+        languages.add(languages::markdown_lang());
+        register_markdown_inline_lazily(&languages);
+
+        // Any kernel language can inject others; Markdown is the injecting
+        // language available to these tests.
+        let notebook_language = Task::ready(Some(languages::markdown_lang())).shared();
+        let metadata: CellMetadata = serde_json::from_str("{}").unwrap();
+
+        let cx = cx.add_empty_window();
+        let cell = cx.update(|window, cx| {
+            cx.new(|cx| {
+                CodeCell::new(
+                    CellSource::None,
+                    uuid::Uuid::new_v4().into(),
+                    metadata,
+                    "Some *emphasized* text".to_string(),
+                    languages,
+                    notebook_language,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        cell.read_with(cx, |cell, cx| {
+            assert_layer_languages(&cell.editor, &["Markdown", "Markdown-Inline"], cx)
+        });
     }
 }

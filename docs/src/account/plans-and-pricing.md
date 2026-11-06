@@ -11,19 +11,19 @@ Zed works without AI features or a subscription. No [authentication](../authenti
 
 ## Plans {#plans}
 
-|                                                          | Free    | Pro       | Student   | Business  |
-| -------------------------------------------------------- | ------- | --------- | --------- | --------- |
-| Zed-hosted AI models                                     | —       | ✓         | ✓         | ✓         |
-| [AI via own API keys](../ai/use-api-access.md)           | ✓       | ✓         | ✓         | ✓         |
-| [External Agents](../ai/external-agents.md)              | ✓       | ✓         | ✓         | ✓         |
-| Edit Predictions                                         | Limited | Unlimited | Unlimited | Unlimited |
-| [Org-wide admin controls](../business/admin-controls.md) | —       | —         | —         | ✓         |
-| Roles & permissions                                      | —       | —         | —         | ✓         |
-| Consolidated billing                                     | —       | —         | —         | ✓         |
+|                                                          | Free | Pro       | Student   | Business  |
+| -------------------------------------------------------- | ---- | --------- | --------- | --------- |
+| Zed-hosted AI models                                     | —    | ✓         | ✓         | ✓         |
+| [AI via own API keys](../ai/use-api-access.md)           | ✓    | ✓         | ✓         | ✓         |
+| [External Agents](../ai/external-agents.md)              | ✓    | ✓         | ✓         | ✓         |
+| Edit Predictions                                         | —    | Unlimited | Unlimited | Unlimited |
+| [Org-wide admin controls](../business/admin-controls.md) | —    | —         | —         | ✓         |
+| Roles & permissions                                      | —    | —         | —         | ✓         |
+| Consolidated billing                                     | —    | —         | —         | ✓         |
 
 ### Zed Free {#free}
 
-Zed is free to use. You can configure AI agents with your own API keys via [Use API Access](../ai/use-api-access.md). [Edit Predictions](../ai/edit-prediction.md) are available on a limited basis. Zed's hosted models require a Pro subscription.
+Zed is free to use. You can configure AI agents with your own API keys via [Use API Access](../ai/use-api-access.md). Zed's hosted models and [Edit Predictions](../ai/edit-prediction.md) require a Pro subscription. You can still use edit predictions from [other providers](../ai/edit-prediction.md#other-providers), like GitHub Copilot or a local model.
 
 ### Zed Pro {#pro}
 

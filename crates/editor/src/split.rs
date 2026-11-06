@@ -495,7 +495,7 @@ impl RenderOnce for DiffStyleControls {
                                     .text_ui_sm(cx)
                                     .text_color(Color::Muted.color(cx))
                                     .children(render_modifiers(
-                                        &gpui::Modifiers::secondary_key(),
+                                        &gpui::Modifiers::secondary_key(cx),
                                         PlatformStyle::platform(),
                                         None,
                                         Some(TextSize::Small.rems(cx).into()),
@@ -508,7 +508,7 @@ impl RenderOnce for DiffStyleControls {
                     .on_click({
                         let splittable_editor = self.splittable_editor.clone();
                         move |_, window, cx| {
-                            if window.modifiers().secondary() {
+                            if window.modifiers().secondary(cx) {
                                 window.dispatch_action(
                                     OpenSettingsAt {
                                         path: "minimum_split_diff_width".to_string(),
@@ -627,7 +627,6 @@ impl SplittableEditor {
             editor.disable_runnables();
             editor.disable_code_lens(cx);
             editor.disable_inline_diagnostics();
-            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor.set_diff_hunk_renderer(Some(Arc::new(DefaultDiffHunkRenderer)), cx);
             editor
@@ -728,6 +727,7 @@ impl SplittableEditor {
         });
 
         let splittable = cx.weak_entity();
+        let enable_mouse_wheel_zoom = self.rhs_editor.read(cx).enable_mouse_wheel_zoom;
         let rhs_editor = self.rhs_editor.downgrade();
         let lhs_editor = cx.new(|cx| {
             let mut editor =
@@ -746,8 +746,12 @@ impl SplittableEditor {
             editor.disable_lsp_data();
             editor.disable_runnables();
             editor.disable_diagnostics(cx);
-            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
+
+            if !enable_mouse_wheel_zoom {
+                editor.disable_mouse_wheel_zoom();
+            }
+
             editor
         });
 
@@ -782,6 +786,12 @@ impl SplittableEditor {
                     }
                 }
 
+                EditorEvent::BufferFoldToggled { .. } => {
+                    this.rhs_editor.update(cx, |editor, cx| {
+                        editor.inlay_hint_visibility_changed(cx);
+                    });
+                    cx.emit(event.clone());
+                }
                 EditorEvent::OpenExcerptsRequested {
                     selections_by_buffer,
                     split,
@@ -859,6 +869,9 @@ impl SplittableEditor {
 
         rhs_display_map.update(cx, |dm, cx| {
             dm.set_companion(Some((lhs_display_map, companion.clone())), cx);
+        });
+        self.rhs_editor.update(cx, |editor, cx| {
+            editor.inlay_hint_visibility_changed(cx);
         });
 
         let lhs = self.lhs.as_ref().unwrap();
@@ -1175,6 +1188,7 @@ impl SplittableEditor {
             rhs.display_map.update(cx, |dm, cx| {
                 dm.set_companion(None, cx);
             });
+            rhs.inlay_hint_visibility_changed(cx);
         });
         cx.notify();
     }
@@ -2330,7 +2344,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use project::Project;
     use rand::rngs::StdRng;
-    use settings::{DiffViewStyle, SettingsStore};
+    use settings::{DiffViewStyle, Settings as _, SettingsStore};
     use ui::{VisualContext as _, div, px};
     use util::rel_path::rel_path;
     use workspace::{Item, MultiWorkspace};
@@ -2688,6 +2702,93 @@ mod tests {
                 editor.check_invariants(quiesced, cx);
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_lhs_mouse_wheel_zoom_respects_rhs_configuration(cx: &mut gpui::TestAppContext) {
+        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.minimum_split_diff_width = Some(0.);
+                });
+            });
+        });
+
+        let set_mouse_wheel_zoom = |enabled: bool, cx: &mut VisualTestContext| {
+            cx.update(|_, cx| {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.editor.mouse_wheel_zoom = Some(enabled);
+                    });
+                });
+            });
+        };
+
+        let buffer_font_size = |cx: &VisualTestContext| {
+            cx.read(|cx| theme_settings::ThemeSettings::get_global(cx).buffer_font_size(cx))
+        };
+
+        let zoom_scroll =
+            |position: gpui::Point<Pixels>, lines: f32, cx: &mut VisualTestContext| {
+                let modifiers = cx.read(|cx| gpui::Modifiers::secondary_key(cx));
+                cx.simulate_event(gpui::ScrollEvent {
+                    position,
+                    delta: gpui::ScrollDelta::Lines(gpui::point(0., lines)),
+                    modifiers,
+                    ..Default::default()
+                });
+            };
+
+        let lhs_position = |cx: &VisualTestContext| {
+            editor.read_with(cx, |editor, cx| {
+                editor
+                    .lhs_editor()
+                    .expect("split editor should have a LHS editor")
+                    .read(cx)
+                    .last_bounds()
+                    .expect("LHS editor should have been rendered")
+                    .center()
+            })
+        };
+
+        let workspace = editor.read_with(cx, |editor, _| editor.workspace.clone());
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.add_item_to_center(Box::new(editor.clone()), window, cx);
+            })
+            .expect("workspace should exist");
+        cx.run_until_parked();
+        set_mouse_wheel_zoom(true, cx);
+        let position = lhs_position(cx);
+        let initial_font_size = buffer_font_size(cx);
+        zoom_scroll(position, 1., cx);
+        assert!(buffer_font_size(cx) > initial_font_size);
+        zoom_scroll(position, -1., cx);
+        assert_eq!(buffer_font_size(cx), initial_font_size);
+        zoom_scroll(position, -1., cx);
+        assert!(buffer_font_size(cx) < initial_font_size);
+
+        set_mouse_wheel_zoom(false, cx);
+        let initial_font_size = buffer_font_size(cx);
+        zoom_scroll(position, 1., cx);
+        assert_eq!(buffer_font_size(cx), initial_font_size);
+
+        set_mouse_wheel_zoom(true, cx);
+        editor.update_in(cx, |editor, window, cx| {
+            // Recreate the LHS editor to exercise inheritance rather than
+            // disabling it directly.
+            editor.unsplit(window, cx);
+            editor.update_editors(cx, |editor, _| editor.disable_mouse_wheel_zoom());
+            editor.split(window, cx);
+        });
+
+        cx.run_until_parked();
+        let position = lhs_position(cx);
+        let initial_font_size = buffer_font_size(cx);
+        zoom_scroll(position, 1., cx);
+        assert_eq!(buffer_font_size(cx), initial_font_size);
     }
 
     #[gpui::test]

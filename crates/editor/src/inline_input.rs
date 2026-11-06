@@ -66,7 +66,7 @@ impl InlineInputPreview {
 
 struct RenderedPreview {
     text: SharedString,
-    highlights: Vec<(Range<usize>, HighlightId)>,
+    highlights: Arc<[(Range<usize>, HighlightId)]>,
     height_in_lines: u32,
     is_error: bool,
 }
@@ -80,9 +80,11 @@ impl RenderedPreview {
         let (text, height_in_lines) = preview.display_text(max_lines);
         let highlights = match (preview, language) {
             (InlineInputPreview::Text(_), Some(language)) => {
-                language.highlight_text(&Rope::from(text.as_str()), 0..text.len())
+                language
+                    .highlight_text_resolved(text.as_str(), 0..text.len())
+                    .runs
             }
-            _ => Vec::new(),
+            _ => Arc::default(),
         };
         Self {
             text: SharedString::from(text),

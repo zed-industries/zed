@@ -104,8 +104,8 @@ suffix, the rename editor opens automatically so you can adjust the name.
 
 ### Duplicate
 
-{#action project_panel::Duplicate} ({#kb project_panel::Duplicate}) copies and
-pastes the selected entries in one step.
+{#action project_panel::Duplicate} ({#kb project_panel::Duplicate}) duplicates
+the selected entries without changing the clipboard.
 
 ### Trash and Delete
 
@@ -180,6 +180,10 @@ The `project_panel.sort_order` setting controls name comparison:
 - `"upper"` — uppercase names grouped first, then lowercase.
 - `"lower"` — lowercase names grouped first, then uppercase.
 - `"unicode"` — raw Unicode codepoint order with no case folding.
+- `"extension"` — files grouped by extension (case-insensitive, last suffix
+  only), with extensionless files, including dotfiles such as `.gitignore`,
+  first. Dotfiles with a further suffix, such as `.config.json`, keep that
+  extension. Files with the same extension are sorted by name.
 
 ## Other Actions
 
