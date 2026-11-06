@@ -2353,6 +2353,17 @@ impl Terminal {
         self.keyboard_input_sent
     }
 
+    /// The working directory the terminal was spawned with, recorded
+    /// synchronously at construction (unlike [`Self::working_directory`],
+    /// which reads the child process's live cwd and needs the PTY event
+    /// loop to make progress).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn initial_working_directory(&self) -> Option<&Path> {
+        self.cwd_history
+            .first()
+            .map(|entry| entry.working_directory.as_ref())
+    }
+
     pub fn toggle_vi_mode(&mut self) {
         self.events.push_back(InternalEvent::ToggleViMode);
     }

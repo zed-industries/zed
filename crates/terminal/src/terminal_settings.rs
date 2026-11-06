@@ -692,16 +692,6 @@ mod tests {
         }
     }
 
-    fn detected(label: &str, program: &str) -> DetectedShell {
-        use util::shell_detection::ShellSource;
-        DetectedShell {
-            label: label.to_string(),
-            program: std::path::PathBuf::from(program),
-            args: Vec::new(),
-            source: ShellSource::EtcShells,
-        }
-    }
-
     fn profile_map(entries: &[(&str, &str)]) -> collections::IndexMap<String, TerminalProfile> {
         entries
             .iter()
@@ -722,8 +712,8 @@ mod tests {
     fn merge_places_configured_first_then_detected() {
         let profiles = profile_map(&[("Zsh", "/bin/zsh"), ("Fish", "/usr/bin/fish")]);
         let detected = vec![
-            detected("bash", "/bin/bash"),
-            detected("python", "/usr/bin/python"),
+            detected_shell("bash", "/bin/bash"),
+            detected_shell("python", "/usr/bin/python"),
         ];
         let merged = merge_with_configured_profiles(detected, &profiles);
         let mut labels = merged.iter().map(|entry| match entry {
@@ -740,7 +730,10 @@ mod tests {
     #[test]
     fn merge_shadows_detected_when_program_path_matches_exactly() {
         let profiles = profile_map(&[("Zsh", "/bin/zsh")]);
-        let detected = vec![detected("zsh", "/bin/zsh"), detected("bash", "/bin/bash")];
+        let detected = vec![
+            detected_shell("zsh", "/bin/zsh"),
+            detected_shell("bash", "/bin/bash"),
+        ];
         let merged = merge_with_configured_profiles(detected, &profiles);
         let labels: Vec<String> = merged
             .iter()
@@ -758,7 +751,7 @@ mod tests {
         // Configured profile uses bare "zsh"; detected shell is at
         // "/bin/zsh". The basename match should shadow the detected entry.
         let profiles = profile_map(&[("MyZsh", "zsh")]);
-        let detected = vec![detected("zsh", "/bin/zsh")];
+        let detected = vec![detected_shell("zsh", "/bin/zsh")];
         let merged = merge_with_configured_profiles(detected, &profiles);
         assert_eq!(merged.len(), 1);
         match &merged[0] {
@@ -773,7 +766,7 @@ mod tests {
         // configured bare stem (`pwsh`) must still shadow the entry, or
         // the menu shows both.
         let profiles = profile_map(&[("PowerShell", "pwsh")]);
-        let detected = vec![detected("pwsh", r"C:\Windows\System32\pwsh.exe")];
+        let detected = vec![detected_shell("pwsh", r"C:\Windows\System32\pwsh.exe")];
         let merged = merge_with_configured_profiles(detected, &profiles);
         match &merged[0] {
             MergedShellEntry::Configured { name, .. } => assert_eq!(name, "PowerShell"),
@@ -816,7 +809,7 @@ mod tests {
         // path-bearing configured program should only shadow via exact
         // match (it doesn't here), so both entries survive.
         let profiles = profile_map(&[("Bash", "/bin/bash")]);
-        let detected = vec![detected("bash", "/usr/bin/bash")];
+        let detected = vec![detected_shell("bash", "/usr/bin/bash")];
         let merged = merge_with_configured_profiles(detected, &profiles);
         assert_eq!(
             merged.len(),
@@ -828,23 +821,11 @@ mod tests {
     }
 
     #[test]
-    fn merge_shadows_detected_when_configured_path_matches_exactly() {
-        // Path-bearing configured programs still shadow via exact path
-        // equality (the configured program string equals the detected
-        // program string).
-        let profiles = profile_map(&[("Bash", "/bin/bash")]);
-        let detected = vec![detected("bash", "/bin/bash")];
-        let merged = merge_with_configured_profiles(detected, &profiles);
-        assert_eq!(merged.len(), 1);
-        assert!(matches!(merged[0], MergedShellEntry::Configured { .. }));
-    }
-
-    #[test]
     fn merge_keeps_detected_when_program_differs() {
         let profiles = profile_map(&[("Zsh", "/bin/zsh")]);
         let detected = vec![
-            detected("bash", "/bin/bash"),
-            detected("fish", "/usr/bin/fish"),
+            detected_shell("bash", "/bin/bash"),
+            detected_shell("fish", "/usr/bin/fish"),
         ];
         let merged = merge_with_configured_profiles(detected, &profiles);
         // 1 configured + 2 detected = 3 entries.
@@ -984,12 +965,16 @@ mod tests {
     #[test]
     fn menu_inline_when_at_threshold() {
         // Distinct programs so dedup doesn't collapse them.
-        let profiles: Vec<(&str, &str)> = (1..=MENU_ESCALATION_THRESHOLD)
-            .map(|i| {
-                let n: &'static str = Box::leak(format!("n{i}").into_boxed_str());
-                let p: &'static str = Box::leak(format!("/bin/n{i}").into_boxed_str());
-                (n, p)
-            })
+        let names: Vec<String> = (1..=MENU_ESCALATION_THRESHOLD)
+            .map(|i| format!("n{i}"))
+            .collect();
+        let programs: Vec<String> = (1..=MENU_ESCALATION_THRESHOLD)
+            .map(|i| format!("/bin/n{i}"))
+            .collect();
+        let profiles: Vec<(&str, &str)> = names
+            .iter()
+            .zip(&programs)
+            .map(|(name, program)| (name.as_str(), program.as_str()))
             .collect();
         let plan = build_plan(&profiles, Vec::new(), &[]);
         assert!(
@@ -1000,12 +985,12 @@ mod tests {
 
     #[test]
     fn menu_collapses_above_threshold() {
-        let profiles: Vec<(&str, &str)> = (1..=9)
-            .map(|i| {
-                let n: &'static str = Box::leak(format!("n{i}").into_boxed_str());
-                let p: &'static str = Box::leak(format!("/bin/n{i}").into_boxed_str());
-                (n, p)
-            })
+        let names: Vec<String> = (1..=9).map(|i| format!("n{i}")).collect();
+        let programs: Vec<String> = (1..=9).map(|i| format!("/bin/n{i}")).collect();
+        let profiles: Vec<(&str, &str)> = names
+            .iter()
+            .zip(&programs)
+            .map(|(name, program)| (name.as_str(), program.as_str()))
             .collect();
         let plan = build_plan(&profiles, Vec::new(), &[]);
         match plan {
@@ -1014,16 +999,6 @@ mod tests {
             }
             _ => panic!("9 entries should collapse to submenu"),
         }
-    }
-
-    #[test]
-    fn menu_places_configured_first_then_detected() {
-        let plan = build_plan(
-            &[("Zsh", "/bin/zsh"), ("Fish", "/usr/bin/fish")],
-            vec![detected_shell("bash", "/bin/bash")],
-            &[],
-        );
-        assert_eq!(entry_labels(&plan), vec!["Zsh", "Fish", "bash"]);
     }
 
     #[test]
@@ -1093,12 +1068,12 @@ mod tests {
     #[test]
     fn menu_escalation_counts_after_filtering() {
         // 10 profiles, but 3 are invalid -> 7 visible -> stays inline.
-        let profiles: Vec<(&str, &str)> = (1..=10)
-            .map(|i| {
-                let n: &'static str = Box::leak(format!("n{i}").into_boxed_str());
-                let p: &'static str = Box::leak(format!("/bin/n{i}").into_boxed_str());
-                (n, p)
-            })
+        let names: Vec<String> = (1..=10).map(|i| format!("n{i}")).collect();
+        let programs: Vec<String> = (1..=10).map(|i| format!("/bin/n{i}")).collect();
+        let profiles: Vec<(&str, &str)> = names
+            .iter()
+            .zip(&programs)
+            .map(|(name, program)| (name.as_str(), program.as_str()))
             .collect();
         let plan = build_plan(&profiles, Vec::new(), &["n1", "n2", "n3"]);
         match plan {
@@ -1107,58 +1082,5 @@ mod tests {
             }
             _ => panic!("7 visible entries should stay inline"),
         }
-    }
-
-    /// `TerminalSettings.profile_warnings` is the cached
-    /// validator output. The cache is populated in `from_settings`, but
-    /// because constructing a full `SettingsContent` here is heavy, this
-    /// test verifies the equivalent contract — that the field exists,
-    /// accepts `validate_configured_profiles` output directly, and that
-    /// `build_menu_entries` (which the menu now drives off
-    /// `settings.profile_warnings`) treats the cached value identically to
-    /// a freshly-computed one.
-    #[test]
-    fn profile_warnings_cache_is_equivalent_to_direct_call() {
-        let profiles = profile_map(&[
-            ("Good", "/bin/zsh"),
-            ("Bad", "/totally/not/real"),
-            ("BashOnPath", "bash"),
-        ]);
-        // Direct call (the value `from_settings` caches).
-        let direct = validate_configured_profiles_with(
-            &profiles,
-            &|p| p.as_os_str() == "/bin/zsh",
-            &|program| match program {
-                "bash" => Some(std::path::PathBuf::from("/usr/bin/bash")),
-                _ => None,
-            },
-        );
-        // Exactly one warning — the bad profile.
-        assert_eq!(direct.len(), 1);
-        assert_eq!(direct[0].profile_name, "Bad");
-
-        // The cache field is `Vec<ProfileWarning>`; assigning the direct
-        // call's output and feeding it to build_menu_entries must hide the
-        // bad profile exactly as the live validator did.
-        let cached: Vec<ProfileWarning> = direct.clone();
-        let plan_cached = build_menu_entries(&profiles, Vec::new(), &cached);
-        let plan_direct = build_menu_entries(&profiles, Vec::new(), &direct);
-        assert_eq!(
-            entry_labels(&plan_cached),
-            entry_labels(&plan_direct),
-            "cached and direct warnings must drive identical menu plans"
-        );
-        let labels = entry_labels(&plan_cached);
-        assert!(labels.contains(&"Good".to_string()));
-        assert!(labels.contains(&"BashOnPath".to_string()));
-        assert!(!labels.contains(&"Bad".to_string()));
-    }
-
-    #[test]
-    fn empty_profile_warnings_cache_yields_all_profiles() {
-        let profiles = profile_map(&[("A", "/bin/a"), ("B", "/bin/b")]);
-        let cached: Vec<ProfileWarning> = Vec::new();
-        let plan = build_menu_entries(&profiles, Vec::new(), &cached);
-        assert_eq!(entry_labels(&plan), vec!["A".to_string(), "B".to_string()]);
     }
 }

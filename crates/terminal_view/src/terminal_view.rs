@@ -3014,11 +3014,11 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&mock_binary, std::fs::Permissions::from_mode(0o755))
-                .unwrap();
+            std::fs::set_permissions(&mock_binary, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let (_project, _workspace, window_handle) = init_remote_test_with_panel(cx, server_cx).await;
+        let (_project, _workspace, window_handle) =
+            init_remote_test_with_panel(cx, server_cx).await;
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
@@ -3028,9 +3028,7 @@ mod tests {
                         "PATH".to_string(),
                         std::env::join_paths(
                             std::iter::once(mock_bin_dir.path().to_path_buf()).chain(
-                                std::env::split_paths(
-                                    &std::env::var("PATH").unwrap_or_default(),
-                                ),
+                                std::env::split_paths(&std::env::var("PATH").unwrap_or_default()),
                             ),
                         )
                         .unwrap()
@@ -3468,6 +3466,93 @@ mod tests {
             .unwrap();
 
         (project, workspace, window_handle)
+    }
+
+    /// Regression: the "+" menu dispatches `SpawnDetectedShell` with
+    /// `local: true` in remote projects so the detected (local) executable
+    /// is actually used. Without the force_local routing the spawn would
+    /// go through `create_terminal_shell_with`, drop the override, and
+    /// open the remote server's shell instead — observable here as the
+    /// remote wrapper title ("{host} — Terminal") rather than the
+    /// detected label.
+    #[gpui::test]
+    async fn remote_detected_shell_with_local_uses_local_executable(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        // The mock remote connection wraps terminal spawn commands in a
+        // program literally named `mock`, which doesn't exist on the test
+        // host. Provide a stand-in and expose it to the spawned PTY via
+        // `terminal.env.PATH` so no process-wide state is touched.
+        let mock_bin_dir = tempfile::TempDir::new().unwrap();
+        let mock_binary = mock_bin_dir.path().join("mock");
+        std::fs::write(&mock_binary, "#!/bin/sh\nexec sleep 3000\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&mock_binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let (_project, _workspace, window_handle) =
+            init_remote_test_with_panel(cx, server_cx).await;
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let terminal = settings.terminal.get_or_insert_default();
+                    let mut env = collections::HashMap::default();
+                    env.insert(
+                        "PATH".to_string(),
+                        std::env::join_paths(
+                            std::iter::once(mock_bin_dir.path().to_path_buf()).chain(
+                                std::env::split_paths(&std::env::var("PATH").unwrap_or_default()),
+                            ),
+                        )
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    );
+                    terminal.project.env = Some(env);
+                });
+            });
+        });
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let detected = crate::SpawnDetectedShell {
+                    program: "/bin/bash".to_string(),
+                    args: Vec::new(),
+                    label: "Detected Local Shell".to_string(),
+                    local: true,
+                };
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::spawn_detected_shell(workspace, &detected, window, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        server_cx.run_until_parked();
+        cx.run_until_parked();
+
+        let terminal_view = window_handle
+            .update(cx, |mw, _window, cx| {
+                let panel = mw
+                    .workspace()
+                    .read_with(cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
+                    .unwrap();
+                let item = panel.read(cx).active_pane.read(cx).active_item();
+                item.and_then(|item| item.act_as::<TerminalView>(cx))
+                    .expect("force_local detected-shell spawn should produce a terminal")
+            })
+            .unwrap();
+
+        terminal_view.update(cx, |view, cx| {
+            let title = view.terminal().read(cx).title(false);
+            assert_eq!(
+                title, "Detected Local Shell",
+                "force_local spawn should apply the detected label as the title; \
+                 the remote wrapper title would mean the override was dropped"
+            );
+        });
     }
 
     /// Creates a file in the given worktree and returns its entry.

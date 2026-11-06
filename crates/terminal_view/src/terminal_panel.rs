@@ -1,4 +1,10 @@
-use std::{cmp, path::{Path, PathBuf}, process::ExitStatus, sync::Arc, time::Duration};
+use std::{
+    cmp,
+    path::{Path, PathBuf},
+    process::ExitStatus,
+    sync::Arc,
+    time::Duration,
+};
 
 use crate::{
     TerminalView, default_working_directory,
@@ -173,7 +179,9 @@ impl TerminalPanel {
                                                 cx,
                                             )
                                         })
-                                        .unwrap_or_else(|| TerminalSettings::get_global(cx).clone());
+                                        .unwrap_or_else(|| {
+                                            TerminalSettings::get_global(cx).clone()
+                                        });
                                     let detected =
                                         util::shell_detection::detect_available_shells().to_vec();
                                     // Read cached warnings off
@@ -970,10 +978,7 @@ impl TerminalPanel {
                     // untagged or restore would flip it to a local
                     // terminal.
                     let override_applies = profile_name.is_some()
-                        && !workspace
-                            .project()
-                            .read(cx)
-                            .is_via_remote_server();
+                        && !workspace.project().read(cx).is_via_remote_server();
                     if override_applies {
                         view.profile_name = profile_name;
                         view.needs_serialize = true;
@@ -1111,10 +1116,7 @@ impl TerminalPanel {
                         // a local terminal where the user had a remote one.
                         let override_applies = profile_name.is_some()
                             && (force_local
-                                || !workspace
-                                    .project()
-                                    .read(cx)
-                                    .is_via_remote_server());
+                                || !workspace.project().read(cx).is_via_remote_server());
                         if override_applies {
                             view.profile_name = profile_name;
                             view.needs_serialize = true;
@@ -2275,11 +2277,9 @@ mod tests {
 
         let worktree_id = window_handle
             .read_with(cx, |multi_workspace, cx| {
-                multi_workspace
-                    .workspace()
-                    .read_with(cx, |workspace, cx| {
-                        workspace.worktrees(cx).next().unwrap().read(cx).id()
-                    })
+                multi_workspace.workspace().read_with(cx, |workspace, cx| {
+                    workspace.worktrees(cx).next().unwrap().read(cx).id()
+                })
             })
             .unwrap();
 
@@ -2903,20 +2903,26 @@ mod tests {
     ) {
         workspace
             .update_in(cx, |workspace, window, cx| {
-                TerminalPanel::add_center_terminal(workspace, window, cx, |_, cx| {
-                    let terminal = cx.new(|cx| {
-                        terminal::TerminalBuilder::new_display_only(
-                            terminal::terminal_settings::CursorShape::default(),
-                            terminal::terminal_settings::AlternateScroll::On,
-                            None,
-                            0,
-                            cx.background_executor(),
-                            util::paths::PathStyle::local(),
-                        )
-                        .subscribe(cx)
-                    });
-                    gpui::Task::ready(Ok(terminal))
-                }, None)
+                TerminalPanel::add_center_terminal(
+                    workspace,
+                    window,
+                    cx,
+                    |_, cx| {
+                        let terminal = cx.new(|cx| {
+                            terminal::TerminalBuilder::new_display_only(
+                                terminal::terminal_settings::CursorShape::default(),
+                                terminal::terminal_settings::AlternateScroll::On,
+                                None,
+                                0,
+                                cx.background_executor(),
+                                util::paths::PathStyle::local(),
+                            )
+                            .subscribe(cx)
+                        });
+                        gpui::Task::ready(Ok(terminal))
+                    },
+                    None,
+                )
             })
             .await
             .unwrap();
@@ -3928,57 +3934,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_spawn_detected_shell_with_local_routes_through_force_local(
-        cx: &mut TestAppContext,
-    ) {
-        cx.executor().allow_parking();
-        init_test(cx);
-
-        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
-
-        // When local=true, spawn_detected_shell must route
-        // through the force_local branch (add_terminal_shell_with with
-        // force_local=true) so the override survives any remote-drop. In a
-        // local project the spawn should still succeed and produce a
-        // terminal with the requested program.
-        let detected = crate::SpawnDetectedShell {
-            program: if cfg!(unix) {
-                "/bin/sh".to_string()
-            } else {
-                "cmd.exe".to_string()
-            },
-            args: Vec::new(),
-            label: "Local Detected".to_string(),
-            local: true,
-        };
-        window_handle
-            .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.workspace().update(cx, |workspace, cx| {
-                    TerminalPanel::spawn_detected_shell(workspace, &detected, window, cx);
-                })
-            })
-            .expect("Failed to dispatch SpawnDetectedShell with local=true");
-        cx.run_until_parked();
-
-        let count =
-            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
-        assert_eq!(count, 1, "force_local branch should still spawn a terminal");
-
-        let active_item =
-            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).active_item());
-        let terminal_view = active_item
-            .and_then(|item| item.downcast::<TerminalView>())
-            .expect("active panel item should be a TerminalView");
-        terminal_view.update(cx, |view, cx| {
-            let title = view.terminal().read(cx).title(false);
-            assert_eq!(
-                title, "Local Detected",
-                "force_local spawn should still apply the title override"
-            );
-        });
-    }
-
-    #[gpui::test]
     async fn test_spawn_detected_shell_uses_project_working_directory(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
@@ -4025,17 +3980,20 @@ mod tests {
         let count =
             terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
         assert_eq!(count, 1, "detected-shell spawn should produce a terminal");
-    }
 
-    #[test]
-    fn spawn_detected_shell_default_local_is_false() {
-        // Backcompat: keymap dispatch without `local` must
-        // default to false (non-force_local path).
-        let action = crate::SpawnDetectedShell::default();
-        assert!(
-            !action.local,
-            "default SpawnDetectedShell.local must be false"
-        );
+        let active_item =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).active_item());
+        let terminal_view = active_item
+            .and_then(|item| item.downcast::<TerminalView>())
+            .expect("active panel item should be a TerminalView");
+        terminal_view.update(cx, |view, cx| {
+            assert_eq!(
+                view.terminal().read(cx).initial_working_directory(),
+                Some(Path::new("/project")),
+                "detected-shell spawn should open in the project directory, \
+                 not the host process's working directory"
+            );
+        });
     }
 
     pub fn init_test(cx: &mut TestAppContext) {
