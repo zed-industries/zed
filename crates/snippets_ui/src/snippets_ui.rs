@@ -441,10 +441,6 @@ impl PickerDelegate for SnippetSelectorDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        if !self.snippets.is_empty() {
-            return None;
-        }
-
         Some(
             h_flex()
                 .w_full()
@@ -452,12 +448,12 @@ impl PickerDelegate for SnippetSelectorDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("open-snippets-folder", "Open Snippets Folder")
+                    Button::new("configure-snippets", "Configure Snippets")
                         .full_width()
                         .style(ButtonStyle::Outlined)
                         .on_click(cx.listener(|picker, _, window, cx| {
                             picker.delegate.dismissed(window, cx);
-                            window.dispatch_action(OpenFolder.boxed_clone(), cx);
+                            window.dispatch_action(ConfigureSnippets.boxed_clone(), cx);
                         })),
                 )
                 .into_any_element(),
