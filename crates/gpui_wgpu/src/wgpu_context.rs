@@ -225,14 +225,7 @@ impl WgpuContext {
                         continue;
                     };
 
-                    // Lets benchmarks measure frames on the GPU when the adapter supports it.
-                    #[cfg(feature = "bench-support")]
-                    let additional_features = adapter.features()
-                        & (wgpu::Features::TIMESTAMP_QUERY
-                            | wgpu::Features::PIPELINE_STATISTICS_QUERY);
-                    #[cfg(not(feature = "bench-support"))]
-                    let additional_features = wgpu::Features::empty();
-                    match Self::create_device(&adapter, additional_features).await {
+                    match Self::create_device(&adapter).await {
                         Ok((device, queue, dual_source_blending, color_texture_format)) => {
                             #[cfg(feature = "bench-support")]
                             if adapter_info.device_type == wgpu::DeviceType::Cpu {
@@ -407,7 +400,7 @@ impl WgpuContext {
         };
 
         let (device, queue, dual_source_blending, color_texture_format) =
-            Self::create_device(&adapter, wgpu::Features::empty()).await?;
+            Self::create_device(&adapter).await?;
         let errors = DeviceErrorState::install(&device);
         log::info!(
             "Browser graphics initialized: requested={preference:?}, selected={backend:?}, \
@@ -431,13 +424,18 @@ impl WgpuContext {
 
     async fn create_device(
         adapter: &wgpu::Adapter,
-        additional_features: wgpu::Features,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, TextureFormat)> {
         let dual_source_blending = adapter
             .features()
             .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
 
-        let mut required_features = additional_features;
+        let mut required_features = wgpu::Features::empty();
+        // Lets benchmarks measure frames on the GPU when the adapter supports it.
+        #[cfg(feature = "bench-support")]
+        {
+            required_features |= adapter.features()
+                & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::PIPELINE_STATISTICS_QUERY);
+        }
         if dual_source_blending {
             required_features |= wgpu::Features::DUAL_SOURCE_BLENDING;
         } else {
@@ -670,7 +668,7 @@ impl WgpuContext {
         }
 
         let (device, queue, dual_source_blending, color_atlas_texture_format) =
-            Self::create_device(adapter, wgpu::Features::empty()).await?;
+            Self::create_device(adapter).await?;
         // Test with the configuration the renderer will use, so that it doesn't need to
         // configure the surface a second time.
         let (surface_config, _, _) =

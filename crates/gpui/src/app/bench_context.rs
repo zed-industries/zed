@@ -144,8 +144,8 @@ impl BenchReport {
 
     fn record_gpu_stats(&self, stats: GpuStats) {
         let mut snapshot = self.frame_snapshot.borrow_mut();
+        // `.ok()` on `record`: this operation is infallible (the histogram auto-resizes).
         for frame_time in stats.frame_times {
-            // Infallible: the histogram auto-resizes.
             snapshot
                 .gpu_frame_time
                 .record(frame_time.as_nanos() as u64)
@@ -395,8 +395,8 @@ impl WindowFrameSnapshot {
             && self.draw.is_empty()
             && self.present_interval.is_empty()
             && self.gpu_frame_time.is_empty()
-            && self.gpu_vertex_invocations.mean().is_none()
-            && self.gpu_fragment_invocations.mean().is_none()
+            && self.gpu_vertex_invocations.samples == 0
+            && self.gpu_fragment_invocations.samples == 0
             && self.foreground_work.histogram.is_empty()
     }
 }
@@ -1047,10 +1047,10 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         self.replace_bencher(bencher);
     }
 
-    /// Waits for GPU work submitted by every open window and returns the GPU
-    /// statistics of frames submitted since the last call. Windows whose
-    /// renderer can't measure GPU work are skipped.
-    fn take_gpu_stats(&self) -> GpuStats {
+    /// Waits for GPU work submitted by every open window and returns each
+    /// window's GPU statistics for frames submitted since the last call. Windows
+    /// whose renderer can't measure GPU work are skipped.
+    fn take_gpu_stats(&self) -> Vec<GpuStats> {
         let windows: Vec<_> = self
             .app
             .borrow_mut()
@@ -1058,27 +1058,20 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             .values_mut()
             .filter_map(|window| window.as_deref_mut()?.platform_window.as_test().cloned())
             .collect();
-        let mut stats = GpuStats::default();
-        for window in windows {
-            match window.take_gpu_stats() {
-                Ok(window_stats) => {
-                    stats.frame_times.extend(window_stats.frame_times);
-                    stats
-                        .vertex_shader_invocations
-                        .extend(window_stats.vertex_shader_invocations);
-                    stats
-                        .fragment_shader_invocations
-                        .extend(window_stats.fragment_shader_invocations);
-                }
-                Err(error) if error.is::<GpuStatsUnsupported>() => {}
+        windows
+            .iter()
+            .filter_map(|window| match window.take_gpu_stats() {
+                Ok(stats) => Some(stats),
+                Err(error) if error.is::<GpuStatsUnsupported>() => None,
                 Err(error) => panic!("failed to wait for benchmark GPU work: {error:#}"),
-            }
-        }
-        stats
+            })
+            .collect()
     }
 
     fn record_gpu_stats(&self) {
-        self.report.record_gpu_stats(self.take_gpu_stats());
+        for stats in self.take_gpu_stats() {
+            self.report.record_gpu_stats(stats);
+        }
     }
 
     fn dispatch_pending_frames(&self, mut should_continue: impl FnMut() -> bool) -> bool {
