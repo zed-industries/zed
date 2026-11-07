@@ -45747,6 +45747,423 @@ async fn test_clicking_sticky_header_sets_character_select_mode(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_reference_results_navigation_preserves_java_type_references(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new(
+        Language::new(
+            LanguageConfig {
+                name: "Java".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["java".into()],
+                    ..Default::default()
+                }
+                .into(),
+                ..Default::default()
+            },
+            None,
+        ),
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    let project = cx.update_workspace(|workspace, _, _| workspace.project().clone());
+    let fs = cx.read(|cx| project.read(cx).fs().clone());
+    let directory = EditorLspTestContext::root_path().join("dir");
+    fs.as_fake()
+        .insert_tree(
+            &directory,
+            json!({
+                "ClientWrapper.java": indoc! {r#"
+            final class ClientWrapper {
+                ClientWrapper() {}
+
+                static final class Subscriber {}
+            }
+        "#},
+                "Factory.java": indoc! {r#"
+            final class Factory {
+                static Object create() {
+                    return new ClientWrapper();
+                }
+            }
+        "#},
+                "Usage.java": indoc! {r#"
+            final class Usage {
+                static Object first() {
+                    return new ClientWrapper.Subscriber();
+                }
+
+                static Object second() {
+                    return new ClientWrapper.Subscriber();
+                }
+
+                static Object third() {
+                    return new ClientWrapper();
+                }
+            }
+        "#}
+            }),
+        )
+        .await;
+    let item = cx
+        .update_workspace(|workspace, window, cx| {
+            workspace.open_abs_path(
+                directory.join("ClientWrapper.java"),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.cx.editor = item.downcast::<Editor>().unwrap();
+    let source_editor = cx.cx.editor.clone();
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 12)..Point::new(0, 12)]);
+        });
+    });
+    let expected = [
+        ("ClientWrapper.java", Point::new(0, 12)),
+        ("Factory.java", Point::new(2, 19)),
+        ("Usage.java", Point::new(2, 19)),
+        ("Usage.java", Point::new(6, 19)),
+        ("Usage.java", Point::new(10, 19)),
+    ];
+    let locations = expected
+        .iter()
+        .map(|(name, point)| lsp::Location {
+            uri: lsp::Uri::from_file_path(directory.join(name)).unwrap(),
+            range: lsp::Range::new(
+                lsp::Position::new(point.row, point.column),
+                lsp::Position::new(point.row, point.column + 13),
+            ),
+        })
+        .collect::<Vec<_>>();
+    let mut constructor_locations = vec![lsp::Location {
+        uri: locations[0].uri.clone(),
+        range: lsp::Range::new(lsp::Position::new(1, 4), lsp::Position::new(1, 17)),
+    }];
+    constructor_locations.extend([1, 4].map(|index| {
+        let mut location = locations[index].clone();
+        location.range = lsp::Range::new(
+            lsp::Position::new(location.range.start.line, 15),
+            lsp::Position::new(location.range.end.line, 34),
+        );
+        location
+    }));
+    let requests = Arc::new(AtomicUsize::new(0));
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>({
+            let requests = requests.clone();
+            move |params, _| {
+                requests.fetch_add(1, atomic::Ordering::SeqCst);
+                let locations = if params.text_document_position.position.line == 0 {
+                    locations.clone()
+                } else {
+                    // Model the changed symbol/range at a constructor call, without relying on JDT LS.
+                    constructor_locations.to_vec()
+                };
+                async move { Ok(Some(locations)) }
+            }
+        });
+    cx.update_editor(|editor, window, cx| {
+        editor.find_all_references(&FindAllReferences::default(), window, cx)
+    })
+    .unwrap()
+    .await
+    .unwrap();
+    let results_editor =
+        cx.update_workspace(|workspace, _, cx| workspace.active_item_as::<Editor>(cx).unwrap());
+    cx.cx.editor = results_editor.clone();
+    cx.editor(|editor, _, _| {
+        let selection = editor.selections.newest_anchor();
+        assert_ne!(selection.start, selection.end);
+    });
+
+    let assert_location = |index: usize, cx: &mut EditorLspTestContext| {
+        cx.editor(|editor, _, cx| {
+            let (buffer, head) = editor
+                .buffer
+                .read(cx)
+                .text_anchor_for_position(editor.selections.newest_anchor().head(), cx)
+                .unwrap();
+            let buffer = buffer.read(cx);
+            assert_eq!(
+                buffer.file().unwrap().path().file_name().unwrap(),
+                expected[index].0
+            );
+            assert_eq!(head.to_point(buffer), expected[index].1);
+        });
+    };
+    for (direction, count, index) in [
+        (Direction::Next, 1, 1),
+        (Direction::Next, 1, 2),
+        (Direction::Next, 1, 3),
+        (Direction::Next, 1, 4),
+        (Direction::Next, 1, 0),
+        (Direction::Prev, 1, 4),
+        (Direction::Prev, 1, 3),
+        (Direction::Prev, 1, 2),
+        (Direction::Prev, 1, 1),
+        (Direction::Prev, 1, 0),
+        (Direction::Next, 12, 2),
+        (Direction::Prev, 8, 4),
+        (Direction::Next, 5, 4),
+    ] {
+        cx.update_editor(|editor, window, cx| {
+            editor.go_to_reference_before_or_after_position(direction, count, window, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_location(index, &mut cx);
+    }
+    assert_eq!(requests.load(atomic::Ordering::SeqCst), 1);
+
+    let clone = cx.update_editor(|editor, window, cx| cx.new(|cx| editor.clone(window, cx)));
+    cx.cx.editor = clone;
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_reference_before_or_after_position(Direction::Next, 1, window, cx)
+    })
+    .unwrap()
+    .await
+    .unwrap();
+    assert_location(0, &mut cx);
+    assert_eq!(requests.load(atomic::Ordering::SeqCst), 1);
+
+    cx.cx.editor = source_editor;
+    cx.update_editor(|editor, window, cx| {
+        editor.find_all_references(&FindAllReferences::default(), window, cx)
+    })
+    .unwrap()
+    .await
+    .unwrap();
+    assert_eq!(
+        cx.update_workspace(|workspace, _, cx| workspace.active_item_as::<Editor>(cx).unwrap()),
+        results_editor
+    );
+    cx.cx.editor = results_editor;
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_start_of_next_excerpt(&MoveToStartOfNextExcerpt, window, cx);
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_reference_before_or_after_position(Direction::Next, 1, window, cx)
+    })
+    .unwrap()
+    .await
+    .unwrap();
+    assert_location(1, &mut cx);
+    assert_eq!(requests.load(atomic::Ordering::SeqCst), 2);
+}
+
+#[gpui::test]
+async fn test_reference_results_navigation_same_line_and_edits(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state("fn ˇtarget() {}\nfn call() { target(); target(); } // target\n");
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(
+                [(0, 3), (1, 12), (1, 22)]
+                    .map(|(line, column)| lsp::Location {
+                        uri: params.text_document_position.text_document.uri.clone(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(line, column),
+                            lsp::Position::new(line, column + 6),
+                        ),
+                    })
+                    .to_vec(),
+            ))
+        });
+    let buffer = cx.buffer(|buffer, _| buffer.remote_id());
+    cx.update_editor(|editor, window, cx| {
+        editor.find_all_references(&FindAllReferences::default(), window, cx)
+    })
+    .unwrap()
+    .await
+    .unwrap();
+    cx.cx.editor =
+        cx.update_workspace(|workspace, _, cx| workspace.active_item_as::<Editor>(cx).unwrap());
+    // Highlighting is shared with other features and is not the source of navigation targets.
+    cx.update_editor(|editor, _, cx| {
+        editor.clear_background_highlights(HighlightKey::Editor, cx);
+    });
+    for (direction, expected) in [
+        (Direction::Next, Point::new(1, 12)),
+        (Direction::Next, Point::new(1, 22)),
+        (Direction::Next, Point::new(0, 3)),
+        (Direction::Prev, Point::new(1, 22)),
+    ] {
+        cx.update_editor(|editor, window, cx| {
+            editor.go_to_reference_before_or_after_position(direction, 1, window, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        cx.editor(|editor, _, cx| {
+            let snapshot = editor.buffer.read(cx).snapshot(cx);
+            assert_eq!(
+                editor.selections.newest_anchor().head().to_point(&snapshot),
+                expected
+            );
+        });
+    }
+    // The same spelling in a comment is deliberately absent from the semantic results.
+    for (cursor, direction, count, expected) in [
+        (Point::new(1, 36), Direction::Next, 1, Point::new(0, 3)),
+        (Point::new(1, 18), Direction::Prev, 1, Point::new(1, 12)),
+        (Point::new(1, 18), Direction::Next, 1, Point::new(1, 22)),
+        (Point::new(0, 0), Direction::Next, 2, Point::new(1, 12)),
+        (Point::new(0, 0), Direction::Prev, 2, Point::new(1, 12)),
+        (Point::new(1, 36), Direction::Prev, 4, Point::new(1, 22)),
+    ] {
+        cx.update_editor(|editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([cursor..cursor]);
+            });
+            editor.go_to_reference_before_or_after_position(direction, count, window, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        cx.editor(|editor, _, cx| {
+            let snapshot = editor.buffer.read(cx).snapshot(cx);
+            assert_eq!(
+                editor.selections.newest_anchor().head().to_point(&snapshot),
+                expected
+            );
+        });
+    }
+    cx.update_editor(|editor, _, cx| {
+        editor
+            .buffer
+            .read(cx)
+            .buffer(buffer)
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.edit([(0..0, "\n\n")], None, cx);
+            });
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_reference_before_or_after_position(Direction::Prev, 1, window, cx)
+    })
+    .unwrap()
+    .await
+    .unwrap();
+    cx.editor(|editor, _, cx| {
+        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        assert_eq!(
+            editor.selections.newest_anchor().head().to_point(&snapshot),
+            Point::new(3, 12)
+        );
+    });
+    cx.update_editor(|editor, _, cx| {
+        editor
+            .buffer
+            .read(cx)
+            .buffer(buffer)
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.edit([(Point::new(3, 22)..Point::new(3, 28), "")], None, cx);
+            });
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_reference_before_or_after_position(Direction::Next, 1, window, cx)
+    })
+    .unwrap()
+    .await
+    .unwrap();
+    cx.editor(|editor, _, cx| {
+        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        assert_eq!(
+            editor.selections.newest_anchor().head().to_point(&snapshot),
+            Point::new(2, 3)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_reference_navigation_in_other_multibuffers_queries_lsp(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state("fn ˇtarget() {}\nfn call() { target(); target(); }\n");
+    let buffer = cx.update_editor(|editor, _, cx| editor.buffer.read(cx).as_singleton().unwrap());
+    cx.update_workspace(|workspace, window, cx| {
+        Editor::open_locations_in_multibuffer(
+            workspace,
+            std::collections::HashMap::from_iter([(
+                buffer,
+                vec![
+                    Point::new(0, 3)..Point::new(0, 9),
+                    Point::new(1, 22)..Point::new(1, 28),
+                ],
+            )]),
+            "Other locations".into(),
+            false,
+            false,
+            MultibufferSelectionMode::First,
+            window,
+            cx,
+        );
+    });
+    cx.cx.editor =
+        cx.update_workspace(|workspace, _, cx| workspace.active_item_as::<Editor>(cx).unwrap());
+    let requests = Arc::new(AtomicUsize::new(0));
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>({
+            let requests = requests.clone();
+            move |params, _| {
+                requests.fetch_add(1, atomic::Ordering::SeqCst);
+                async move {
+                    Ok(Some(
+                        [(0, 3), (1, 12), (1, 22)]
+                            .map(|(line, column)| lsp::Location {
+                                uri: params.text_document_position.text_document.uri.clone(),
+                                range: lsp::Range::new(
+                                    lsp::Position::new(line, column),
+                                    lsp::Position::new(line, column + 6),
+                                ),
+                            })
+                            .to_vec(),
+                    ))
+                }
+            }
+        });
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_reference_before_or_after_position(Direction::Next, 1, window, cx)
+    })
+    .unwrap()
+    .await
+    .unwrap();
+    cx.editor(|editor, _, cx| {
+        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        assert_eq!(
+            editor.selections.newest_anchor().head().to_point(&snapshot),
+            Point::new(1, 12)
+        );
+    });
+    assert_eq!(requests.load(atomic::Ordering::SeqCst), 1);
+}
+
+#[gpui::test]
 async fn test_next_prev_reference(cx: &mut TestAppContext) {
     const CYCLE_POSITIONS: &[&'static str] = &[
         indoc! {"
