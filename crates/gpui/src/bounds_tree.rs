@@ -1,4 +1,4 @@
-use crate::{Bounds, Half};
+use crate::{Bounds, Half, scene::PrimitiveKind};
 use std::{
     cmp,
     fmt::Debug,
@@ -45,18 +45,23 @@ where
     /// Bounding box containing this node and all descendants.
     bounds: Bounds<U>,
     /// Maximum key in this subtree.
-    max_key: u64,
+    max_key: Key,
     /// Node-specific data.
     kind: NodeKind,
+}
+
+/// The ordering of a bounds, then its kind, which orders the bounds that share
+/// an ordering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Key {
+    ordering: u32,
+    kind: PrimitiveKind,
 }
 
 #[derive(Debug, Clone)]
 enum NodeKind {
     /// Leaf node containing actual bounds data.
-    Leaf {
-        /// The ordering and kind of this bounds.
-        key: u64,
-    },
+    Leaf { key: Key },
     /// Internal node with children.
     Internal {
         /// Indices of child nodes (2 to MAX_CHILDREN).
@@ -122,19 +127,18 @@ where
     /// bounds that intersect with the new bounds. The new bounds share that
     /// maximum ordering instead if every intersecting bounds there has a kind
     /// of at most `max_shared_kind`, since those are drawn first.
-    pub fn insert(&mut self, new_bounds: Bounds<U>, kind: u8, max_shared_kind: Option<u8>) -> u32 {
+    pub fn insert(
+        &mut self,
+        new_bounds: Bounds<U>,
+        kind: PrimitiveKind,
+        max_shared_kind: PrimitiveKind,
+    ) -> u32 {
         let ordering = match self.find_max_key(&new_bounds) {
-            0 => 1,
-            max_key => {
-                let (max_ordering, max_kind) = ((max_key >> 8) as u32, max_key as u8);
-                if max_shared_kind.is_some_and(|shared| max_kind <= shared) {
-                    max_ordering
-                } else {
-                    max_ordering + 1
-                }
-            }
+            None => 1,
+            Some(max_key) if max_key.kind <= max_shared_kind => max_key.ordering,
+            Some(max_key) => max_key.ordering + 1,
         };
-        let key = u64::from(ordering) << 8 | u64::from(kind);
+        let key = Key { ordering, kind };
 
         // Insert the new leaf
         let new_leaf_idx = self.insert_leaf(new_bounds, key);
@@ -149,18 +153,15 @@ where
         ordering
     }
 
-    /// Finds the maximum key among all bounds that intersect with the query,
-    /// or zero if none do.
-    fn find_max_key(&mut self, query: &Bounds<U>) -> u64 {
-        let Some(root_idx) = self.root else {
-            return 0;
-        };
+    /// Finds the maximum key among all bounds that intersect with the query.
+    fn find_max_key(&mut self, query: &Bounds<U>) -> Option<Key> {
+        let root_idx = self.root?;
 
         // Fast path: check if the max-key leaf intersects
         if let Some(max_idx) = self.max_leaf {
             let max_node = &self.nodes[max_idx];
             if query.intersects(&max_node.bounds) {
-                return max_node.max_key;
+                return Some(max_node.max_key);
             }
         }
 
@@ -168,7 +169,8 @@ where
         self.search_stack.clear();
         self.search_stack.push(NonNull::from(&self.nodes[root_idx]));
 
-        let mut max_found = 0u64;
+        // `None` compares below every key.
+        let mut max_found = None;
 
         while let Some(node) = self.search_stack.pop() {
             // SAFETY: `node` is guaranteed to be valid as the `nodes` stack is unmodified in this function
@@ -176,7 +178,7 @@ where
             let node = unsafe { node.as_ref() };
 
             // Pruning: skip if this subtree can't improve our result
-            if node.max_key <= max_found {
+            if Some(node.max_key) <= max_found {
                 continue;
             }
 
@@ -187,7 +189,7 @@ where
 
             match &node.kind {
                 NodeKind::Leaf { key } => {
-                    max_found = cmp::max(max_found, *key);
+                    max_found = cmp::max(max_found, Some(*key));
                 }
                 NodeKind::Internal { children } => {
                     // Children are maintained with highest max_key at the end.
@@ -197,7 +199,7 @@ where
                             .as_slice()
                             .iter()
                             .map(|&child_idx| &self.nodes[child_idx])
-                            .filter(|node| node.max_key > max_found)
+                            .filter(|node| Some(node.max_key) > max_found)
                             .map(NonNull::from),
                     );
                 }
@@ -209,7 +211,7 @@ where
 
     /// Inserts a leaf node with the given bounds and key.
     /// Returns the index of the new leaf.
-    fn insert_leaf(&mut self, bounds: Bounds<U>, key: u64) -> usize {
+    fn insert_leaf(&mut self, bounds: Bounds<U>, key: Key) -> usize {
         let new_leaf_idx = self.nodes.len();
         self.nodes.push(Node {
             bounds: bounds.clone(),
@@ -395,6 +397,7 @@ mod tests {
     #[test]
     fn test_insert() {
         let mut tree = BoundsTree::<f32>::default();
+        let (quad, shadow) = (PrimitiveKind::Quad, PrimitiveKind::Shadow);
         let bounds1 = Bounds {
             origin: Point { x: 0.0, y: 0.0 },
             size: Size {
@@ -418,9 +421,9 @@ mod tests {
         };
 
         // Insert the bounds into the tree and verify the order is correct
-        assert_eq!(tree.insert(bounds1, 0, None), 1);
-        assert_eq!(tree.insert(bounds2, 0, None), 2);
-        assert_eq!(tree.insert(bounds3, 0, None), 3);
+        assert_eq!(tree.insert(bounds1, quad, shadow), 1);
+        assert_eq!(tree.insert(bounds2, quad, shadow), 2);
+        assert_eq!(tree.insert(bounds3, quad, shadow), 3);
 
         // Insert non-overlapping bounds and verify they can reuse orders
         let bounds4 = Bounds {
@@ -444,29 +447,9 @@ mod tests {
                 height: 10.0,
             },
         };
-        assert_eq!(tree.insert(bounds4, 0, None), 1); // bounds4 does not overlap with bounds1, bounds2, or bounds3
-        assert_eq!(tree.insert(bounds5, 0, None), 1); // bounds5 does not overlap with any other bounds
-        assert_eq!(tree.insert(bounds6, 0, None), 2); // bounds6 overlaps with bounds4, so it should have a different order
-    }
-
-    #[test]
-    fn test_shared_orderings() {
-        let mut tree = BoundsTree::<f32>::default();
-        let square = |x: f32| Bounds {
-            origin: Point { x, y: 0.0 },
-            size: Size {
-                width: 10.0,
-                height: 10.0,
-            },
-        };
-        assert_eq!(tree.insert(square(0.0), 1, Some(1)), 1);
-        // Over an earlier kind, or its own kind when it may share with it.
-        assert_eq!(tree.insert(square(5.0), 1, Some(1)), 1);
-        assert_eq!(tree.insert(square(5.0), 2, Some(2)), 1);
-        // Over a later kind, or its own kind when it may not share with it.
-        assert_eq!(tree.insert(square(5.0), 1, Some(1)), 2);
-        assert_eq!(tree.insert(square(5.0), 1, Some(0)), 3);
-        assert_eq!(tree.insert(square(5.0), 0, None), 4);
+        assert_eq!(tree.insert(bounds4, quad, shadow), 1); // bounds4 does not overlap with bounds1, bounds2, or bounds3
+        assert_eq!(tree.insert(bounds5, quad, shadow), 1); // bounds5 does not overlap with any other bounds
+        assert_eq!(tree.insert(bounds6, quad, shadow), 2); // bounds6 overlaps with bounds4, so it should have a different order
     }
 
     #[test]
@@ -475,7 +458,13 @@ mod tests {
         for seed in 1..=1000 {
             let mut tree = BoundsTree::default();
             let mut rng = rand::rngs::StdRng::seed_from_u64(seed as u64);
-            let mut expected_quads: Vec<(Bounds<f32>, u32, u8)> = Vec::new();
+            let mut expected_quads: Vec<(Bounds<f32>, u32, PrimitiveKind)> = Vec::new();
+            let kinds = [
+                PrimitiveKind::Shadow,
+                PrimitiveKind::Quad,
+                PrimitiveKind::Path,
+                PrimitiveKind::Underline,
+            ];
 
             // Insert a random number of random AABBs into the tree.
             let num_bounds = rng.random_range(1..=max_bounds);
@@ -488,12 +477,8 @@ mod tests {
                     origin: Point { x: min_x, y: min_y },
                     size: Size { width, height },
                 };
-                let kind: u8 = rng.random_range(0..4);
-                let max_shared_kind = match rng.random_range(0..3) {
-                    0 => None,
-                    1 => kind.checked_sub(1),
-                    _ => Some(kind),
-                };
+                let kind = kinds[rng.random_range(0..kinds.len())];
+                let max_shared_kind = kinds[rng.random_range(0..kinds.len())];
 
                 let max_intersecting = expected_quads
                     .iter()
@@ -502,11 +487,7 @@ mod tests {
                     .max();
                 let expected_ordering = match max_intersecting {
                     None => 1,
-                    Some((ordering, max_kind))
-                        if max_shared_kind.is_some_and(|shared| max_kind <= shared) =>
-                    {
-                        ordering
-                    }
+                    Some((ordering, max_kind)) if max_kind <= max_shared_kind => ordering,
                     Some((ordering, _)) => ordering + 1,
                 };
                 expected_quads.push((bounds, expected_ordering, kind));

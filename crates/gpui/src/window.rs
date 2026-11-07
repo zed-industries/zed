@@ -4868,28 +4868,20 @@ impl Window {
         });
     }
 
-    /// Creates a new painting layer for the specified bounds. A "layer" is a batch
-    /// of geometry that are non-overlapping and have the same draw order. This is typically used
+    /// Creates a new painting layer. A "layer" is a batch of geometry that are
+    /// non-overlapping and have the same draw order. This is typically used
     /// for performance reasons.
     ///
+    /// Layers painted inside `f` are drawn above this layer, including above
+    /// what `f` paints after them.
+    ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn paint_layer<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         self.invalidator.debug_assert_paint();
 
-        let content_mask = self.content_mask();
-        let clipped_bounds = bounds.intersect(&content_mask.bounds);
-        if !clipped_bounds.is_empty() {
-            self.next_frame
-                .scene
-                .push_layer(self.cover_bounds(clipped_bounds));
-        }
-
+        self.next_frame.scene.push_layer();
         let result = f(self);
-
-        if !clipped_bounds.is_empty() {
-            self.next_frame.scene.pop_layer();
-        }
-
+        self.next_frame.scene.pop_layer();
         result
     }
 

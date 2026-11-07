@@ -1187,6 +1187,37 @@ impl<T: PartialOrd + Add<T, Output = T> + Sub<Output = T> + Clone + Debug + Defa
         let bottom_right = self.bottom_right().max(&other.bottom_right());
         Bounds::from_corners(top_left, bottom_right)
     }
+
+    /// Computes the smallest `Bounds` that covers the area of both `Bounds`.
+    ///
+    /// Unlike [`Bounds::union`], an empty `Bounds` covers nothing, so joining with it returns
+    /// the other `Bounds` unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use gpui::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 5, y: 5 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// let empty = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 0, height: 10 },
+    /// };
+    ///
+    /// assert_eq!(bounds.join(&empty), bounds);
+    /// assert_eq!(empty.join(&bounds), bounds);
+    /// ```
+    pub fn join(&self, other: &Self) -> Self {
+        if self.is_empty() {
+            other.clone()
+        } else if other.is_empty() {
+            self.clone()
+        } else {
+            self.union(other)
+        }
+    }
 }
 
 impl<T> Bounds<T>
@@ -4050,6 +4081,37 @@ mod tests {
         ] {
             assert_eq!(px(value).to_i32(), expected);
         }
+    }
+
+    #[test]
+    fn test_bounds_join() {
+        let bounds = Bounds {
+            origin: Point { x: 5.0, y: 5.0 },
+            size: Size {
+                width: 5.0,
+                height: 5.0,
+            },
+        };
+        let other = Bounds {
+            origin: Point { x: 20.0, y: 0.0 },
+            size: Size {
+                width: 5.0,
+                height: 5.0,
+            },
+        };
+        assert_eq!(bounds.join(&other), bounds.union(&other));
+
+        let empty = Bounds {
+            origin: Point { x: 0.0, y: 0.0 },
+            size: Size {
+                width: 0.0,
+                height: 10.0,
+            },
+        };
+        assert_eq!(bounds.join(&empty), bounds);
+        assert_eq!(empty.join(&bounds), bounds);
+        assert_eq!(Bounds::default().join(&bounds), bounds);
+        assert_ne!(bounds.union(&empty), bounds);
     }
 
     #[test]
