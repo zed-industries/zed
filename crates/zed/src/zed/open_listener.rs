@@ -896,8 +896,7 @@ async fn open_workspaces(
         match location {
             SerializedWorkspaceLocation::Local => {
                 let workspace_paths = workspace_paths
-                    .paths()
-                    .iter()
+                    .ordered_paths()
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect();
 
@@ -928,7 +927,7 @@ async fn open_workspaces(
                 cx.spawn(async move |cx| {
                     open_remote_project(
                         connection,
-                        workspace_paths.paths().to_vec(),
+                        workspace_paths.ordered_paths().cloned().collect(),
                         app_state,
                         open_options,
                         cx,
