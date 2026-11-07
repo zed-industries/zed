@@ -122,6 +122,16 @@ impl FileStatus {
                 second_head: UnmergedStatusCode::Deleted,
             }
             .into(),
+            [b'A', b'D'] => UnmergedStatus {
+                first_head: UnmergedStatusCode::Added,
+                second_head: UnmergedStatusCode::Deleted,
+            }
+            .into(),
+            [b'D', b'A'] => UnmergedStatus {
+                first_head: UnmergedStatusCode::Deleted,
+                second_head: UnmergedStatusCode::Added,
+            }
+            .into(),
             [x, b'U'] => UnmergedStatus {
                 first_head: UnmergedStatusCode::from_byte(x)?,
                 second_head: UnmergedStatusCode::Updated,
@@ -769,6 +779,26 @@ mod tests {
             FileStatus::Unmerged(UnmergedStatus {
                 first_head: UnmergedStatusCode::Deleted,
                 second_head: UnmergedStatusCode::Deleted,
+            })
+        );
+    }
+    #[test]
+    fn test_ad_da_unmerged_status() {
+        let input = "AD file1.txt\0DA file2.txt\0";
+        let status: GitStatus = input.parse().unwrap();
+        assert_eq!(status.entries.len(), 2);
+        assert_eq!(
+            status.entries[0].1,
+            FileStatus::Unmerged(UnmergedStatus {
+                first_head: UnmergedStatusCode::Added,
+                second_head: UnmergedStatusCode::Deleted,
+            })
+        );
+        assert_eq!(
+            status.entries[1].1,
+            FileStatus::Unmerged(UnmergedStatus {
+                first_head: UnmergedStatusCode::Deleted,
+                second_head: UnmergedStatusCode::Added,
             })
         );
     }
