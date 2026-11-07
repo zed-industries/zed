@@ -117,6 +117,25 @@ impl LineLayout {
         self.width
     }
 
+    /// The horizontal span covered by the character whose glyphs start at the given index,
+    /// or `None` if no glyph starts there.
+    ///
+    /// Unlike `x_for_index`, this follows glyph positions rather than byte order, so it stays
+    /// correct inside right-to-left runs, where later characters are drawn further left.
+    pub fn x_range_for_index(&self, index: usize) -> Option<Range<Pixels>> {
+        let glyphs = || self.runs.iter().flat_map(|run| &run.glyphs);
+        let start = glyphs()
+            .filter(|glyph| glyph.index == index)
+            .map(|glyph| glyph.position.x)
+            .reduce(Pixels::min)?;
+        let end = glyphs()
+            .filter(|glyph| glyph.index != index && glyph.position.x > start)
+            .map(|glyph| glyph.position.x)
+            .reduce(Pixels::min)
+            .unwrap_or(self.width);
+        Some(start..end)
+    }
+
     /// The corresponding Font at the given index
     pub fn font_id_for_index(&self, index: usize) -> Option<FontId> {
         for run in &self.runs {
@@ -937,6 +956,48 @@ mod tests {
                 .compute_wrap_boundaries("a", px(10.), None, &mut WrapScratch::default())
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn test_x_range_for_index() {
+        let mut right_to_left =
+            make_layout(vec![glyph_at(20., 0), glyph_at(10., 2), glyph_at(0., 4)]);
+        right_to_left.width = px(30.);
+        right_to_left.len = "אבג".len();
+
+        let mut mixed = make_layout(vec![
+            glyph_at(0., 0),
+            glyph_at(10., 1),
+            glyph_at(20., 4),
+            glyph_at(30., 2),
+            glyph_at(40., 6),
+            glyph_at(50., 7),
+        ]);
+        mixed.width = px(60.);
+        mixed.len = "a אב b".len();
+
+        let mut with_mark = make_layout(vec![glyph_at(0., 0), glyph_at(2., 0), glyph_at(10., 3)]);
+        with_mark.width = px(20.);
+        with_mark.len = "e\u{301}x".len();
+
+        for (layout, index, expected) in [
+            (&right_to_left, 0, Some(20.0..30.0)),
+            (&right_to_left, 2, Some(10.0..20.0)),
+            (&right_to_left, 4, Some(0.0..10.0)),
+            (&right_to_left, 6, None),
+            (&mixed, 0, Some(0.0..10.0)),
+            (&mixed, 2, Some(30.0..40.0)),
+            (&mixed, 4, Some(20.0..30.0)),
+            (&mixed, 7, Some(50.0..60.0)),
+            (&mixed, 3, None),
+            (&with_mark, 0, Some(0.0..10.0)),
+        ] {
+            assert_eq!(
+                layout.x_range_for_index(index),
+                expected.map(|range| px(range.start)..px(range.end)),
+                "index {index}",
+            );
+        }
     }
 
     #[test]

@@ -7416,6 +7416,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tiny-skia-path",
  "ttf-parser",
+ "unicode-bidi",
  "unicode-segmentation",
  "url",
  "usvg",

@@ -1211,19 +1211,28 @@ impl EditorElement {
                         [cursor_position.row().minus(visible_display_row_range.start) as usize];
                     let cursor_column = cursor_position.column() as usize;
 
-                    let cursor_character_x = cursor_row_layout.x_for_index(cursor_column)
-                        + cursor_row_layout
-                            .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
-                    let cursor_next_x = cursor_row_layout.x_for_index(cursor_column + 1)
-                        + cursor_row_layout
-                            .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
-                    let mut cell_width = cursor_next_x - cursor_character_x;
+                    let alignment_offset = cursor_row_layout
+                        .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
+                    let cursor_x_range = cursor_row_layout
+                        .x_range_for_index(cursor_column)
+                        .unwrap_or_else(|| {
+                            cursor_row_layout.x_for_index(cursor_column)
+                                ..cursor_row_layout.x_for_index(cursor_column + 1)
+                        });
+                    let cursor_x = if selection.cursor_shape == CursorShape::Bar {
+                        cursor_row_layout.caret_x_for_index(cursor_column)
+                    } else {
+                        cursor_x_range.start
+                    };
+                    let mut cursor_character_x = cursor_x + alignment_offset;
+                    let mut cell_width = cursor_x_range.end - cursor_x_range.start;
                     if cell_width == Pixels::ZERO {
                         cell_width = em_advance;
                     }
 
                     let mut block_width = cell_width;
                     let mut block_text = None;
+                    let mut clip_block_text = false;
 
                     let is_cursor_in_redacted_range = redacted_ranges
                         .iter()
@@ -1268,21 +1277,34 @@ impl EditorElement {
                                 cx.theme().colors().editor_background
                             };
 
-                            let shaped = window.text_system().shape_line(
-                                text,
-                                cursor_row_layout.font_size,
-                                &[TextRun {
-                                    len,
-                                    font,
-                                    color,
-                                    ..Default::default()
-                                }],
-                                None,
-                            );
-                            if !is_ascii_whitespace_only {
-                                block_width = block_width.max(shaped.width);
+                            let cell_in_context =
+                                if cursor_row_layout.is_right_to_left_at(cursor_column) {
+                                    cursor_row_layout.cell_for_index(cursor_column, color, window)
+                                } else {
+                                    None
+                                };
+                            if let Some((span, cell)) = cell_in_context {
+                                cursor_character_x = span.start + alignment_offset;
+                                block_width = span.end - span.start;
+                                block_text = Some(cell);
+                                clip_block_text = true;
+                            } else {
+                                let shaped = window.text_system().shape_line(
+                                    text,
+                                    cursor_row_layout.font_size,
+                                    &[TextRun {
+                                        len,
+                                        font,
+                                        color,
+                                        ..Default::default()
+                                    }],
+                                    None,
+                                );
+                                if !is_ascii_whitespace_only {
+                                    block_width = block_width.max(shaped.width);
+                                }
+                                block_text = Some(shaped);
                             }
-                            block_text = Some(shaped);
                         }
                     }
 
@@ -1332,6 +1354,7 @@ impl EditorElement {
                         line_height,
                         shape: selection.cursor_shape,
                         block_text,
+                        clip_block_text,
                         cursor_name: None,
                         animated_corners: None,
                     };
@@ -8285,6 +8308,71 @@ impl LineWithInvisibles {
         fragment_start_x
     }
 
+    pub fn x_range_for_index(&self, index: usize) -> Option<Range<Pixels>> {
+        let (fragment_start_x, fragment_start_index, shaped_line) =
+            self.text_fragment_for_index(index)?;
+        let range = shaped_line.x_range_for_index(index - fragment_start_index)?;
+        Some(fragment_start_x + range.start..fragment_start_x + range.end)
+    }
+
+    pub fn caret_x_for_index(&self, index: usize) -> Pixels {
+        match self.text_fragment_for_index(index) {
+            Some((fragment_start_x, fragment_start_index, shaped_line)) => {
+                fragment_start_x + shaped_line.caret_x_for_index(index - fragment_start_index)
+            }
+            None => self.x_for_index(index),
+        }
+    }
+
+    pub fn is_right_to_left_at(&self, index: usize) -> bool {
+        self.text_fragment_for_index(index)
+            .is_some_and(|(_, fragment_start_index, shaped_line)| {
+                shaped_line.is_right_to_left_at(index - fragment_start_index)
+            })
+    }
+
+    pub fn cell_for_index(
+        &self,
+        index: usize,
+        color: Hsla,
+        window: &Window,
+    ) -> Option<(Range<Pixels>, ShapedLine)> {
+        let (fragment_start_x, fragment_start_index, shaped_line) =
+            self.text_fragment_for_index(index)?;
+        let (span, cell) =
+            shaped_line.cell_for_index(index - fragment_start_index, color, window)?;
+        Some((
+            fragment_start_x + span.start..fragment_start_x + span.end,
+            cell,
+        ))
+    }
+
+    /// The text fragment holding `index`, with its starting x and index. The end of the line
+    /// belongs to the last fragment when that fragment is text.
+    fn text_fragment_for_index(&self, index: usize) -> Option<(Pixels, usize, &ShapedLine)> {
+        let mut fragment_start_x = Pixels::ZERO;
+        let mut fragment_start_index = 0;
+
+        for (fragment_ix, fragment) in self.fragments.iter().enumerate() {
+            let (fragment_len, fragment_width) = match fragment {
+                LineFragment::Text(shaped_line) => (shaped_line.len, shaped_line.width),
+                LineFragment::Element { len, size, .. } => (*len, size.width),
+            };
+            let fragment_end_index = fragment_start_index + fragment_len;
+            let is_last_fragment = fragment_ix + 1 == self.fragments.len();
+            if index < fragment_end_index || (index == fragment_end_index && is_last_fragment) {
+                let LineFragment::Text(shaped_line) = fragment else {
+                    return None;
+                };
+                return Some((fragment_start_x, fragment_start_index, shaped_line));
+            }
+            fragment_start_x += fragment_width;
+            fragment_start_index = fragment_end_index;
+        }
+
+        None
+    }
+
     pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
         let mut fragment_start_x = Pixels::ZERO;
         let mut fragment_start_index = 0;
@@ -11015,6 +11103,7 @@ pub struct CursorLayout {
     color: Hsla,
     shape: CursorShape,
     block_text: Option<ShapedLine>,
+    clip_block_text: bool,
     cursor_name: Option<AnyElement>,
     animated_corners: Option<[gpui::Point<Pixels>; 4]>,
 }
@@ -11042,6 +11131,7 @@ impl CursorLayout {
             color,
             shape,
             block_text,
+            clip_block_text: false,
             cursor_name: None,
             animated_corners: None,
         }
@@ -11145,16 +11235,19 @@ impl CursorLayout {
         }
 
         if let Some(block_text) = &self.block_text {
-            block_text
-                .paint(
-                    self.origin + origin,
-                    self.line_height,
-                    TextAlign::Left,
-                    None,
-                    window,
-                    cx,
-                )
-                .log_err();
+            let content_mask = self.clip_block_text.then_some(ContentMask { bounds });
+            window.with_content_mask(content_mask, |window| {
+                block_text
+                    .paint(
+                        self.origin + origin,
+                        self.line_height,
+                        TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    )
+                    .log_err();
+            });
         }
     }
 

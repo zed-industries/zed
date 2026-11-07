@@ -1,11 +1,14 @@
 use crate::{
     App, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point, RenderGlyphParams, Result,
-    SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
-    WrappedLineLayout, black, fill, point, px, size, underline_y_offset,
+    ShapedGlyph, ShapedRun, SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window,
+    WrapBoundary, WrappedLineLayout, black, fill, point, px, size, underline_y_offset,
 };
 use derive_more::{Deref, DerefMut};
-use smallvec::SmallVec;
+use gpui_util::ResultExt as _;
+use smallvec::{SmallVec, smallvec};
 use std::{ops::Range, sync::Arc};
+use unicode_bidi::{BidiInfo, Level};
+use unicode_segmentation::UnicodeSegmentation as _;
 
 /// Pre-computed glyph data for efficient painting without per-glyph cache lookups.
 ///
@@ -102,6 +105,126 @@ impl ShapedLine {
             len,
         });
         self
+    }
+
+    /// The x position of a caret placed before the character at the given index.
+    ///
+    /// A caret sits on the leading edge of the character after it, which is the right edge
+    /// inside right-to-left text. At the end of the line it follows the last character instead.
+    pub fn caret_x_for_index(&self, index: usize) -> Pixels {
+        if let Some(range) = self.x_range_for_index(index) {
+            return if self.is_right_to_left_at(index) {
+                range.end
+            } else {
+                range.start
+            };
+        }
+
+        if index == self.len()
+            && let Some((last_index, _)) = self.text.grapheme_indices(true).next_back()
+            && self.is_right_to_left_at(last_index)
+            && let Some(range) = self.x_range_for_index(last_index)
+        {
+            return range.start;
+        }
+
+        self.x_for_index(index)
+    }
+
+    /// Whether the character at the given index is laid out right to left.
+    pub fn is_right_to_left_at(&self, index: usize) -> bool {
+        self.len() == self.text.len()
+            && !self.text.is_ascii()
+            && line_bidi_levels(&self.text)
+                .get(index)
+                .is_some_and(|level| level.is_rtl())
+    }
+
+    /// The span the grapheme at the given index covers, counting both its advance and the ink
+    /// its glyphs draw, together with this line repainted in `color` and shifted so that the
+    /// span starts at x = 0.
+    ///
+    /// Painting that line clipped to the span redraws the grapheme as it appears in context,
+    /// along with any neighbouring ink that reaches into the span, such as the strokes that join
+    /// Arabic letters. Shaping the grapheme alone would give its standalone form instead.
+    pub fn cell_for_index(
+        &self,
+        index: usize,
+        color: Hsla,
+        window: &Window,
+    ) -> Option<(Range<Pixels>, ShapedLine)> {
+        if self.len() != self.text.len() {
+            return None;
+        }
+        let advance = self.x_range_for_index(index)?;
+        let scale_factor = window.scale_factor();
+        let span = self
+            .layout
+            .runs
+            .iter()
+            .flat_map(|run| {
+                run.glyphs
+                    .iter()
+                    .filter(|glyph| glyph.index == index)
+                    .map(|glyph| (run.font_id, glyph))
+            })
+            .filter_map(|(font_id, glyph)| {
+                let ink = window
+                    .text_system()
+                    .raster_bounds(&RenderGlyphParams {
+                        font_id,
+                        glyph_id: glyph.id,
+                        font_size: self.layout.font_size,
+                        subpixel_variant: Point::default(),
+                        scale_factor,
+                        is_emoji: glyph.is_emoji,
+                        subpixel_rendering: false,
+                        dilation: 0,
+                    })
+                    .log_err()?;
+                let ink_start = glyph.position.x + px(ink.origin.x.0 as f32 / scale_factor);
+                let ink_end = ink_start + px(ink.size.width.0 as f32 / scale_factor);
+                (ink.size.width.0 > 0).then_some(ink_start..ink_end)
+            })
+            .fold(advance, |span, ink| {
+                span.start.min(ink.start)..span.end.max(ink.end)
+            });
+
+        let runs = self
+            .layout
+            .runs
+            .iter()
+            .map(|run| ShapedRun {
+                font_id: run.font_id,
+                glyphs: run
+                    .glyphs
+                    .iter()
+                    .map(|glyph| ShapedGlyph {
+                        position: point(glyph.position.x - span.start, glyph.position.y),
+                        ..glyph.clone()
+                    })
+                    .collect(),
+            })
+            .collect();
+        let line = ShapedLine {
+            layout: Arc::new(LineLayout {
+                font_size: self.layout.font_size,
+                width: span.end - span.start,
+                ascent: self.layout.ascent,
+                descent: self.layout.descent,
+                runs,
+                len: self.len(),
+            }),
+            text: self.text.clone(),
+            decoration_runs: smallvec![DecorationRun {
+                len: self.len() as u32,
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }],
+        };
+        Some((span, line))
     }
 
     /// Paint the line of text to the window.
@@ -962,6 +1085,23 @@ fn aligned_origin_x(
     }
 }
 
+/// The bidi embedding level of each byte, with each paragraph laid out as a single line so
+/// trailing whitespace and tabs fall back to the paragraph direction, as the shaper does.
+fn line_bidi_levels(text: &str) -> Vec<Level> {
+    let bidi_info = BidiInfo::new(text, None);
+    let mut levels = bidi_info.levels.clone();
+    for paragraph in &bidi_info.paragraphs {
+        let range = paragraph.range.clone();
+        let reordered_levels = bidi_info.reordered_levels(paragraph, range.clone());
+        if let (Some(target), Some(source)) =
+            (levels.get_mut(range.clone()), reordered_levels.get(range))
+        {
+            target.copy_from_slice(source);
+        }
+    }
+    levels
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1004,6 +1144,97 @@ mod tests {
             text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
         }
+    }
+
+    #[test]
+    fn test_caret_x_for_index() {
+        let left_to_right = make_shaped_line("ab", &[(0, 0.), (1, 10.)], 20., &[]);
+        let right_to_left = make_shaped_line("אבג", &[(0, 20.), (2, 10.), (4, 0.)], 30., &[]);
+        let mixed = make_shaped_line(
+            "a אב b",
+            &[(0, 0.), (1, 10.), (4, 20.), (2, 30.), (6, 40.), (7, 50.)],
+            60.,
+            &[],
+        );
+        let tab_between_right_to_left = make_shaped_line(
+            "a \u{5d0}\t\u{5d1} b",
+            &[
+                (0, 0.),
+                (1, 10.),
+                (2, 20.),
+                (4, 30.),
+                (5, 40.),
+                (7, 50.),
+                (8, 60.),
+            ],
+            70.,
+            &[],
+        );
+
+        for (line, index, expected_x) in [
+            (&left_to_right, 0, 0.),
+            (&left_to_right, 1, 10.),
+            (&left_to_right, 2, 20.),
+            (&right_to_left, 0, 30.),
+            (&right_to_left, 2, 20.),
+            (&right_to_left, 4, 10.),
+            (&right_to_left, 6, 0.),
+            (&mixed, 1, 10.),
+            (&mixed, 2, 40.),
+            (&mixed, 4, 30.),
+            (&mixed, 6, 40.),
+            (&mixed, 8, 60.),
+            (&tab_between_right_to_left, 4, 30.),
+            (&tab_between_right_to_left, 5, 50.),
+        ] {
+            assert_eq!(
+                line.caret_x_for_index(index),
+                px(expected_x),
+                "{:?} at {index}",
+                line.text
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_cell_for_index(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let color = hsla(0., 0., 0., 1.);
+        let line = make_shaped_line(
+            "a \u{5d0}\u{5d1} b",
+            &[(0, 0.), (1, 10.), (4, 20.), (2, 30.), (6, 40.), (7, 50.)],
+            60.,
+            &[],
+        );
+
+        cx.update(|window, _| {
+            let (span, cell) = line
+                .cell_for_index(2, color, window)
+                .expect("glyph starts at 2");
+            assert_eq!(span, px(30.)..px(40.));
+            assert_eq!(cell.width, px(10.));
+            assert_eq!(cell.text, line.text);
+            let positions: Vec<_> = cell
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .map(|glyph| (glyph.index, glyph.position.x))
+                .collect();
+            assert_eq!(
+                positions,
+                [
+                    (0, px(-30.)),
+                    (1, px(-20.)),
+                    (4, px(-10.)),
+                    (2, px(0.)),
+                    (6, px(10.)),
+                    (7, px(20.)),
+                ]
+            );
+
+            assert!(line.cell_for_index(3, color, window).is_none());
+            assert!(line.with_len(4).cell_for_index(2, color, window).is_none());
+        });
     }
 
     #[gpui::test]
