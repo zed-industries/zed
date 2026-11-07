@@ -1065,6 +1065,16 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE workspaces ADD COLUMN native_window_state BLOB;
         ),
+        sql!(
+            CREATE TABLE restricted_worktrees (
+                absolute_path BLOB NOT NULL,
+                connection_kind TEXT,
+                host TEXT,
+                user TEXT,
+                port INTEGER
+            ) STRICT;
+            CREATE INDEX restricted_worktrees_absolute_path ON restricted_worktrees(absolute_path);
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -2684,6 +2694,112 @@ VALUES {placeholders};"#
             DELETE FROM trusted_worktrees
         }
     }
+
+    pub(crate) async fn has_undecided_restricted_worktrees(
+        &self,
+        abs_paths: Vec<Arc<Path>>,
+        connection_identity: Option<RemoteConnectionIdentity<'static>>,
+    ) -> Result<bool> {
+        self.write(move |connection| {
+            let columns = remote_identity_columns(connection_identity.as_ref());
+            for abs_path in &abs_paths {
+                if !is_worktree_kept_restricted(connection, abs_path, &columns)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })
+        .await
+    }
+
+    pub(crate) fn keep_worktrees_restricted(
+        &self,
+        abs_paths: Vec<Arc<Path>>,
+        connection_identity: Option<RemoteConnectionIdentity<'static>>,
+    ) {
+        // The write is queued by this call and runs even if the returned future is dropped.
+        drop(self.write(move |connection| {
+            connection
+                .with_savepoint("keep_worktrees_restricted", || {
+                    let columns = remote_identity_columns(connection_identity.as_ref());
+                    let mut insert =
+                        connection.exec_bound::<(&Path, RemoteIdentityColumns)>(sql!(
+                            INSERT INTO restricted_worktrees(absolute_path, connection_kind, host, user, port)
+                            VALUES (?, ?, ?, ?, ?)
+                        ))?;
+                    for abs_path in &abs_paths {
+                        if !is_worktree_kept_restricted(connection, abs_path, &columns)? {
+                            insert((abs_path.as_ref(), columns.clone()))?;
+                        }
+                    }
+                    Ok(())
+                })
+                .log_err();
+        }));
+    }
+
+    query! {
+        pub(crate) async fn clear_restricted_worktrees() -> Result<()> {
+            DELETE FROM restricted_worktrees
+        }
+    }
+}
+
+type RemoteIdentityColumns = (
+    Option<&'static str>,
+    Option<String>,
+    Option<String>,
+    Option<u16>,
+);
+
+fn remote_identity_columns(
+    connection_identity: Option<&RemoteConnectionIdentity<'_>>,
+) -> RemoteIdentityColumns {
+    match connection_identity {
+        None => (None, None, None, None),
+        Some(RemoteConnectionIdentity::Ssh {
+            host,
+            username,
+            port,
+        }) => (
+            Some(RemoteConnectionKind::Ssh.serialize()),
+            Some(host.to_string()),
+            username.as_ref().map(ToString::to_string),
+            *port,
+        ),
+        Some(RemoteConnectionIdentity::Wsl { distro_name, user }) => (
+            Some(RemoteConnectionKind::Wsl.serialize()),
+            Some(distro_name.to_string()),
+            user.as_ref().map(ToString::to_string),
+            None,
+        ),
+        Some(RemoteConnectionIdentity::Docker {
+            container_id,
+            remote_user,
+        }) => (
+            Some(RemoteConnectionKind::Docker.serialize()),
+            Some(container_id.to_string()),
+            Some(remote_user.to_string()),
+            None,
+        ),
+        #[cfg(any(test, feature = "test-support"))]
+        Some(RemoteConnectionIdentity::Mock { id }) => {
+            (Some("mock"), Some(id.to_string()), None, None)
+        }
+    }
+}
+
+fn is_worktree_kept_restricted(
+    connection: &Connection,
+    abs_path: &Path,
+    columns: &RemoteIdentityColumns,
+) -> Result<bool> {
+    let mut select = connection.select_row_bound::<(&Path, RemoteIdentityColumns), PathBuf>(sql!(
+        SELECT absolute_path
+        FROM restricted_worktrees
+        WHERE absolute_path = ? AND connection_kind IS ? AND host IS ? AND user IS ? AND port IS ?
+    ))?;
+    Ok(select((abs_path, columns.clone()))?.is_some())
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -3224,6 +3340,130 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(test_text_1, "test-text-1");
+    }
+
+    #[gpui::test]
+    async fn test_restricted_worktrees_are_scoped_to_path_and_connection() {
+        let db = WorkspaceDb::open_test_db("test_restricted_worktrees").await;
+        let path = Path::new("/project");
+        let other_path = Path::new("/other");
+        let ssh =
+            |username: Option<&'static str>, port: Option<u16>| RemoteConnectionIdentity::Ssh {
+                host: Cow::Borrowed("host"),
+                username: username.map(Cow::Borrowed),
+                port,
+            };
+        let declined_connection = ssh(Some("user"), Some(2222));
+
+        db.keep_worktrees_restricted(
+            Vec::from([Arc::from(path), Arc::from(path), Arc::from(other_path)]),
+            Some(declined_connection.clone()),
+        );
+
+        for (paths, connection_identity, expected_undecided) in [
+            (
+                Vec::from([path, other_path]),
+                Some(declined_connection.clone()),
+                false,
+            ),
+            (
+                Vec::from([path, Path::new("/project/nested")]),
+                Some(declined_connection.clone()),
+                true,
+            ),
+            (Vec::from([path]), None, true),
+            (Vec::from([path]), Some(ssh(None, Some(2222))), true),
+            (Vec::from([path]), Some(ssh(Some("user"), Some(2223))), true),
+            (Vec::from([path]), Some(ssh(Some("user"), None)), true),
+            (
+                Vec::from([path]),
+                Some(RemoteConnectionIdentity::Wsl {
+                    distro_name: Cow::Borrowed("host"),
+                    user: Some(Cow::Borrowed("user")),
+                }),
+                true,
+            ),
+        ] {
+            assert_eq!(
+                db.has_undecided_restricted_worktrees(
+                    paths.iter().copied().map(Arc::from).collect::<Vec<_>>(),
+                    connection_identity.clone(),
+                )
+                .await
+                .unwrap(),
+                expected_undecided,
+                "{paths:?} on {connection_identity:?}"
+            );
+        }
+
+        db.keep_worktrees_restricted(Vec::from([Arc::from(Path::new("/late"))]), None);
+        db.keep_worktrees_restricted(Vec::from([Arc::from(Path::new("/late"))]), None);
+        assert_eq!(
+            db.select_row::<i64>(sql!(SELECT COUNT(*) FROM restricted_worktrees))
+                .unwrap()()
+            .unwrap(),
+            Some(3)
+        );
+
+        db.clear_restricted_worktrees().await.unwrap();
+        assert_eq!(
+            db.select_row::<i64>(sql!(SELECT COUNT(*) FROM restricted_worktrees))
+                .unwrap()()
+            .unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn test_restricted_worktree_lookup_waits_for_pending_saves() {
+        futures::executor::block_on(async {
+            let db = WorkspaceDb(
+                ThreadSafeConnection::builder::<WorkspaceDb>(
+                    "test_restricted_worktree_lookup",
+                    false,
+                )
+                .build()
+                .await
+                .unwrap(),
+            );
+            let path = Arc::<Path>::from(Path::new("/project"));
+            let (release_writer, writer_released) = std::sync::mpsc::channel::<()>();
+            drop(db.write(move |_| {
+                writer_released.recv().ok();
+            }));
+
+            db.keep_worktrees_restricted(Vec::from([path.clone()]), None);
+            let (has_undecided_worktrees, ()) = futures::join!(
+                db.has_undecided_restricted_worktrees(Vec::from([path]), None),
+                async {
+                    release_writer.send(()).unwrap();
+                }
+            );
+
+            assert_eq!(has_undecided_worktrees.unwrap(), false);
+        });
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_restricted_worktrees_keep_non_utf8_paths_distinct() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
+
+        let db = WorkspaceDb::open_test_db("test_restricted_worktrees_non_utf8").await;
+        let declined_path = Path::new(OsStr::from_bytes(b"/tmp/\xff/project"));
+        let other_path = Path::new(OsStr::from_bytes(b"/tmp/\xfe/project"));
+
+        db.keep_worktrees_restricted(Vec::from([Arc::from(declined_path)]), None);
+
+        for (path, expected_undecided) in [(declined_path, false), (other_path, true)] {
+            assert_eq!(
+                db.has_undecided_restricted_worktrees(Vec::from([Arc::from(path)]), None)
+                    .await
+                    .unwrap(),
+                expected_undecided,
+                "{path:?}"
+            );
+        }
     }
 
     #[gpui::test]
