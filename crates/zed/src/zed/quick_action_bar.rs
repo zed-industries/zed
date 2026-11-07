@@ -136,10 +136,28 @@ impl Render for QuickActionBar {
                     Some(ContextMenu::build(window, cx, move |menu, _, _| {
                         menu.entry("Show Uncommitted Changes", None, {
                             let editor = editor.clone();
-                            move |_, cx| {
-                                editor
-                                    .update(cx, |editor, cx| editor.show_uncommitted_changes(cx))
-                                    .log_err();
+                            move |window, cx| {
+                                let loading = editor
+                                    .update(cx, |editor, cx| {
+                                        editor.show_uncommitted_changes(cx);
+                                        editor.wait_for_diff_to_load()
+                                    })
+                                    .log_err()
+                                    .flatten();
+                                if let Some(loading) = loading {
+                                    let editor = editor.clone();
+                                    window
+                                        .spawn(cx, async move |cx| {
+                                            loading.await;
+                                            editor
+                                                .update_in(cx, |editor, window, cx| {
+                                                    editor.focus_handle(cx).focus(window, cx);
+                                                    window.refresh();
+                                                })
+                                                .log_err();
+                                        })
+                                        .detach();
+                                }
                             }
                         })
                         .separator()
