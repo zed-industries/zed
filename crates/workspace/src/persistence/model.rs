@@ -384,6 +384,14 @@ impl SerializedPane {
             }
         }
 
+        // Mark the pinned tabs before re-adding items: `add_item` enforces
+        // `max_tabs` as each item is restored, and that enforcement only spares
+        // tabs the pane already knows are pinned. Without this, restoring more
+        // pinned tabs than `max_tabs` would close the extra pins mid-restore.
+        pane.update(cx, |pane, _| {
+            pane.set_pinned_count(self.pinned_count);
+        })?;
+
         let mut items = Vec::new();
         for item_handle in futures::future::join_all(item_tasks).await {
             let item_handle = item_handle.log_err();
