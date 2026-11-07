@@ -8,7 +8,6 @@ use crate::{Empty, Window};
 use anyhow::Result;
 use collections::FxHashSet;
 use refineable::Refineable;
-use std::mem;
 use std::{
     any::{TypeId, type_name},
     fmt,
@@ -323,6 +322,11 @@ impl<V: View> IntoElement for ViewElement<V> {
 struct ViewElementState {
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
+    /// The draws `prepaint_range` and `paint_range` were recorded in. A cached
+    /// ancestor reused whole carries this state into the next frame without
+    /// moving its ranges, which then index a frame that is gone.
+    prepaint_frame: u64,
+    paint_frame: u64,
     cache_key: ViewElementCacheKey,
     /// The entities the view accessed while it was last drawn, in any phase,
     /// restored when its prepaint is reused so the window stays subscribed.
@@ -556,6 +560,8 @@ fn prepaint_view(
                     && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
                     && !window.dirty_views.contains(&entity_id)
                     && !window.refreshing
+                    && element_state.prepaint_frame + 1 == window.frames_drawn
+                    && element_state.paint_frame + 1 == window.frames_drawn
                 {
                     let prepaint_start = window.prepaint_index();
                     window.reuse_prepaint(element_state.prepaint_range.clone());
@@ -563,11 +569,14 @@ fn prepaint_view(
                         .extend_accessed(element_state.accessed_entities.iter().copied());
                     let prepaint_end = window.prepaint_index();
                     element_state.prepaint_range = prepaint_start..prepaint_end;
+                    element_state.prepaint_frame = window.frames_drawn;
 
                     return (None, element_state);
                 }
 
-                let refreshing = mem::replace(&mut window.refreshing, true);
+                // Cached views inside this one are left to their own cache keys:
+                // one that is neither dirty nor moved is reused. Only a refresh of
+                // the whole window renders everything again.
                 let prepaint_start = window.prepaint_index();
                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                     let mut element = render(window, cx);
@@ -577,7 +586,6 @@ fn prepaint_view(
                 });
 
                 let prepaint_end = window.prepaint_index();
-                window.refreshing = refreshing;
 
                 (
                     Some(element),
@@ -585,6 +593,8 @@ fn prepaint_view(
                         accessed_entities,
                         prepaint_range: prepaint_start..prepaint_end,
                         paint_range: PaintIndex::default()..PaintIndex::default(),
+                        prepaint_frame: window.frames_drawn,
+                        paint_frame: 0,
                         cache_key: ViewElementCacheKey {
                             bounds,
                             content_mask,
@@ -637,11 +647,9 @@ fn paint_view(
                     // actually painted, and output replayed under a different opacity is
                     // redrawn on the next frame.
                     if let Some(element) = element {
-                        let refreshing = mem::replace(&mut window.refreshing, true);
                         let ((), accessed_entities) =
                             cx.detect_accessed_entities(|cx| element.paint(window, cx));
                         element_state.accessed_entities.extend(accessed_entities);
-                        window.refreshing = refreshing;
                         element_state.cache_key.opacity = opacity;
                     } else {
                         window.reuse_paint(element_state.paint_range.clone());
@@ -652,6 +660,7 @@ fn paint_view(
 
                     let paint_end = window.paint_index();
                     element_state.paint_range = paint_start..paint_end;
+                    element_state.paint_frame = window.frames_drawn;
 
                     ((), element_state)
                 },
