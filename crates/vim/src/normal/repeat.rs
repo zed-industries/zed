@@ -52,7 +52,7 @@ fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
                 None
             }
         }
-        ReplayableAction::Insertion { .. } => None,
+        ReplayableAction::Insertion { .. } | ReplayableAction::SnippetInsertion { .. } => None,
     }
 }
 
@@ -177,6 +177,29 @@ impl Replayer {
                 };
                 editor.update(cx, |editor, cx| {
                     editor.replay_insert_event(&text, utf16_range_to_replace.clone(), window, cx)
+                })
+            }
+            ReplayableAction::SnippetInsertion {
+                snippet_source,
+                utf16_range_to_replace,
+            } => {
+                let Some(workspace) = Workspace::for_window(window, cx) else {
+                    return;
+                };
+                let Some(editor) = workspace
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+                else {
+                    return;
+                };
+                editor.update(cx, |editor, cx| {
+                    editor.replay_snippet_insertion(
+                        &snippet_source,
+                        utf16_range_to_replace.clone(),
+                        window,
+                        cx,
+                    )
                 })
             }
         }
