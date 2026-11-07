@@ -119,6 +119,11 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: false
     pub show_menus: Option<bool>,
+    /// Whether to keep menus on the same row as other title bar items when
+    /// `show_menus` is enabled (Windows and Linux only).
+    ///
+    /// Default: false
+    pub inline_menus: Option<bool>,
     /// Whether to automatically open the menus in the title bar on hover.
     ///
     /// Default: false
