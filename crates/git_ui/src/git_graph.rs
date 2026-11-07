@@ -7269,6 +7269,124 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_graph_data_reloaded_after_external_tag_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+        let first = Oid::from_bytes(&[1; 20]).unwrap();
+        let second = Oid::from_bytes(&[2; 20]).unwrap();
+        let set_graph_commits = |tag_target: Option<Oid>| {
+            fs.set_graph_commits(
+                Path::new("/project/.git"),
+                [first, second]
+                    .into_iter()
+                    .map(|sha| {
+                        Arc::new(InitialGraphCommitData {
+                            sha,
+                            parents: smallvec![],
+                            ref_names: if Some(sha) == tag_target {
+                                vec!["tag: v1.0.0".into()]
+                            } else {
+                                vec![]
+                            },
+                        })
+                    })
+                    .collect(),
+            );
+        };
+        set_graph_commits(None);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let mut previous_version = repository.read_with(&*cx, |repository, _| {
+            repository.snapshot().tags_version.expect("tags scanned")
+        });
+        for target in [Some(first), Some(second), None] {
+            set_graph_commits(target);
+            fs.with_git_state(Path::new("/project/.git"), true, |state| {
+                if let Some(target) = target {
+                    state
+                        .refs
+                        .insert("refs/tags/v1.0.0".into(), target.to_string());
+                } else {
+                    state.refs.remove("refs/tags/v1.0.0");
+                }
+            })
+            .unwrap();
+            project
+                .update(cx, |project, cx| project.git_scans_complete(cx))
+                .await;
+            cx.run_until_parked();
+            cx.draw(
+                point(px(0.), px(0.)),
+                gpui::size(px(1200.), px(800.)),
+                |_, _| git_graph.clone().into_any_element(),
+            );
+            cx.run_until_parked();
+
+            let version = repository.read_with(&*cx, |repository, _| {
+                repository.snapshot().tags_version.expect("tags scanned")
+            });
+            assert_eq!(version, previous_version + 1);
+            previous_version = version;
+            git_graph.read_with(&*cx, |graph, _| {
+                let tagged = graph
+                    .graph_data
+                    .commits
+                    .iter()
+                    .find(|commit| {
+                        commit
+                            .data
+                            .ref_names
+                            .iter()
+                            .any(|name| name == "tag: v1.0.0")
+                    })
+                    .map(|commit| commit.data.sha);
+                assert_eq!(tagged, target);
+                assert_eq!(graph.graph_data.commits.len(), 2);
+            });
+        }
+
+        fs.with_git_state(Path::new("/project/.git"), true, |_| {})
+            .unwrap();
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+        assert_eq!(
+            repository.read_with(&*cx, |repository, _| repository.snapshot().tags_version),
+            Some(previous_version)
+        );
+    }
+
+    #[gpui::test]
     async fn test_git_graph_row_at_position_rounding(cx: &mut TestAppContext) {
         init_test(cx);
 

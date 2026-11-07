@@ -626,6 +626,7 @@ pub struct RepositorySnapshot {
     pub remote_upstream_url: Option<String>,
     pub stash_entries: GitStash,
     pub linked_worktrees: Arc<[GitWorktree]>,
+    pub tags_version: Option<u64>,
 }
 
 type JobId = u64;
@@ -701,6 +702,7 @@ pub struct Repository {
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
+    tags: Vec<(String, String)>,
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
     auto_fetch: AutoFetchState,
@@ -5996,6 +5998,7 @@ impl RepositorySnapshot {
             remote_upstream_url: None,
             stash_entries: Default::default(),
             linked_worktrees: Arc::from([]),
+            tags_version: None,
             path_style,
         }
     }
@@ -6008,6 +6011,7 @@ impl RepositorySnapshot {
                 .branch_list_error
                 .as_ref()
                 .map(|error| error.to_string()),
+            tags_version: self.tags_version,
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses: self
                 .statuses_by_path
@@ -6099,6 +6103,7 @@ impl RepositorySnapshot {
                 .branch_list_error
                 .as_ref()
                 .map(|error| error.to_string()),
+            tags_version: self.tags_version,
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses,
             removed_statuses,
@@ -6502,6 +6507,7 @@ impl Repository {
             active_jobs: Default::default(),
             job_debug_queue: job_debug_queue::GitJobDebugQueue::new(),
             initial_graph_data: Default::default(),
+            tags: Vec::new(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
             auto_fetch: AutoFetchState::default(),
@@ -6555,6 +6561,7 @@ impl Repository {
             job_debug_queue: job_debug_queue::GitJobDebugQueue::new(),
             job_id: 0,
             initial_graph_data: Default::default(),
+            tags: Vec::new(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
             auto_fetch: AutoFetchState::default(),
@@ -9969,6 +9976,12 @@ impl Repository {
         self.snapshot.head_commit = new_head_commit;
 
         if update.is_last_update {
+            if let Some(tags_version) = update.tags_version {
+                if self.snapshot.tags_version != Some(tags_version) {
+                    cx.emit(RepositoryEvent::TagsChanged);
+                }
+                self.snapshot.tags_version = Some(tags_version);
+            }
             let new_branch_list: Arc<[Branch]> =
                 update.branch_list.iter().map(proto_to_branch).collect();
             let new_branch_list_error = update.branch_list_error.map(SharedString::from);
@@ -11350,6 +11363,55 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[gpui::test]
+    async fn test_remote_tag_version_invalidates_graph(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(Path::new("/project"), json!({ ".git": {} }))
+            .await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+        let repository = project.read_with(cx, |project, cx| {
+            project.active_repository(cx).expect("repository exists")
+        });
+        let mut events = cx.events(&repository);
+        let mut update =
+            repository.read_with(cx, |repository, _| repository.snapshot.initial_update(0));
+        update.tags_version = Some(update.tags_version.unwrap_or_default() + 1);
+
+        let mut partial = update.clone();
+        partial.is_last_update = false;
+        repository.update(cx, |repository, cx| {
+            repository.apply_remote_update(partial, cx).unwrap();
+        });
+        cx.run_until_parked();
+        assert!(
+            !std::iter::from_fn(|| events.try_recv().ok())
+                .any(|event| matches!(event, RepositoryEvent::TagsChanged))
+        );
+
+        repository.update(cx, |repository, cx| {
+            repository.apply_remote_update(update.clone(), cx).unwrap();
+        });
+        cx.run_until_parked();
+        assert!(
+            std::iter::from_fn(|| events.try_recv().ok())
+                .any(|event| matches!(event, RepositoryEvent::TagsChanged))
+        );
+
+        repository.update(cx, |repository, cx| {
+            repository.apply_remote_update(update, cx).unwrap();
+        });
+        cx.run_until_parked();
+        assert!(
+            !std::iter::from_fn(|| events.try_recv().ok())
+                .any(|event| matches!(event, RepositoryEvent::TagsChanged))
+        );
     }
 
     #[gpui::test]
@@ -13009,9 +13071,17 @@ async fn compute_snapshot(
         let backend = backend.clone();
         async move { backend.worktrees().await.log_err().unwrap_or_default() }
     };
-    let (branches, head_commit, all_worktrees) =
-        futures::future::join3(branches_future, head_commit_future, worktrees_future).await;
-    log::debug!("fetched branches, head commit, worktrees");
+    let tags_future = {
+        let backend = backend.clone();
+        async move { backend.tags().await.log_err() }
+    };
+    let (branches, head_commit, all_worktrees, tags) = futures::join!(
+        branches_future,
+        head_commit_future,
+        worktrees_future,
+        tags_future
+    );
+    log::debug!("fetched branches, head commit, worktrees, tags");
 
     let BranchesScanResult {
         branches,
@@ -13037,6 +13107,13 @@ async fn compute_snapshot(
         let branch_list_changed = *branch_list != *this.snapshot.branch_list;
         let branch_list_error_changed = branch_list_error != this.snapshot.branch_list_error;
         let worktrees_changed = *linked_worktrees != *this.snapshot.linked_worktrees;
+        let tags_changed = tags.as_ref().is_some_and(|tags| *tags != this.tags);
+        let tags_version = tags.as_ref().map_or(this.snapshot.tags_version, |_| {
+            Some(this.snapshot.tags_version.unwrap_or_default() + u64::from(tags_changed))
+        });
+        if let Some(tags) = tags {
+            this.tags = tags;
+        }
 
         this.snapshot = RepositorySnapshot {
             id,
@@ -13048,6 +13125,7 @@ async fn compute_snapshot(
             remote_origin_url,
             remote_upstream_url,
             linked_worktrees,
+            tags_version,
             scan_id: prev_snapshot.scan_id + 1,
             ..prev_snapshot
         };
@@ -13058,6 +13136,10 @@ async fn compute_snapshot(
 
         if branch_list_changed || branch_list_error_changed {
             cx.emit(RepositoryEvent::BranchListChanged);
+        }
+
+        if tags_changed {
+            cx.emit(RepositoryEvent::TagsChanged);
         }
 
         if worktrees_changed {
