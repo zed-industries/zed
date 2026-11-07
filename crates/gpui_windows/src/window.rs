@@ -88,16 +88,21 @@ pub struct WindowsWindowState {
     pub(crate) draw_coordinator: Rc<DrawCoordinator>,
     fullscreen: Cell<Option<StyleAndBounds>>,
     initial_placement: Cell<Option<WindowOpenStatus>>,
-    /// Deferred uncloak for windows created with `show: true`.
+    /// Deferred show for windows created with `show: true`.
     ///
     /// DWM composites asynchronously and the acrylic/backdrop accent doesn't
-    /// render before the window's first present, so showing a window
-    /// immediately at creation displays a fully transparent frame (a visible
-    /// transparent -> blurred flash with translucent themes). When set, the
-    /// window is shown as usual (so it receives WM_PAINT and renders) but is
-    /// cloaked via DWM, and uncloaked in [`PlatformWindow::draw`] after the
-    /// first frame is presented.
-    pending_uncloak: Cell<bool>,
+    /// render before the window's first present, so a window shown at creation
+    /// displays a fully transparent frame (a visible transparent -> blurred
+    /// flash with translucent themes). Cloaking the window until the first
+    /// present avoids the flash but also suppresses the OS window-open
+    /// animation, so instead the window is created hidden, the first frame is
+    /// presented by [`PlatformWindow::on_request_frame`], and only then is it
+    /// shown in [`PlatformWindow::draw`], which lets DWM animate the opening
+    /// with the content already composited.
+    pending_show: Cell<bool>,
+    /// Set when the window is activated before it is first shown. The
+    /// activation is performed right after the window is shown.
+    pending_activation: Cell<bool>,
     hwnd: HWND,
     pub(crate) a11y: RefCell<Option<A11yState>>,
     pub mouse_position: Cell<Point<Pixels>>,
@@ -165,7 +170,8 @@ impl WindowsWindowState {
         let nc_button_pressed = None;
         let fullscreen = None;
         let initial_placement = None;
-        let pending_uncloak = false;
+        let pending_show = false;
+        let pending_activation = false;
 
         let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
             .context("initializing Direct Manipulation")?;
@@ -198,7 +204,8 @@ impl WindowsWindowState {
             display: Cell::new(display),
             fullscreen: Cell::new(fullscreen),
             initial_placement: Cell::new(initial_placement),
-            pending_uncloak: Cell::new(pending_uncloak),
+            pending_show: Cell::new(pending_show),
+            pending_activation: Cell::new(pending_activation),
             hwnd,
             invalidate_devices,
             draw_coordinator,
@@ -403,6 +410,59 @@ impl WindowsWindowInner {
         Ok(())
     }
 
+    fn activate_now(self: &Rc<Self>) {
+        let hwnd = self.hwnd;
+        let this = self.clone();
+        self.executor
+            .spawn(async move {
+                this.set_window_placement().log_err();
+
+                unsafe {
+                    // If the window is minimized, restore it.
+                    if IsIconic(hwnd).as_bool() {
+                        ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
+                    }
+
+                    SetActiveWindow(hwnd).ok();
+                    SetFocus(Some(hwnd)).ok();
+                }
+
+                // premium ragebait by windows, this is needed because the window
+                // must have received an input event to be able to set itself to foreground
+                // so let's just simulate user input as that seems to be the most reliable way
+                // some more info: https://gist.github.com/Aetopia/1581b40f00cc0cadc93a0e8ccb65dc8c
+                // bonus: this bug also doesn't manifest if you have vs attached to the process
+                let inputs = [
+                    INPUT {
+                        r#type: INPUT_KEYBOARD,
+                        Anonymous: INPUT_0 {
+                            ki: KEYBDINPUT {
+                                wVk: VK_MENU,
+                                dwFlags: KEYBD_EVENT_FLAGS(0),
+                                ..Default::default()
+                            },
+                        },
+                    },
+                    INPUT {
+                        r#type: INPUT_KEYBOARD,
+                        Anonymous: INPUT_0 {
+                            ki: KEYBDINPUT {
+                                wVk: VK_MENU,
+                                dwFlags: KEYEVENTF_KEYUP,
+                                ..Default::default()
+                            },
+                        },
+                    },
+                ];
+                unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+
+                // todo(windows)
+                // crate `windows 0.56` reports true as Err
+                unsafe { SetForegroundWindow(hwnd).as_bool() };
+            })
+            .detach();
+    }
+
     pub(crate) fn system_settings(&self) -> &WindowsSystemSettings {
         &self.system_settings
     }
@@ -601,16 +661,34 @@ impl WindowsWindow {
             if !params.focus {
                 placement.showCmd = SW_SHOWNOACTIVATE.0 as u32;
             }
-            // Cloak the window until its first frame is presented. Showing a
-            // window without presented content lets DWM composite a fully
-            // transparent frame first (a transparent -> blurred flash with
-            // translucent themes). A cloaked window is still visible to the
-            // application, so it receives WM_PAINT and renders normally,
-            // while DWM doesn't display it. Uncloaks after the first present,
-            // see `pending_uncloak` and [`PlatformWindow::draw`].
-            dwm_set_window_cloak(hwnd, true);
-            this.state.pending_uncloak.set(true);
-            unsafe { SetWindowPlacement(hwnd, &placement)? };
+            // Apply the placement while the window is still hidden, so its
+            // first frame is laid out at the final position, size and DPI.
+            // `Window::new` reads the platform content size right after this,
+            // and the default size of a freshly created window is not the
+            // requested one.
+            let rect = placement.rcNormalPosition;
+            unsafe {
+                SetWindowPos(
+                    hwnd,
+                    None,
+                    rect.left,
+                    rect.top,
+                    rect.right - rect.left,
+                    rect.bottom - rect.top,
+                    SWP_NOACTIVATE | SWP_NOZORDER,
+                )
+            }
+            .context("failed to size hidden window")?;
+            // Show the window only after its first frame has been presented,
+            // so DWM never composites a frame without content or backdrop and
+            // still runs the OS window-open animation (see `pending_show`).
+            // `on_request_frame` requests that first presentation while the
+            // window is hidden; [`PlatformWindow::draw`] shows it afterwards.
+            this.state.initial_placement.set(Some(WindowOpenStatus {
+                placement,
+                state: WindowOpenState::Windowed,
+            }));
+            this.state.pending_show.set(true);
         } else {
             this.state.initial_placement.set(Some(WindowOpenStatus {
                 placement,
@@ -843,57 +921,14 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn activate(&self) {
-        let hwnd = self.0.hwnd;
-        let this = self.0.clone();
-        self.0
-            .executor
-            .spawn(async move {
-                this.set_window_placement().log_err();
-
-                unsafe {
-                    // If the window is minimized, restore it.
-                    if IsIconic(hwnd).as_bool() {
-                        ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
-                    }
-
-                    SetActiveWindow(hwnd).ok();
-                    SetFocus(Some(hwnd)).ok();
-                }
-
-                // premium ragebait by windows, this is needed because the window
-                // must have received an input event to be able to set itself to foreground
-                // so let's just simulate user input as that seems to be the most reliable way
-                // some more info: https://gist.github.com/Aetopia/1581b40f00cc0cadc93a0e8ccb65dc8c
-                // bonus: this bug also doesn't manifest if you have vs attached to the process
-                let inputs = [
-                    INPUT {
-                        r#type: INPUT_KEYBOARD,
-                        Anonymous: INPUT_0 {
-                            ki: KEYBDINPUT {
-                                wVk: VK_MENU,
-                                dwFlags: KEYBD_EVENT_FLAGS(0),
-                                ..Default::default()
-                            },
-                        },
-                    },
-                    INPUT {
-                        r#type: INPUT_KEYBOARD,
-                        Anonymous: INPUT_0 {
-                            ki: KEYBDINPUT {
-                                wVk: VK_MENU,
-                                dwFlags: KEYEVENTF_KEYUP,
-                                ..Default::default()
-                            },
-                        },
-                    },
-                ];
-                unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
-
-                // todo(windows)
-                // crate `windows 0.56` reports true as Err
-                unsafe { SetForegroundWindow(hwnd).as_bool() };
-            })
-            .detach();
+        if self.state.pending_show.get() {
+            // The window isn't visible yet; activating it now would show it
+            // without content and skip its open animation. Activate once it is
+            // shown (see [`PlatformWindow::draw`]).
+            self.state.pending_activation.set(true);
+            return;
+        }
+        self.0.clone().activate_now();
     }
 
     fn request_attention(&self) {
@@ -978,6 +1013,30 @@ impl PlatformWindow for WindowsWindow {
 
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.state.callbacks.request_frame.set(Some(callback));
+        if self.state.pending_show.get() {
+            // Hidden windows don't receive WM_PAINT, so request the first
+            // presentation explicitly and keep the window hidden until it is
+            // presented (see `pending_show`). Deferred to the executor because
+            // `App::open_window` draws the first frame only after this callback
+            // is registered, and it registers the window in `App` only after
+            // that draw completes.
+            let this = self.0.clone();
+            self.executor
+                .spawn(async move {
+                    if !this.state.pending_show.get() {
+                        return;
+                    }
+                    let Some(mut request_frame) = this.state.callbacks.request_frame.take() else {
+                        return;
+                    };
+                    request_frame(RequestFrameOptions {
+                        require_presentation: true,
+                        ..Default::default()
+                    });
+                    this.state.callbacks.request_frame.set(Some(request_frame));
+                })
+                .detach();
+        }
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
@@ -1047,11 +1106,17 @@ impl PlatformWindow for WindowsWindow {
             .renderer
             .borrow_mut()
             .draw(scene, self.state.background_appearance.get());
-        // Uncloak the window now that its first frame has been presented, so
-        // DWM never composites a visible frame without content or backdrop
-        // (see `WindowsWindowState::pending_uncloak`).
-        if draw_result.is_ok() && self.state.pending_uncloak.replace(false) {
-            dwm_set_window_cloak(self.0.hwnd, false);
+        // Show the window now that its first frame has been presented, so DWM
+        // runs the OS window-open animation with the content and backdrop
+        // already composited instead of flashing a transparent frame (see
+        // `WindowsWindowState::pending_show`). A failed first draw still shows
+        // the window: previously it was shown at creation, and leaving it
+        // hidden would make it unreachable.
+        if self.state.pending_show.replace(false) {
+            self.0.clone().set_window_placement().log_err();
+            if self.state.pending_activation.replace(false) {
+                self.0.clone().activate_now();
+            }
         }
         draw_result.log_err();
     }
@@ -1614,27 +1679,6 @@ fn retrieve_window_placement(
     let bounds = bounds.to_device_pixels(display.scale_factor());
     placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
     Ok(placement)
-}
-
-/// Cloaks or uncloaks the given window.
-///
-/// A cloaked window is still visible to the application (it receives
-/// WM_PAINT and renders normally), but DWM doesn't composite it to the
-/// screen. Used to hide a freshly-shown window until its first frame is
-/// presented, avoiding a transparent flash.
-fn dwm_set_window_cloak(hwnd: HWND, cloak: bool) {
-    let value = BOOL::from(cloak);
-    let result = unsafe {
-        DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_CLOAK,
-            &raw const value as *const _,
-            std::mem::size_of::<BOOL>() as u32,
-        )
-    };
-    if let Err(e) = result {
-        log::error!("DwmSetWindowAttribute(DWMWA_CLOAK) failed: {e:#}");
-    }
 }
 
 /// Applies the given background appearance to the given window.
