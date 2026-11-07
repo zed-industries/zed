@@ -6,6 +6,7 @@ use crate::{
     },
     commit_tooltip::CommitAvatar,
     commit_view::{CommitView, CommitViewOptions},
+    emoji_shortcode::render_commit_text,
     git_status_icon,
     git_timestamp::format_git_timestamp,
 };
@@ -2085,7 +2086,7 @@ impl GitGraph {
                 let author_email: Option<SharedString>;
 
                 if let CommitDataState::Loaded(ref data) = data {
-                    subject = data.subject.clone();
+                    subject = render_commit_text(data.subject.clone());
                     author_name = data.author_name.clone();
                     author_email =
                         (!data.author_email.is_empty()).then(|| data.author_email.clone());
@@ -2479,7 +2480,7 @@ impl GitGraph {
             .log_err();
         self.selected_commit_message = Some(DetailPanelCommitMessage {
             sha,
-            message: cx.new(|cx| Markdown::new(message, languages, None, cx)),
+            message: cx.new(|cx| Markdown::new(render_commit_text(message), languages, None, cx)),
             scroll_handle: ScrollHandle::new(),
         });
         self._selected_commit_message_task = None;

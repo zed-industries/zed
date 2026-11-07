@@ -28,6 +28,7 @@ use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
 use crate::branch_picker;
+use crate::emoji_shortcode::render_commit_text;
 use git_ui_core::notifications::show_error_toast;
 
 actions!(
@@ -1680,7 +1681,7 @@ impl PickerDelegate for BranchListDelegate {
             .as_branch()
             .and_then(|branch| {
                 branch.most_recent_commit.as_ref().map(|commit| {
-                    let subject = commit.subject.clone();
+                    let subject = render_commit_text(commit.subject.clone());
                     let commit_time = OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
                         .unwrap_or_else(|_| OffsetDateTime::now_utc());
                     let formatted_time = crate::git_timestamp::format_git_date(
