@@ -97,7 +97,13 @@ impl VimTestContext {
 
     pub fn init_keybindings(enabled: bool, cx: &mut App) {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |s| s.vim_mode = Some(enabled));
+            store.update_user_settings(cx, |s| {
+                s.modal_editing = Some(if enabled {
+                    settings::ModalEditingContent::Vim
+                } else {
+                    settings::ModalEditingContent::None
+                });
+            });
         });
         let mut default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
             "keymaps/default-macos.json",
@@ -166,7 +172,9 @@ impl VimTestContext {
     pub fn enable_vim(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |s| s.vim_mode = Some(true));
+                store.update_user_settings(cx, |s| {
+                    s.modal_editing = Some(settings::ModalEditingContent::Vim);
+                });
             });
         })
     }
@@ -174,7 +182,9 @@ impl VimTestContext {
     pub fn disable_vim(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |s| s.vim_mode = Some(false));
+                store.update_user_settings(cx, |s| {
+                    s.modal_editing = Some(settings::ModalEditingContent::None);
+                });
             });
         })
     }
@@ -182,7 +192,9 @@ impl VimTestContext {
     pub fn enable_helix(&mut self) {
         self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |s| s.helix_mode = Some(true));
+                store.update_user_settings(cx, |s| {
+                    s.modal_editing = Some(settings::ModalEditingContent::Helix);
+                });
             });
         })
     }

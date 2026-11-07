@@ -3482,8 +3482,7 @@ mod test {
             VimTestContext::init_keybindings(true, cx);
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |s| {
-                    s.vim_mode = Some(true);
-                    s.helix_mode = Some(true);
+                    s.modal_editing = Some(settings::ModalEditingContent::Helix);
                 });
             });
         });
@@ -4312,7 +4311,9 @@ mod test {
         cx.update(|cx| {
             VimTestContext::init_keybindings(true, cx);
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |store| store.helix_mode = Some(true));
+                store.update_user_settings(cx, |store| {
+                    store.modal_editing = Some(settings::ModalEditingContent::Helix);
+                });
             })
         });
 

@@ -682,7 +682,9 @@ mod test {
         let (multi_buffer, source) = cx.update(|cx| {
             VimTestContext::init_keybindings(true, cx);
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |s| s.helix_mode = Some(true));
+                store.update_user_settings(cx, |s| {
+                    s.modal_editing = Some(settings::ModalEditingContent::Helix);
+                });
             });
             let multi_buffer = MultiBuffer::build_multi([(text, excerpts)], cx);
             let source = multi_buffer

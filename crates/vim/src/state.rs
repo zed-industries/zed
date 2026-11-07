@@ -37,7 +37,7 @@ use ui::{
 };
 use util::ResultExt;
 use util::rel_path::RelPath;
-use vim_mode_setting::HelixModeSetting;
+use vim_mode_setting::ModalEditing;
 use workspace::searchable::Direction;
 use workspace::{MultiWorkspace, Workspace, WorkspaceDb, WorkspaceId};
 
@@ -908,7 +908,7 @@ impl VimGlobals {
     }
 
     fn default_register_clipboard_policy(cx: &App) -> UseSystemClipboard {
-        if HelixModeSetting::get_global(cx).0 {
+        if ModalEditing::get_global(cx).is_helix() {
             UseSystemClipboard::Never
         } else {
             VimSettings::get_global(cx).use_system_clipboard

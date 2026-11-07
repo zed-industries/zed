@@ -3577,16 +3577,6 @@ Numbers from `6` to `100` pixels, inclusive.
 
 `boolean` values
 
-## Helix Mode
-
-- Description: Whether or not to enable Helix mode. Enabling `helix_mode` also enables `vim_mode`. See the [Helix documentation](../helix.md) for more details.
-- Setting: `helix_mode`
-- Default: `false`
-
-**Options**
-
-`boolean` values
-
 ## Hidden Files {#hidden-files}
 
 - Setting: `hidden_files`
@@ -4287,6 +4277,45 @@ Positive `integer` values or `null` for unlimited tabs
 **Options**
 
 Positive `integer` values, or `0` to disable modeline parsing
+
+## Modal Editing {#modal-editing}
+
+- Description: Select the modal editing mode. See the [Vim](../vim.md) and [Helix](../helix.md) documentation for more details.
+- Setting: `modal_editing`
+- Default: `"none"`
+
+In the Settings Editor, search for `modal_editing` and choose None, Vim, or Helix.
+
+Existing `vim_mode` and `helix_mode` settings are migrated automatically. If a
+combination of overrides cannot be converted without changing behavior, the
+Settings Editor identifies which overrides need an explicit `modal_editing`
+value. Your existing editing mode keeps working while you update those settings.
+
+**Options**
+
+1. Use standard, non-modal editing:
+
+```json [settings]
+{
+  "modal_editing": "none"
+}
+```
+
+2. Use Vim-style modal editing:
+
+```json [settings]
+{
+  "modal_editing": "vim"
+}
+```
+
+3. Use Helix-style modal editing:
+
+```json [settings]
+{
+  "modal_editing": "helix"
+}
+```
 
 ## Multi Cursor Modifier
 
@@ -6541,15 +6570,9 @@ Available variables:
 
 > Note: This setting only affects Linux. GNOME Wayland does not support server-side decorations. Changes only apply to newly created windows. Restart Zed to apply the setting to all windows.
 
-## Vim
+## Vim Settings {#vim-settings}
 
-- Description: Whether or not to enable vim mode.
-- Setting: `vim_mode`
-- Default: `false`
-
-### Vim Settings {#vim-settings}
-
-- Description: Configure Vim behavior separately from the `vim_mode` switch.
+- Description: Configure Vim behavior separately from the `modal_editing` setting.
 - Setting: `vim`
 - Default:
 
@@ -7634,7 +7657,7 @@ The [Per-Release Channel Overrides](../configuring-zed.md#per-release-channel-ov
 
   "autosave": "on_focus_change",
   "format_on_save": "off",
-  "vim_mode": false,
+  "modal_editing": "none",
   "terminal": {
     "font_family": "FiraCode Nerd Font Mono",
     "blinking": "off"

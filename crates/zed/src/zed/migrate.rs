@@ -302,7 +302,7 @@ async fn write_keymap_migration(fs: Arc<dyn Fs>) -> Result<()> {
 
 async fn write_settings_migration(fs: Arc<dyn Fs>) -> Result<()> {
     let old_text = SettingsStore::load_settings(&fs).await?;
-    let Ok(Some(new_text)) = migrate_settings(&old_text) else {
+    let Some(new_text) = migrate_settings(&old_text)? else {
         return Ok(());
     };
     let settings_path = paths::settings_file().as_path();
@@ -323,4 +323,79 @@ async fn write_settings_migration(fs: Arc<dyn Fs>) -> Result<()> {
             .with_context(|| format!("Failed to write settings to file {:?}", settings_path))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[gpui::test]
+    async fn test_modal_editing_disk_migration_preserves_ambiguous_source(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        fs.create_dir(
+            paths::settings_file()
+                .parent()
+                .expect("settings must have a parent"),
+        )
+        .await
+        .expect("settings directory should be created");
+        let original = r#"{
+            "vim_mode": true,
+            "preview": { "helix_mode": true },
+            "macos": { "vim_mode": false }
+        }"#;
+        fs.atomic_write(paths::settings_file().clone(), original.into())
+            .await
+            .expect("settings should be saved");
+
+        let error = write_settings_migration(fs.clone())
+            .await
+            .expect_err("ambiguous overrides should require a manual selection");
+
+        assert!(error.to_string().contains("macos"));
+        assert_eq!(
+            fs.load(paths::settings_file())
+                .await
+                .expect("settings should exist"),
+            original
+        );
+        assert!(!fs.is_file(paths::settings_backup_file()).await);
+    }
+
+    #[gpui::test]
+    async fn test_modal_editing_disk_migration_saves_a_backup(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        fs.create_dir(
+            paths::settings_file()
+                .parent()
+                .expect("settings must have a parent"),
+        )
+        .await
+        .expect("settings directory should be created");
+        let original = r#"{"preview":{"vim_mode":true},"macos":{"vim_mode":false}}"#;
+        fs.atomic_write(paths::settings_file().clone(), original.into())
+            .await
+            .expect("settings should be saved");
+
+        write_settings_migration(fs.clone())
+            .await
+            .expect("migration should succeed");
+
+        assert_eq!(
+            fs.load(paths::settings_backup_file())
+                .await
+                .expect("backup should exist"),
+            original
+        );
+        let migrated = fs
+            .load(paths::settings_file())
+            .await
+            .expect("settings should exist");
+        let value: serde_json::Value = settings::parse_json_with_comments(&migrated)
+            .expect("migrated settings should be valid JSON");
+        assert_eq!(value["preview"]["modal_editing"], "vim");
+        assert_eq!(value["macos"]["modal_editing"], "none");
+    }
 }
