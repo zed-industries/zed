@@ -776,19 +776,21 @@ pub fn authorize_file_edit(
             None => {}
         }
 
-        match resolved {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                let authorize = cx.update(|cx| {
-                    let context = ToolPermissionContext::new(
-                        &tool_name,
-                        vec![path_owned.to_string_lossy().to_string()],
-                    );
-                    event_stream.authorize(&title, context, cx)
-                });
-                authorize.await
-            }
+        // Deny and esnsitive returned already above
+        let needs_confirmation = matches!(decision, ToolPermissionDecision::Confirm);
+
+        if !needs_confirmation {
+            return Ok(());
         }
+
+        let authorize = cx.update(|cx| {
+            let context = ToolPermissionContext::new(
+                &tool_name,
+                vec![path_owned.to_string_lossy().to_string()],
+            );
+            event_stream.authorize(&title, context, cx)
+        });
+        authorize.await
     })
 }
 
