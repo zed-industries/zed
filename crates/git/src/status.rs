@@ -37,7 +37,8 @@ pub struct TrackedStatus {
 pub enum StatusCode {
     Modified,
     TypeChanged,
-    Added,\n    Deleted,
+    Added,
+    Deleted,
     Renamed,
     Copied,
     Unmodified,
@@ -174,7 +175,8 @@ impl FileStatus {
             FileStatus::Tracked(tracked) => matches!(
                 (tracked.index_status, tracked.worktree_status),
                 (StatusCode::Modified, _) | (_, StatusCode::Modified)
-            ),\n            _ => false,
+            ),
+            _ => false,
         }
     }
 
@@ -542,8 +544,7 @@ impl FromStr for TreeDiff {
                 .ok_or_else(|| anyhow!("expected to find new_sha"))?;
             let status = fields
                 .next()
-                .and_then(|s| {
-                    if s.len() == 1 {
+                .and_then(|s| {\n                    if s.len() == 1 {
                         s.as_bytes().first()
                     } else {
                         None
