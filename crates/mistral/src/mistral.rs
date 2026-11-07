@@ -52,6 +52,8 @@ pub enum Model {
     #[default]
     CodestralLatest,
 
+    #[serde(rename = "mistral-large-4", alias = "mistral-large-4")]
+    MistralLarge4,
     #[serde(rename = "mistral-large-latest", alias = "mistral-large-latest")]
     MistralLargeLatest,
     #[serde(rename = "mistral-medium-latest", alias = "mistral-medium-latest")]
@@ -91,6 +93,7 @@ impl Model {
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "codestral-latest" => Ok(Self::CodestralLatest),
+            "mistral-large-4" => Ok(Self::MistralLarge4),
             "mistral-large-latest" => Ok(Self::MistralLargeLatest),
             "mistral-medium-latest" => Ok(Self::MistralMediumLatest),
             "mistral-small-latest" => Ok(Self::MistralSmallLatest),
@@ -105,6 +108,7 @@ impl Model {
     pub fn id(&self) -> &str {
         match self {
             Self::CodestralLatest => "codestral-latest",
+            Self::MistralLarge4 => "mistral-large-4",
             Self::MistralLargeLatest => "mistral-large-latest",
             Self::MistralMediumLatest => "mistral-medium-latest",
             Self::MistralSmallLatest => "mistral-small-latest",
@@ -119,6 +123,7 @@ impl Model {
     pub fn display_name(&self) -> &str {
         match self {
             Self::CodestralLatest => "codestral-latest",
+            Self::MistralLarge4 => "mistral-large-4",
             Self::MistralLargeLatest => "mistral-large-latest",
             Self::MistralMediumLatest => "mistral-medium-latest",
             Self::MistralSmallLatest => "mistral-small-latest",
@@ -135,6 +140,7 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         match self {
             Self::CodestralLatest => 128000,
+            Self::MistralLarge4 => 524288,
             Self::MistralLargeLatest => 256000,
             Self::MistralMediumLatest => 256000,
             Self::MistralSmallLatest => 256000,
@@ -158,6 +164,7 @@ impl Model {
     pub fn supports_tools(&self) -> bool {
         match self {
             Self::CodestralLatest
+            | Self::MistralLarge4
             | Self::MistralLargeLatest
             | Self::MistralMediumLatest
             | Self::MistralSmallLatest
@@ -171,7 +178,8 @@ impl Model {
 
     pub fn supports_images(&self) -> bool {
         match self {
-            Self::MistralLargeLatest
+            Self::MistralLarge4
+            | Self::MistralLargeLatest
             | Self::MistralMediumLatest
             | Self::MistralSmallLatest
             | Self::Ministral3bLatest
@@ -186,7 +194,10 @@ impl Model {
 
     pub fn supports_thinking(&self) -> bool {
         match self {
-            Self::MistralMediumLatest | Self::MistralSmallLatest | Self::ZaiGlmLatest => true,
+            Self::MistralLarge4
+            | Self::MistralMediumLatest
+            | Self::MistralSmallLatest
+            | Self::ZaiGlmLatest => true,
             Self::Custom {
                 supports_thinking, ..
             } => supports_thinking.unwrap_or(false),
