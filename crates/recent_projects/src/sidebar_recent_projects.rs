@@ -324,8 +324,12 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             .ordered_paths()
             .map(|p| p.compact())
             .map(|path| {
-                let (label, path_match) =
-                    highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
+                let (label, path_match) = highlights_for_path(
+                    path.as_ref(),
+                    workspace.effective_path_style(),
+                    &hit.positions,
+                    path_start_offset,
+                );
                 path_start_offset += path_match.text.len();
                 label
             })

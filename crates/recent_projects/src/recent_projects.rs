@@ -10,8 +10,6 @@ use std::{
     sync::Arc,
 };
 
-use chrono::{DateTime, Utc};
-
 use fs::Fs;
 
 #[cfg(target_os = "windows")]
@@ -43,7 +41,10 @@ use ui::{
     ButtonLike, ContextMenu, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
     ListSubHeader, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
-use util::{ResultExt, paths::PathExt};
+use util::{
+    ResultExt,
+    paths::{PathExt, PathStyle},
+};
 use workspace::{
     HistoryManager, ModalView, MultiWorkspace, OpenMode, OpenOptions, OpenVisible, RecentWorkspace,
     SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
@@ -55,15 +56,6 @@ actions!(
     recent_projects,
     [ToggleActionsMenu, RemoveSelected, AddToWorkspace,]
 );
-
-#[derive(Clone, Debug)]
-pub struct RecentProjectEntry {
-    pub name: SharedString,
-    pub full_path: SharedString,
-    pub paths: Vec<PathBuf>,
-    pub workspace_id: WorkspaceId,
-    pub timestamp: DateTime<Utc>,
-}
 
 #[derive(Clone, Debug)]
 struct OpenFolderEntry {
@@ -116,78 +108,6 @@ fn is_selectable_entry(entry: &ProjectPickerEntry) -> bool {
 enum ProjectPickerStyle {
     Modal,
     Popover,
-}
-
-pub async fn get_recent_projects(
-    current_workspace_id: Option<WorkspaceId>,
-    limit: Option<usize>,
-    fs: Arc<dyn fs::Fs>,
-    db: &WorkspaceDb,
-) -> Vec<RecentProjectEntry> {
-    let workspaces = db
-        .recent_project_workspaces(fs.as_ref())
-        .await
-        .unwrap_or_default();
-
-    let filtered: Vec<_> = workspaces
-        .into_iter()
-        .filter(|workspace| Some(workspace.workspace_id) != current_workspace_id)
-        .filter(|workspace| matches!(workspace.location, SerializedWorkspaceLocation::Local))
-        .collect();
-
-    let mut all_paths: Vec<PathBuf> = filtered
-        .iter()
-        .flat_map(|workspace| workspace.identity_paths.paths().iter().cloned())
-        .collect();
-    all_paths.sort_unstable();
-    all_paths.dedup();
-    let path_details =
-        util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {
-            project::path_suffix(path, detail)
-        });
-    let path_detail_map: std::collections::HashMap<PathBuf, usize> =
-        all_paths.into_iter().zip(path_details).collect();
-
-    let entries: Vec<RecentProjectEntry> = filtered
-        .into_iter()
-        .map(|workspace| {
-            let paths: Vec<PathBuf> = workspace.paths.paths().to_vec();
-            let ordered_paths: Vec<&PathBuf> = workspace.identity_paths.ordered_paths().collect();
-
-            let name = ordered_paths
-                .iter()
-                .map(|p| {
-                    let detail = path_detail_map.get(*p).copied().unwrap_or(0);
-                    project::path_suffix(p, detail)
-                })
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let full_path = ordered_paths
-                .iter()
-                .map(|p| p.to_string_lossy().to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            RecentProjectEntry {
-                name: SharedString::from(name),
-                full_path: SharedString::from(full_path),
-                paths,
-                workspace_id: workspace.workspace_id,
-                timestamp: workspace.timestamp,
-            }
-        })
-        .collect();
-
-    match limit {
-        Some(n) => entries.into_iter().take(n).collect(),
-        None => entries,
-    }
-}
-
-pub async fn delete_recent_project(workspace_id: WorkspaceId, db: &WorkspaceDb) {
-    let _ = db.delete_workspace_by_id(workspace_id).await;
 }
 
 fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
@@ -1361,14 +1281,19 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let tooltip_path: SharedString = ordered_paths.join("\n").into();
                 let icon = icon_for_project_group(key);
                 let show_icon = self.filtered_entries_include_remote_project();
+                let path_style = self.path_style_for_project_group(key, window, cx);
 
                 let mut path_start_offset = 0;
                 let (match_labels, path_highlights): (Vec<_>, Vec<_>) = paths
                     .ordered_paths()
                     .map(|p| p.compact())
                     .map(|path| {
-                        let highlighted_text =
-                            highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
+                        let highlighted_text = highlights_for_path(
+                            path.as_ref(),
+                            path_style,
+                            &hit.positions,
+                            path_start_offset,
+                        );
                         path_start_offset += highlighted_text.1.text.len();
                         highlighted_text
                     })
@@ -1476,6 +1401,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             }
             ProjectPickerEntry::RecentProject(hit) => {
                 let workspace = self.workspaces.get(hit.candidate_id)?;
+                let path_style = workspace.effective_path_style();
                 let location = &workspace.location;
                 let raw_paths = &workspace.paths;
                 let identity_paths = &workspace.identity_paths;
@@ -1502,8 +1428,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .ordered_paths()
                     .map(|p| p.compact())
                     .map(|path| {
-                        let highlighted_text =
-                            highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
+                        let highlighted_text = highlights_for_path(
+                            path.as_ref(),
+                            path_style,
+                            &hit.positions,
+                            path_start_offset,
+                        );
                         path_start_offset += highlighted_text.1.text.len();
                         highlighted_text
                     })
@@ -2010,11 +1940,11 @@ pub(crate) fn icon_for_remote_connection(options: Option<&RemoteConnectionOption
 // Compute the highlighted text for the name and path
 pub(crate) fn highlights_for_path(
     path: &Path,
+    path_style: PathStyle,
     match_positions: &Vec<usize>,
     path_start_offset: usize,
 ) -> (Option<HighlightedMatch>, HighlightedMatch) {
-    let path_string = path.to_string_lossy();
-    let path_text = path_string.to_string();
+    let path_text = path.to_string_lossy().into_owned();
     let path_byte_len = path_text.len();
     // Get the subset of match highlight positions that line up with the given path.
     // Also adjusts them to start at the path start
@@ -2028,7 +1958,7 @@ pub(crate) fn highlights_for_path(
 
     // Again subset the highlight positions to just those that line up with the file_name
     // again adjusted to the start of the file_name
-    let file_name_text_and_positions = path.file_name().map(|file_name| {
+    let file_name_text_and_positions = path_style.file_name(path).map(|file_name| {
         let file_name_text = file_name.to_string_lossy().into_owned();
         let file_name_start_byte = path_byte_len - file_name_text.len();
         let highlight_positions = path_positions
@@ -2439,6 +2369,40 @@ impl RecentProjectsDelegate {
         false
     }
 
+    fn path_style_for_project_group(
+        &self,
+        key: &ProjectGroupKey,
+        window: &Window,
+        cx: &App,
+    ) -> PathStyle {
+        if key.host().is_none() {
+            return PathStyle::local();
+        }
+
+        // Prefer a loaded workspace's live connection; fall back to the persisted value for
+        // groups that haven't connected yet (e.g. restored from a previous session).
+        let live_path_style =
+            window
+                .root::<MultiWorkspace>()
+                .flatten()
+                .and_then(|multi_workspace| {
+                    multi_workspace
+                        .read(cx)
+                        .workspaces_for_project_group(key, cx)
+                        .next()
+                        .map(|workspace| workspace.read(cx).path_style(cx))
+                });
+
+        live_path_style
+            .or_else(|| {
+                self.workspaces
+                    .iter()
+                    .find(|workspace| key.matches_identity(&workspace.project_group_key()))
+                    .and_then(|workspace| workspace.path_style)
+            })
+            .unwrap_or_else(PathStyle::local)
+    }
+
     fn is_active_project_group(&self, key: &ProjectGroupKey, cx: &App) -> bool {
         if let Some(workspace) = self.workspace.upgrade() {
             return workspace.read(cx).project_group_key(cx) == *key;
@@ -2492,6 +2456,7 @@ impl RecentProjectsDelegate {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
 
     use serde_json::json;
@@ -2552,6 +2517,7 @@ mod tests {
             location: SerializedWorkspaceLocation::Local,
             paths: paths.clone(),
             identity_paths: paths,
+            path_style: Some(PathStyle::local()),
             timestamp: Utc::now(),
         }
     }
@@ -2738,6 +2704,7 @@ mod tests {
             location: SerializedWorkspaceLocation::Local,
             paths: paths.clone(),
             identity_paths: paths.clone(),
+            path_style: Some(PathStyle::local()),
             timestamp: Utc::now(),
         };
         let remote_workspace = RecentWorkspace {
@@ -2747,6 +2714,7 @@ mod tests {
             )),
             paths: paths.clone(),
             identity_paths: paths,
+            path_style: Some(PathStyle::local()),
             timestamp: Utc::now(),
         };
 

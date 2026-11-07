@@ -24,7 +24,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, path_list::SerializedPathList};
+use util::{ResultExt, path_list::SerializedPathList, paths::PathStyle};
 use uuid::Uuid;
 
 #[derive(
@@ -148,6 +148,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     pub(crate) recent_navigation_history: Vec<PathBuf>,
     pub(crate) window_id: Option<u64>,
+    pub(crate) path_style: PathStyle,
 }
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
