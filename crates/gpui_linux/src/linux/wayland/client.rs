@@ -2721,6 +2721,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                                 modifiers: state.modifiers,
                                 touch_phase: TouchPhase::Moved,
                                 source: ScrollSource::Pointer,
+                                release_velocity: None,
                             });
                             drop(state);
                             window.handle_input(input);
@@ -2734,6 +2735,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             modifiers: state.modifiers,
                             touch_phase: TouchPhase::Moved,
                             source: ScrollSource::Pointer,
+                            release_velocity: None,
                         });
                         drop(state);
                         window.handle_input(input);

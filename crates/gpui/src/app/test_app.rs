@@ -453,6 +453,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
             modifiers: Default::default(),
             touch_phase: crate::TouchPhase::Moved,
             source: crate::ScrollSource::Pointer,
+            release_velocity: None,
         });
     }
 

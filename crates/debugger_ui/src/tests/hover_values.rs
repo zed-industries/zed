@@ -975,6 +975,7 @@ async fn test_hover_values_keyboard_selection_scrolls_into_view(
             modifiers: Modifiers::none(),
             touch_phase: gpui::TouchPhase::Moved,
             source: gpui::ScrollSource::Pointer,
+            release_velocity: None,
         });
         editor_cx.run_until_parked();
         assert_eq!(scroll_handle.bounds(), viewport);
