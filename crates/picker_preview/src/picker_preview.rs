@@ -8,7 +8,7 @@ use gpui::{
 };
 use language::{Bias, Buffer, HighlightedText, HighlightedTextBuilder, ToPoint};
 use picker::{MatchLocation, PreviewBackend, PreviewLayout, PreviewSource, PreviewUpdate};
-use project::{Project, Symbol};
+use project::{Project, ProjectPath, Symbol, Worktree};
 use rope::Point;
 use settings::Settings;
 use ui::{ActiveTheme, Color, div, prelude::*, v_flex};
@@ -57,6 +57,7 @@ struct SearchMatchLineHighlight;
 struct EditorPreview {
     project: Entity<Project>,
     current_path: Option<Arc<RelPath>>,
+    _worktree: Option<Entity<Worktree>>,
     /// When set show a text message instead of a preview
     message: Option<HighlightedText>,
     preview_editor: Entity<Editor>,
@@ -100,6 +101,7 @@ impl EditorPreview {
             project,
             preview_editor,
             current_path: None,
+            _worktree: None,
             message: None,
             pending_update: Task::ready(()),
         };
@@ -108,6 +110,8 @@ impl EditorPreview {
     }
 
     fn clear(&mut self) {
+        self.pending_update = Task::ready(());
+        self._worktree = None;
         let mut message = HighlightedTextBuilder::default();
         message.push_plain("No results to preview");
         self.message = Some(message.build());
@@ -118,6 +122,10 @@ impl EditorPreview {
             source,
             match_location: highlight,
         } = update;
+        self.pending_update = Task::ready(());
+        if !matches!(&source, PreviewSource::Path(_)) {
+            self._worktree = None;
+        }
 
         match source {
             PreviewSource::Path(abs_path) => {
@@ -144,28 +152,44 @@ impl EditorPreview {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let open_task = self.project.update(cx, |project, cx| {
-            match project.project_path_for_absolute_path(&abs_path, cx) {
-                Some(project_path) => {
-                    if let Some(buffer) = project.get_open_buffer(&project_path, cx) {
-                        Task::ready(Ok(buffer))
-                    } else {
-                        project.open_buffer(project_path, cx)
-                    }
-                }
-                None => project.open_local_buffer(&abs_path, cx),
-            }
+        let worktree_task = self.project.update(cx, |project, cx| {
+            project.find_or_create_worktree(&abs_path, false, cx)
         });
 
-        self.pending_update = cx.spawn_in(window, async move |this, cx| {
-            let Some(buffer) = open_task.await.log_err() else {
-                return;
-            };
-            this.update_in(cx, |this, window, cx| {
-                this.update_from_buffer(buffer, highlight, window, cx);
-                cx.notify();
-            })
-            .ok();
+        self.pending_update = cx.spawn_in(window, async move |preview, cx| {
+            let result = async {
+                let (worktree, path) = worktree_task.await?;
+                preview
+                    .update(cx, |preview, cx| {
+                        let project_path = ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path,
+                        };
+                        preview._worktree = Some(worktree);
+                        preview.project.update(cx, |project, cx| {
+                            if let Some(buffer) = project.get_open_buffer(&project_path, cx) {
+                                Task::ready(Ok(buffer))
+                            } else {
+                                project.open_buffer(project_path, cx)
+                            }
+                        })
+                    })?
+                    .await
+            }
+            .await;
+            preview
+                .update_in(cx, |preview, window, cx| {
+                    match result {
+                        Ok(buffer) => preview.update_from_buffer(buffer, highlight, window, cx),
+                        Err(error) => {
+                            let mut message = HighlightedTextBuilder::default();
+                            message.push_plain(error.root_cause().to_string());
+                            preview.message = Some(message.build());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
         });
     }
 
