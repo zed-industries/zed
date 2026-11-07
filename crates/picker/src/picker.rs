@@ -9,7 +9,8 @@ use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
-    cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
+    borrow::Cow, cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc,
+    time::Duration,
 };
 use ui::{
     Checkbox, ContextMenu, Divider, DocumentationAside, KeyBinding, PopoverMenuHandle, Tooltip,
@@ -59,6 +60,28 @@ pub enum Direction {
 pub enum ScrollBehavior {
     RevealSelected,
     PreserveOffset,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueryMode {
+    /// A normal query with no mode prefix.
+    Standalone,
+    /// Show this prefix in the input, but leave it out when filtering results.
+    Prefixed(char),
+}
+
+impl QueryMode {
+    pub const COMMAND_PALETTE: Self = Self::Prefixed('>');
+
+    fn query(self, query: &str) -> Cow<'_, str> {
+        match self {
+            Self::Standalone => Cow::Borrowed(query),
+            Self::Prefixed(prefix) => Cow::Owned(format!(
+                "{prefix}{}",
+                query.strip_prefix(prefix).unwrap_or(query)
+            )),
+        }
+    }
 }
 
 actions!(
@@ -130,6 +153,7 @@ pub struct Picker<D: PickerDelegate> {
     head: Head,
     preview: Option<Preview>,
     pending_update_matches: Option<PendingUpdateMatches>,
+    query_mode: QueryMode,
     confirm_on_update: Option<bool>,
     select_instead_of_open: bool,
     shape: shape::Shape,
@@ -624,6 +648,7 @@ impl<D: PickerDelegate> Picker<D> {
             head,
             element_container,
             pending_update_matches: None,
+            query_mode: QueryMode::Standalone,
             confirm_on_update: None,
             select_instead_of_open: false,
             preview,
@@ -1180,12 +1205,12 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Head::Editor(editor) = &self.head else {
+        let Head::Editor(_) = &self.head else {
             panic!("unexpected call");
         };
         match event {
             ErasedEditorEvent::BufferEdited => {
-                let query = editor.text(cx);
+                let query = self.query(cx);
                 self.update_matches(query, window, cx);
             }
             ErasedEditorEvent::Blurred => {
@@ -1313,15 +1338,24 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn query(&self, cx: &App) -> String {
-        match &self.head {
+        let query = match &self.head {
             Head::Editor(editor) => editor.text(cx),
             Head::Empty(_) => "".to_string(),
+        };
+        match self.query_mode {
+            QueryMode::Standalone => query,
+            QueryMode::Prefixed(prefix) => query.strip_prefix(prefix).unwrap_or(&query).to_owned(),
         }
+    }
+
+    pub fn set_query_mode(&mut self, query_mode: QueryMode) {
+        self.query_mode = query_mode;
     }
 
     pub fn set_query(&self, query: &str, window: &mut Window, cx: &mut App) {
         if let Head::Editor(editor) = &self.head {
-            editor.set_text(query, window, cx);
+            let query = self.query_mode.query(query);
+            editor.set_text(query.as_ref(), window, cx);
             editor.move_selection_to_end(window, cx);
         }
     }
@@ -1805,6 +1839,23 @@ mod tests {
             cx.set_global(store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_query_excludes_mode_prefix(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::new(vec![true]), window, cx)
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query_mode(QueryMode::COMMAND_PALETTE);
+            picker.set_query("needle", window, cx);
+        });
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.query(cx), "needle");
         });
     }
 
