@@ -60,7 +60,8 @@ use crate::oci::get_latest_oci_manifest;
 use crate::oci::get_oci_token;
 
 pub use devcontainer_api::{
-    DevContainerConfig, find_configs_in_snapshot, find_devcontainer_configs,
+    ContainerSummary, DevContainerConfig, connection_for_running_container,
+    find_configs_in_snapshot, find_devcontainer_configs, list_running_containers,
     start_dev_container_with_config,
 };
 
