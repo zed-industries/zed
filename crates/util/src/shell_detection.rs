@@ -1,0 +1,779 @@
+//! Discovery of installed shells for the terminal profile picker.
+//!
+//! Detection goes through [`detect_available_shells_inner`], a pure
+//! function with injectable filesystem inputs, so both platform paths are
+//! unit-testable from any host.
+
+use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+use collections::HashSet;
+
+use crate::get_system_shell;
+#[cfg(target_os = "windows")]
+use crate::shell::get_windows_bash;
+use crate::shell::get_windows_system_shell;
+
+/// Where a [`DetectedShell`] came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellSource {
+    EtcShells,
+    LoginShell,
+    KnownLocation,
+    Path,
+    Wsl,
+}
+
+/// A shell discovered on the local machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetectedShell {
+    pub label: String,
+    pub program: PathBuf,
+    /// Only populated for WSL (`["-d", "<distro>"]`).
+    pub args: Vec<String>,
+    pub source: ShellSource,
+}
+
+/// Host OS the detection should run against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    Unix,
+    Windows,
+}
+
+impl Platform {
+    fn host() -> Self {
+        if cfg!(target_os = "windows") {
+            Platform::Windows
+        } else {
+            Platform::Unix
+        }
+    }
+}
+
+static DETECTED_SHELLS: LazyLock<Vec<DetectedShell>> =
+    LazyLock::new(detect_available_shells_blocking);
+
+/// Cached enumeration of installed shells on the local machine; the
+/// filesystem is walked at most once per process.
+pub fn detect_available_shells() -> &'static [DetectedShell] {
+    &DETECTED_SHELLS
+}
+
+#[cfg(not(target_os = "windows"))]
+fn read_etc_shells() -> Option<String> {
+    std::fs::read_to_string("/etc/shells").ok()
+}
+
+#[cfg(target_os = "windows")]
+fn read_etc_shells() -> Option<String> {
+    None
+}
+
+fn detect_available_shells_blocking() -> Vec<DetectedShell> {
+    let platform = Platform::host();
+    let login_shell = if platform == Platform::Unix {
+        get_system_shell()
+    } else {
+        get_windows_system_shell()
+    };
+    let path_env = std::env::var_os("PATH").map(|os| os.to_string_lossy().into_owned());
+    let etc_shells = if platform == Platform::Unix {
+        read_etc_shells()
+    } else {
+        None
+    };
+    let windir = if platform == Platform::Windows {
+        std::env::var_os("WINDIR").map(PathBuf::from)
+    } else {
+        None
+    };
+    let path_exists = |p: &Path| p.exists();
+
+    let mut shells = detect_available_shells_inner(
+        platform,
+        etc_shells.as_deref(),
+        &login_shell,
+        path_env.as_deref(),
+        windir.as_deref(),
+        &path_exists,
+    );
+
+    if platform == Platform::Windows {
+        let wsl = enumerate_wsl_distros();
+        shells.extend(wsl);
+    }
+
+    apply_duplicate_label_suffixes(dedup_by_program(shells, &canonicalize_path))
+}
+
+/// Pure detector with injectable inputs — every existence check goes
+/// through `path_exists`. `etc_shells_content` is Unix-only (`None`
+/// triggers the well-known-paths fallback), `windir` is Windows-only
+/// (`None` skips the PowerShell/cmd probes).
+pub fn detect_available_shells_inner(
+    platform: Platform,
+    etc_shells_content: Option<&str>,
+    login_shell: &str,
+    path_env: Option<&str>,
+    windir: Option<&Path>,
+    path_exists: &dyn Fn(&Path) -> bool,
+) -> Vec<DetectedShell> {
+    match platform {
+        Platform::Unix => detect_unix_inner(etc_shells_content, login_shell, path_env, path_exists),
+        Platform::Windows => detect_windows_inner(login_shell, path_env, windir, path_exists),
+    }
+}
+
+fn detect_unix_inner(
+    etc_shells_content: Option<&str>,
+    login_shell: &str,
+    path_env: Option<&str>,
+    path_exists: &dyn Fn(&Path) -> bool,
+) -> Vec<DetectedShell> {
+    let mut shells: Vec<DetectedShell> = Vec::new();
+    let mut seen_paths: HashSet<PathBuf> = HashSet::default();
+
+    if let Some(content) = etc_shells_content {
+        for raw in content.lines() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some(shell) = resolve_etc_shells_entry(line, path_env, path_exists) {
+                if seen_paths.insert(shell.program.clone()) {
+                    shells.push(shell);
+                }
+            }
+        }
+    }
+
+    if !login_shell.is_empty() {
+        let login_path = PathBuf::from(login_shell);
+        if path_exists(&login_path) && seen_paths.insert(login_path.clone()) {
+            shells.push(DetectedShell {
+                label: basename_label(&login_path),
+                program: login_path,
+                args: Vec::new(),
+                source: ShellSource::LoginShell,
+            });
+        }
+    }
+
+    let probed_fallback = etc_shells_content
+        .map(|c| {
+            c.lines()
+                .any(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
+        })
+        .unwrap_or(false);
+    if !probed_fallback {
+        for known in [
+            "/bin/bash",
+            "/usr/bin/bash",
+            "/bin/zsh",
+            "/usr/bin/zsh",
+            "/bin/sh",
+            "/usr/bin/fish",
+        ] {
+            let path = PathBuf::from(known);
+            if path_exists(&path) && seen_paths.insert(path.clone()) {
+                shells.push(DetectedShell {
+                    label: basename_label(&path),
+                    program: path,
+                    args: Vec::new(),
+                    source: ShellSource::KnownLocation,
+                });
+            }
+        }
+    }
+
+    dedup_by_program(shells, &identity_canonicalize)
+}
+
+/// Resolve a single non-comment `/etc/shells` line into a
+/// [`DetectedShell`].
+fn resolve_etc_shells_entry(
+    line: &str,
+    path_env: Option<&str>,
+    path_exists: &dyn Fn(&Path) -> bool,
+) -> Option<DetectedShell> {
+    let path = Path::new(line);
+    if path.is_absolute() {
+        if path_exists(path) {
+            return Some(DetectedShell {
+                label: basename_label(path),
+                program: path.to_path_buf(),
+                args: Vec::new(),
+                source: ShellSource::EtcShells,
+            });
+        }
+        return None;
+    }
+
+    let name = path.file_name()?;
+    let path_env = path_env?;
+    for dir in path_env.split(':') {
+        if dir.is_empty() {
+            continue;
+        }
+        let candidate = Path::new(dir).join(name);
+        if path_exists(&candidate) {
+            return Some(DetectedShell {
+                label: basename_label(&candidate),
+                program: candidate,
+                args: Vec::new(),
+                source: ShellSource::Path,
+            });
+        }
+    }
+    None
+}
+
+fn detect_windows_inner(
+    login_shell: &str,
+    _path_env: Option<&str>,
+    windir: Option<&Path>,
+    path_exists: &dyn Fn(&Path) -> bool,
+) -> Vec<DetectedShell> {
+    let mut shells: Vec<DetectedShell> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::default();
+
+    if !login_shell.is_empty() {
+        let program = PathBuf::from(login_shell);
+        if path_exists(&program) && seen.insert(program.clone()) {
+            shells.push(DetectedShell {
+                label: basename_label(&program),
+                program,
+                args: Vec::new(),
+                source: ShellSource::LoginShell,
+            });
+        }
+    }
+
+    if let Some(windir) = windir {
+        let powershell = windir
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        if path_exists(&powershell) && seen.insert(powershell.clone()) {
+            shells.push(DetectedShell {
+                label: "PowerShell".to_string(),
+                program: powershell,
+                args: Vec::new(),
+                source: ShellSource::KnownLocation,
+            });
+        }
+
+        let cmd = windir.join("System32").join("cmd.exe");
+        if path_exists(&cmd) && seen.insert(cmd.clone()) {
+            shells.push(DetectedShell {
+                label: "Command Prompt".to_string(),
+                program: cmd,
+                args: Vec::new(),
+                source: ShellSource::KnownLocation,
+            });
+        }
+    }
+
+    // Git Bash (Scoop shim, or alongside a git-for-windows install).
+    #[cfg(target_os = "windows")]
+    if let Some(bash) = get_windows_bash() {
+        let bash_path = PathBuf::from(bash);
+        if path_exists(&bash_path) && seen.insert(bash_path.clone()) {
+            shells.push(DetectedShell {
+                label: "Git Bash".to_string(),
+                program: bash_path,
+                args: Vec::new(),
+                source: ShellSource::Path,
+            });
+        }
+    }
+
+    dedup_by_program(shells, &identity_canonicalize)
+}
+
+/// Enumerate WSL distros via `wsl.exe -l -q`. Currently a stub: probing
+/// can't be unit-tested off Windows, and the output needs UTF-16LE/BOM
+/// decoding. [`ShellSource::Wsl`] exists so the menu needs no schema
+/// change once this is filled in.
+#[cfg(target_os = "windows")]
+fn enumerate_wsl_distros() -> Vec<DetectedShell> {
+    // TODO: decode `wsl.exe -l -q` (UTF-8 when `WSL_UTF8=1`, else
+    // UTF-16LE with BOM), drop `docker-desktop*` distros, and emit one
+    // `DetectedShell` per distro with `args: ["-d", <distro>]`.
+    Vec::new()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn enumerate_wsl_distros() -> Vec<DetectedShell> {
+    Vec::new()
+}
+
+/// Dedup by `(canonicalize(program), label)`, falling back to the raw
+/// path when canonicalization fails. Canonicalization collapses usr-merge
+/// duplicates (Arch lists both `/bin/bash` and `/usr/bin/bash`); the label
+/// stays in the key because one binary can back several distinct shells
+/// (`sh`, `rbash` are bash symlinks). Label suffixing is left to the
+/// caller — suffixing before this dedup would leak `" (2)"` into the key
+/// and defeat the canonical pass.
+fn dedup_by_program(
+    mut shells: Vec<DetectedShell>,
+    canonicalize: &dyn Fn(&Path) -> Option<PathBuf>,
+) -> Vec<DetectedShell> {
+    let mut seen: HashSet<(PathBuf, String)> = HashSet::default();
+    shells.retain(|shell| {
+        let canonical = canonicalize(&shell.program).unwrap_or_else(|| shell.program.clone());
+        seen.insert((canonical, shell.label.clone()))
+    });
+    shells
+}
+
+fn canonicalize_path(path: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(path).ok()
+}
+
+fn identity_canonicalize(path: &Path) -> Option<PathBuf> {
+    Some(path.to_path_buf())
+}
+
+fn apply_duplicate_label_suffixes(mut shells: Vec<DetectedShell>) -> Vec<DetectedShell> {
+    let mut label_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for shell in &mut shells {
+        let base = shell.label.clone();
+        let count = label_counts.entry(base.clone()).or_insert(0);
+        *count += 1;
+        if *count > 1 {
+            shell.label = format!("{base} ({count})");
+        }
+    }
+    shells
+}
+
+fn basename_label(path: &Path) -> String {
+    path.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn detected(label: &str, program: &str, source: ShellSource) -> DetectedShell {
+        DetectedShell {
+            label: label.to_string(),
+            program: PathBuf::from(program),
+            args: Vec::new(),
+            source,
+        }
+    }
+
+    fn always_exists(_: &Path) -> bool {
+        true
+    }
+
+    fn never_exists(_: &Path) -> bool {
+        false
+    }
+
+    fn exists_set(set: &[&str]) -> impl Fn(&Path) -> bool {
+        let set: HashSet<PathBuf> = set.iter().map(PathBuf::from).collect();
+        move |p| set.contains(p)
+    }
+
+    /// Simulates a usr-merge filesystem where `sh` is a symlink to bash.
+    fn resolve_symlink_pairs(path: &Path) -> Option<PathBuf> {
+        let as_str = path.to_string_lossy();
+        if as_str == "/bin/sh" || as_str == "/usr/bin/sh" {
+            return Some(PathBuf::from("/usr/bin/bash"));
+        }
+        if let Some(rest) = as_str.strip_prefix("/bin/") {
+            return Some(PathBuf::from(format!("/usr/bin/{rest}")));
+        }
+        Some(path.to_path_buf())
+    }
+
+    #[test]
+    fn etc_shells_strips_comments_and_blanks() {
+        let content = "# This is a comment\n\n/bin/bash\n  /bin/zsh  \n# trailing comment\n";
+        let shells = detect_unix_inner(Some(content), "", Some("/bin"), &always_exists);
+        let labels: Vec<&str> = shells.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["bash", "zsh"]);
+        assert!(shells.iter().all(|s| s.source == ShellSource::EtcShells));
+    }
+
+    #[test]
+    fn etc_shells_drops_nonexistent_absolute_entries() {
+        let content = "/bin/bash\n/definitely/not/real/zsh\n/bin/fish\n";
+        let exists = exists_set(&["/bin/bash", "/bin/fish"]);
+        let shells = detect_unix_inner(Some(content), "", Some("/bin"), &exists);
+        let labels: Vec<&str> = shells.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["bash", "fish"]);
+    }
+
+    #[test]
+    fn etc_shells_dedupes_repeated_programs() {
+        let content = "/bin/bash\n/bin/bash\n";
+        let shells = detect_unix_inner(Some(content), "", Some("/bin"), &always_exists);
+        let bash_count = shells
+            .iter()
+            .filter(|s| s.program.as_os_str() == "/bin/bash")
+            .count();
+        assert_eq!(
+            bash_count, 1,
+            "duplicate /bin/bash entries should collapse to one after dedup"
+        );
+    }
+
+    #[test]
+    fn etc_shells_resolves_relative_entries_via_path() {
+        let content = "bash\nzsh\n";
+        let exists = exists_set(&["/usr/bin/bash", "/usr/local/bin/zsh"]);
+        let shells = detect_unix_inner(Some(content), "", Some("/usr/bin:/usr/local/bin"), &exists);
+        assert_eq!(shells.len(), 2);
+        let bash = shells
+            .iter()
+            .find(|s| s.label == "bash")
+            .expect("bash should be resolved via PATH");
+        assert_eq!(bash.program, PathBuf::from("/usr/bin/bash"));
+        assert_eq!(bash.source, ShellSource::Path);
+    }
+
+    #[test]
+    fn etc_shells_drops_unresolvable_relative_entries() {
+        let content = "nosuchshell\n";
+        let shells = detect_unix_inner(Some(content), "", Some("/usr/bin"), &never_exists);
+        assert!(
+            shells.is_empty(),
+            "unresolvable relative entries should produce no shells"
+        );
+    }
+
+    #[test]
+    fn login_shell_always_included_even_if_absent_from_etc_shells() {
+        let content = "/bin/bash\n";
+        let exists = exists_set(&["/bin/bash", "/bin/zsh"]);
+        let shells = detect_unix_inner(Some(content), "/bin/zsh", Some("/bin"), &exists);
+        let has_zsh = shells
+            .iter()
+            .any(|s| s.program.as_os_str() == "/bin/zsh" && s.source == ShellSource::LoginShell);
+        assert!(
+            has_zsh,
+            "login shell should be included even when absent from /etc/shells"
+        );
+    }
+
+    #[test]
+    fn missing_etc_shells_falls_back_to_known_locations() {
+        let exists = exists_set(&["/bin/bash", "/bin/zsh", "/bin/sh"]);
+        let shells = detect_unix_inner(None, "", Some("/usr/bin"), &exists);
+        let labels: Vec<&str> = shells.iter().map(|s| s.label.as_str()).collect();
+        assert!(labels.contains(&"bash"));
+        assert!(labels.contains(&"zsh"));
+        assert!(labels.contains(&"sh"));
+        assert!(
+            shells
+                .iter()
+                .all(|s| s.source == ShellSource::KnownLocation)
+        );
+    }
+
+    #[test]
+    fn empty_etc_shells_falls_back_to_known_locations() {
+        let content = "# only comments\n\n";
+        let exists = exists_set(&["/bin/bash"]);
+        let shells = detect_unix_inner(Some(content), "", Some("/usr/bin"), &exists);
+        let labels: Vec<&str> = shells.iter().map(|s| s.label.as_str()).collect();
+        assert!(
+            labels.contains(&"bash"),
+            "empty /etc/shells should still produce known-location fallback"
+        );
+    }
+
+    #[test]
+    fn duplicate_labels_get_vscode_style_suffixes() {
+        let shells = vec![
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("bash", "/usr/local/bin/bash", ShellSource::Path),
+            detected("bash", "/opt/bash", ShellSource::KnownLocation),
+            detected("zsh", "/bin/zsh", ShellSource::EtcShells),
+        ];
+        let merged = apply_duplicate_label_suffixes(shells);
+        let labels: Vec<&str> = merged.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["bash", "bash (2)", "bash (3)", "zsh"]);
+    }
+
+    #[test]
+    fn dedup_by_program_identity_keeps_distinct_raw_paths() {
+        let shells = vec![
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("bash (2)", "/usr/bin/bash", ShellSource::Path),
+        ];
+        let merged = dedup_by_program(shells, &identity_canonicalize);
+        assert_eq!(
+            merged.len(),
+            2,
+            "distinct raw paths should both survive dedup"
+        );
+    }
+
+    #[test]
+    fn dedup_by_program_canonicalize_collapses_usr_merge_duplicates() {
+        let shells = vec![
+            detected("sh", "/bin/sh", ShellSource::EtcShells),
+            detected("sh", "/usr/bin/sh", ShellSource::EtcShells),
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("bash", "/usr/bin/bash", ShellSource::EtcShells),
+            detected("zsh", "/bin/zsh", ShellSource::EtcShells),
+            detected("zsh", "/usr/bin/zsh", ShellSource::EtcShells),
+        ];
+        let merged = dedup_by_program(shells, &resolve_symlink_pairs);
+        let labels: Vec<&str> = merged.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["sh", "bash", "zsh"]);
+    }
+
+    #[test]
+    fn dedup_by_program_canonicalize_keeps_shells_sharing_a_binary() {
+        let shells = vec![
+            detected("sh", "/bin/sh", ShellSource::EtcShells),
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("bash", "/usr/bin/bash", ShellSource::EtcShells),
+            detected("rbash", "/bin/rbash", ShellSource::EtcShells),
+        ];
+        let merged = dedup_by_program(shells, &resolve_symlink_pairs);
+        let labels: Vec<&str> = merged.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["sh", "bash", "rbash"],
+            "sh and rbash share bash's binary but must survive"
+        );
+    }
+
+    #[test]
+    fn dedup_by_program_canonicalize_keeps_genuinely_distinct_shells() {
+        let shells = vec![
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("bash", "/usr/local/bin/bash", ShellSource::Path),
+        ];
+        let deduped = dedup_by_program(shells, &resolve_symlink_pairs);
+        let merged = apply_duplicate_label_suffixes(deduped);
+        let labels: Vec<&str> = merged.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["bash", "bash (2)"]);
+    }
+
+    #[test]
+    fn blocking_pipeline_suffixes_only_after_canonical_dedup() {
+        let inner_output = vec![
+            detected("sh", "/bin/sh", ShellSource::EtcShells),
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("rbash", "/bin/rbash", ShellSource::EtcShells),
+            detected("sh", "/usr/bin/sh", ShellSource::EtcShells),
+            detected("bash", "/usr/bin/bash", ShellSource::EtcShells),
+            detected("rbash", "/usr/bin/rbash", ShellSource::EtcShells),
+            detected("zsh", "/bin/zsh", ShellSource::EtcShells),
+            detected("zsh", "/usr/bin/zsh", ShellSource::EtcShells),
+        ];
+        let deduped = dedup_by_program(inner_output, &resolve_symlink_pairs);
+        let merged = apply_duplicate_label_suffixes(deduped);
+        let labels: Vec<&str> = merged.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["sh", "bash", "rbash", "zsh"],
+            "usr-merge duplicates must collapse even though the inner pass kept them"
+        );
+    }
+
+    #[test]
+    fn dedup_by_program_canonicalize_failure_falls_back_to_raw_path() {
+        let shells = vec![
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("bash (2)", "/usr/bin/bash", ShellSource::Path),
+        ];
+        let merged = dedup_by_program(shells, &|_| None);
+        assert_eq!(merged.len(), 2, "fallback to raw path keeps both entries");
+    }
+
+    #[test]
+    fn dedup_by_program_drops_exact_duplicates() {
+        let shells = vec![
+            detected("bash", "/bin/bash", ShellSource::EtcShells),
+            detected("bash", "/bin/bash", ShellSource::Path),
+        ];
+        let merged = dedup_by_program(shells, &identity_canonicalize);
+        assert_eq!(merged.len(), 1, "exact raw-path duplicates collapse");
+    }
+
+    #[test]
+    fn windows_probes_emit_login_shell_when_windir_unset() {
+        let exists = always_exists;
+        let shells = detect_windows_inner(
+            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            None,
+            None,
+            &exists,
+        );
+        assert_eq!(shells.len(), 1);
+        assert_eq!(shells[0].source, ShellSource::LoginShell);
+    }
+
+    #[test]
+    fn windows_emits_powershell_and_cmd_when_windir_set() {
+        // Path::join uses the host separator, keeping the expectation
+        // portable across hosts.
+        let windir = Path::new("C:\\Windows");
+        let pwsh = Path::new("C:\\Program Files\\PowerShell\\7\\pwsh.exe");
+        let powershell = windir
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        let cmd = windir.join("System32").join("cmd.exe");
+        let paths = [
+            pwsh.to_str().expect("utf8"),
+            powershell.to_str().expect("utf8"),
+            cmd.to_str().expect("utf8"),
+        ];
+        let exists = exists_set(&paths);
+        let shells =
+            detect_windows_inner(pwsh.to_str().expect("utf8"), None, Some(windir), &exists);
+        assert_eq!(
+            shells.len(),
+            3,
+            "login shell + PowerShell + cmd should all surface"
+        );
+        assert_eq!(shells[0].source, ShellSource::LoginShell);
+        assert_eq!(shells[0].program.as_os_str(), pwsh.as_os_str());
+
+        assert_eq!(shells[1].label, "PowerShell");
+        assert_eq!(shells[1].source, ShellSource::KnownLocation);
+        assert_eq!(shells[1].program.as_os_str(), powershell.as_os_str());
+
+        assert_eq!(shells[2].label, "Command Prompt");
+        assert_eq!(shells[2].source, ShellSource::KnownLocation);
+        assert_eq!(shells[2].program.as_os_str(), cmd.as_os_str());
+    }
+
+    #[test]
+    fn windows_skips_missing_windir_entries() {
+        let windir = Path::new("C:\\Windows");
+        let pwsh = Path::new("C:\\pwsh.exe");
+        let cmd = windir.join("System32").join("cmd.exe");
+        let paths = [pwsh.to_str().expect("utf8"), cmd.to_str().expect("utf8")];
+        let exists = exists_set(&paths);
+        let shells =
+            detect_windows_inner(pwsh.to_str().expect("utf8"), None, Some(windir), &exists);
+        assert_eq!(shells.len(), 2);
+        assert_eq!(shells[0].program.as_os_str(), pwsh.as_os_str());
+        assert_eq!(shells[1].label, "Command Prompt");
+        assert!(
+            !shells.iter().any(|s| s.label == "PowerShell"),
+            "PowerShell should be skipped when its file is missing"
+        );
+    }
+
+    #[test]
+    fn windows_dedupes_when_login_shell_equals_known_location() {
+        let windir = Path::new("C:\\Windows");
+        let powershell = windir
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        let cmd = windir.join("System32").join("cmd.exe");
+        let paths = [
+            powershell.to_str().expect("utf8"),
+            cmd.to_str().expect("utf8"),
+        ];
+        let exists = exists_set(&paths);
+        let shells = detect_windows_inner(
+            powershell.to_str().expect("utf8"),
+            None,
+            Some(windir),
+            &exists,
+        );
+        assert_eq!(shells.len(), 2);
+        assert_eq!(shells[0].program.as_os_str(), powershell.as_os_str());
+        assert_eq!(shells[1].label, "Command Prompt");
+    }
+
+    #[test]
+    fn windows_windir_ignored_on_unix_platform_via_inner_fn() {
+        let shells = detect_available_shells_inner(
+            Platform::Unix,
+            Some("/bin/bash\n"),
+            "",
+            Some("/bin"),
+            Some(Path::new("C:\\should\\be\\ignored")),
+            &exists_set(&["/bin/bash"]),
+        );
+        assert_eq!(shells.len(), 1);
+        assert_eq!(shells[0].label, "bash");
+    }
+
+    #[test]
+    fn platform_host_matches_cfg() {
+        let host = Platform::host();
+        if cfg!(target_os = "windows") {
+            assert_eq!(host, Platform::Windows);
+        } else {
+            assert_eq!(host, Platform::Unix);
+        }
+    }
+
+    #[test]
+    fn inner_fn_unix_dispatch() {
+        let shells = detect_available_shells_inner(
+            Platform::Unix,
+            Some("/bin/bash\n"),
+            "/bin/zsh",
+            Some("/bin"),
+            None,
+            &exists_set(&["/bin/bash", "/bin/zsh"]),
+        );
+        assert!(shells.iter().any(|s| s.label == "bash"));
+        assert!(shells.iter().any(|s| s.label == "zsh"));
+    }
+
+    #[test]
+    fn inner_fn_windows_dispatch() {
+        let shells = detect_available_shells_inner(
+            Platform::Windows,
+            None,
+            "C:\\pwsh.exe",
+            Some("C:\\Windows\\System32"),
+            None,
+            &exists_set(&["C:\\pwsh.exe"]),
+        );
+        assert_eq!(shells.len(), 1);
+        assert_eq!(shells[0].source, ShellSource::LoginShell);
+    }
+
+    #[test]
+    fn public_detect_returns_nonempty_on_unix_host() {
+        if !cfg!(unix) {
+            return;
+        }
+        let shells = detect_available_shells();
+        assert!(
+            !shells.is_empty(),
+            "detect_available_shells() should find at least the login shell on Unix"
+        );
+    }
+
+    #[test]
+    fn basename_label_uses_file_stem() {
+        assert_eq!(basename_label(Path::new("/bin/bash")), "bash");
+        assert_eq!(basename_label(Path::new("/usr/bin/zsh")), "zsh");
+        // `file_stem` only splits on the host separator; gate the
+        // expectation so the test is meaningful on both platforms.
+        if cfg!(target_os = "windows") {
+            assert_eq!(
+                basename_label(Path::new("C:\\Program Files\\PowerShell\\7\\pwsh.exe")),
+                "pwsh"
+            );
+        }
+    }
+}
