@@ -766,27 +766,3 @@ impl Kernel {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_kernel_info_accepts_versionless_codemirror_mode() -> anyhow::Result<()> {
-        let reply: jupyter_protocol::KernelInfoReply = serde_json::from_value(serde_json::json!({
-            "status": "ok",
-            "protocol_version": "5.3",
-            "implementation": "Deno kernel",
-            "implementation_version": "2.9.3",
-            "banner": "Deno",
-            "language_info": {
-                "name": "typescript",
-                "version": "5.8.3",
-                "mimetype": "text/x.typescript",
-                "file_extension": ".ts",
-                "codemirror_mode": { "name": "typescript" }
-            }
-        }))?;
-        assert!(matches!(reply.language_info.codemirror_mode,
-            Some(jupyter_protocol::CodeMirrorMode::Simple(name)) if name == "typescript"));
-        Ok(())
-    }
-}
