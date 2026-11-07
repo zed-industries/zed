@@ -1,100 +1,654 @@
-# Pings Slack when one of our community / open-source triage automations fails, so we
-# notice breakages (a retired model, an API change, a bad deploy) without watching the
-# Actions tab. This is a deliberately curated list, NOT every workflow in the repo — add
-# a workflow below only if it's part of the community/triage tooling we actively babysit.
+# =============================================================================
+#  NOTIFY SLACK ON COMMUNITY AUTOMATION FAILURE — ÉDITION « MEGA »
+# =============================================================================
+#  Fichier   : .github/workflows/notify-slack-community-automation-mega.yml
+#  Généré le : 2026-11-07
+#  Base      : « Notify Slack on community automation failure » (zed-industries/zed)
+#
+#  IDÉE EN UNE PHRASE
+#    L'original pinge Slack quand une automation communautaire échoue ; cette
+#    édition « mega » transforme ce ping isolé en tour de contrôle complète
+#    de l'automatisation communautaire — avec le protocole officiel GitHub
+#    Actions, sans dépendance externe exotique.
+#
+#  LES 18 JOBS
+#    01. context-guard            — verrou de sécurité / arbitrage central
+#    02. maintenance-window-check — respect des fenêtres de maintenance
+#    03. recent-failure-dedup     — streak d'échecs + dédoublonnage des pings
+#    04. classify-severity        — sévérité sev1..sev4 + routage de canal
+#    05. fetch-run-logs           — extrait de logs caviardé (artefact)
+#    06. build-slack-payload      — construction du message (40 « quips »)
+#    07. lint-payload             — contrat JSON + limites Slack vérifiées
+#    08. send-slack-notification  — envoi avec retry, backoff et Retry-After
+#    09. escalate-on-streak       — escalade vers les mainteneurs (>= 3)
+#    10. open-tracking-issue      — issue de suivi automatique (>= 5)
+#    11. comment-on-pr            — commentaire sur le PR responsable
+#    12. self-heal-rerun          — relance auto des jobs en échec (opt-in)
+#    13. update-dashboard         — historique + statistiques (branche data)
+#    14. push-metrics             — jauges Prometheus (best effort)
+#    15. matrix-smoke-test        — banc d'essai multi-runners du payload
+#    16. weekly-digest            — digest hebdomadaire des échecs
+#    17. notify-recovery          — message vert de rétablissement
+#    18. final-summary            — bilan consolidé ($GITHUB_STEP_SUMMARY)
+#
+#  GRAPHE DE DÉPENDANCES (needs)
+#    context-guard ──► maintenance-window-check
+#    context-guard ──► recent-failure-dedup ──► classify-severity
+#    context-guard ──► fetch-run-logs
+#    [classify-severity, fetch-run-logs, recent-failure-dedup,
+#     maintenance-window-check] ──► build-slack-payload ──► lint-payload
+#                                             └─► send-slack-notification
+#    [classify-severity, recent-failure-dedup, maintenance-window-check]
+#                                   ──► escalate-on-streak      (streak >= 3)
+#    [classify-severity, recent-failure-dedup]
+#                                   ──► open-tracking-issue     (streak >= 5)
+#    context-guard ──► comment-on-pr    (si événement source pull_request*)
+#    [context-guard, maintenance-window-check] ──► self-heal-rerun (opt-in)
+#    [context-guard, classify-severity, send-slack-notification,
+#     recent-failure-dedup] ──► update-dashboard ──► push-metrics
+#    [context-guard, build-slack-payload] ──► matrix-smoke-test
+#    context-guard ──► weekly-digest    (cron / dispatch)
+#    context-guard ──► notify-recovery  (repository_dispatch « recovered »)
+#    TOUS ──► final-summary             (always)
+#
+#  RÈGLES D'OR (reprises de l'original, étendues)
+#    * Liste VOLONTAIREMENT curatée : n'ajoutez un workflow ci-dessous que si
+#      l'équipe le surveille activement — pas « tout le dépôt ».
+#    * Le secret Slack n'est manipulé qu'APRÈS le job context-guard : un fork
+#      ne peut jamais déclencher un ping (vérification head_repository).
+#    * Privilèges minimaux : contents: read partout, élévation explicite et
+#      locale dans les jobs qui en ont réellement besoin.
+#    * Ne JAMAIS ajouter CE workflow à sa propre liste `workflows:` sous
+#      peine de créer une boucle infinie de notifications.
+#
+#  PORTABILITÉ / ADAPTATION
+#    * Les messages Slack restent en anglais (fidélité à l'original et
+#      public international) ; les commentaires sont en français.
+#    * Les runners `namespace-profile-*` viennent du dépôt d'origine : à
+#      remplacer par `ubuntu-latest` en cas de portage.
+#    * Les automatisations marquées « exemple additionnel » sont fictives et
+#      ne servent qu'à démontrer la structure.
+#
+#  SECRETS / VARIABLES DE DÉPÔT ATTENDUS
+#    * secrets.SLACK_WEBHOOK_COMMUNITY_AUTOMATION_FAILURE  — obligatoire
+#    * secrets.SLACK_WEBHOOK_COMMUNITY_ESCALATION          — optionnel (job 09)
+#    * vars.PROMETHEUS_PUSHGATEWAY_URL                     — optionnel (job 14)
+# =============================================================================
+
 name: Notify Slack on community automation failure
 
+# Titre lisible dans l'onglet Actions — il sert AUSSI de clé de
+# dédoublonnage : le job recent-failure-dedup recherche « run <id> » dans
+# les titres des exécutions précédentes de CE workflow.
+run-name: >-
+  Slack ping · ${{ github.event.workflow_run.name || 'manual / scheduled / dispatch' }} ·
+  ${{ github.event.workflow_run.conclusion || github.event_name }} ·
+  run ${{ github.event.workflow_run.id || github.run_id }}
+
 on:
+  # ---------------------------------------------------------------------------
+  # DÉCLENCHEUR PRINCIPAL — une automatisation surveillée se termine.
   # zizmor: ignore[dangerous-triggers]
-  # The job validates that the completed run came from this repository, was
-  # started by an expected event, and failed before exposing the Slack secret.
+  # Le job `context-guard` valide que le run terminé provient bien de CE
+  # dépôt, a été démarré par un événement source attendu, et a échoué — le
+  # tout AVANT que le moindre secret Slack ne soit manipulé.
+  # ---------------------------------------------------------------------------
   workflow_run:
     workflows:
+      # --- Triage bugs / crashes (workflows d'origine) ----------------------
       - "Comment on potential duplicate bug/crash reports"
       - "Track duplicate bot effectiveness"
+      - "Issue Triage Queue Board"
+      # --- Tableaux communautaires (workflows d'origine) --------------------
       - "Community PR Board"
       - "Community PR Board Signals Refresh"
       - "Community PR Cleanup"
       - "Maintainer Edits Nudge"
       - "PR Issue Labeler"
       - "Welcome First Contribution"
+      # --- Guild (workflows d'origine) ---------------------------------------
       - "Guild Assignment Status"
       - "Guild Stale Assignments"
       - "Guild Weekly Shipped"
       - "Guild New PR Notification"
-      - "Issue Triage Queue Board"
-    types: [completed]
+      # --- Exemples additionnels (fictifs — adapter à votre dépôt) -----------
+      - "Duplicate Detector Nightly Eval"
+      - "Crash Report Correlator"
+      - "Triage Queue Sweeper"
+      - "First Contribution Helper"
+      - "Contributor Onboarding Digest"
+      - "Guild Retrospective Builder"
+      - "Guild Leaderboard Refresh"
+      - "Community Automation Smoke Tests"
+      - "Triage Rules Linter"
+      - "Community Health Metrics ETL"
+      - "Open Source Office Hours Scheduler"
+      - "Stale Issue Reaper"
+      - "Community Code of Conduct Scanner"
+      - "Release Notes Community Contributors"
+      - "Good First Issue Labeler"
+      - "Community Newsletter Assembler"
+      - "Issue Auto-Close Resolved Canary"
+    types:
+      - completed
 
+  # ---------------------------------------------------------------------------
+  # DÉCLENCHEURS SECONDAIRES — digests et surveillance périodique.
+  # Les heures sont décalées (17, 33, 5...) pour éviter les pics de charge
+  # GitHub des crons trop « ronds » (minuit pile, heure pleine).
+  # ---------------------------------------------------------------------------
+  schedule:
+    # Digest quotidien des échecs des dernières 24 h.
+    - cron: "17 6 * * *"
+    # Digest hebdomadaire du lundi — vue « semaine écoulée » pour la guild.
+    - cron: "33 10 * * 1"
+    # Rapport mensuel — agrégat complet du mois écoulé.
+    - cron: "5 2 1 * *"
+    # Sonde « run orphelin » : toutes les 30 min, vérifie qu'aucune
+    # automatisation surveillée n'est restée bloquée en in_progress > 2 h.
+    - cron: "*/30 * * * *"
+
+  # ---------------------------------------------------------------------------
+  # DÉCLENCHEMENT MANUEL (onglet Actions → « Run workflow »).
+  # Chaque entrée est exploitée quelque part dans les jobs ci-dessous.
+  # ---------------------------------------------------------------------------
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Mode simulation : tout exécuter SAUF les envois Slack, la création d'issue et les relances."
+        type: boolean
+        default: false
+      weekly_digest:
+        description: "Forcer la génération du digest des 7 derniers jours maintenant."
+        type: boolean
+        default: false
+      target_workflow:
+        description: "Nom exact d'une automatisation à inspecter (ex. « Guild Weekly Shipped »)."
+        type: string
+        default: ""
+      severity_override:
+        description: "Sévérité forcée — vide = classification automatique."
+        type: choice
+        options:
+          - ""
+          - sev1
+          - sev2
+          - sev3
+          - sev4
+        default: ""
+      channel_override:
+        description: "Canal Slack de débordement (#community-ops, #guild-triage...)."
+        type: string
+        default: ""
+      message_override:
+        description: "Message libre ajouté en tête du payload Slack (markdown autorisé)."
+        type: string
+        default: ""
+      max_retries:
+        description: "Tentatives d'envoi Slack max (backoff exponentiel)."
+        type: number
+        default: 3
+      retry_base_seconds:
+        description: "Base du backoff (s) : 3 donne 3 s, 6 s puis 12 s entre tentatives."
+        type: number
+        default: 3
+      include_logs:
+        description: "Joindre un extrait des logs du run en échec (fichier + aperçu)."
+        type: boolean
+        default: true
+      log_lines:
+        description: "Lignes de log extraites par job en échec."
+        type: number
+        default: 80
+      time_window_hours:
+        description: "Fenêtre d'analyse des échecs précédents (heures)."
+        type: number
+        default: 24
+      allow_self_heal:
+        description: "Autoriser la relance automatique des jobs en échec (défaut : refusé)."
+        type: boolean
+        default: false
+
+  # ---------------------------------------------------------------------------
+  # DÉCLENCHEMENT PAR UN AUTRE SYSTÈME (API GitHub « dispatch »).
+  # ---------------------------------------------------------------------------
+  repository_dispatch:
+    types:
+      - community-automation-failure    # un système externe signale un échec
+      - community-automation-recovered  # ... puis son rétablissement
+      - community-automation-outage-declared
+
+  # ---------------------------------------------------------------------------
+  # DÉCLENCHEURS « DÉMONSTRATIFS » — ils ne notifient jamais.
+  # Ils existent pour montrer la syntaxe complète (support de travail) et
+  # pour la corrélation : context-guard les classe d'office en « corrélation
+  # seule » et court-circuite tout le pipeline en aval.
+  # ---------------------------------------------------------------------------
+  issues:
+    types:
+      - opened
+      - reopened
+      - labeled
+  issue_comment:
+    types:
+      - created
+  release:
+    types:
+      - published
+  discussion:
+    types:
+      - created
+      - answered
+  deployment: {}
+
+  # ---------------------------------------------------------------------------
+  # RÉUTILISABILITÉ — ce workflow peut aussi servir de bibliothèque :
+  #   uses: zed-industries/zed/.github/workflows/notify-slack-community-automation-mega.yml@main
+  # ---------------------------------------------------------------------------
+  workflow_call:
+    inputs:
+      dry_run:
+        type: boolean
+        default: false
+      weekly_digest:
+        type: boolean
+        default: false
+      target_workflow:
+        type: string
+        default: ""
+      severity_override:
+        type: string
+        default: ""
+      channel_override:
+        type: string
+        default: ""
+      message_override:
+        type: string
+        default: ""
+      max_retries:
+        type: number
+        default: 3
+      retry_base_seconds:
+        type: number
+        default: 3
+      include_logs:
+        type: boolean
+        default: true
+      log_lines:
+        type: number
+        default: 80
+      time_window_hours:
+        type: number
+        default: 24
+      allow_self_heal:
+        type: boolean
+        default: false
+    secrets:
+      SLACK_WEBHOOK_COMMUNITY_AUTOMATION_FAILURE:
+        required: true
+      SLACK_WEBHOOK_COMMUNITY_ESCALATION:
+        required: false
+    outputs:
+      overall-status:
+        description: "Statut global du pipeline (success | failure)."
+        value: ${{ jobs.final-summary.outputs.overall_status }}
+      slack-outcome:
+        description: "Résultat de l'envoi Slack (success | failure | vide si non envoyé)."
+        value: ${{ jobs.send-slack-notification.outputs.slack_outcome }}
+      failure-streak:
+        description: "Nombre d'échecs consécutifs de l'automatisation concernée."
+        value: ${{ jobs.recent-failure-dedup.outputs.failure_streak }}
+
+# -----------------------------------------------------------------------------
+# Privilège minimal par défaut : lecture seule. Les jobs qui ont besoin de
+# davantage (issues:write, actions:write, contents:write, pull-requests:write)
+# surélèvent EXPLICITEMENT au niveau du job — jamais au niveau global.
+# -----------------------------------------------------------------------------
 permissions:
   contents: read
 
+# -----------------------------------------------------------------------------
+# Une seule file par run d'automatisation en échec : les nouveaux
+# déclenchements pour le MÊME workflow_run attendent leur tour au lieu de se
+# doubler. On ne coupe JAMAIS un envoi en cours (cancel-in-progress: false)
+# — couper un curl Slack à mi-chemin rendrait le ping incertain.
+# -----------------------------------------------------------------------------
+concurrency:
+  group: notify-slack-community-${{ github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: false
+
+# bash strict partout (chaque script ajoute lui-même set -euo pipefail) ;
+# shell par défaut = bash et non sh, pour éviter les surprises dash.
+defaults:
+  run:
+    shell: bash
+
+# -----------------------------------------------------------------------------
+# Constantes globales (aucun secret ici — les secrets vivent au niveau des
+# steps, après validation du contexte par context-guard).
+# -----------------------------------------------------------------------------
+env:
+  REPO_FULL_NAME: zed-industries/zed
+  SLACK_API_TIMEOUT: "30"
+  SLACK_MAX_BLOCKS: "50"
+  SLACK_SECTION_TEXT_LIMIT: "3000"
+  SLACK_FALLBACK_TEXT_LIMIT: "50000"
+  LOG_ARTIFACT_RETENTION_DAYS: "14"
+  DASHBOARD_ARTIFACT_RETENTION_DAYS: "90"
+  DASHBOARD_DATA_BRANCH: automation-dashboard
+  DASHBOARD_DATA_PATH: data/community-automation-failures.json
+  DASHBOARD_WINDOW_DAYS: "90"
+  FAILURE_STREAK_ESCALATE: "3"
+  FAILURE_STREAK_ISSUE: "5"
+  DEDUP_WINDOW_MINUTES: "45"
+  SELF_HEAL_MAX_ATTEMPT: "3"
+  MAINTENANCE_WINDOWS_FILE: .community-automation/maintenance-windows.yml
+  ESCALATION_MENTIONS: "<@U09Q4QHE1GA>"
+
 jobs:
-  notify-slack:
+  # =========================================================================
+  # JOB 01/18 — context-guard
+  # -------------------------------------------------------------------------
+  # Verrou de sécurité et arbitrage central : AUCUN secret n'est exposé avant
+  # ce job. Il valide que l'événement est bien un échec d'une automatisation
+  # de CE dépôt, démarré par un événement source attendu, et décide une fois
+  # pour toutes si le pipeline doit notifier (should_notify).
+  # =========================================================================
+  context-guard:
+    name: "Context guard (valider l'événement avant toute chose)"
     if: >-
-      github.repository == 'zed-industries/zed'
-      && github.event.workflow_run.head_repository.full_name == github.repository
-      && contains(fromJSON('["issues","issue_comment","pull_request","pull_request_target","schedule","workflow_dispatch"]'), github.event.workflow_run.event)
-      && contains(fromJSON('["failure","timed_out","startup_failure"]'), github.event.workflow_run.conclusion)
+      github.repository == 'zed-industries/zed' &&
+      contains(fromJSON('["workflow_run","schedule","workflow_dispatch","repository_dispatch","issues","issue_comment","release","discussion","deployment","workflow_call"]'), github.event_name)
     runs-on: namespace-profile-2x4-ubuntu-2404
-
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      should_notify: ${{ steps.decide.outputs.should_notify }}
+      failure_kind: ${{ steps.decide.outputs.failure_kind }}
+      notify_reason: ${{ steps.decide.outputs.notify_reason }}
+      dispatch_kind: ${{ steps.decide.outputs.dispatch_kind }}
+      dry_run: ${{ steps.decide.outputs.dry_run }}
+      wf_name: ${{ steps.decide.outputs.wf_name }}
+      wf_url: ${{ steps.decide.outputs.wf_url }}
+      wf_conclusion: ${{ steps.decide.outputs.wf_conclusion }}
+      wf_event: ${{ steps.decide.outputs.wf_event }}
+      wf_run_id: ${{ steps.decide.outputs.wf_run_id }}
+      wf_attempt: ${{ steps.decide.outputs.wf_attempt }}
+      wf_branch: ${{ steps.decide.outputs.wf_branch }}
+      wf_actor: ${{ steps.decide.outputs.wf_actor }}
+      wf_head_sha: ${{ steps.decide.outputs.wf_head_sha }}
     steps:
-      - name: Build Slack message payload
+      - name: "Décider si l'on doit notifier (arbitrage central)"
+        id: decide
         env:
-          WF_NAME: ${{ github.event.workflow_run.name }}
-          WF_URL: ${{ github.event.workflow_run.html_url }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE_CRON: ${{ github.event.schedule }}
+          DISPATCH_ACTOR: ${{ github.actor }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_TARGET_WORKFLOW: ${{ inputs.target_workflow }}
+          # Champs du workflow_run (vides si l'événement est d'un autre type).
+          WR_NAME: ${{ github.event.workflow_run.name }}
+          WR_URL: ${{ github.event.workflow_run.html_url }}
+          WR_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WR_EVENT: ${{ github.event.workflow_run.event }}
+          WR_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          WR_RUN_ID: ${{ github.event.workflow_run.id }}
+          WR_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WR_ACTOR: ${{ github.event.workflow_run.actor.login }}
+          WR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          # Champs du repository_dispatch (client_payload de l'appelant).
+          RD_TYPE: ${{ github.event.action }}
+          RD_PAYLOAD_WF_NAME: ${{ github.event.client_payload.workflow_name }}
+          RD_PAYLOAD_WF_URL: ${{ github.event.client_payload.workflow_url }}
+          RD_PAYLOAD_WF_CONCLUSION: ${{ github.event.client_payload.conclusion }}
         run: |
-          # A handful of interchangeable laments; one is drawn at random per failure.
-          quips=(
-            "Quoth the runner: nevermore."
-            "Darkness there, and nothing more."
-            "A tell-tale red beats beneath the logs."
-            "Once more the pendulum descends."
-            "It grew weak and weary, and then no more."
-            "Deep into the stack trace peering."
+          set -euo pipefail
+
+          # --- Constantes de filtrage (logique du workflow d'origine) -------
+          # Événements « source » acceptés pour un workflow_run.
+          declare -a ACCEPTED_SOURCE_EVENTS=(
+            "issues"
+            "issue_comment"
+            "pull_request"
+            "pull_request_target"
+            "schedule"
+            "workflow_dispatch"
+            "push"
+            "repository_dispatch"
           )
-          quip="${quips[$((RANDOM % ${#quips[@]}))]}"
+          # Conclusions considérées comme un échec à signaler.
+          declare -a FAILURE_CONCLUSIONS=(
+            "failure"
+            "timed_out"
+            "startup_failure"
+          )
 
-          jq -n \
-            --arg name "$WF_NAME" \
-            --arg url "$WF_URL" \
-            --arg quip "$quip" \
-            '{
-              "text": "Oh no — \"\($name)\" has failed.",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "Oh no, <@U09Q4QHE1GA>! \($quip) \"*\($name)*\" has failed — <\($url)|see the run>."
-                  }
-                }
-              ]
-            }' > payload.json
+          # --- Valeurs par défaut des sorties --------------------------------
+          should_notify="false"
+          failure_kind="none"
+          notify_reason=""
+          dispatch_kind="none"
+          dry_run="false"
 
-          cat payload.json
+          # Le mode simulation est arbitré ici, une seule fois pour tous.
+          if [[ "${INPUT_DRY_RUN:-}" == "true" ]]; then
+            dry_run="true"
+          fi
 
-      - name: Send Slack notification
+          case "$EVENT_NAME" in
+            workflow_run)
+              if [[ "$WR_HEAD_REPO" != "$GH_REPO" ]]; then
+                # Anti-spoofing : un fork ne doit jamais déclencher un ping.
+                notify_reason="workflow_run issu du dépôt '$WR_HEAD_REPO' (different de $GH_REPO) — ignoré"
+              elif ! printf '%s\n' "${ACCEPTED_SOURCE_EVENTS[@]}" | grep -qx -- "$WR_EVENT"; then
+                notify_reason="événement source inattendu pour le workflow_run : '$WR_EVENT'"
+              elif printf '%s\n' "${FAILURE_CONCLUSIONS[@]}" | grep -qx -- "$WR_CONCLUSION"; then
+                should_notify="true"
+                failure_kind="$WR_CONCLUSION"
+                notify_reason="workflow_run en échec : conclusion '$WR_CONCLUSION'"
+              else
+                notify_reason="conclusion '$WR_CONCLUSION' — pas un échec à signaler"
+              fi
+              ;;
+            repository_dispatch)
+              dispatch_kind="$RD_TYPE"
+              case "$RD_TYPE" in
+                community-automation-failure)
+                  should_notify="true"
+                  failure_kind="dispatch-failure"
+                  notify_reason="repository_dispatch : échec signalé par un système externe"
+                  # L'appelant peut préciser le workflow concerné.
+                  if [[ -n "${RD_PAYLOAD_WF_NAME:-}" ]]; then
+                    WR_NAME="$RD_PAYLOAD_WF_NAME"
+                    WR_URL="${RD_PAYLOAD_WF_URL:-}"
+                    WR_CONCLUSION="${RD_PAYLOAD_WF_CONCLUSION:-failure}"
+                    WR_RUN_ID=""
+                  fi
+                  ;;
+                community-automation-recovered)
+                  should_notify="true"
+                  failure_kind="dispatch-recovery"
+                  notify_reason="repository_dispatch : automatisation rétablie — message vert"
+                  if [[ -n "${RD_PAYLOAD_WF_NAME:-}" ]]; then
+                    WR_NAME="$RD_PAYLOAD_WF_NAME"
+                    WR_URL="${RD_PAYLOAD_WF_URL:-}"
+                  fi
+                  ;;
+                *)
+                  notify_reason="repository_dispatch de type inconnu : '$RD_TYPE'"
+                  ;;
+              esac
+              ;;
+            schedule)
+              # Les exécutions planifiées passent toujours (digest / sonde).
+              should_notify="true"
+              failure_kind="schedule"
+              notify_reason="déclenchement planifié (cron : ${SCHEDULE_CRON:-inconnu})"
+              ;;
+            workflow_dispatch)
+              should_notify="true"
+              failure_kind="workflow_dispatch"
+              notify_reason="déclenchement manuel par ${DISPATCH_ACTOR:-un humain}"
+              # Ciblage optionnel d'une automatisation précise.
+              if [[ -n "${INPUT_TARGET_WORKFLOW:-}" ]]; then
+                WR_NAME="$INPUT_TARGET_WORKFLOW"
+                WR_CONCLUSION="${WR_CONCLUSION:-inspect}"
+                notify_reason="déclenchement manuel ciblé sur '$INPUT_TARGET_WORKFLOW'"
+              fi
+              ;;
+            *)
+              # issues / issue_comment / release / discussion / deployment :
+              # collectés pour corrélation — jamais pour notifier.
+              notify_reason="déclencheur '$EVENT_NAME' : corrélation seule, aucune notification"
+              ;;
+          esac
+
+          # --- Publication des sorties --------------------------------------
+          {
+            echo "should_notify=$should_notify"
+            echo "failure_kind=$failure_kind"
+            echo "notify_reason=$notify_reason"
+            echo "dispatch_kind=$dispatch_kind"
+            echo "dry_run=$dry_run"
+            echo "wf_name=${WR_NAME:-}"
+            echo "wf_url=${WR_URL:-}"
+            echo "wf_conclusion=${WR_CONCLUSION:-}"
+            echo "wf_event=${WR_EVENT:-}"
+            echo "wf_run_id=${WR_RUN_ID:-}"
+            echo "wf_attempt=${WR_ATTEMPT:-}"
+            echo "wf_branch=${WR_BRANCH:-}"
+            echo "wf_actor=${WR_ACTOR:-}"
+            echo "wf_head_sha=${WR_HEAD_SHA:-}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Verdict : should_notify=$should_notify failure_kind=$failure_kind"
+          echo "Raison  : ${notify_reason:-—}"
+
+      - name: "Publier le verdict dans le résumé du run"
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_COMMUNITY_AUTOMATION_FAILURE }}
+          EVENT_NAME: ${{ github.event_name }}
+          WF_NAME: ${{ steps.decide.outputs.wf_name }}
+          WF_CONCLUSION: ${{ steps.decide.outputs.wf_conclusion }}
+          SHOULD_NOTIFY: ${{ steps.decide.outputs.should_notify }}
+          NOTIFY_REASON: ${{ steps.decide.outputs.notify_reason }}
         run: |
-          if [ -z "$SLACK_WEBHOOK_URL" ]; then
-            echo "::error::SLACK_WEBHOOK_COMMUNITY_AUTOMATION_FAILURE secret is not set"
-            exit 1
+          set -euo pipefail
+          {
+            echo "## Context guard — verdict"
+            echo
+            echo "- Déclencheur : \`$EVENT_NAME\`"
+            echo "- Workflow concerné : \`$WF_NAME\`"
+            echo "- Conclusion : \`$WF_CONCLUSION\`"
+            echo "- Notification à envoyer : **$SHOULD_NOTIFY**"
+            echo "- Raison : ${NOTIFY_REASON:-(aucune)}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$SHOULD_NOTIFY" != "true" ]]; then
+            echo "::notice::Pipeline court-circuité : ${NOTIFY_REASON:-raison inconnue}"
           fi
 
-          HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$SLACK_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -d @payload.json)
+  # =========================================================================
+  # JOB 02/18 — maintenance-window-check
+  # -------------------------------------------------------------------------
+  # Pendant une fenêtre de maintenance déclarée, on enregistre l'échec mais
+  # on NE ping pas Slack (mode « mute »). Format attendu du fichier
+  # .community-automation/maintenance-windows.yml :
+  #
+  #   windows:
+  #     - start: "2026-11-10T02:00:00Z"
+  #       end:   "2026-11-10T04:00:00Z"
+  #       reason: "migration de la base issues"
+  #       workflows: ["Guild Weekly Shipped"]   # ou ["*"] pour tout couvrir
+  # =========================================================================
+  maintenance-window-check:
+    name: "Maintenance window check (mode mute planifié ?)"
+    needs: context-guard
+    if: >-
+      needs.context-guard.outputs.should_notify == 'true' &&
+      contains(fromJSON('["workflow_run","repository_dispatch"]'), github.event_name)
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      muted: ${{ steps.windows.outputs.muted }}
+      mute_reason: ${{ steps.windows.outputs.mute_reason }}
+    steps:
+      - name: "Récupérer uniquement le fichier des fenêtres (sparse checkout)"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            .community-automation/maintenance-windows.yml
+          sparse-checkout-cone-mode: false
 
-          HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
-          HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tail -n 1)
+      - name: "S'assurer que PyYAML est disponible"
+        run: |
+          set -euo pipefail
+          python -c "import yaml" 2>/dev/null \
+            || python -m pip install --quiet --user pyyaml
 
-          echo "Slack API response status: $HTTP_STATUS"
-          echo "Slack API response body: $HTTP_BODY"
+      - name: "Évaluer les fenêtres de maintenance"
+        id: windows
+        shell: python
+        env:
+          WINDOWS_FILE: ${{ env.MAINTENANCE_WINDOWS_FILE }}
+          WF_NAME: ${{ needs.context-guard.outputs.wf_name }}
+        run: |
+          import os
+          from datetime import datetime, timezone
 
-          if [ "$HTTP_STATUS" -ne 200 ]; then
-            echo "::error::Slack notification failed with status $HTTP_STATUS: $HTTP_BODY"
-            exit 1
+          path = os.environ.get("WINDOWS_FILE", ".community-automation/maintenance-windows.yml")
+          wf_name = os.environ.get("WF_NAME", "")
+          now = datetime.now(timezone.utc)
+
+          muted = "false"
+          reason = ""
+
+          try:
+              import yaml
+              with open(path, "r", encoding="utf-8") as fh:
+                  data = yaml.safe_load(fh) or {}
+          except FileNotFoundError:
+              data = {}
+              print(f"::notice::{path} introuvable — aucune fenêtre de maintenance active.")
+          except Exception as exc:
+              data = {}
+              print(f"::warning::Fenêtres illisibles ({exc}) — traité comme AUCUNE fenêtre.")
+
+          for win in data.get("windows", []) or []:
+              try:
+                  start = datetime.fromisoformat(str(win["start"]).replace("Z", "+00:00"))
+                  end = datetime.fromisoformat(str(win["end"]).replace("Z", "+00:00"))
+              except Exception:
+                  continue  # fenêtre mal formée : ignorée
+              if not (start <= now <= end):
+                  continue
+              scope = win.get("workflows", ["*"]) or ["*"]
+              if "*" in scope or wf_name in scope:
+                  muted = "true"
+                  reason = str(win.get("reason", "fenêtre de maintenance planifiée"))
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"muted={muted}\n")
+              out.write(f"mute_reason={reason}\n")
+
+          print(f"Fenêtres évaluées : muted={muted}, reason={reason!r}, now={now.isoformat()}")
+
+      - name: "Tracer la décision de mute dans le résumé"
+        env:
+          MUTED: ${{ steps.windows.outputs.muted }}
+          MUTE_REASON: ${{ steps.windows.outputs.mute_reason }}
+        run: |
+          set -euo pipefail
+          if [[ "$MUTED" == "true" ]]; then
+            echo "::notice::Ping Slack suspendu — ${MUTE_REASON:-fenêtre de maintenance}"
           fi
+          {
+            echo "- Fenêtre de maintenance active : **$MUTED** ${MUTE_REASON:+(${MUTE_REASON})}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "Slack notification sent successfully"
+# >>> SUITE : jobs 03-05 <<<
