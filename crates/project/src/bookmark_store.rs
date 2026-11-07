@@ -27,6 +27,13 @@ pub struct Bookmark {
     pub label: String,
 }
 
+pub struct ProjectBookmark {
+    pub path: Arc<Path>,
+    pub label: String,
+    pub buffer: Entity<Buffer>,
+    pub anchor: text::Anchor,
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SerializedBookmark {
     pub row: u32,
@@ -464,6 +471,59 @@ impl BookmarkStore {
                 Self::emit_bookmarks_changed(cx);
             }
         }
+    }
+
+    pub async fn all_bookmarks(
+        this: &Entity<BookmarkStore>,
+        cx: &mut (impl AppContext + Clone),
+    ) -> Result<Vec<ProjectBookmark>> {
+        Self::resolve_all(this, cx).await?;
+
+        let bookmarks = cx.read_entity(this, |bookmark_store, cx| {
+            let mut bookmarks = Vec::new();
+
+            for (path, value) in &bookmark_store.bookmarks {
+                let BookmarkEntry::Loaded(buffer_bookmarks) = value else {
+                    continue;
+                };
+
+                let snapshot = buffer_bookmarks.buffer.read(cx).snapshot();
+                for bookmark in &buffer_bookmarks.bookmarks {
+                    let label = if bookmark.label.is_empty() {
+                        let row = snapshot.summary_for_anchor::<Point>(&bookmark.anchor).row;
+                        let line_length = snapshot.line_len(row);
+                        let mut label = String::with_capacity(line_length as usize);
+
+                        for chunk in snapshot
+                            .text_for_range(Point::new(row, 0)..Point::new(row, line_length))
+                        {
+                            let chunk = if label.is_empty() {
+                                chunk.trim_start()
+                            } else {
+                                chunk
+                            };
+                            label.push_str(chunk);
+                        }
+
+                        let trimmed_length = label.trim_end().len();
+                        label.truncate(trimmed_length);
+                        label
+                    } else {
+                        bookmark.label.clone()
+                    };
+
+                    bookmarks.push(ProjectBookmark {
+                        path: path.clone(),
+                        label,
+                        buffer: buffer_bookmarks.buffer.clone(),
+                        anchor: bookmark.anchor,
+                    });
+                }
+            }
+
+            bookmarks
+        });
+        Ok(bookmarks)
     }
 
     pub fn all_serialized_bookmarks(
