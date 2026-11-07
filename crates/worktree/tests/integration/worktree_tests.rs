@@ -12,7 +12,9 @@ use postage::stream::Stream;
 use pretty_assertions::assert_eq;
 use rand::prelude::*;
 use rpc::{AnyProtoClient, NoopProtoClient, proto};
-use worktree::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
+use worktree::{
+    Entry, EntryExclusions, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle,
+};
 
 use serde_json::json;
 use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore, SplicingVec, WorktreeId};
@@ -2835,6 +2837,213 @@ async fn test_hidden_files(cx: &mut TestAppContext) {
                 (rel_path("src/visible.rs"), false),
                 (rel_path("visible.txt"), false),
             ]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_file_exclusions(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_search_exclusions =
+                    Some(SplicingVec::from(vec!["vendor".to_string()]));
+                settings.project.worktree.file_finder_exclusions = Some(SplicingVec::from(vec![
+                    "vendor".to_string(),
+                    "**/*.orig".to_string(),
+                ]));
+            });
+        });
+    });
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "main.rs": "code",
+                "main.rs.orig": "code",
+            },
+            "vendor": {
+                "lib": {
+                    "lib.php": "code",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        path!("/root").as_ref(),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let replica = tree.update(cx, |tree, cx| {
+        let tree = tree.as_local_mut().unwrap();
+        let snapshot = Arc::new(Mutex::new(tree.snapshot()));
+        tree.observe_updates(0, cx, {
+            let snapshot = snapshot.clone();
+            let settings = tree.settings();
+            move |update| {
+                snapshot
+                    .lock()
+                    .apply_remote_update(update, &settings.file_scan_inclusions);
+                async { true }
+            }
+        });
+        snapshot
+    });
+
+    let search_and_finder = EntryExclusions::SEARCH | EntryExclusions::FINDER;
+    let none = EntryExclusions::empty();
+    let assert_exclusions = |expected: &[(&str, EntryExclusions)], cx: &mut TestAppContext| {
+        tree.read_with(cx, |tree, _| {
+            assert_eq!(
+                tree.entries(true, 0)
+                    .map(|entry| (entry.path.as_unix_str(), entry.exclusions))
+                    .collect::<Vec<_>>(),
+                expected,
+            );
+        });
+        assert_eq!(
+            replica
+                .lock()
+                .entries(true, 0)
+                .map(|entry| (entry.path.as_unix_str(), entry.exclusions))
+                .collect::<Vec<_>>(),
+            expected,
+            "exclusions are synced to remote replicas",
+        );
+    };
+
+    fs.insert_file(
+        path!("/root/vendor/lib/new.php"),
+        "code".as_bytes().to_vec(),
+    )
+    .await;
+    tree.flush_fs_events(cx).await;
+    cx.executor().run_until_parked();
+
+    assert_exclusions(
+        &[
+            ("", none),
+            ("src", none),
+            ("src/main.rs", none),
+            ("src/main.rs.orig", EntryExclusions::FINDER),
+            ("vendor", search_and_finder),
+            ("vendor/lib", search_and_finder),
+            ("vendor/lib/lib.php", search_and_finder),
+            ("vendor/lib/new.php", search_and_finder),
+        ],
+        cx,
+    );
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_search_exclusions =
+                    Some(SplicingVec::from(vec!["**/lib".to_string()]));
+                settings.project.worktree.file_finder_exclusions = None;
+            });
+        });
+    });
+    tree.flush_fs_events(cx).await;
+    cx.executor().run_until_parked();
+
+    assert_exclusions(
+        &[
+            ("", none),
+            ("src", none),
+            ("src/main.rs", none),
+            ("src/main.rs.orig", none),
+            ("vendor", none),
+            ("vendor/lib", EntryExclusions::SEARCH),
+            ("vendor/lib/lib.php", EntryExclusions::SEARCH),
+            ("vendor/lib/new.php", EntryExclusions::SEARCH),
+        ],
+        cx,
+    );
+}
+
+#[gpui::test]
+async fn test_file_exclusions_in_loaded_ignored_dir(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".gitignore": "vendor\n",
+            "vendor": {
+                "lib": {
+                    "lib.php": "code",
+                },
+                "unloaded": {
+                    "unloaded.php": "code",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        path!("/root").as_ref(),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("vendor/lib/lib.php").into()])
+    })
+    .recv()
+    .await;
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_finder_exclusions =
+                    Some(SplicingVec::from(vec!["vendor".to_string()]));
+            });
+        });
+    });
+    tree.flush_fs_events(cx).await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (
+                    entry.path.as_unix_str(),
+                    entry.exclusions,
+                    entry.kind == EntryKind::UnloadedDir
+                ))
+                .collect::<Vec<_>>(),
+            &[
+                ("", EntryExclusions::empty(), false),
+                (".gitignore", EntryExclusions::empty(), false),
+                ("vendor", EntryExclusions::FINDER, true),
+                ("vendor/lib", EntryExclusions::FINDER, false),
+                ("vendor/lib/lib.php", EntryExclusions::FINDER, false),
+                ("vendor/unloaded", EntryExclusions::empty(), true),
+            ],
         );
     });
 }
@@ -6589,6 +6798,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                     size: None,
                     canonical_path: None,
                     is_unloaded: false,
+                    exclusions: 0,
                 }],
                 removed_entries: vec![],
                 scan_id: 1,
@@ -6871,6 +7081,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                     size: None,
                     canonical_path: None,
                     is_unloaded: false,
+                    exclusions: 0,
                 }],
                 removed_entries: vec![],
                 scan_id: 1,

@@ -35,7 +35,10 @@ pub struct PathMatch {
 }
 
 pub trait PathMatchCandidateSet<'a>: Send + Sync {
-    type Candidates: Iterator<Item = PathMatchCandidate<'a>>;
+    /// Yields one item per position counted by `len`. `None` marks a position
+    /// that must not be matched, so that segments starting at the same
+    /// position still cover the same candidates.
+    type Candidates: Iterator<Item = Option<PathMatchCandidate<'a>>>;
     fn id(&self) -> usize;
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
@@ -201,7 +204,8 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                         if tree_start < segment_end && segment_start < tree_end {
                             let start = cmp::max(tree_start, segment_start) - tree_start;
                             let end = cmp::min(tree_end, segment_end) - tree_start;
-                            let candidates = candidate_set.candidates(start).take(end - start);
+                            let candidates =
+                                candidate_set.candidates(start).take(end - start).flatten();
 
                             let worktree_id = candidate_set.id();
                             let mut prefix = candidate_set

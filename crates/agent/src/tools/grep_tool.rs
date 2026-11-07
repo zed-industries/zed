@@ -1143,6 +1143,48 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_grep_skips_search_exclusions(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "src": {
+                    "main.rs": "fn needle() {}",
+                },
+                "vendor": {
+                    "lib.rs": "fn needle() {}",
+                },
+            }),
+        )
+        .await;
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_search_exclusions =
+                        Some(SplicingVec::from(vec!["vendor".to_string()]));
+                });
+            });
+        });
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let result = run_grep_tool(
+            GrepToolInput {
+                regex: "needle".to_string(),
+                include_pattern: None,
+                offset: 0,
+                case_sensitive: false,
+            },
+            project,
+            cx,
+        )
+        .await;
+        assert_eq!(extract_paths_from_results(&result), &["root/src/main.rs"]);
+    }
+
+    #[gpui::test]
     async fn test_grep_security_boundaries(cx: &mut TestAppContext) {
         init_test(cx);
 
