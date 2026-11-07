@@ -344,7 +344,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
 
         let highlighted_match = HighlightedMatchWithPaths {
             prefix,
-            match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
+            match_label: HighlightedMatch::join(match_labels.into_iter(), ", "),
             paths: Vec::new(),
             active: false,
         };

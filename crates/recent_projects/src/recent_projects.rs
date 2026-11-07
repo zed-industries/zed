@@ -1301,7 +1301,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                 let highlighted_match = HighlightedMatchWithPaths {
                     prefix: None,
-                    match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
+                    match_label: HighlightedMatch::join(match_labels.into_iter(), ", "),
                     paths: path_highlights,
                     active: is_active,
                 };
@@ -1454,7 +1454,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                 let highlighted_match = HighlightedMatchWithPaths {
                     prefix,
-                    match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
+                    match_label: HighlightedMatch::join(match_labels.into_iter(), ", "),
                     paths,
                     active: false,
                 };
@@ -1943,7 +1943,7 @@ pub(crate) fn highlights_for_path(
     path_style: PathStyle,
     match_positions: &Vec<usize>,
     path_start_offset: usize,
-) -> (Option<HighlightedMatch>, HighlightedMatch) {
+) -> (HighlightedMatch, HighlightedMatch) {
     let path_text = path.to_string_lossy().into_owned();
     let path_byte_len = path_text.len();
     // Get the subset of match highlight positions that line up with the given path.
@@ -1958,22 +1958,29 @@ pub(crate) fn highlights_for_path(
 
     // Again subset the highlight positions to just those that line up with the file_name
     // again adjusted to the start of the file_name
-    let file_name_text_and_positions = path_style.file_name(path).map(|file_name| {
-        let file_name_text = file_name.to_string_lossy().into_owned();
-        let file_name_start_byte = path_byte_len - file_name_text.len();
-        let highlight_positions = path_positions
-            .iter()
-            .copied()
-            .skip_while(|position| *position < file_name_start_byte)
-            .take_while(|position| *position < file_name_start_byte + file_name_text.len())
-            .map(|position| position - file_name_start_byte)
-            .collect::<Vec<_>>();
-        HighlightedMatch {
-            text: file_name_text,
-            highlight_positions,
+    let file_name_text_and_positions = path_style
+        .file_name(path)
+        .map(|file_name| {
+            let file_name_text = file_name.to_string_lossy().into_owned();
+            let file_name_start_byte = path_byte_len - file_name_text.len();
+            let highlight_positions = path_positions
+                .iter()
+                .copied()
+                .skip_while(|position| *position < file_name_start_byte)
+                .take_while(|position| *position < file_name_start_byte + file_name_text.len())
+                .map(|position| position - file_name_start_byte)
+                .collect::<Vec<_>>();
+            HighlightedMatch {
+                text: file_name_text,
+                highlight_positions,
+                color: Color::Default,
+            }
+        })
+        .unwrap_or_else(|| HighlightedMatch {
+            text: path_text.clone(),
+            highlight_positions: path_positions.clone(),
             color: Color::Default,
-        }
-    });
+        });
 
     (
         file_name_text_and_positions,
