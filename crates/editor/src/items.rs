@@ -12,7 +12,7 @@ use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
 use fs::MTime;
 use futures::{channel::oneshot, future::try_join_all};
-use git::status::GitSummary;
+use git::status::{GitSummary, TrackedSummary};
 use gpui::{
     AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Font,
     IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
@@ -788,6 +788,7 @@ impl Item for Editor {
                         status.summary(),
                         entry.is_ignored,
                         params.selected,
+                        cx,
                     ))
                 })
                 .unwrap_or_else(|| entry_label_color(params.selected))
@@ -2281,21 +2282,59 @@ pub fn entry_diagnostic_aware_icon_decoration_and_color(
     }
 }
 
-pub fn entry_git_aware_label_color(git_status: GitSummary, ignored: bool, selected: bool) -> Color {
-    let tracked = git_status.index + git_status.worktree;
-    if git_status.conflict > 0 {
-        Color::Conflict
-    } else if tracked.deleted > 0 {
-        Color::Deleted
-    } else if tracked.modified > 0 {
-        Color::Modified
-    } else if tracked.added > 0 || git_status.untracked > 0 {
-        Color::Created
-    } else if ignored {
-        Color::Ignored
+fn git_status_color_for(status: TrackedSummary) -> Option<Color> {
+    if status.deleted > 0 {
+        Some(Color::Deleted)
+    } else if status.modified > 0 {
+        Some(Color::Modified)
+    } else if status.added > 0 {
+        Some(Color::Created)
     } else {
-        entry_label_color(selected)
+        None
     }
+}
+
+fn staged_git_status_color_for(status: TrackedSummary, cx: &App) -> Option<Color> {
+    let colors = cx.theme().status();
+    let color = if status.deleted > 0 {
+        colors.deleted_staged
+    } else if status.modified > 0 {
+        colors.modified_staged
+    } else if status.added > 0 {
+        colors.created_staged
+    } else {
+        return None;
+    };
+    Some(Color::Custom(color))
+}
+
+pub fn entry_git_aware_label_color(
+    git_status: GitSummary,
+    ignored: bool,
+    selected: bool,
+    cx: &App,
+) -> Color {
+    if git_status.conflict > 0 {
+        return Color::Conflict;
+    }
+
+    // Prefer the worktree (unstaged/"todo") status when present; a file that's
+    // only changed in the index is fully staged ("done") and uses the theme's
+    // staged colors. A partially-staged file (both index and worktree have
+    // changes) is treated as unstaged/"todo" since there's still work left on it.
+    let color = if git_status.worktree != TrackedSummary::UNCHANGED {
+        git_status_color_for(git_status.worktree)
+    } else if git_status.index != TrackedSummary::UNCHANGED {
+        staged_git_status_color_for(git_status.index, cx)
+    } else if git_status.untracked > 0 {
+        return Color::Untracked;
+    } else if ignored {
+        return Color::Ignored;
+    } else {
+        return entry_label_color(selected);
+    };
+
+    color.unwrap_or_else(|| entry_label_color(selected))
 }
 
 fn path_for_buffer<'a>(
@@ -2731,6 +2770,107 @@ mod tests {
                 window[0], window[1],
             );
         }
+    }
+
+    #[test]
+    fn test_git_status_color_for_precedence() {
+        assert_eq!(
+            git_status_color_for(TrackedSummary::DELETED),
+            Some(Color::Deleted)
+        );
+        assert_eq!(
+            git_status_color_for(TrackedSummary::MODIFIED),
+            Some(Color::Modified)
+        );
+        assert_eq!(
+            git_status_color_for(TrackedSummary::ADDED),
+            Some(Color::Created)
+        );
+        assert_eq!(git_status_color_for(TrackedSummary::UNCHANGED), None);
+
+        // Deleted takes priority over every other tracked status.
+        assert_eq!(
+            git_status_color_for(TrackedSummary::DELETED + TrackedSummary::ADDED),
+            Some(Color::Deleted)
+        );
+        // Modified takes priority over added.
+        assert_eq!(
+            git_status_color_for(TrackedSummary::MODIFIED + TrackedSummary::ADDED),
+            Some(Color::Modified)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_entry_git_aware_label_color_precedence(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        cx.update(|cx| {
+            // Conflict takes priority over every other status.
+            let git_status = GitSummary {
+                conflict: 1,
+                worktree: TrackedSummary::MODIFIED,
+                index: TrackedSummary::ADDED,
+                ..GitSummary::UNCHANGED
+            };
+            assert_eq!(
+                entry_git_aware_label_color(git_status, false, false, cx),
+                Color::Conflict
+            );
+
+            // Unstaged (worktree) status is shown at full strength.
+            let git_status = GitSummary {
+                worktree: TrackedSummary::MODIFIED,
+                ..GitSummary::UNCHANGED
+            };
+            assert_eq!(
+                entry_git_aware_label_color(git_status, false, false, cx),
+                Color::Modified
+            );
+
+            // Partially-staged: unstaged work remains, so it reads as
+            // full-strength "todo" modified, not the faded staged-added color.
+            let git_status = GitSummary {
+                worktree: TrackedSummary::MODIFIED,
+                index: TrackedSummary::ADDED,
+                ..GitSummary::UNCHANGED
+            };
+            assert_eq!(
+                entry_git_aware_label_color(git_status, false, false, cx),
+                Color::Modified
+            );
+
+            // Fully staged (index-only): the theme's staged color.
+            let git_status = GitSummary {
+                index: TrackedSummary::ADDED,
+                ..GitSummary::UNCHANGED
+            };
+            assert_eq!(
+                entry_git_aware_label_color(git_status, false, false, cx),
+                Color::Custom(cx.theme().status().created_staged)
+            );
+
+            // Untracked.
+            let git_status = GitSummary {
+                untracked: 1,
+                ..GitSummary::UNCHANGED
+            };
+            assert_eq!(
+                entry_git_aware_label_color(git_status, false, false, cx),
+                Color::Untracked
+            );
+
+            // Ignored.
+            assert_eq!(
+                entry_git_aware_label_color(GitSummary::UNCHANGED, true, false, cx),
+                Color::Ignored
+            );
+
+            // No status at all falls back to the plain entry label color.
+            assert_eq!(
+                entry_git_aware_label_color(GitSummary::UNCHANGED, false, true, cx),
+                entry_label_color(true)
+            );
+        });
     }
 
     #[gpui::test]

@@ -580,7 +580,7 @@ impl Item for ImageView {
                 .read(cx)
                 .entry_for_path(&project_path, cx)
                 .map(|entry| {
-                    entry_git_aware_label_color(git_status, entry.is_ignored, params.selected)
+                    entry_git_aware_label_color(git_status, entry.is_ignored, params.selected, cx)
                 })
                 .unwrap_or_else(|| params.text_color())
         } else {
