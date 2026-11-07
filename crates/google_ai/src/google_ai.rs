@@ -17,11 +17,16 @@ pub mod completion;
 // below. Update these lists when Google releases or retires models.
 
 /// Catalog entries Zed doesn't offer: models that produce media or serve specialized APIs,
-/// and `-latest` aliases, which silently retarget to models already listed by version.
+/// `-latest` aliases, which silently retarget to models already listed by version, and
+/// retired models that have been shut down or superseded.
 ///
-/// Matched by ID segment so that new versions of these families stay excluded.
+/// Matched by exact ID for retired models, and by ID segment so that new versions of
+/// non-text families stay excluded.
 fn is_excluded_model(model_id: &str) -> bool {
-    model_id.split('-').any(|segment| {
+    matches!(
+        model_id,
+        "gemini-3.1-flash-lite-preview" | "gemini-3.5-flash" | "gemini-3.7-flash"
+    ) || model_id.split('-').any(|segment| {
         matches!(
             segment,
             "latest"
@@ -1058,6 +1063,28 @@ mod tests {
         assert!(is_versioned_model("gemini-4-argon"));
         assert!(!is_versioned_model("gemini-flash-latest"));
         assert!(!is_versioned_model("gemini-nano-banana-2.1"));
+    }
+
+    #[test]
+    fn test_is_excluded_model() {
+        assert!(is_excluded_model("gemini-3.1-flash-lite-preview"));
+        assert!(is_excluded_model("gemini-3.5-flash"));
+        assert!(is_excluded_model("gemini-3.7-flash"));
+        assert!(is_excluded_model("gemini-3.8-flash-tts"));
+        assert!(is_excluded_model("gemini-3.8-live"));
+        assert!(is_excluded_model("gemini-3.1-flash-image"));
+        assert!(is_excluded_model("gemini-3.5-flash-latest"));
+
+        assert!(!is_excluded_model("gemini-2.5-flash"));
+        assert!(!is_excluded_model("gemini-2.5-flash-lite"));
+        assert!(!is_excluded_model("gemini-2.5-pro"));
+        assert!(!is_excluded_model("gemini-3-flash-preview"));
+        assert!(!is_excluded_model("gemini-3.1-flash-lite"));
+        assert!(!is_excluded_model("gemini-3.1-pro-preview"));
+        assert!(!is_excluded_model("gemini-3.5-flash-lite"));
+        assert!(!is_excluded_model("gemini-3.6-flash"));
+        assert!(!is_excluded_model("gemini-3.8-flash"));
+        assert!(!is_excluded_model("gemini-4-argon"));
     }
 
     #[test]
