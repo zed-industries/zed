@@ -981,13 +981,16 @@ mod linux {
 
 #[cfg(target_os = "linux")]
 mod flatpak {
+    use std::env;
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
-    use std::process::Command;
-    use std::{env, process};
+    use std::process::{Command, Stdio};
+
+    use anyhow::{Context as _, Result, anyhow, bail};
 
     const EXTRA_LIB_ENV_NAME: &str = "ZED_FLATPAK_LIB_PATH";
     const NO_ESCAPE_ENV_NAME: &str = "ZED_FLATPAK_NO_ESCAPE";
+    const FLATPAK_SPAWN: &str = "/usr/bin/flatpak-spawn";
 
     fn restart_cli_args(flatpak_dir: &Path, invocation_args: &[OsString]) -> Vec<OsString> {
         let mut args = Vec::with_capacity(invocation_args.len() + 2);
@@ -1017,64 +1020,103 @@ mod flatpak {
         unsafe { env::set_var("LD_LIBRARY_PATH", env::join_paths(paths).unwrap()) };
     }
 
-    /// Restarts outside of the sandbox if currently running within it
+    /// Restarts outside of the sandbox if currently running within it.
+    ///
+    /// Falls back to running inside the sandbox when the host cannot run Zed,
+    /// e.g. on musl-based distributions where the bundled glibc binaries fail to start.
     pub fn try_restart_to_host() {
-        if let Some(flatpak_dir) = get_flatpak_dir() {
-            let mut args = vec!["/usr/bin/flatpak-spawn".into(), "--host".into()];
-            args.append(&mut get_xdg_env_args());
-            args.push("--env=ZED_UPDATE_EXPLANATION=Please use flatpak to update zed".into());
-            args.push(
-                format!(
-                    "--env={EXTRA_LIB_ENV_NAME}={}",
-                    flatpak_dir.join("lib").to_str().unwrap()
-                )
-                .into(),
+        if env::var(NO_ESCAPE_ENV_NAME).is_ok() || !is_zed_flatpak() {
+            return;
+        }
+
+        if let Err(error) = restart_to_host() {
+            eprintln!(
+                "Failed to run Zed on the host, running inside the Flatpak sandbox instead: {error:#}"
             );
-            args.push(flatpak_dir.join("bin").join("zed").into());
-
-            let invocation_args = env::args_os().skip(1).collect::<Vec<_>>();
-            args.extend(restart_cli_args(&flatpak_dir, &invocation_args));
-
-            let error = exec::execvp("/usr/bin/flatpak-spawn", args);
-            eprintln!("failed restart cli on host: {:?}", error);
-            process::exit(1);
+            // Lets `set_bin_if_no_escape` select the sandboxed editor binary.
+            unsafe { env::set_var(NO_ESCAPE_ENV_NAME, "1") };
         }
     }
 
+    /// Only returns if restarting on the host failed.
+    fn restart_to_host() -> Result<()> {
+        let flatpak_dir = get_flatpak_dir()?;
+        let host_cli = flatpak_dir.join("bin").join("zed");
+        let host_editor = flatpak_dir.join("libexec").join("zed-editor");
+
+        let mut env_args = get_xdg_env_args();
+        env_args.push("--env=ZED_UPDATE_EXPLANATION=Please use flatpak to update zed".into());
+        let mut lib_path_arg = OsString::from(format!("--env={EXTRA_LIB_ENV_NAME}="));
+        lib_path_arg.push(flatpak_dir.join("lib"));
+        env_args.push(lib_path_arg);
+
+        // `exec` replaces this process, so a host binary that fails to start could not be recovered from.
+        let probe = Command::new(FLATPAK_SPAWN)
+            .arg("--host")
+            .args(&env_args)
+            .arg(&host_cli)
+            .arg("--zed")
+            .arg(&host_editor)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .output()
+            .context("failed to run flatpak-spawn")?;
+        if !probe.status.success() {
+            bail!(
+                "{} could not be run on the host ({}): {}",
+                host_cli.display(),
+                probe.status,
+                String::from_utf8_lossy(&probe.stderr).trim()
+            );
+        }
+
+        let mut args: Vec<OsString> = vec![FLATPAK_SPAWN.into(), "--host".into()];
+        args.extend(env_args);
+        args.push(host_cli.into());
+        let invocation_args = env::args_os().skip(1).collect::<Vec<_>>();
+        args.extend(restart_cli_args(&flatpak_dir, &invocation_args));
+
+        let error = exec::execvp(FLATPAK_SPAWN, args);
+        Err(anyhow!("failed to restart cli on host: {error:?}"))
+    }
+
+    fn is_zed_flatpak() -> bool {
+        env::var("FLATPAK_ID").is_ok_and(|id| id.starts_with("dev.zed.Zed"))
+    }
+
     pub fn set_bin_if_no_escape(mut args: super::Args) -> super::Args {
-        if env::var(NO_ESCAPE_ENV_NAME).is_ok()
-            && env::var("FLATPAK_ID").is_ok_and(|id| id.starts_with("dev.zed.Zed"))
-            && args.zed.is_none()
-        {
+        if env::var(NO_ESCAPE_ENV_NAME).is_ok() && is_zed_flatpak() && args.zed.is_none() {
             args.zed = Some("/app/libexec/zed-editor".into());
             unsafe { env::set_var("ZED_UPDATE_EXPLANATION", "Please use flatpak to update zed") };
         }
         args
     }
 
-    fn get_flatpak_dir() -> Option<PathBuf> {
-        if env::var(NO_ESCAPE_ENV_NAME).is_ok() {
-            return None;
+    fn get_flatpak_dir() -> Result<PathBuf> {
+        let flatpak_id = env::var("FLATPAK_ID").context("FLATPAK_ID is not set")?;
+        let output = Command::new(FLATPAK_SPAWN)
+            .arg("--host")
+            .arg("flatpak")
+            .arg("info")
+            .arg("--show-location")
+            .arg(&flatpak_id)
+            .stdin(Stdio::null())
+            .output()
+            .context("failed to run flatpak-spawn")?;
+        if !output.status.success() {
+            bail!(
+                "failed to query the install location of {flatpak_id} ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
         }
-
-        if let Ok(flatpak_id) = env::var("FLATPAK_ID") {
-            if !flatpak_id.starts_with("dev.zed.Zed") {
-                return None;
-            }
-
-            let install_dir = Command::new("/usr/bin/flatpak-spawn")
-                .arg("--host")
-                .arg("flatpak")
-                .arg("info")
-                .arg("--show-location")
-                .arg(flatpak_id)
-                .output()
-                .unwrap();
-            let install_dir = PathBuf::from(String::from_utf8(install_dir.stdout).unwrap().trim());
-            Some(install_dir.join("files"))
-        } else {
-            None
+        let install_dir = String::from_utf8(output.stdout)
+            .context("flatpak install location is not valid UTF-8")?;
+        let install_dir = install_dir.trim();
+        if install_dir.is_empty() {
+            bail!("flatpak reported an empty install location for {flatpak_id}");
         }
+        Ok(PathBuf::from(install_dir).join("files"))
     }
 
     fn get_xdg_env_args() -> Vec<OsString> {
