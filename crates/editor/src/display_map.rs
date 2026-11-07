@@ -3125,63 +3125,63 @@ pub mod tests {
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
             assert_eq!(
                 snapshot.text_chunks(DisplayRow(0)).collect::<String>(),
-                "one two \nthree four \nfive\nsix seven \neight"
+                "one two three \nfour five\nsix seven \neight"
             );
             assert_eq!(
-                snapshot.clip_point(DisplayPoint::new(DisplayRow(0), 8), Bias::Left),
-                DisplayPoint::new(DisplayRow(0), 7)
+                snapshot.clip_point(DisplayPoint::new(DisplayRow(0), 14), Bias::Left),
+                DisplayPoint::new(DisplayRow(0), 13)
             );
             assert_eq!(
-                snapshot.clip_point(DisplayPoint::new(DisplayRow(0), 8), Bias::Right),
+                snapshot.clip_point(DisplayPoint::new(DisplayRow(0), 14), Bias::Right),
                 DisplayPoint::new(DisplayRow(1), 0)
             );
             assert_eq!(
-                movement::right(&snapshot, DisplayPoint::new(DisplayRow(0), 7)),
+                movement::right(&snapshot, DisplayPoint::new(DisplayRow(0), 13)),
                 DisplayPoint::new(DisplayRow(1), 0)
             );
             assert_eq!(
                 movement::left(&snapshot, DisplayPoint::new(DisplayRow(1), 0)),
-                DisplayPoint::new(DisplayRow(0), 7)
+                DisplayPoint::new(DisplayRow(0), 13)
             );
 
             let x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(1), 10), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(0), 13), &text_layout_details);
             assert_eq!(
-                movement::up(
+                movement::down(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(1), 10),
+                    DisplayPoint::new(DisplayRow(0), 13),
                     language::SelectionGoal::None,
                     false,
                     &text_layout_details,
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(0), 7),
+                    DisplayPoint::new(DisplayRow(1), 9),
+                    language::SelectionGoal::HorizontalPosition(f64::from(x))
+                )
+            );
+            assert_eq!(
+                movement::up(
+                    &snapshot,
+                    DisplayPoint::new(DisplayRow(1), 9),
+                    language::SelectionGoal::HorizontalPosition(f64::from(x)),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(DisplayRow(0), 13),
                     language::SelectionGoal::HorizontalPosition(f64::from(x))
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
-                    DisplayPoint::new(DisplayRow(0), 7),
+                    DisplayPoint::new(DisplayRow(1), 9),
                     language::SelectionGoal::HorizontalPosition(f64::from(x)),
                     false,
                     &text_layout_details
                 ),
                 (
-                    DisplayPoint::new(DisplayRow(1), 10),
-                    language::SelectionGoal::HorizontalPosition(f64::from(x))
-                )
-            );
-            assert_eq!(
-                movement::down(
-                    &snapshot,
-                    DisplayPoint::new(DisplayRow(1), 10),
-                    language::SelectionGoal::HorizontalPosition(f64::from(x)),
-                    false,
-                    &text_layout_details
-                ),
-                (
-                    DisplayPoint::new(DisplayRow(2), 4),
+                    DisplayPoint::new(DisplayRow(2), 9),
                     language::SelectionGoal::HorizontalPosition(f64::from(x))
                 )
             );
@@ -3194,7 +3194,7 @@ pub mod tests {
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
             assert_eq!(
                 snapshot.text_chunks(DisplayRow(1)).collect::<String>(),
-                "three four \nfive\nsix and \nseven eight"
+                "four five\nsix and seven \neight"
             );
 
             // Re-wrap on font size changes
@@ -3205,7 +3205,7 @@ pub mod tests {
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
             assert_eq!(
                 snapshot.text_chunks(DisplayRow(1)).collect::<String>(),
-                "three \nfour five\nsix and \nseven \neight"
+                "three four \nfive\nsix and \nseven \neight"
             )
         });
     }
@@ -4172,10 +4172,12 @@ pub mod tests {
             cx.update(|cx| syntax_chunks(DisplayRow(1)..DisplayRow(4), &map, &theme, cx)),
             [
                 ("out".to_string(), Some(Hsla::blue())),
-                ("⋯\n".to_string(), None),
+                ("⋯".to_string(), None),
                 ("  ".to_string(), Some(Hsla::red())),
                 ("\n".to_string(), None),
                 ("fn ".to_string(), Some(Hsla::red())),
+                ("\n".to_string(), None),
+                ("inne".to_string(), Some(Hsla::blue())),
                 ("\n".to_string(), None)
             ]
         );
