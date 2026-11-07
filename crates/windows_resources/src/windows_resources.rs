@@ -73,8 +73,14 @@ pub fn compile(manifest: bool) -> Result<(), Box<dyn std::error::Error>> {
         version_parts.next().unwrap_or(0),
     );
 
+    // The resource paths can contain non-ASCII characters (e.g. when the
+    // repository lives under a path with such characters). Rust Strings are
+    // encoded using UTF-8, but rc.exe decodes the .rc file using the ANSI code
+    // page by default, which mangles those paths and makes it fail to find the
+    // referenced files, so specify UTF-8 decoding.
     let rc_content = format!(
-        r#"1 ICON "{icon_escaped}"
+        r#"#pragma code_page(65001)
+1 ICON "{icon_escaped}"
 {manifest_line}
 
 1 VERSIONINFO

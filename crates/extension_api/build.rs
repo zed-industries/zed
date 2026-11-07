@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
     let version = std::env::var("CARGO_PKG_VERSION").unwrap();
     let out_dir = std::env::var("OUT_DIR").unwrap();
 

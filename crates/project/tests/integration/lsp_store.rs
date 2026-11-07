@@ -5,10 +5,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs};
 use futures::{FutureExt, StreamExt};
-use gpui::{Entity, TestAppContext};
+use gpui::{Entity, TestAppContext, UpdateGlobal as _};
 use language::{
     Buffer, CodeLabel, DiagnosticSourceKind, FakeLspAdapter, HighlightId, LocalFile, rust_lang,
 };
@@ -22,6 +22,7 @@ use project::{
     },
 };
 use serde_json::json;
+use settings::{ScanSymlinksSetting, SettingsStore};
 use unindent::Unindent;
 use util::{path, rel_path::rel_path};
 
@@ -167,7 +168,7 @@ async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
-    let (_visible_buffer, _visible_handle) = project
+    let (visible_buffer, _visible_handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
         })
@@ -185,13 +186,10 @@ async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut
             .unwrap()
             .0
     });
+    let external_uri = Uri::from_file_path(path!("/the-registry/dep/src/dep.rs")).unwrap();
     let external_buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_via_lsp(
-                Uri::from_file_path(path!("/the-registry/dep/src/dep.rs")).unwrap(),
-                server_id,
-                cx,
-            )
+            project.open_local_buffer_via_lsp(external_uri.clone(), server_id, cx)
         })
         .await
         .unwrap();
@@ -225,6 +223,56 @@ async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut
         );
         assert!(!lsp_store.has_language_server_seed_for_worktree(invisible_worktree_id));
     });
+
+    let external_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(external_uri.clone(), server_id, cx)
+        })
+        .await
+        .unwrap();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store.update(cx, |store, cx| store.stop_all_language_servers(cx));
+    cx.run_until_parked();
+    let _external_handle = project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&external_buffer, cx)
+    });
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers(vec![visible_buffer], HashSet::default(), cx);
+    });
+    cx.run_until_parked();
+    lsp_store.read_with(cx, |store, _| {
+        assert_eq!(store.language_server_statuses().count(), 1);
+    });
+    let mut fake_server = fake_servers.next().await.unwrap();
+    assert_ne!(fake_server.server.server_id(), server_id);
+    let document = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .now_or_never()
+        .expect("visible buffer was not reopened")
+        .text_document;
+    assert_eq!(
+        document.uri,
+        Uri::from_file_path(path!("/the-root/main.rs")).unwrap()
+    );
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers(
+            vec![external_buffer.clone()],
+            HashSet::default(),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    let document = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .now_or_never()
+        .expect("external buffer was not reopened")
+        .text_document;
+    assert_eq!(document.uri, external_uri);
+    assert_eq!(document.text, "pub fn dep() {}");
+    lsp_store.read_with(cx, |store, _| {
+        assert_eq!(store.language_server_statuses().count(), 1);
+    });
+    assert!(fake_servers.next().now_or_never().is_none());
 }
 
 #[gpui::test]
@@ -331,6 +379,129 @@ async fn test_open_buffer_via_lsp_preserves_external_symlink_path(cx: &mut TestA
         (
             "pkg/def.rs".to_string(),
             PathBuf::from(path!("/project/pkg/def.rs"))
+        )
+    );
+    assert_eq!(
+        worktree_roots(&project, cx),
+        vec![PathBuf::from(path!("/project"))]
+    );
+}
+
+#[gpui::test]
+async fn test_open_buffer_via_lsp_maps_external_symlink_target(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/shared"),
+        json!({ "pkg": { "def.rs": "pub fn def() {}", "other.rs": "pub fn other() {}" } }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "src": { "main.rs": "fn main() {}" } }),
+    )
+    .await;
+    fs.create_symlink(
+        path!("/project/pkg").as_ref(),
+        PathBuf::from(path!("/shared/pkg")),
+    )
+    .await
+    .unwrap();
+
+    let (project, server_id) =
+        project_with_rust_server(fs, path!("/project"), path!("/project/src/main.rs"), cx).await;
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(
+                Uri::from_file_path(path!("/project/pkg/def.rs")).unwrap(),
+                server_id,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(
+                Uri::from_file_path(path!("/shared/pkg/other.rs")).unwrap(),
+                server_id,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer_paths(&buffer, cx),
+        (
+            "pkg/other.rs".to_string(),
+            PathBuf::from(path!("/project/pkg/other.rs"))
+        )
+    );
+    assert_eq!(
+        worktree_roots(&project, cx),
+        vec![PathBuf::from(path!("/project"))]
+    );
+}
+
+#[gpui::test]
+async fn test_open_buffer_via_lsp_maps_external_symlink_target_with_scan_symlinks_always(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.scan_symlinks = Some(ScanSymlinksSetting::Always);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/shared"),
+        json!({ "pkg": { "other.rs": "pub fn other() {}" } }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "src": { "main.rs": "fn main() {}" } }),
+    )
+    .await;
+    fs.create_symlink(
+        path!("/project/pkg").as_ref(),
+        PathBuf::from(path!("/shared/pkg")),
+    )
+    .await
+    .unwrap();
+
+    let (project, server_id) =
+        project_with_rust_server(fs, path!("/project"), path!("/project/src/main.rs"), cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_via_lsp(
+                Uri::from_file_path(path!("/shared/pkg/other.rs")).unwrap(),
+                server_id,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer_paths(&buffer, cx),
+        (
+            "pkg/other.rs".to_string(),
+            PathBuf::from(path!("/project/pkg/other.rs"))
         )
     );
     assert_eq!(

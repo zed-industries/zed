@@ -12,6 +12,7 @@ Python support is available natively in Zed.
   - [DetachHead/basedpyright](https://github.com/DetachHead/basedpyright)
   - [astral-sh/ruff](https://github.com/astral-sh/ruff)
   - [astral-sh/ty](https://github.com/astral-sh/ty)
+  - [facebook/pyrefly](https://github.com/facebook/pyrefly)
   - [microsoft/pyright](https://github.com/microsoft/pyright)
   - [python-lsp/python-lsp-server](https://github.com/python-lsp/python-lsp-server) (PyLSP)
 - Debug Adapter: [debugpy](https://github.com/microsoft/debugpy)
@@ -76,11 +77,12 @@ Zed provides several Python language servers out of the box. By default, [basedp
 
 Other built-in language servers are:
 
-- [ty](https://docs.astral.sh/ty/)&mdash;Up-and-coming language server from Astral, built for speed.
+- [Ty](https://docs.astral.sh/ty/)&mdash;Up-and-coming language server from Astral, built for speed.
+- [Pyrefly](https://pyrefly.org)&mdash;Language server and type checker using inference for accurate navigation and type safety.
 - [Pyright](https://github.com/microsoft/pyright)&mdash;The basis for basedpyright.
 - [PyLSP](https://github.com/python-lsp/python-lsp-server)&mdash;A plugin-based language server that integrates with tools like `pycodestyle`, `autopep8`, and `yapf`.
 
-These are disabled by default, but can be enabled in your settings.
+These are disabled by default and are not included by `"..."`. Enable them by listing them by name in your settings.
 
 Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
 
@@ -89,8 +91,8 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
   "languages": {
     "Python": {
       "language_servers": [
-        // Enable ty, disable basedpyright, and enable all
-        // other registered language servers (ruff, pylsp, pyright).
+        // Enable ty, disable basedpyright, and enable all other
+        // language servers that are enabled by default (e.g. ruff).
         "ty",
         "!basedpyright",
         "..."
@@ -169,6 +171,41 @@ Here's an example `pyrightconfig.json` file that configures basedpyright to use 
 [python-lsp-server](https://github.com/python-lsp/python-lsp-server/), more commonly known as PyLSP, by default integrates with a number of external tools (autopep8, mccabe, pycodestyle, yapf) while others are optional and must be explicitly enabled and configured (flake8, pylint).
 
 See [Python Language Server Configuration](https://github.com/python-lsp/python-lsp-server/blob/develop/CONFIGURATION.md) for more.
+
+### Pyrefly
+
+[Pyrefly](https://pyrefly.org) is a modern Python type checker and language server from Meta with powerful IDE features.
+
+#### Showing Type Errors
+
+By default, Pyrefly only displays type errors when a configuration file is present in your project. To see type errors in Zed:
+
+**Create a configuration file** (recommended): Add a `pyrefly.toml` or configure `[tool.pyrefly]` in your `pyproject.toml` at the root of your project. This is the standard way to use Pyrefly and allows you to customize its behavior.
+
+Example minimal `pyrefly.toml`:
+
+```toml
+# Check all Python files in your project
+project-includes = ["."]
+```
+
+For comprehensive configuration options, see the [Pyrefly configuration documentation](https://pyrefly.org/docs/configuration).
+
+Alternatively, add to the `lsp` section of your zed config file to tell Pyrefly to always display type errors:
+
+```json
+"lsp": {
+  "pyrefly": {
+    "initialization_options": {
+      "python": {
+        "pyrefly": {
+          "displayTypeErrors": "force-on"
+        }
+      }
+    }
+  }
+}
+```
 
 ## Virtual Environments
 

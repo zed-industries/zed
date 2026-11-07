@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, stream::BoxStream};
 use http_client::StatusCode;
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -11,7 +11,6 @@ use language_model_core::{
     ProviderErrorCategory, Role, StopReason, TokenUsage, provider_name_for_id,
     util::{fix_streamed_json, parse_tool_arguments},
 };
-use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
@@ -42,9 +41,17 @@ fn service_tier_for(speed: Option<language_model_core::Speed>) -> Option<Service
     }
 }
 
-/// Astra rejects temperature at every reasoning effort, including the default value.
-fn temperature_for_model(model_id: &str, temperature: Option<f32>) -> Option<f32> {
-    temperature.filter(|_| model_id != crate::Model::SixAstra.id())
+/// Omitting effort enables reasoning on Sol/Luna, which then reject temperature.
+fn temperature_for_model(
+    model_id: &str,
+    temperature: Option<f32>,
+    reasoning_effort: Option<ReasoningEffort>,
+) -> Option<f32> {
+    temperature.filter(|_| match model_id {
+        "gpt-6-astra" | "gpt-6.1-sol" => false,
+        "gpt-6-sol" | "gpt-6-luna" => reasoning_effort == Some(ReasoningEffort::None),
+        _ => true,
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -201,7 +208,11 @@ pub fn into_open_ai(
             None
         },
         stop: request.stop,
-        temperature: temperature_for_model(model_id, request.temperature.or(Some(1.0))),
+        temperature: temperature_for_model(
+            model_id,
+            request.temperature.or(Some(1.0)),
+            reasoning_effort,
+        ),
         max_completion_tokens: match max_tokens_parameter {
             ChatCompletionMaxTokensParameter::MaxCompletionTokens => max_output_tokens,
             ChatCompletionMaxTokensParameter::MaxTokens => None,
@@ -327,7 +338,7 @@ pub fn into_open_ai_response(
                     name: tool.name,
                     description: Some(tool.description),
                     parameters: Some(input_schema),
-                    strict: None,
+                    strict: Some(false),
                 }
             }
             LanguageModelRequestToolInput::Custom { format } => {
@@ -390,7 +401,7 @@ pub fn into_open_ai_response(
         store: Some(false),
         include,
         stream,
-        temperature: temperature_for_model(model_id, temperature),
+        temperature: temperature_for_model(model_id, temperature, reasoning_effort),
         top_p: None,
         max_output_tokens,
         parallel_tool_calls: if tools.is_empty() {
@@ -778,15 +789,15 @@ impl OpenAiResponseEventMapper {
         }
     }
 
-    pub fn map_stream(
+    pub fn map_stream<E: Into<LanguageModelCompletionError> + 'static>(
         mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponsesStreamEvent>>>>,
+        events: BoxStream<'static, Result<ResponsesStreamEvent, E>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
+                Err(error) => vec![Err(error.into())],
             })
         })
     }
@@ -869,7 +880,8 @@ impl OpenAiResponseEventMapper {
                     events
                 }
             }
-            ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
+            ResponsesStreamEvent::ReasoningDelta { delta, .. }
+            | ResponsesStreamEvent::ReasoningTextDelta { delta, .. } => {
                 if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -1073,6 +1085,7 @@ impl OpenAiResponseEventMapper {
             | ResponsesStreamEvent::ContentPartAdded { .. }
             | ResponsesStreamEvent::ContentPartDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryTextDone { .. }
+            | ResponsesStreamEvent::ReasoningTextDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryPartDone { .. }
             | ResponsesStreamEvent::ReasoningDone { .. }
             | ResponsesStreamEvent::Created { .. }
@@ -1498,7 +1511,12 @@ fn response_reasoning_input_item_from_output(
     ResponseReasoningInputItem {
         id: reasoning.id.clone(),
         summary,
-        content: reasoning.content.clone(),
+        content: reasoning
+            .content
+            .iter()
+            .filter(|part| !matches!(part, crate::responses::ReasoningContentPart::Other))
+            .cloned()
+            .collect(),
         encrypted_content,
         status: reasoning.status.clone(),
     }
@@ -1573,7 +1591,9 @@ mod tests {
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
             OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID)
-                .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+                .map_stream(Box::pin(futures::stream::iter(
+                    events.into_iter().map(Ok::<_, crate::RequestError>),
+                )))
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
@@ -1947,7 +1967,8 @@ mod tests {
                     "type": "function",
                     "name": "get_weather",
                     "description": "Fetches the weather",
-                    "parameters": { "type": "object" }
+                    "parameters": { "type": "object" },
+                    "strict": false
                 }
             ],
             "prompt_cache_key": "thread-123",
@@ -2356,14 +2377,25 @@ mod tests {
 
     #[test]
     fn request_conversion_omits_unsupported_temperature() -> Result<()> {
-        for (model_id, temperature, expected_temperature) in [
-            ("gpt-6-astra", Some(0.25), None),
-            ("gpt-6-astra", None, None),
-            ("gpt-4o-mini", Some(0.25), Some(0.25)),
-            ("custom-model", Some(0.25), Some(0.25)),
+        use ReasoningEffort::{Medium, None as NoReasoning};
+
+        for (model_id, temperature, effort, expected_temperature) in [
+            ("gpt-6.1-sol", Some(0.25), None, None),
+            ("gpt-6.1-sol", None, None, None),
+            ("gpt-6-astra", Some(0.25), None, None),
+            ("gpt-6-astra", None, None, None),
+            ("gpt-6-sol", Some(0.25), None, None),
+            ("gpt-6-sol", Some(0.25), Some(Medium), None),
+            ("gpt-6-sol", Some(0.25), Some(NoReasoning), Some(0.25)),
+            ("gpt-6-luna", Some(0.25), None, None),
+            ("gpt-6-luna", Some(0.25), Some(Medium), None),
+            ("gpt-6-luna", Some(0.25), Some(NoReasoning), Some(0.25)),
+            ("gpt-4o-mini", Some(0.25), None, Some(0.25)),
+            ("custom-model", Some(0.25), None, Some(0.25)),
         ] {
             let request = LanguageModelRequest {
                 temperature,
+                thinking_allowed: effort != Some(NoReasoning),
                 ..Default::default()
             };
             let response = into_open_ai_response(
@@ -2372,8 +2404,8 @@ mod tests {
                 true,
                 true,
                 None,
-                None,
-                false,
+                effort,
+                effort == Some(NoReasoning),
                 &OPEN_AI_PROVIDER_ID,
             )?;
             let chat = into_open_ai(
@@ -2383,9 +2415,14 @@ mod tests {
                 true,
                 None,
                 ChatCompletionMaxTokensParameter::MaxCompletionTokens,
-                None,
+                effort,
                 false,
             )?;
+            assert_eq!(
+                response.reasoning.as_ref().map(|config| config.effort),
+                effort
+            );
+            assert_eq!(chat.reasoning_effort, effort);
 
             for (endpoint, serialized) in [
                 ("responses", serde_json::to_value(response)?),
@@ -2394,7 +2431,7 @@ mod tests {
                 assert_eq!(
                     serialized.get("temperature"),
                     expected_temperature.map(serde_json::Value::from).as_ref(),
-                    "{endpoint} temperature for {model_id} with {temperature:?}",
+                    "{endpoint} temperature for {model_id} with {temperature:?}, {effort:?}",
                 );
             }
         }
@@ -3899,10 +3936,9 @@ mod tests {
             Some("ENC"),
             Some("completed".into()),
         );
-        reasoning_item.content = vec![json!({
-            "type": "reasoning_text",
-            "text": "Internal reasoning text."
-        })];
+        reasoning_item.content = vec![crate::responses::ReasoningContentPart::ReasoningText {
+            text: "Internal reasoning text.".into(),
+        }];
 
         let events = vec![
             ResponsesStreamEvent::OutputItemDone {

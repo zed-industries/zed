@@ -29,7 +29,6 @@ itertools.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true
-pretty_assertions.workspace = true
 project.workspace = true
 regex.workspace = true
 schemars.workspace = true
@@ -51,6 +50,7 @@ zed_actions.workspace = true
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true

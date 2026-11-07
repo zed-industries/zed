@@ -11,6 +11,7 @@ use std::{
     fmt::{self, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
+    mem,
     num::NonZeroU64,
     sync::{
         Arc, Weak,
@@ -21,7 +22,7 @@ use std::{
 
 use super::Context;
 use crate::util::atomic_incr_if_not_zero;
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 use collections::HashMap;
 
 slotmap::new_key_type! {
@@ -55,15 +56,37 @@ impl Display for EntityId {
 
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
-    pub accessed_entities: RefCell<FxHashSet<EntityId>>,
+    accessed_entities: RefCell<AccessedEntities>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
+}
+
+/// The entities accessed during the current draw. An access is recorded only
+/// in the innermost open scope, or in `frame` outside any scope, and a scope's
+/// accesses are added to the one around it when it ends. Each scope therefore
+/// collects exactly what was accessed inside it, without copying what the
+/// draw accessed before it began, and `frame` ends up with every access.
+struct AccessedEntities {
+    /// Every entity accessed during the draw: the window subscribes to
+    /// exactly this set when the draw ends. Accesses outside any scope land
+    /// here directly, and a scope's accesses reach it when the outermost open
+    /// scope ends. It is the innermost set only while no scope is open, and
+    /// unlike a scope it is never ended.
+    frame: FxHashSet<EntityId>,
+    /// The scopes currently recording, innermost last.
+    scopes: Vec<FxHashSet<EntityId>>,
+}
+
+impl AccessedEntities {
+    fn innermost(&mut self) -> &mut FxHashSet<EntityId> {
+        self.scopes.last_mut().unwrap_or(&mut self.frame)
+    }
 }
 
 #[doc(hidden)]
 pub(crate) struct EntityRefCounts {
     counts: SlotMap<EntityId, AtomicUsize>,
     dropped_entity_ids: Vec<EntityId>,
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     leak_detector: LeakDetector,
 }
 
@@ -75,11 +98,14 @@ impl EntityMap {
     pub fn new() -> Self {
         Self {
             entities: SecondaryMap::new(),
-            accessed_entities: RefCell::new(FxHashSet::default()),
+            accessed_entities: RefCell::new(AccessedEntities {
+                frame: FxHashSet::default(),
+                scopes: Vec::new(),
+            }),
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
-                #[cfg(any(test, feature = "leak-detection"))]
+                #[cfg(any(test, gpui_leak_detection))]
                 leak_detector: LeakDetector {
                     next_handle_id: 0,
                     entity_handles: HashMap::default(),
@@ -98,7 +124,7 @@ impl EntityMap {
     /// The returned [`LeakDetectorSnapshot`] can later be passed to
     /// [`assert_no_new_leaks`](Self::assert_no_new_leaks) to verify that no
     /// entities created after the snapshot are still alive.
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     pub fn leak_detector_snapshot(&self) -> LeakDetectorSnapshot {
         self.ref_counts.read().leak_detector.snapshot()
     }
@@ -106,7 +132,7 @@ impl EntityMap {
     /// Asserts that no entities created after `snapshot` still have alive handles.
     ///
     /// See [`LeakDetector::assert_no_new_leaks`] for details.
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     pub fn assert_no_new_leaks(&self, snapshot: &LeakDetectorSnapshot) {
         self.ref_counts
             .read()
@@ -125,8 +151,10 @@ impl EntityMap {
     where
         T: 'static,
     {
-        let mut accessed_entities = self.accessed_entities.get_mut();
-        accessed_entities.insert(slot.entity_id);
+        self.accessed_entities
+            .get_mut()
+            .innermost()
+            .insert(slot.entity_id);
 
         let handle = slot.0;
         self.entities.insert(handle.entity_id, Box::new(entity));
@@ -177,20 +205,64 @@ impl EntityMap {
         );
     }
 
-    pub fn extend_accessed(&mut self, entities: &FxHashSet<EntityId>) {
-        self.accessed_entities
-            .get_mut()
-            .extend(entities.iter().copied());
+    /// Records entities accessed by a reused draw. Entities released since it
+    /// recorded them are skipped, because the window would otherwise subscribe
+    /// to them again after `App` has cleaned up their subscriptions, and
+    /// nothing would clean those up.
+    pub fn extend_accessed(&mut self, entities: impl IntoIterator<Item = EntityId>) {
+        let ref_counts = self.ref_counts.read();
+        self.accessed_entities.get_mut().innermost().extend(
+            entities
+                .into_iter()
+                .filter(|entity_id| ref_counts.counts.contains_key(*entity_id)),
+        );
     }
 
+    /// Clears the accessed entities and ends any scope left open.
     pub fn clear_accessed(&mut self) {
-        self.accessed_entities.get_mut().clear();
+        let accessed_entities = self.accessed_entities.get_mut();
+        accessed_entities.scopes.clear();
+        accessed_entities.frame.clear();
+    }
+
+    pub fn push_access_scope(&mut self) {
+        self.accessed_entities
+            .get_mut()
+            .scopes
+            .push(FxHashSet::default());
+    }
+
+    /// Ends the innermost scope, adds its accessed entities to the scope
+    /// around it, and returns them.
+    pub fn pop_access_scope(&mut self) -> FxHashSet<EntityId> {
+        let accessed_entities = self.accessed_entities.get_mut();
+        let Some(scope) = accessed_entities.scopes.pop() else {
+            debug_assert!(false, "popped an access scope that wasn't pushed");
+            return FxHashSet::default();
+        };
+        accessed_entities.innermost().extend(scope.iter().copied());
+        scope
+    }
+
+    /// Takes every entity accessed during the draw, to be handed back with
+    /// [`Self::restore_accessed`].
+    pub fn take_accessed(&mut self) -> FxHashSet<EntityId> {
+        let accessed_entities = self.accessed_entities.get_mut();
+        debug_assert!(
+            accessed_entities.scopes.is_empty(),
+            "access scope left open"
+        );
+        mem::take(&mut accessed_entities.frame)
+    }
+
+    pub fn restore_accessed(&mut self, entities: FxHashSet<EntityId>) {
+        self.accessed_entities.get_mut().frame = entities;
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
-        let mut ref_counts = &mut *self.ref_counts.write();
+        let ref_counts = &mut *self.ref_counts.write();
         let dropped_entity_ids = ref_counts.dropped_entity_ids.drain(..);
-        let mut accessed_entities = self.accessed_entities.get_mut();
+        let accessed_entities = self.accessed_entities.get_mut();
 
         dropped_entity_ids
             .filter_map(|entity_id| {
@@ -200,7 +272,10 @@ impl EntityMap {
                     0,
                     "dropped an entity that was referenced"
                 );
-                accessed_entities.remove(&entity_id);
+                accessed_entities.frame.remove(&entity_id);
+                for scope in &mut accessed_entities.scopes {
+                    scope.remove(&entity_id);
+                }
                 // If the EntityId was allocated with `Context::reserve`,
                 // the entity may not have been inserted.
                 Some((entity_id, self.entities.remove(entity_id)?))
@@ -210,14 +285,19 @@ impl EntityMap {
 
     #[inline(never)]
     fn read_inner(&self, entity_id: EntityId) -> Option<&dyn Any> {
-        let mut accessed_entities = self.accessed_entities.borrow_mut();
-        accessed_entities.insert(entity_id);
+        self.accessed_entities
+            .borrow_mut()
+            .innermost()
+            .insert(entity_id);
         self.entities.get(entity_id).map(Box::as_ref)
     }
 
     #[inline(never)]
     fn lease_inner(&mut self, entity_id: EntityId) -> Option<Box<dyn Any>> {
-        self.accessed_entities.get_mut().insert(entity_id);
+        self.accessed_entities
+            .get_mut()
+            .innermost()
+            .insert(entity_id);
         self.entities.remove(entity_id)
     }
 
@@ -268,7 +348,7 @@ pub struct AnyEntity {
     pub(crate) entity_id: EntityId,
     pub(crate) entity_type: TypeId,
     entity_map: Weak<RwLock<EntityRefCounts>>,
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     handle_id: HandleId,
 }
 
@@ -277,12 +357,12 @@ impl AnyEntity {
         id: EntityId,
         entity_type: TypeId,
         entity_map: Weak<RwLock<EntityRefCounts>>,
-        #[cfg(any(test, feature = "leak-detection"))] type_name: &'static str,
+        #[cfg(any(test, gpui_leak_detection))] type_name: &'static str,
     ) -> Self {
         Self {
             entity_id: id,
             entity_type,
-            #[cfg(any(test, feature = "leak-detection"))]
+            #[cfg(any(test, gpui_leak_detection))]
             handle_id: entity_map
                 .clone()
                 .upgrade()
@@ -345,7 +425,7 @@ impl Clone for AnyEntity {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_map: self.entity_map.clone(),
-            #[cfg(any(test, feature = "leak-detection"))]
+            #[cfg(any(test, gpui_leak_detection))]
             handle_id: self
                 .entity_map
                 .upgrade()
@@ -374,7 +454,7 @@ impl Drop for AnyEntity {
             }
         }
 
-        #[cfg(any(test, feature = "leak-detection"))]
+        #[cfg(any(test, gpui_leak_detection))]
         if let Some(entity_map) = self.entity_map.upgrade() {
             entity_map
                 .write()
@@ -452,7 +532,7 @@ impl<T: 'static> Entity<T> {
                 id,
                 TypeId::of::<T>(),
                 entity_map,
-                #[cfg(any(test, feature = "leak-detection"))]
+                #[cfg(any(test, gpui_leak_detection))]
                 std::any::type_name::<T>(),
             ),
             entity_type: PhantomData,
@@ -626,7 +706,7 @@ impl AnyWeakEntity {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_map: self.entity_ref_counts.clone(),
-            #[cfg(any(test, feature = "leak-detection"))]
+            #[cfg(any(test, gpui_leak_detection))]
             handle_id: self
                 .entity_ref_counts
                 .upgrade()
@@ -652,11 +732,12 @@ impl AnyWeakEntity {
     ///
     /// # Debugging Leaks
     ///
-    /// If this method panics due to leaked handles, set the `LEAK_BACKTRACE` environment
-    /// variable to see where the leaked handles were allocated:
+    /// With leak detection enabled (build with `GPUI_LEAK_DETECTION=1`), a failure
+    /// lists each leaked handle. Also set the `LEAK_BACKTRACE` environment variable
+    /// to see where they were allocated:
     ///
     /// ```bash
-    /// LEAK_BACKTRACE=1 cargo test my_test
+    /// GPUI_LEAK_DETECTION=1 LEAK_BACKTRACE=1 cargo test my_test
     /// ```
     ///
     /// # Panics
@@ -664,8 +745,9 @@ impl AnyWeakEntity {
     /// - Panics if any strong handles to the entity are still alive.
     /// - Panics if the entity was recently dropped but cleanup hasn't completed yet
     ///   (resources are retained until the end of the effect cycle).
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, feature = "test-support", gpui_leak_detection))]
     pub fn assert_released(&self) {
+        #[cfg(any(test, gpui_leak_detection))]
         self.entity_ref_counts
             .upgrade()
             .unwrap()
@@ -680,7 +762,9 @@ impl AnyWeakEntity {
             .is_some()
         {
             panic!(
-                "entity was recently dropped but resources are retained until the end of the effect cycle."
+                "entity is still alive, or was recently dropped and its resources are retained \
+                 until the end of the effect cycle. Build with GPUI_LEAK_DETECTION=1 to list \
+                 its live handles."
             )
         }
     }
@@ -890,7 +974,7 @@ impl<T: 'static> PartialOrd for WeakEntity<T> {
 ///
 /// Set the `LEAK_BACKTRACE` environment variable to any non-empty value to enable
 /// backtrace capture. This helps identify where leaked handles were allocated.
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 static LEAK_BACKTRACE: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").is_ok_and(|b| !b.is_empty()));
 
@@ -898,7 +982,7 @@ static LEAK_BACKTRACE: std::sync::LazyLock<bool> =
 ///
 /// This is distinct from `EntityId` - while multiple handles can point to the same
 /// entity (same `EntityId`), each handle has its own unique `HandleId`.
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
 pub(crate) struct HandleId {
     id: u64,
@@ -953,7 +1037,7 @@ pub(crate) struct HandleId {
 ///   `WeakEntity::upgrade`), `handle_created` is called to register the handle.
 /// - When a handle is dropped, `handle_released` removes it from tracking.
 /// - `assert_released` verifies that no handles remain for a given entity.
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 pub(crate) struct LeakDetector {
     next_handle_id: u64,
     entity_handles: HashMap<EntityId, EntityLeakData>,
@@ -964,18 +1048,20 @@ pub(crate) struct LeakDetector {
 /// Created by [`LeakDetector::snapshot`]. Can later be passed to
 /// [`LeakDetector::assert_no_new_leaks`] to verify that no new entity
 /// handles remain between the snapshot and the current state.
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, feature = "test-support", gpui_leak_detection))]
+#[derive(Default)]
 pub struct LeakDetectorSnapshot {
+    #[cfg(any(test, gpui_leak_detection))]
     entity_ids: collections::HashSet<EntityId>,
 }
 
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 struct EntityLeakData {
     handles: HashMap<HandleId, Option<backtrace::Backtrace>>,
     type_name: &'static str,
 }
 
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 impl LeakDetector {
     /// Records that a new handle has been created for the given entity.
     ///
@@ -1106,7 +1192,7 @@ impl LeakDetector {
     }
 }
 
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 impl Drop for LeakDetector {
     fn drop(&mut self) {
         use std::fmt::Write;
@@ -1141,10 +1227,10 @@ impl Drop for LeakDetector {
     }
 }
 
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 struct BacktraceFormatter(backtrace::Backtrace);
 
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 impl fmt::Debug for BacktraceFormatter {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         use backtrace::{BacktraceFmt, BytesOrWideString, PrintFmt};
@@ -1209,9 +1295,42 @@ impl fmt::Debug for BacktraceFormatter {
 #[cfg(test)]
 mod test {
     use crate::EntityMap;
+    use collections::FxHashSet;
 
     struct TestEntity {
         pub i: i32,
+    }
+
+    #[test]
+    fn test_accessed_entity_scopes() {
+        let mut entity_map = EntityMap::new();
+        let slot = entity_map.reserve::<TestEntity>();
+        let first = entity_map.insert(slot, TestEntity { i: 1 });
+        let slot = entity_map.reserve::<TestEntity>();
+        let second = entity_map.insert(slot, TestEntity { i: 2 });
+        entity_map.clear_accessed();
+
+        entity_map.read(&first);
+        entity_map.push_access_scope();
+        entity_map.read(&first);
+        entity_map.push_access_scope();
+        entity_map.read(&second);
+        let inner = entity_map.pop_access_scope();
+        let outer = entity_map.pop_access_scope();
+
+        assert_eq!(inner, FxHashSet::from_iter([second.entity_id()]));
+        let both = FxHashSet::from_iter([first.entity_id(), second.entity_id()]);
+        assert_eq!(outer, both);
+        assert_eq!(entity_map.take_accessed(), both);
+
+        drop(second);
+        entity_map.take_dropped();
+        entity_map.extend_accessed(both);
+        assert_eq!(
+            entity_map.take_accessed(),
+            FxHashSet::from_iter([first.entity_id()]),
+            "a released entity shouldn't be recorded again"
+        );
     }
 
     #[test]

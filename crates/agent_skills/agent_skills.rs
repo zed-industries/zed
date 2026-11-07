@@ -745,10 +745,8 @@ pub fn builtin_skill_content(skill_file_path: &Path) -> Option<&'static str> {
 /// location, so a Zed installation may have skills here even before the
 /// rest of Zed's skills support ships.
 ///
-/// In test builds, `paths::home_dir()` is hardcoded to a fixed path
-/// (e.g. `/Users/zed`), so all tests using this function operate on the
-/// same simulated home directory. Each test should use its own `FakeFs`
-/// instance to keep skill setups from leaking across tests.
+/// Tests see the real home directory here, so they should resolve this path
+/// against their own `FakeFs` instance rather than the real filesystem.
 pub fn global_skills_dir() -> PathBuf {
     paths::home_dir()
         .join(AGENTS_DIR_NAME)

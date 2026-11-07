@@ -2,7 +2,7 @@ use std::sync::{Arc, LazyLock};
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, Task, WeakEntity};
+use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, SharedString, Task, WeakEntity};
 use language::{
     LanguageRegistry, LanguageServerName, LspAdapterDelegate,
     language_settings::AllLanguageSettings,
@@ -418,13 +418,12 @@ pub fn all_schema_file_associations(
         .into_iter()
         .flatten()
         // Path suffixes can be entire file names or just their extensions.
-        .flat_map(|path_suffix| [format!("*.{path_suffix}"), path_suffix]);
+        .flat_map(|path_suffix| [format!("*.{path_suffix}").into(), path_suffix]);
     let override_globs = AllLanguageSettings::get(path, cx)
         .file_types
         .get(JSONC_LANGUAGE_NAME)
         .into_iter()
-        .flat_map(|(_, glob_strings)| glob_strings)
-        .cloned();
+        .flat_map(|(_, glob_strings)| glob_strings.iter().map(SharedString::from));
     let jsonc_globs = extension_globs.chain(override_globs).collect::<Vec<_>>();
 
     let mut file_associations = serde_json::json!([

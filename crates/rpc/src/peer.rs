@@ -153,7 +153,7 @@ impl Peer {
         let handle_io = async move {
             tracing::trace!(%connection_id, "handle io future: start");
 
-            let _end_connection = util::defer(|| {
+            let _end_connection = gpui_util::defer(|| {
                 response_channels.lock().take();
                 if let Some(channels) = stream_response_channels.lock().take() {
                     for channel in channels.values() {
@@ -422,7 +422,7 @@ impl Peer {
         async move {
             let (message_id, stream_response_channels) = send?;
             let stream_response_channels = Arc::downgrade(&stream_response_channels);
-            let cleanup_stream_response_channel = util::defer({
+            let cleanup_stream_response_channel = gpui_util::defer({
                 let stream_response_channels = stream_response_channels.clone();
                 move || {
                     if let Some(channels) = stream_response_channels.upgrade()
@@ -606,7 +606,7 @@ impl Peer {
             async move {
                 let message_id = incoming.id;
                 tracing::trace!(?incoming, "incoming message future: start");
-                let _end = util::defer(move || {
+                let _end = gpui_util::defer(move || {
                     tracing::trace!(%connection_id, message_id, "incoming message future: end");
                 });
 
