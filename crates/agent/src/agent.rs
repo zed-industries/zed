@@ -3319,11 +3319,23 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         session_id: acp_v2::SessionId,
         project: Entity<Project>,
         _work_dirs: PathList,
-        _title: Option<SharedString>,
+        title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
-        self.0
-            .update(cx, |agent, cx| agent.open_thread(session_id, project, cx))
+        let load = self
+            .0
+            .update(cx, |agent, cx| agent.open_thread(session_id, project, cx));
+        cx.spawn(async move |cx| {
+            let thread = load.await?;
+            if let Some(title) = title {
+                thread.update(cx, |thread, cx| {
+                    if thread.title().is_none() {
+                        thread.set_provisional_title(title, cx);
+                    }
+                });
+            }
+            Ok(thread)
+        })
     }
 
     fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
@@ -6257,6 +6269,85 @@ mod internal_tests {
                     .map(|block| block.to_markdown(cx)),
                 Some("retained context")
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_load_session_restores_caller_title_only_without_saved_title(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let database = cx
+            .update(|cx| ThreadsDatabase::connect(cx))
+            .await
+            .expect("thread database should connect");
+
+        let untitled_session_id = acp_v2::SessionId::new("untitled");
+        let mut untitled_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        untitled_thread.title = SharedString::default();
+        database
+            .save_thread(
+                untitled_session_id.clone(),
+                untitled_thread,
+                PathList::new(&[Path::new("/a")]),
+            )
+            .await
+            .expect("untitled thread should save");
+
+        let titled_session_id = acp_v2::SessionId::new("titled");
+        let mut titled_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        titled_thread.title = "Saved title".into();
+        database
+            .save_thread(
+                titled_session_id.clone(),
+                titled_thread,
+                PathList::new(&[Path::new("/a")]),
+            )
+            .await
+            .expect("titled thread should save");
+
+        let restored_untitled = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    untitled_session_id.clone(),
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    Some("Sidebar title".into()),
+                    cx,
+                )
+            })
+            .await
+            .expect("untitled thread should load");
+        cx.run_until_parked();
+        restored_untitled.read_with(cx, |thread, _| {
+            assert_eq!(thread.title(), Some("Sidebar title".into()));
+            assert!(thread.has_provisional_title());
+        });
+        // The restored title is display-only, so it must not be written back
+        // as the native thread's own title.
+        let native_untitled =
+            cx.update(|cx| native_thread_for_session(&agent, &untitled_session_id, cx));
+        native_untitled.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
+
+        let restored_titled = cx
+            .update(|cx| {
+                connection.load_session(
+                    titled_session_id,
+                    project,
+                    PathList::new(&[Path::new("/a")]),
+                    Some("Stale title".into()),
+                    cx,
+                )
+            })
+            .await
+            .expect("titled thread should load");
+        cx.run_until_parked();
+        restored_titled.read_with(cx, |thread, _| {
+            assert_eq!(thread.title(), Some("Saved title".into()));
+            assert!(!thread.has_provisional_title());
         });
     }
 

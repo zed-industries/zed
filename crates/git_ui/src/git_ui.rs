@@ -827,8 +827,7 @@ impl RefPickerModal {
                                 details.sha.to_string(),
                                 repo.downgrade(),
                                 workspace.weak_handle(),
-                                None,
-                                None,
+                                Default::default(),
                                 window,
                                 cx,
                             );

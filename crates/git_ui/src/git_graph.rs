@@ -5,7 +5,7 @@ use crate::{
         commit_context_menu, git_context_menu_tasks, git_task_context,
     },
     commit_tooltip::CommitAvatar,
-    commit_view::CommitView,
+    commit_view::{CommitView, CommitViewOptions},
     git_status_icon,
     git_timestamp::format_git_timestamp,
 };
@@ -268,8 +268,10 @@ impl ChangedFileEntry {
             commit_sha.to_string(),
             repository.clone(),
             workspace.clone(),
-            None,
-            Some(self.repo_path.clone()),
+            CommitViewOptions {
+                file_filter: Some(self.repo_path.clone()),
+                ..Default::default()
+            },
             window,
             cx,
         );
@@ -2592,8 +2594,7 @@ impl GitGraph {
             commit_entry.data.sha.to_string(),
             repository.downgrade(),
             self.workspace.clone(),
-            None,
-            None,
+            Default::default(),
             window,
             cx,
         );
