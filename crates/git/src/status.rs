@@ -118,8 +118,8 @@ impl FileStatus {
             }
             .into(),
             [b'D', b'D'] => UnmergedStatus {
-                first_head: UnmergedStatusCode::Added,
-                second_head: UnmergedStatusCode::Added,
+                first_head: UnmergedStatusCode::Deleted,
+                second_head: UnmergedStatusCode::Deleted,
             }
             .into(),
             [x, b'U'] => UnmergedStatus {
@@ -758,5 +758,18 @@ mod tests {
                 .collect()
             }
         )
+    }
+    #[test]
+    fn test_dd_unmerged_status() {
+        let input = "DD file.txt\0";
+        let status: GitStatus = input.parse().unwrap();
+        assert_eq!(status.entries.len(), 1);
+        assert_eq!(
+            status.entries[0].1,
+            FileStatus::Unmerged(UnmergedStatus {
+                first_head: UnmergedStatusCode::Deleted,
+                second_head: UnmergedStatusCode::Deleted,
+            })
+        );
     }
 }
