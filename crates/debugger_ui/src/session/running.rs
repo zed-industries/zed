@@ -1296,6 +1296,19 @@ impl RunningState {
                 anyhow::bail!("Zed cannot determine how to run this debug scenario. `build` field was not provided and Debug Adapter won't accept provided configuration because: {e}");
             };
 
+            // If a DapLocator does not set `cwd` in the config, it will still contain None here.
+            // In that case, inject the task context's `cwd` here after template substitution has run.
+            // Without this fallback, some (all?) adapters will abort with an error.
+            if  let Some(config) = config.as_object_mut()
+                && !config.get("cwd").is_some_and(|value| !value.is_null())
+                && let Some(cwd) = task_context.cwd.as_deref()
+            {
+                config.insert(
+                    "cwd".to_string(),
+                    Value::String(cwd.to_string_lossy().into_owned()),
+                );
+            }
+
             Ok(DebugTaskDefinition {
                 label,
                 adapter: DebugAdapterName(adapter),
