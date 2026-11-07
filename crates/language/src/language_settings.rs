@@ -139,7 +139,8 @@ pub struct LanguageSettings {
     pub whitespace_map: WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
-    /// Whether to continue markdown lists when pressing enter.
+    /// Whether to continue Markdown lists on Enter and automatically renumber
+    /// ordered lists when editing them.
     pub extend_list_on_newline: bool,
     /// Whether to indent list items when pressing tab after a list marker.
     pub indent_list_on_tab: bool,
