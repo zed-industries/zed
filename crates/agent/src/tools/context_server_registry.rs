@@ -445,11 +445,58 @@ impl AnyAgentTool for ContextServerTool {
                     context_server::types::ToolResponseContent::Audio { .. } => {
                         log::warn!("Ignoring audio content from tool response");
                     }
-                    context_server::types::ToolResponseContent::Resource { .. } => {
-                        log::warn!("Ignoring resource content from tool response");
+                    context_server::types::ToolResponseContent::Resource { resource } => {
+                        match resource {
+                            context_server::types::ResourceContentsType::Text(text_resource) => {
+                                concatenated_text.push_str(&text_resource.text);
+
+                                llm_output.push(LanguageModelToolResultContent::Text(
+                                    text_resource.text.into(),
+                                ));
+                            }
+                            context_server::types::ResourceContentsType::Blob (
+                                context_server::types::BlobResourceContents { uri, mime_type, ..}
+                            ) => {
+                                let mut link = acp::ResourceLink::new(uri.to_string(), uri.to_string());
+                                if let Some(mime_type) = &mime_type {
+                                    link = link.mime_type(mime_type.clone());
+                                }
+                                tool_call_content.push(acp::ToolCallContent::Content(Box::new(acp::Content::new(
+                                    acp::ContentBlock::ResourceLink(link)),
+                                )));
+
+                                let link_text = match &mime_type {
+                                    Some(mime_type) => format!("Binary resource at {uri} ({mime_type})"),
+                                    None => format!("Binary resource at {uri}")
+                                };
+
+                                concatenated_text.push_str(&link_text);
+                                llm_output.push(LanguageModelToolResultContent::Text(link_text.into()));
+                            }
+                        }
                     }
-                    context_server::types::ToolResponseContent::ResourceLink { .. } => {
-                        log::warn!("Ignoring resource link content from tool response");
+                    context_server::types::ToolResponseContent::ResourceLink {
+                        uri,
+                        name,
+                        title,
+                        description,
+                        mime_type,
+                    } => {
+                        let mut link = acp::ResourceLink::new(name.clone(), uri.to_string());
+                        if let Some(mime_type) = mime_type {
+                            link = link.mime_type(mime_type);
+                        }
+                        tool_call_content.push(acp::ToolCallContent::Content(Box::new(acp::Content::new(
+                            acp::ContentBlock::ResourceLink(link)),
+                        )));
+
+                        let mut link_text = format!("{} ({uri})", title.unwrap_or(name));
+                        if let Some(description) = description {
+                            link_text.push_str(": ");
+                            link_text.push_str(&description);
+                        }
+                        concatenated_text.push_str(&link_text);
+                        llm_output.push(LanguageModelToolResultContent::Text(link_text.into()));
                     }
                 }
             }
