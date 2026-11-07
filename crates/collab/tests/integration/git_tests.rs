@@ -1666,3 +1666,74 @@ async fn test_load_commit_template_over_collab(
 
     assert_eq!(commit_template.template, "feat: add awesome feature");
 }
+
+#[gpui::test]
+async fn test_history_not_preloaded_for_remote_project(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    cx_a.update(|cx| git_ui::init(cx));
+    cx_b.update(|cx| git_ui::init(cx));
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+    let dot_git = Path::new(path!("/project/.git"));
+    client_a.fs().set_branch_name(dot_git, Some("main"));
+    client_a
+        .fs()
+        .set_head_for_repo(dot_git, &[("file.txt", "content".into())], "sha1");
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let panel_a = workspace_a.update_in(cx_a, GitPanel::new_test);
+    workspace_a.update_in(cx_a, |workspace, window, cx| {
+        workspace.add_panel(panel_a.clone(), window, cx);
+    });
+    let panel_b = workspace_b.update_in(cx_b, GitPanel::new_test);
+    workspace_b.update_in(cx_b, |workspace, window, cx| {
+        workspace.add_panel(panel_b.clone(), window, cx);
+    });
+    executor.run_until_parked();
+
+    let log_source = git::repository::LogSource::Branch("main".into());
+    let log_order = git::repository::LogOrder::DateOrder;
+    let repository_a =
+        project_a.read_with(cx_a, |project, cx| project.active_repository(cx).unwrap());
+    let repository_b =
+        project_b.read_with(cx_b, |project, cx| project.active_repository(cx).unwrap());
+    assert!(
+        repository_a.read_with(cx_a, |repository, _| {
+            repository
+                .get_graph_data(log_source.clone(), log_order)
+                .is_some()
+        }),
+        "local project should preload commit history"
+    );
+    assert!(
+        repository_b.read_with(cx_b, |repository, _| {
+            repository.get_graph_data(log_source, log_order).is_none()
+        }),
+        "remote project should not fetch commit history until the History tab is opened"
+    );
+}
