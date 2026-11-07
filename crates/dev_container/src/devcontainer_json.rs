@@ -64,7 +64,7 @@ pub(crate) enum ShutdownAction {
     StopCompose,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MountDefinition {
     #[serde(default)]
@@ -72,6 +72,62 @@ pub(crate) struct MountDefinition {
     pub(crate) target: String,
     #[serde(rename = "type")]
     pub(crate) mount_type: Option<String>,
+    #[serde(
+        default,
+        rename = "read_only",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub(crate) read_only: bool,
+    /// Other `docker run --mount` options, kept verbatim.
+    #[serde(skip)]
+    pub(crate) options: Vec<String>,
+}
+
+impl MountDefinition {
+    /// Parses a `docker run --mount` value.
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        let mut mount = Self::default();
+        let mut target = None;
+        let mut quoted = false;
+
+        for part in value
+            .split(|character| {
+                if character == '"' {
+                    quoted = !quoted;
+                }
+                character == ',' && !quoted
+            })
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+        {
+            let field = part
+                .strip_prefix('"')
+                .and_then(|part| part.strip_suffix('"'))
+                .map(|part| part.replace("\"\"", "\""));
+            let field = field.as_deref().unwrap_or(part);
+            let (key, value) = match field.split_once('=') {
+                Some((key, value)) => (key.trim(), Some(value.trim())),
+                None => (field, None),
+            };
+            match (key.to_ascii_lowercase().as_str(), value) {
+                ("source" | "src", Some(value)) => mount.source = Some(value.to_string()),
+                ("target" | "dst" | "destination", Some(value)) => target = Some(value.to_string()),
+                ("type", Some(value)) => mount.mount_type = Some(value.to_string()),
+                // Docker's false values; anything else is read-only.
+                ("readonly" | "ro", value) => {
+                    mount.read_only =
+                        !matches!(value, Some("0" | "f" | "F" | "false" | "False" | "FALSE"))
+                }
+                _ => mount.options.push(part.to_string()),
+            }
+        }
+
+        if quoted {
+            return None;
+        }
+        mount.target = target?;
+        Some(mount)
+    }
 }
 
 impl Display for MountDefinition {
@@ -89,10 +145,34 @@ impl Display for MountDefinition {
             "volume".to_string()
         });
         write!(f, "type={}", mount_type)?;
-        if let Some(source) = &self.source {
-            write!(f, ",source={}", source)?;
+        for (key, value) in [
+            ("source", self.source.as_deref()),
+            ("target", Some(self.target.as_str())),
+        ] {
+            if let Some(value) = value {
+                let field = format!("{key}={value}");
+                if field.contains([',', '"', '\n', '\r']) {
+                    write!(f, ",\"{}\"", field.replace('"', "\"\""))?;
+                } else {
+                    write!(f, ",{field}")?;
+                }
+            }
         }
-        write!(f, ",target={},consistency=cached", self.target)
+        if self.read_only {
+            write!(f, ",readonly")?;
+        }
+        for option in &self.options {
+            write!(f, ",{option}")?;
+        }
+        if !self.options.iter().any(|option| {
+            option
+                .trim_matches('"')
+                .split_once('=')
+                .is_some_and(|(key, _)| key.trim().eq_ignore_ascii_case("consistency"))
+        }) {
+            write!(f, ",consistency=cached")?;
+        }
+        Ok(())
     }
 }
 
@@ -504,32 +584,8 @@ where
 
     let mount = match item {
         MountItem::Object(mount) => mount,
-        MountItem::String(s) => {
-            let mut source = None;
-            let mut target = None;
-            let mut mount_type = None;
-
-            for part in s.split(',') {
-                let part = part.trim();
-                if let Some((key, value)) = part.split_once('=') {
-                    match key.trim() {
-                        "source" => source = Some(value.trim().to_string()),
-                        "target" => target = Some(value.trim().to_string()),
-                        "type" => mount_type = Some(value.trim().to_string()),
-                        _ => {} // Ignore unknown keys
-                    }
-                }
-            }
-
-            let target = target
-                .ok_or_else(|| D::Error::custom(format!("mount string missing 'target': {}", s)))?;
-
-            MountDefinition {
-                source,
-                target,
-                mount_type,
-            }
-        }
+        MountItem::String(s) => MountDefinition::parse(&s)
+            .ok_or_else(|| D::Error::custom(format!("mount string missing 'target': {}", s)))?,
     };
 
     Ok(Some(mount))
@@ -557,33 +613,9 @@ where
     for item in items {
         match item {
             MountItem::Object(mount) => mounts.push(mount),
-            MountItem::String(s) => {
-                let mut source = None;
-                let mut target = None;
-                let mut mount_type = None;
-
-                for part in s.split(',') {
-                    let part = part.trim();
-                    if let Some((key, value)) = part.split_once('=') {
-                        match key.trim() {
-                            "source" => source = Some(value.trim().to_string()),
-                            "target" => target = Some(value.trim().to_string()),
-                            "type" => mount_type = Some(value.trim().to_string()),
-                            _ => {} // Ignore unknown keys
-                        }
-                    }
-                }
-
-                let target = target.ok_or_else(|| {
-                    D::Error::custom(format!("mount string missing 'target': {}", s))
-                })?;
-
-                mounts.push(MountDefinition {
-                    source,
-                    target,
-                    mount_type,
-                });
-            }
+            MountItem::String(s) => mounts.push(MountDefinition::parse(&s).ok_or_else(|| {
+                D::Error::custom(format!("mount string missing 'target': {}", s))
+            })?),
         }
     }
 
@@ -1007,6 +1039,7 @@ mod test {
                     source: Some("/localfolder/app".to_string()),
                     target: "/workspaces/app".to_string(),
                     mount_type: Some("volume".to_string()),
+                    ..Default::default()
                 }]),
                 run_args: Some(vec!["-c".to_string(), "some_command".to_string()]),
                 shutdown_action: Some(ShutdownAction::StopContainer),
@@ -1015,7 +1048,9 @@ mod test {
                 workspace_mount: Some(MountDefinition {
                     source: Some("/app".to_string()),
                     target: "/workspaces/app".to_string(),
-                    mount_type: Some("bind".to_string())
+                    mount_type: Some("bind".to_string()),
+                    options: vec!["consistency=cached".to_string()],
+                    ..Default::default()
                 }),
                 customizations: Some(ZedCustomizationsWrapper {
                     zed: ZedCustomization {
@@ -1473,11 +1508,13 @@ mod test {
                         source: Some("/localfolder/app".to_string()),
                         target: "/workspaces/app".to_string(),
                         mount_type: Some("volume".to_string()),
+                        ..Default::default()
                     },
                     MountDefinition {
                         source: Some("dev-containers-cli-bashhistory".to_string()),
                         target: "/home/node/commandhistory".to_string(),
                         mount_type: None,
+                        ..Default::default()
                     }
                 ]),
                 run_args: Some(vec!["-c".to_string(), "some_command".to_string()]),
@@ -1487,7 +1524,9 @@ mod test {
                 workspace_mount: Some(MountDefinition {
                     source: Some("/folder".to_string()),
                     target: "/workspace".to_string(),
-                    mount_type: Some("bind".to_string())
+                    mount_type: Some("bind".to_string()),
+                    options: vec!["consistency=cached".to_string()],
+                    ..Default::default()
                 }),
                 build: Some(ContainerBuild {
                     dockerfile: "DockerFile".to_string(),
@@ -1555,6 +1594,7 @@ mod test {
             source: Some("/home/user/project".to_string()),
             target: "/workspaces/project".to_string(),
             mount_type: None,
+            ..Default::default()
         };
 
         let rendered = mount.to_string();
@@ -1571,6 +1611,7 @@ mod test {
             source: Some("\\\\server\\share\\project".to_string()),
             target: "/workspaces/project".to_string(),
             mount_type: None,
+            ..Default::default()
         };
 
         let rendered = mount.to_string();
@@ -1587,6 +1628,7 @@ mod test {
             source: Some("C:\\Users\\mrg\\cli".to_string()),
             target: "/workspaces/cli".to_string(),
             mount_type: None,
+            ..Default::default()
         };
 
         let rendered = mount.to_string();
@@ -1603,11 +1645,100 @@ mod test {
             source: None,
             target: "/tmp".to_string(),
             mount_type: Some("tmpfs".to_string()),
+            ..Default::default()
         };
 
         let rendered = mount.to_string();
 
         assert_eq!(rendered, "type=tmpfs,target=/tmp,consistency=cached");
+    }
+
+    #[test]
+    fn should_keep_readonly_and_other_options_in_string_mounts() {
+        let devcontainer = deserialize_devcontainer_json(
+            r#"{
+                "image": "ubuntu",
+                "workspaceMount": "source=/app,target=/workspaces/app,type=bind,readonly",
+                "mounts": [
+                    "source=/a,target=/a,type=bind,readonly",
+                    "source=/b,target=/b,type=bind,ro",
+                    "source=/c,target=/c,type=bind,readonly=true",
+                    "source=/d,target=/d,type=bind,readonly=false",
+                    "source=/e,target=/e,type=bind,consistency=delegated,bind-propagation=rslave"
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            devcontainer.workspace_mount.unwrap().to_string(),
+            "type=bind,source=/app,target=/workspaces/app,readonly,consistency=cached"
+        );
+        assert_eq!(
+            devcontainer
+                .mounts
+                .unwrap()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec![
+                "type=bind,source=/a,target=/a,readonly,consistency=cached",
+                "type=bind,source=/b,target=/b,readonly,consistency=cached",
+                "type=bind,source=/c,target=/c,readonly,consistency=cached",
+                "type=bind,source=/d,target=/d,consistency=cached",
+                "type=bind,source=/e,target=/e,consistency=delegated,bind-propagation=rslave",
+            ]
+        );
+    }
+
+    #[test]
+    fn should_preserve_readonly_with_case_and_csv_quoting() {
+        for (options, read_only) in [
+            ("READONLY=false,readonly", true),
+            ("ro=false,RO", true),
+            ("\"readonly\"", true),
+            ("\"readonly=false\",readonly", true),
+            ("readonly=1", true),
+            ("readonly,readonly=0", false),
+            ("ro,readonly=f", false),
+            ("readonly=F", false),
+            ("readonly=False", false),
+            ("readonly=FALSE", false),
+        ] {
+            let value = format!("type=bind,src=/host,dst=/data,{options}");
+            let mount = MountDefinition::parse(&value).unwrap();
+            assert_eq!(mount.read_only, read_only, "{value}");
+            assert_eq!(
+                mount.to_string(),
+                format!(
+                    "type=bind,source=/host,target=/data{},consistency=cached",
+                    if read_only { ",readonly" } else { "" }
+                ),
+                "{value}"
+            );
+        }
+
+        let mount = MountDefinition::parse(
+            r#"type=bind,"source=/host/with,readonly=false,commas",target=/data,readonly,"consistency=delegated""#,
+        )
+        .unwrap();
+        assert!(mount.read_only);
+        assert_eq!(
+            mount.source.as_deref(),
+            Some("/host/with,readonly=false,commas")
+        );
+        assert_eq!(
+            mount.to_string(),
+            r#"type=bind,"source=/host/with,readonly=false,commas",target=/data,readonly,"consistency=delegated""#
+        );
+
+        let value = r#"type=bind,"source=C:\with,""quotes""",target=/data,ro"#;
+        let mount = MountDefinition::parse(value).unwrap();
+        assert_eq!(mount.source.as_deref(), Some("C:\\with,\"quotes\""));
+        assert_eq!(
+            mount.to_string(),
+            r#"type=bind,"source=C:\with,""quotes""",target=/data,readonly,consistency=cached"#
+        );
     }
 
     #[test]
