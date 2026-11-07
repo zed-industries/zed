@@ -563,7 +563,7 @@ async-std = { version = "1.12", features = ["unstable"] }
 async-tar = { git = "https://github.com/zed-industries/async-tar", rev = "bd3ad6f89df9a9da7a8535958756d6bf465936a0" }
 async-task = "4.7"
 async-trait = "0.1"
-async-tungstenite = "0.35"
+async-tungstenite = "0.33"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.8.10", default-features = false, features = [
     "behavior-version-latest",
