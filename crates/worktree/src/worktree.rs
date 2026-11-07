@@ -4,7 +4,7 @@ mod worktree_settings;
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
-use collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
 use file_content::{
     ByteContent, DecodingReader, decode_byte_header, detect_encoding, encode_text, read_byte_header,
@@ -28,7 +28,7 @@ use git::{
     BISECT_LOG, COMMIT_MESSAGE, DOT_GIT, FETCH_HEAD, FSMONITOR_DAEMON, GC_PID, GITIGNORE,
     HOOKS_DIR, INFO_DIR, LFS_DIR, LOGS_DIR, LOGS_REF_STASH, OBJECTS_DIR, ORIG_HEAD,
     REBASE_APPLY_DIR, REBASE_MERGE_DIR, REFS_DIR, REFTABLE_DIR, REPO_EXCLUDE, SEQUENCER_DIR,
-    status::GitSummary,
+    repository::GitRepository, repository::RepoPath, status::GitSummary,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
@@ -275,6 +275,17 @@ pub struct LocalSnapshot {
     external_canonical_to_relative: BTreeMap<Arc<Path>, Arc<RelPath>>,
 }
 
+#[derive(Debug, Clone)]
+enum TrackedDirectoryState {
+    NoTrackedFiles,
+    HasTrackedFiles(Arc<BTreeSet<RepoPath>>),
+}
+
+enum TrackedCacheLookup {
+    Hit(bool),
+    Miss,
+}
+
 struct BackgroundScannerState {
     snapshot: LocalSnapshot,
     symlink_paths_by_target: HashMap<Arc<Path>, SmallVec<[Arc<RelPath>; 1]>>,
@@ -286,6 +297,73 @@ struct BackgroundScannerState {
     changed_paths: Vec<Arc<RelPath>>,
     prev_snapshot: Snapshot,
     scanning_enabled: bool,
+}
+
+/// Caches which ignored paths contain git-tracked files. Kept separate from
+/// [`BackgroundScannerState`] so it can be consulted while that lock is held.
+#[derive(Default)]
+struct TrackedFilesCache {
+    tracked_files: HashMap<Arc<Path>, TrackedDirectoryState>,
+    repos: HashMap<PathBuf, Arc<dyn GitRepository>>,
+}
+
+impl TrackedFilesCache {
+    fn check(&self, abs_path: &Path, repo_path: &RepoPath, is_dir: bool) -> TrackedCacheLookup {
+        let check_state = |state: &TrackedDirectoryState| match state {
+            TrackedDirectoryState::NoTrackedFiles => TrackedCacheLookup::Hit(false),
+            TrackedDirectoryState::HasTrackedFiles(paths) => {
+                let is_tracked = if is_dir {
+                    if repo_path.is_empty() {
+                        !paths.is_empty()
+                    } else {
+                        paths
+                            .range(repo_path..)
+                            .take_while(|p| p.starts_with(repo_path))
+                            .next()
+                            .is_some()
+                    }
+                } else {
+                    paths.contains(repo_path)
+                };
+                TrackedCacheLookup::Hit(is_tracked)
+            }
+        };
+
+        for ancestor_abs_path in abs_path.ancestors() {
+            if let Some(state) = self.tracked_files.get(ancestor_abs_path) {
+                return check_state(state);
+            }
+        }
+
+        TrackedCacheLookup::Miss
+    }
+
+    fn insert(&mut self, abs_path: Arc<Path>, tracked_files: Vec<RepoPath>) {
+        if tracked_files.is_empty() {
+            self.tracked_files
+                .insert(abs_path, TrackedDirectoryState::NoTrackedFiles);
+        } else {
+            self.tracked_files.insert(
+                abs_path,
+                TrackedDirectoryState::HasTrackedFiles(Arc::new(
+                    tracked_files.into_iter().collect(),
+                )),
+            );
+        }
+    }
+
+    fn invalidate(&mut self, abs_paths: &[Arc<Path>]) {
+        self.tracked_files.retain(|cached_path, _| {
+            !abs_paths.iter().any(|abs_path| {
+                cached_path.starts_with(abs_path.as_ref())
+                    || abs_path.as_ref().starts_with(cached_path.as_ref())
+            })
+        });
+    }
+
+    fn clear(&mut self) {
+        self.tracked_files.clear();
+    }
 }
 
 /// The entries that were removed from the snapshot as part of the current
@@ -1394,6 +1472,7 @@ impl LocalWorktree {
                         removed_entries: RemovedEntries::default(),
                         changed_paths: Default::default(),
                     }),
+                    tracked_files_cache: Default::default(),
                     phase: BackgroundScannerPhase::InitialScan,
                     share_private_files,
                     settings,
@@ -3144,7 +3223,7 @@ impl LocalSnapshot {
         let mut ancestor_ignore_stack = ignore_stack.clone();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
             if ancestor_ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
-                ignore_stack = IgnoreStack::all();
+                ignore_stack = ignore_stack.all_within();
                 break;
             } else if let Some(ignore) = ignore {
                 let kind = IgnoreKind::Gitignore(parent_abs_path.into());
@@ -3155,7 +3234,7 @@ impl LocalSnapshot {
         }
 
         if ignore_stack.is_abs_path_ignored(abs_path, is_dir) {
-            ignore_stack = IgnoreStack::all();
+            ignore_stack = ignore_stack.all_within();
         }
 
         ignore_stack
@@ -3723,6 +3802,18 @@ async fn watch_dir_tree(root_abs_path: PathBuf, fs: &dyn Fs, watcher: &dyn Watch
             }
         }
     }
+}
+
+/// Whether a change at `path_in_git_dir` may have changed the index, and with it
+/// which files are tracked. Ref, reflog and `HEAD` updates (e.g. fetches, or a
+/// commit's branch update) can't, so they don't need ignore statuses recomputed;
+/// a commit or checkout that does change the index also writes `index`.
+fn git_dir_change_may_affect_index(path_in_git_dir: &Path) -> bool {
+    !(path_in_git_dir.starts_with(REFS_DIR)
+        || path_in_git_dir.starts_with(REFTABLE_DIR)
+        || path_in_git_dir.starts_with(LOGS_DIR)
+        || path_in_git_dir == Path::new("packed-refs")
+        || path_in_git_dir == Path::new("HEAD"))
 }
 
 async fn is_dot_git(path: &Path, fs: &dyn Fs) -> bool {
@@ -4366,6 +4457,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
 
 struct BackgroundScanner {
     state: async_lock::Mutex<BackgroundScannerState>,
+    tracked_files_cache: Mutex<TrackedFilesCache>,
     fs: Arc<dyn Fs>,
     fs_case_sensitive: bool,
     status_updates_tx: UnboundedSender<ScanState>,
@@ -4492,7 +4584,10 @@ impl BackgroundScanner {
                     .snapshot
                     .ignore_stack_for_abs_path(root_abs_path.as_path(), true, self.fs.as_ref())
                     .await;
-                if ignore_stack.is_abs_path_ignored(root_abs_path.as_path(), true) {
+                let is_root_ignored = self
+                    .is_path_ignored(root_abs_path.as_path(), true, &ignore_stack)
+                    .await;
+                if is_root_ignored {
                     root_entry.is_ignored = true;
                     let mut root_entry = root_entry.clone();
                     state.reuse_entry_id(&mut root_entry);
@@ -4717,6 +4812,13 @@ impl BackgroundScanner {
             .collect::<Vec<_>>();
 
         {
+            let abs_paths = abs_paths
+                .iter()
+                .map(|abs_path| Arc::from(abs_path.as_path()))
+                .collect::<Vec<_>>();
+            self.tracked_files_cache.lock().invalidate(&abs_paths);
+        }
+        {
             let mut state = self.state.lock().await;
             let is_idle = state.snapshot.completed_scan_id == state.snapshot.scan_id;
             state.snapshot.scan_id += 1;
@@ -4725,14 +4827,16 @@ impl BackgroundScanner {
             }
         }
 
-        self.reload_entries_for_paths(
-            &root_path,
-            &root_canonical_path,
-            &request.relative_paths,
-            abs_paths,
-            None,
-        )
-        .await;
+        if !request.relative_paths.is_empty() {
+            self.reload_entries_for_paths(
+                &root_path,
+                &root_canonical_path,
+                &request.relative_paths,
+                abs_paths,
+                None,
+            )
+            .await;
+        }
 
         self.send_status_update(scanning, request.done, &[]).await
     }
@@ -4894,6 +4998,8 @@ impl BackgroundScanner {
         ];
 
         let mut dot_git_abs_paths = Vec::new();
+        // Git directories with changes that may have changed which files are tracked.
+        let mut dot_git_abs_paths_with_index_changes = Vec::new();
         let mut work_dirs_needing_exclude_update = Vec::new();
 
         {
@@ -4974,6 +5080,11 @@ impl BackgroundScanner {
                         continue;
                     }
 
+                    if git_dir_change_may_affect_index(&path_in_git_dir)
+                        && !dot_git_abs_paths_with_index_changes.contains(&dot_git_abs_path)
+                    {
+                        dot_git_abs_paths_with_index_changes.push(dot_git_abs_path.clone());
+                    }
                     if !dot_git_abs_paths.contains(&dot_git_abs_path) {
                         log::debug!(
                             "detected update within git repo at {dot_git_abs_path:?}: {abs_path:?}"
@@ -5016,6 +5127,11 @@ impl BackgroundScanner {
                         .iter()
                         .any(|git_dir_abs_path| git_dir_abs_path.starts_with(abs_path.as_path()));
                         let dot_git_abs_path = repository.dot_git_abs_path.to_path_buf();
+                        if affected_by_rescan
+                            && !dot_git_abs_paths_with_index_changes.contains(&dot_git_abs_path)
+                        {
+                            dot_git_abs_paths_with_index_changes.push(dot_git_abs_path.clone());
+                        }
                         if affected_by_rescan && !dot_git_abs_paths.contains(&dot_git_abs_path) {
                             log::debug!(
                                 "reloading git repo at {dot_git_abs_path:?} due to rescan of {abs_path:?}"
@@ -5048,6 +5164,7 @@ impl BackgroundScanner {
                     log::debug!(
                         "detected update within git repo at {dot_git_abs_path:?}: bare .git directory event"
                     );
+                    dot_git_abs_paths_with_index_changes.push(dot_git_abs_path.clone());
                     dot_git_abs_paths.push(dot_git_abs_path);
                 }
             }
@@ -5193,7 +5310,8 @@ impl BackgroundScanner {
         .await;
 
         let affected_repo_roots = if !dot_git_abs_paths.is_empty() {
-            self.update_git_repositories(dot_git_abs_paths).await
+            self.update_git_repositories(dot_git_abs_paths, &dot_git_abs_paths_with_index_changes)
+                .await
         } else {
             Vec::new()
         };
@@ -5228,6 +5346,7 @@ impl BackgroundScanner {
         let (prev_snapshot, ignore_stack, abs_path) = {
             let mut state = self.state.lock().await;
             state.snapshot.global_gitignore = ignore;
+            self.tracked_files_cache.lock().clear();
             let abs_path = state.snapshot.abs_path().clone();
             let ignore_stack = state
                 .snapshot
@@ -5600,7 +5719,9 @@ impl BackgroundScanner {
             }
 
             if child_entry.is_dir() {
-                child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
+                child_entry.is_ignored = self
+                    .is_path_ignored(&child_abs_path, true, &ignore_stack)
+                    .await;
                 child_entry.is_always_included =
                     self.settings.is_path_always_included(&child_path, true);
 
@@ -5615,8 +5736,8 @@ impl BackgroundScanner {
                         abs_path: child_abs_path.clone(),
                         path: child_path,
                         is_external: child_entry.is_external,
-                        ignore_stack: if child_entry.is_ignored {
-                            IgnoreStack::all()
+                        ignore_stack: if ignore_stack.is_abs_path_ignored(&child_abs_path, true) {
+                            ignore_stack.all_within()
                         } else {
                             ignore_stack.clone()
                         },
@@ -5625,7 +5746,9 @@ impl BackgroundScanner {
                     }));
                 }
             } else {
-                child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
+                child_entry.is_ignored = self
+                    .is_path_ignored(&child_abs_path, false, &ignore_stack)
+                    .await;
                 child_entry.is_always_included =
                     self.settings.is_path_always_included(&child_path, false);
             }
@@ -5771,7 +5894,8 @@ impl BackgroundScanner {
                     );
 
                     let is_dir = fs_entry.is_dir();
-                    fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
+                    fs_entry.is_ignored =
+                        self.is_path_ignored(&abs_path, is_dir, &ignore_stack).await;
                     fs_entry.is_external = is_external;
                     fs_entry.is_private = self.is_path_private(path);
                     fs_entry.is_always_included =
@@ -5879,6 +6003,12 @@ impl BackgroundScanner {
         prev_snapshot: LocalSnapshot,
         ignores_to_update: Vec<(Arc<Path>, IgnoreStack)>,
     ) {
+        let abs_paths: Vec<Arc<Path>> = ignores_to_update
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect();
+        self.tracked_files_cache.lock().invalidate(&abs_paths);
+
         let (ignore_queue_tx, ignore_queue_rx) = async_channel::unbounded();
         {
             for (parent_abs_path, ignore_stack) in ignores_to_update {
@@ -6075,7 +6205,9 @@ impl BackgroundScanner {
         for mut entry in snapshot.child_entries(&path).cloned() {
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.absolutize(&entry.path).into();
-            entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
+            entry.is_ignored = self
+                .is_path_ignored(&abs_path, entry.is_dir(), &ignore_stack)
+                .await;
 
             if entry.is_dir() {
                 let state = self.state.lock().await;
@@ -6096,8 +6228,8 @@ impl BackgroundScanner {
                 {
                     entry.is_ignored = is_ignored;
                 }
-                let child_ignore_stack = if entry.is_ignored {
-                    IgnoreStack::all()
+                let child_ignore_stack = if ignore_stack.is_abs_path_ignored(&abs_path, true) {
+                    ignore_stack.all_within()
                 } else {
                     ignore_stack.clone()
                 };
@@ -6174,7 +6306,11 @@ impl BackgroundScanner {
         state.snapshot.entries_by_id.edit(entries_by_id_edits, ());
     }
 
-    async fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) -> Vec<Arc<Path>> {
+    async fn update_git_repositories(
+        &self,
+        dot_git_paths: Vec<PathBuf>,
+        dot_git_paths_with_index_changes: &[PathBuf],
+    ) -> Vec<Arc<Path>> {
         log::trace!("reloading repositories: {dot_git_paths:?}");
         let mut state = self.state.lock().await;
         let scan_id = state.snapshot.scan_id;
@@ -6222,6 +6358,8 @@ impl BackgroundScanner {
                     )
                     .await;
             } else {
+                let index_may_have_changed =
+                    dot_git_paths_with_index_changes.contains(&dot_git_dir);
                 for work_directory_id in existing_work_directory_ids {
                     state
                         .snapshot
@@ -6229,6 +6367,20 @@ impl BackgroundScanner {
                         .update(&work_directory_id, |entry| {
                             entry.git_dir_scan_id = scan_id;
                         });
+                    // An index change may have changed which files are tracked, so
+                    // recompute ignore statuses (this also drops the tracked-files cache
+                    // for the repository and loads directories that are no longer ignored).
+                    if !index_may_have_changed {
+                        continue;
+                    }
+                    if let Some(repo) = state.snapshot.git_repositories.get(&work_directory_id) {
+                        let root_abs_path = state.snapshot.abs_path.as_path();
+                        if repo.work_directory_abs_path.starts_with(root_abs_path) {
+                            affected_repo_roots.push(repo.work_directory_abs_path.clone());
+                        } else {
+                            affected_repo_roots.push(root_abs_path.into());
+                        }
+                    }
                 }
             }
         }
@@ -6291,6 +6443,90 @@ impl BackgroundScanner {
         }
 
         self.executor.timer(FS_WATCH_LATENCY).await
+    }
+
+    async fn is_path_ignored(
+        &self,
+        abs_path: &Path,
+        is_dir: bool,
+        ignore_stack: &IgnoreStack,
+    ) -> bool {
+        let is_ignored = ignore_stack.is_abs_path_ignored(abs_path, is_dir);
+        if !is_ignored {
+            return false;
+        }
+
+        let Some(repo_root) = &ignore_stack.repo_root else {
+            return true;
+        };
+
+        let Ok(rel_to_repo) = abs_path.strip_prefix(repo_root) else {
+            return true;
+        };
+
+        let Ok(repo_path) = RepoPath::from_std_path(rel_to_repo, PathStyle::local()) else {
+            return true;
+        };
+
+        // Note: callers may hold `self.state`, so this must not lock it.
+        let cache_result = self
+            .tracked_files_cache
+            .lock()
+            .check(abs_path, &repo_path, is_dir);
+
+        match cache_result {
+            TrackedCacheLookup::Hit(is_tracked) => !is_tracked,
+            TrackedCacheLookup::Miss => {
+                let (query_abs_path, query_repo_path) = if is_dir {
+                    (Arc::from(abs_path), repo_path.clone())
+                } else {
+                    let parent_abs = abs_path.parent().unwrap_or(repo_root.as_ref());
+                    let parent_repo = repo_path
+                        .parent()
+                        .map(RepoPath::from_rel_path)
+                        .unwrap_or_else(|| RepoPath::from_rel_path(RelPath::empty()));
+                    (Arc::from(parent_abs), parent_repo)
+                };
+
+                let repo = {
+                    let mut cache = self.tracked_files_cache.lock();
+                    let dot_git_path = repo_root.join(DOT_GIT);
+                    if let Some(repo) = cache.repos.get(&dot_git_path) {
+                        Some(repo.clone())
+                    } else {
+                        // Development builds have no bundled git, so fall back to the
+                        // system git, as `GitStore` does.
+                        let system_git = which::which("git").ok();
+                        match self.fs.open_repo(&dot_git_path, system_git.as_deref()) {
+                            Ok(repo) => {
+                                cache.repos.insert(dot_git_path, repo.clone());
+                                Some(repo)
+                            }
+                            Err(error) => {
+                                log::error!("failed to open {dot_git_path:?}: {error:#}");
+                                None
+                            }
+                        }
+                    }
+                };
+
+                let tracked_files = match repo {
+                    Some(repo) => repo
+                        .tracked_files(std::slice::from_ref(&query_repo_path))
+                        .await
+                        .log_err()
+                        .unwrap_or_default(),
+                    None => Vec::new(),
+                };
+
+                let mut cache = self.tracked_files_cache.lock();
+                cache.insert(query_abs_path, tracked_files);
+                match cache.check(abs_path, &repo_path, is_dir) {
+                    TrackedCacheLookup::Hit(is_tracked) => !is_tracked,
+                    TrackedCacheLookup::Miss => true,
+                }
+            }
+        }
     }
 
     fn is_path_private(&self, path: &RelPath) -> bool {
@@ -7433,7 +7669,7 @@ mod tests {
     use super::{
         BackgroundScanner, BackgroundScannerPhase, BackgroundScannerState, IgnoreStack,
         NullWatcher, RemovedEntries, STREAM_BLOCK_BYTES, ScanRequest, UpdateIgnoreStatusJob,
-        Worktree, stream_utf8_into_rope,
+        Worktree, git_dir_change_may_affect_index, stream_utf8_into_rope,
     };
     use collections::{HashMap, HashSet};
     use fs::{FakeFs, Fs, RemoveOptions, RenameOptions};
@@ -7454,6 +7690,28 @@ mod tests {
             .await
             .unwrap()
             .map(|(rope, line_ending)| (rope.to_string(), line_ending))
+    }
+
+    #[test]
+    fn test_git_dir_change_may_affect_index() {
+        for path in [
+            "index",
+            "sharedindex.0123",
+            "worktrees/feature/index",
+            "config",
+        ] {
+            assert!(git_dir_change_may_affect_index(Path::new(path)), "{path}");
+        }
+        for path in [
+            "HEAD",
+            "packed-refs",
+            "refs/heads/main",
+            "refs/remotes/origin/main",
+            "reftable/tables.list",
+            "logs/HEAD",
+        ] {
+            assert!(!git_dir_change_may_affect_index(Path::new(path)), "{path}");
+        }
     }
 
     #[test]
@@ -7576,6 +7834,7 @@ mod tests {
                     track_git_repositories: true,
                     is_single_file: false,
                     defer_watch: false,
+                    tracked_files_cache: Default::default(),
                 }
             });
             fs.insert_file(

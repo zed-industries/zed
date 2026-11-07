@@ -52,6 +52,16 @@ impl IgnoreStack {
         }
     }
 
+    /// Like [`IgnoreStack::all`], but keeps the repository context so that
+    /// tracked files beneath an ignored directory can still be detected.
+    pub fn all_within(&self) -> Self {
+        Self {
+            repo_root: self.repo_root.clone(),
+            global_ignore_root: self.global_ignore_root.clone(),
+            top: Arc::new(IgnoreStackEntry::All),
+        }
+    }
+
     pub fn global(ignore: Arc<Gitignore>) -> Self {
         Self {
             repo_root: None,
