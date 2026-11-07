@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::{v1, v2};
+use agent_client_protocol::{v1::schema as v1, v2::schema as v2};
 use anyhow::{Result, bail};
 use std::collections::BTreeMap;
 
@@ -57,10 +57,6 @@ pub fn response_to_v1(
     Ok(v1::CreateElicitationResponse::new(action).meta(response.meta))
 }
 
-pub fn error_to_v1(error: v2::Error) -> v1::Error {
-    v1::Error::new(error.code.into(), error.message).data(error.data)
-}
-
 fn scope_from_v1(scope: v1::ElicitationScope) -> Result<v2::ElicitationScope> {
     Ok(match scope {
         v1::ElicitationScope::Session(scope) => {
@@ -69,9 +65,17 @@ fn scope_from_v1(scope: v1::ElicitationScope) -> Result<v2::ElicitationScope> {
                 .into()
         }
         v1::ElicitationScope::Request(scope) => {
-            v2::ElicitationRequestScope::new(scope.request_id).into()
+            v2::ElicitationRequestScope::new(request_id_from_v1(scope.request_id)?).into()
         }
         _ => bail!("unsupported v1 elicitation scope"),
+    })
+}
+
+fn request_id_from_v1(id: v1::RequestId) -> Result<v2::RequestId> {
+    Ok(match id {
+        v1::RequestId::Number(id) => v2::RequestId::Number(id),
+        v1::RequestId::Str(id) => v2::RequestId::Str(id),
+        v1::RequestId::Null => bail!("elicitation cannot be scoped to a null request ID"),
     })
 }
 
@@ -333,7 +337,9 @@ mod tests {
             });
             let request: v1::CreateElicitationRequest = serde_json::from_value(fixture.clone())?;
             let request_id = match request.scope() {
-                v1::ElicitationScope::Request(scope) => scope.request_id.clone(),
+                v1::ElicitationScope::Request(scope) => {
+                    request_id_from_v1(scope.request_id.clone())?
+                }
                 _ => bail!("expected request scope"),
             };
             let converted = request_from_v1(request)?;
@@ -408,26 +414,6 @@ mod tests {
             assert_eq!(serde_json::to_value(converted)?, fixture);
         }
 
-        for (code, message, data) in [
-            (-32700, "Parse", None),
-            (-32600, "Invalid request", Some(json!(null))),
-            (-32601, "Missing method", Some(json!({}))),
-            (
-                -32602,
-                "Invalid parameters",
-                Some(json!({"parameter": [1, null]})),
-            ),
-            (-32603, "Internal", Some(json!("detail"))),
-            (-32800, "Canceled", None),
-            (-32000, "Authentication", None),
-            (-32002, "Missing resource", None),
-            (17, "", Some(json!({"opaque": {"nested": [false, 2]}}))),
-        ] {
-            let converted = error_to_v1(v2::Error::new(code, message).data(data.clone()));
-            assert_eq!(i32::from(converted.code), code);
-            assert_eq!(converted.message, message);
-            assert_eq!(converted.data, data);
-        }
         Ok(())
     }
 }

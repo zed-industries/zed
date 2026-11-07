@@ -21,6 +21,7 @@ use semver::Version;
 pub use settings_content::SshPortForwardOption;
 use smol::fs;
 use std::{
+    borrow::Cow,
     fmt::Write as _,
     net::IpAddr,
     path::{Path, PathBuf},
@@ -74,9 +75,13 @@ impl SshConnectionHost {
     }
 
     pub fn to_string(&self) -> String {
+        self.to_cow().into_owned()
+    }
+
+    pub fn to_cow(&self) -> Cow<'_, str> {
         match self {
-            Self::IpAddr(ip) => ip.to_string(),
-            Self::Hostname(hostname) => hostname.clone(),
+            Self::IpAddr(ip) => Cow::Owned(ip.to_string()),
+            Self::Hostname(hostname) => Cow::Borrowed(hostname),
         }
     }
 }
@@ -1857,7 +1862,6 @@ fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
 
 impl SshConnectionOptions {
     pub fn parse_command_line(input: &str) -> Result<Self> {
-        let input = input.trim_start_matches("ssh ");
         let mut hostname: Option<String> = None;
         let mut username: Option<String> = None;
         let mut port: Option<u16> = None;
@@ -1873,10 +1877,14 @@ impl SshConnectionOptions {
             "-w",
         ];
 
-        let mut tokens = ShellKind::Posix
-            .split(input)
-            .context("invalid input")?
-            .into_iter();
+        let mut tokens = ShellKind::Posix.split(input).context("invalid input")?;
+        // The input may be a full command such as `ssh -p 2222 host`, possibly with
+        // shell-quoted tokens. Strip the executable after tokenizing so that `'ssh'`
+        // is recognized too, while a lone `ssh` is still treated as a hostname.
+        if tokens.len() > 1 && tokens[0] == "ssh" {
+            tokens.remove(0);
+        }
+        let mut tokens = tokens.into_iter();
 
         'outer: while let Some(arg) = tokens.next() {
             if ALLOWED_OPTS.contains(&(&arg as &str)) {
@@ -2280,7 +2288,13 @@ fn build_command_windows(
     let byte_slice: Vec<u8> = utf16_bytes.iter().flat_map(|&u| u.to_le_bytes()).collect();
     let base64_encoded = base64::engine::general_purpose::STANDARD.encode(&byte_slice);
 
-    args.push(format!("powershell.exe -E {}", base64_encoded));
+    // Windows OpenSSH server automatically quotes the command for `ssh -T` (non-PTY),
+    // but leaves it unquoted for `ssh -t` (PTY).
+    // Related issue: https://github.com/PowerShell/Win32-OpenSSH/issues/2478
+    match interactive {
+        Interactive::Yes => args.push(format!("\"powershell.exe -E {}\"", base64_encoded)),
+        Interactive::No => args.push(format!("powershell.exe -E {}", base64_encoded)),
+    }
 
     Ok(CommandTemplate {
         program: "ssh".into(),
@@ -2883,6 +2897,114 @@ mod tests {
     }
 
     #[test]
+    fn test_build_command_windows() -> Result<()> {
+        use base64::Engine as _;
+
+        let encode_utf16_base64 = |script: &str| {
+            let utf16_bytes: Vec<u16> = script.encode_utf16().collect();
+            let byte_slice: Vec<u8> = utf16_bytes.iter().flat_map(|&u| u.to_le_bytes()).collect();
+            base64::engine::general_purpose::STANDARD.encode(&byte_slice)
+        };
+
+        let mut input_env = HashMap::default();
+        input_env.insert("INPUT_VAR".to_string(), "val".to_string());
+        let mut env = HashMap::default();
+        env.insert("SSH_VAR".to_string(), "ssh-val".to_string());
+
+        // Non-interactive command (Interactive::No should use -T and keep the command unquoted,
+        // because Windows OpenSSH already quotes the command in non-PTY mode)
+        let command = build_command_windows(
+            Some("remote_program".to_string()),
+            &["arg1".to_string(), "arg2".to_string()],
+            &input_env,
+            Some(r"C:\work".to_string()),
+            None,
+            env.clone(),
+            PathStyle::Windows,
+            "nu.exe",
+            ShellKind::Nushell,
+            vec!["-p".to_string(), "2222".to_string()],
+            vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "--".to_string(),
+                "host".to_string(),
+            ],
+            Interactive::No,
+        )?;
+
+        let expected_non_interactive_exec = format!(
+            "powershell.exe -E {}",
+            encode_utf16_base64(r"Set-Location -Path C:\work ; &remote_program arg1 arg2")
+        );
+        assert_eq!(command.program, "ssh");
+        assert_eq!(
+            command.args.iter().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "-p",
+                "2222",
+                "-o",
+                "LogLevel=ERROR",
+                "-T",
+                "-l",
+                "user",
+                "--",
+                "host",
+                &expected_non_interactive_exec,
+            ]
+        );
+        assert_eq!(command.env, env);
+
+        // Interactive command (Interactive::Yes should use -t and wrap the command in quotes,
+        // because Windows OpenSSH concatenates the command unquoted in PTY mode)
+        let command = build_command_windows(
+            None,
+            &[],
+            &input_env,
+            Some(r"D:\code\test_python".to_string()),
+            Some((1, "foo".to_owned(), 2)),
+            env.clone(),
+            PathStyle::Windows,
+            "nu.exe",
+            ShellKind::Nushell,
+            vec!["-p".to_string(), "2222".to_string()],
+            vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "--".to_string(),
+                "host".to_string(),
+            ],
+            Interactive::Yes,
+        )?;
+
+        let expected_interactive_exec = format!(
+            "\"powershell.exe -E {}\"",
+            encode_utf16_base64(r"Set-Location -Path D:\code\test_python ; nu.exe")
+        );
+        assert_eq!(command.program, "ssh");
+        assert_eq!(
+            command.args.iter().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "-p",
+                "2222",
+                "-L",
+                "1:foo:2",
+                "-o",
+                "LogLevel=ERROR",
+                "-t",
+                "-l",
+                "user",
+                "--",
+                "host",
+                &expected_interactive_exec,
+            ]
+        );
+        assert_eq!(command.env, env);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_build_command_quotes_env_assignment() -> Result<()> {
         let mut input_env = HashMap::default();
         input_env.insert("ZED$(echo foo)".to_string(), "value".to_string());
@@ -3044,6 +3166,45 @@ mod tests {
         assert_eq!(opts.host, "192.168.1.1".into());
         assert_eq!(opts.username, Some("user".to_string()));
         assert_eq!(opts.port, Some(2222));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_line_with_ssh_executable() -> Result<()> {
+        let opts = SshConnectionOptions::parse_command_line("ssh -p 2222 user@example.com")?;
+        assert_eq!(opts.host, "example.com".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(2222));
+
+        let opts = SshConnectionOptions::parse_command_line(
+            "'ssh' '-i' '/Users/test/Library/Application Support/key' '-p' '64042' '-o' 'ControlMaster=auto' 'user@127.0.0.1'",
+        )?;
+        assert_eq!(opts.host, "127.0.0.1".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(64042));
+        assert_eq!(
+            opts.args,
+            Some(vec![
+                "-i".to_string(),
+                "/Users/test/Library/Application Support/key".to_string(),
+                "-o".to_string(),
+                "ControlMaster=auto".to_string(),
+            ])
+        );
+
+        let opts = SshConnectionOptions::parse_command_line("\"ssh\" user@example.com")?;
+        assert_eq!(opts.host, "example.com".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+
+        // A bare `ssh` is a hostname, not the executable.
+        let opts = SshConnectionOptions::parse_command_line("ssh")?;
+        assert_eq!(opts.host, "ssh".into());
+        assert_eq!(opts.username, None);
+
+        let opts = SshConnectionOptions::parse_command_line("ssh user@ssh")?;
+        assert_eq!(opts.host, "ssh".into());
+        assert_eq!(opts.username, Some("user".to_string()));
 
         Ok(())
     }

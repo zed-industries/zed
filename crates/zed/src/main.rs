@@ -348,11 +348,6 @@ fn main() {
     let installation_id = app
         .background_executor()
         .spawn(installation_id(KeyValueStore::from_app_db(&app_db)));
-    let session_id = Uuid::new_v4().to_string();
-    let session = app.background_executor().spawn(Session::new(
-        session_id.clone(),
-        KeyValueStore::from_app_db(&app_db),
-    ));
     let background_executor = app.background_executor();
 
     let (open_listener, mut open_rx) = OpenListener::new();
@@ -382,6 +377,12 @@ fn main() {
         println!("zed is already running");
         return;
     }
+
+    let session_id = Uuid::new_v4().to_string();
+    let session = app.background_executor().spawn(Session::new(
+        session_id.clone(),
+        KeyValueStore::from_app_db(&app_db),
+    ));
 
     let should_install_crash_handler =
         client::telemetry::should_install_crash_handler(*release_channel::RELEASE_CHANNEL);
@@ -1241,8 +1242,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                         sha,
                                         repo.downgrade(),
                                         workspace.weak_handle(),
-                                        None,
-                                        None,
+                                        Default::default(),
                                         window,
                                         cx,
                                     );
@@ -1455,7 +1455,12 @@ pub(crate) async fn restore_or_create_workspace(
                             connection_options,
                             paths,
                             app_state.clone(),
-                            workspace::OpenOptions::default(),
+                            workspace::OpenOptions {
+                                // Each saved window must retain its own project roots,
+                                // even when some roots also appear in another window.
+                                workspace_matching: workspace::WorkspaceMatching::None,
+                                ..Default::default()
+                            },
                             cx,
                         )
                         .await?;
