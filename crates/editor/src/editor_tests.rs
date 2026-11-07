@@ -43550,7 +43550,7 @@ async fn test_click_on_parameter_inlay_hint_places_cursor_correctly(cx: &mut Tes
     });
     let cursor_pixel = cx.pixel_position_for(cursor_display_point);
     let em_width =
-        cx.update_editor(|editor, _, _| editor.last_position_map.as_ref().unwrap().em_layout_width);
+        cx.update_editor(|editor, _, _| editor.last_position_map.as_ref().unwrap().em_advance);
     // Click 3 characters to the left of the cursor, which lands inside the
     // "value: " inlay hint text.
     let click_position = gpui::Point {
@@ -45636,7 +45636,7 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
         let position_map = editor.last_position_map.as_ref().unwrap();
         (
             position_map.text_hitbox.bounds.origin.x,
-            position_map.em_layout_width,
+            position_map.em_advance,
         )
     });
 

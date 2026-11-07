@@ -1843,7 +1843,7 @@ impl Editor {
         let text_layout_details = self.text_layout_details(window, cx);
 
         // The mouse handlers encode drags past a line's end as extra columns
-        // beyond the line length, in em layout widths (see
+        // beyond the line length, in em advances (see
         // `PositionMap::point_for_position`). `x_for_display_point` clamps at
         // the line's width, so convert that overshoot back to pixels with the
         // same unit to keep the rectangle tracking the mouse past short lines.
@@ -1855,9 +1855,10 @@ impl Editor {
             .text
             .font_size
             .to_pixels(text_layout_details.rem_size);
-        let em_layout_width = text_layout_details
+        let em_advance = text_layout_details
             .text_system
-            .em_layout_width(font_id, font_size);
+            .em_advance(font_id, font_size)
+            .expect("resolved editor font must have an em advance");
         let x_for_unclipped_point = |point: DisplayPoint| {
             let line_len = display_map.line_len(point.row());
             if point.column() > line_len {
@@ -1865,7 +1866,7 @@ impl Editor {
                     DisplayPoint::new(point.row(), line_len),
                     &text_layout_details,
                 );
-                eol_x + em_layout_width * (point.column() - line_len) as f32
+                eol_x + em_advance * (point.column() - line_len) as f32
             } else {
                 display_map.x_for_display_point(point, &text_layout_details)
             }

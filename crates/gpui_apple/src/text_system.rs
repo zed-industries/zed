@@ -782,10 +782,94 @@ mod lenient_font_attributes {
 #[cfg(test)]
 mod tests {
     use crate::AppleTextSystem;
+    use core_graphics::geometry::CGSize;
+    use core_text::font_descriptor::kCTFontDefaultOrientation;
     use gpui::{
         FontFallbacks, FontFeatures, FontId, FontRun, GlyphId, PlatformTextSystem, font, px,
     };
-    use std::sync::Arc;
+    use std::{borrow::Cow, sync::Arc};
+
+    #[test]
+    fn test_single_run_preserves_requested_font_size() -> anyhow::Result<()> {
+        let fonts = AppleTextSystem::new();
+        fonts.add_fonts(vec![Cow::Borrowed(include_bytes!(
+            "../../../assets/fonts/lilex/Lilex-Regular.ttf"
+        ))])?;
+        let font_id = fonts.font_id(&font("Lilex"))?;
+        let glyph_id = fonts.glyph_for_char(font_id, 'm').expect("Lilex m glyph");
+
+        for font_size in [13., 14., 15.5, 16.] {
+            let native_font = fonts.0.read().fonts[font_id.0]
+                .native_font()
+                .clone_with_font_size(font_size);
+            let mut advance = CGSize::new(0., 0.);
+            unsafe {
+                native_font.get_advances_for_glyphs(
+                    kCTFontDefaultOrientation,
+                    &(glyph_id.0 as u16),
+                    &mut advance,
+                    1,
+                );
+            }
+            let layout =
+                fonts.layout_line("m", px(font_size as f32), &[FontRun { len: 1, font_id }]);
+            assert_eq!(
+                layout.width,
+                px(advance.width as f32),
+                "font size {font_size}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_ligatures_do_not_cross_font_run_boundaries() -> anyhow::Result<()> {
+        let fonts = AppleTextSystem::new();
+        fonts.add_fonts(vec![Cow::Borrowed(include_bytes!(
+            "../../../assets/fonts/lilex/Lilex-Regular.ttf"
+        ))])?;
+        let mut font = font("Lilex");
+        font.features = FontFeatures(Arc::new(vec![("calt".into(), 1)]));
+        let font_id = fonts.font_id(&font)?;
+
+        for font_size in [13., 14., 15.5, 16.] {
+            let separate_glyphs = ["-", ">"]
+                .into_iter()
+                .flat_map(|text| {
+                    fonts
+                        .layout_line(text, px(font_size), &[FontRun { len: 1, font_id }])
+                        .runs
+                })
+                .flat_map(|run| run.glyphs)
+                .map(|glyph| glyph.id)
+                .collect::<Vec<_>>();
+            let joined = fonts.layout_line("->", px(font_size), &[FontRun { len: 2, font_id }]);
+            let joined_glyphs = joined
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .map(|glyph| glyph.id)
+                .collect::<Vec<_>>();
+            assert_ne!(
+                joined_glyphs, separate_glyphs,
+                "fixture must form a ligature"
+            );
+
+            let split = fonts.layout_line(
+                "->",
+                px(font_size),
+                &[FontRun { len: 1, font_id }, FontRun { len: 1, font_id }],
+            );
+            let split_glyphs = split
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .map(|glyph| glyph.id)
+                .collect::<Vec<_>>();
+            assert_eq!(split_glyphs, separate_glyphs, "font size {font_size}");
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_reload_family_with_features_and_fallbacks() {

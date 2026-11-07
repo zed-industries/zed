@@ -916,11 +916,6 @@ impl WindowTextSystem {
             )
             .width
     }
-
-    /// Returns the shaped layout width of an `em`.
-    pub fn em_layout_width(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.layout_width(font_id, font_size, 'm')
-    }
 }
 
 #[derive(Hash, Eq, PartialEq)]

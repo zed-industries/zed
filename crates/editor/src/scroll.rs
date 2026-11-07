@@ -948,19 +948,13 @@ impl Editor {
                 .text
                 .font_size
                 .to_pixels(text_layout_details.rem_size);
-            let on_screen = match text_layout_details
+            let em_advance = text_layout_details
                 .text_system
                 .em_advance(font_id, font_size)
-                .log_err()
-            {
-                Some(em_advance) => {
-                    let head_x = snapshot.x_for_display_point(newest_head, &text_layout_details);
-                    let screen_left_x =
-                        snapshot.x_for_display_point(screen_top, &text_layout_details);
-                    head_x <= screen_left_x + em_advance * visible_columns as f32
-                }
-                None => newest_head.column() <= screen_top.column() + visible_columns as u32,
-            };
+                .expect("resolved editor font must have an em advance");
+            let head_x = snapshot.x_for_display_point(newest_head, &text_layout_details);
+            let screen_left_x = snapshot.x_for_display_point(screen_top, &text_layout_details);
+            let on_screen = head_x <= screen_left_x + em_advance * visible_columns as f32;
             if on_screen {
                 return Ordering::Equal;
             }
