@@ -2444,6 +2444,19 @@ impl Interactivity {
                                 None
                             };
 
+                            // Window prepaint checks whether the active tooltip is still hovered
+                            // after this, so it needs the bounds from this frame rather than the
+                            // ones from when the tooltip was scheduled.
+                            if self.tooltip_builder.is_some()
+                                && let Some(hitbox) = hitbox.as_ref()
+                                && let Some(element_state) = element_state.as_mut()
+                            {
+                                element_state
+                                    .tooltip_source_bounds
+                                    .get_or_insert_with(Default::default)
+                                    .set(hitbox.bounds);
+                            }
+
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
                             let result = window.with_element_opacity(style.opacity, |window| {
@@ -3263,14 +3276,18 @@ impl Interactivity {
                 let build_tooltip = Rc::new(move |window: &mut Window, cx: &mut App| {
                     Some(((tooltip_builder.build)(window, cx), tooltip_is_hoverable))
                 });
-                // Use bounds instead of testing hitbox since this is called during prepaint.
+                // Use bounds instead of testing hitbox since this is called during prepaint. They
+                // are updated every prepaint, so the check follows the element when it moves.
                 let check_is_hovered_during_prepaint = Rc::new({
                     let pending_mouse_down = pending_mouse_down.clone();
-                    let source_bounds = hitbox.bounds;
+                    let source_bounds = element_state
+                        .tooltip_source_bounds
+                        .get_or_insert_with(Default::default)
+                        .clone();
                     move |window: &Window| {
                         !window.last_input_was_keyboard()
                             && pending_mouse_down.borrow().is_none()
-                            && source_bounds.contains(&window.mouse_position())
+                            && source_bounds.get().contains(&window.mouse_position())
                     }
                 });
                 let check_is_hovered = Rc::new({
@@ -3684,6 +3701,9 @@ pub struct InteractiveElementState {
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
+    /// The bounds of the element's hitbox in the latest prepaint, used to check whether a pending
+    /// or visible tooltip is still hovered after the element has moved.
+    tooltip_source_bounds: Option<Rc<Cell<Bounds<Pixels>>>>,
     long_press_tooltip_active: Option<Rc<Cell<bool>>>,
 }
 
@@ -3854,7 +3874,15 @@ pub(crate) fn register_tooltip_mouse_handlers(
     window.on_mouse_event({
         let active_tooltip = active_tooltip.clone();
         move |_: &ScrollEvent, _phase, window: &mut Window, _cx| {
-            if !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)) {
+            // Scrolling moves content under a still pointer, so a pending tooltip would otherwise
+            // be shown over whatever element ends up beneath it.
+            let is_waiting_for_show = matches!(
+                active_tooltip.borrow().as_ref(),
+                Some(ActiveTooltip::WaitingForShow { .. })
+            );
+            if is_waiting_for_show {
+                active_tooltip.borrow_mut().take();
+            } else if !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)) {
                 clear_active_tooltip_if_not_hoverable(&active_tooltip, window);
             }
         }
@@ -4504,7 +4532,8 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, Keystroke,
-        MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas, util::FluentBuilder as _,
+        MouseMoveEvent, ScrollDelta, TestAppContext, TouchEvent, TouchId, canvas,
+        util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 
@@ -4918,6 +4947,7 @@ mod tests {
     struct TooltipOwner {
         captured_active_tooltip: CapturedActiveTooltip,
         show_delay_override: Option<Duration>,
+        target_top: Pixels,
     }
 
     impl Render for TooltipOwner {
@@ -4928,6 +4958,7 @@ mod tests {
                     .child(
                         div()
                             .id("target")
+                            .mt(self.target_top)
                             .w(px(50.))
                             .h(px(50.))
                             .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
@@ -5104,6 +5135,7 @@ mod tests {
             move |_, _| TooltipOwner {
                 captured_active_tooltip,
                 show_delay_override,
+                target_top: px(0.),
             }
         });
         let any_window = window.into();
@@ -5115,6 +5147,23 @@ mod tests {
             .unwrap();
 
         (test_app, any_window, captured_active_tooltip)
+    }
+
+    /// Moves the tooltip target down without moving the mouse, then draws a frame.
+    fn move_tooltip_target(
+        test_app: &mut TestAppContext,
+        any_window: AnyWindowHandle,
+        target_top: Pixels,
+    ) {
+        test_app
+            .update_window(any_window, |root_view, window, cx| {
+                root_view
+                    .downcast::<TooltipOwner>()
+                    .unwrap()
+                    .update(cx, |owner, _| owner.target_top = target_top);
+                window.draw(cx).clear(cx);
+            })
+            .unwrap();
     }
 
     #[test]
@@ -5194,6 +5243,89 @@ mod tests {
         drop(active_tooltip);
 
         assert!(weak_active_tooltip.upgrade().is_none());
+    }
+
+    #[test]
+    fn tooltip_waiting_for_show_is_cancelled_by_scroll() {
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
+
+        let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
+        let active_tooltip = weak_active_tooltip.upgrade().unwrap();
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::WaitingForShow { .. })
+        ));
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.dispatch_event(
+                    ScrollEvent {
+                        position: point(px(10.), px(10.)),
+                        delta: ScrollDelta::Lines(point(0., -1.)),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        assert!(active_tooltip.borrow().is_none());
+
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+
+        assert!(active_tooltip.borrow().is_none());
+    }
+
+    #[test]
+    fn tooltip_hides_when_its_element_moves_away_from_the_mouse() {
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
+
+        let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
+        let active_tooltip = weak_active_tooltip.upgrade().unwrap();
+
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+
+        move_tooltip_target(&mut test_app, any_window, px(100.));
+
+        assert!(active_tooltip.borrow().is_none());
+    }
+
+    #[test]
+    fn tooltip_waiting_for_show_is_not_shown_after_its_element_moves_away() {
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
+
+        let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
+        let active_tooltip = weak_active_tooltip.upgrade().unwrap();
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::WaitingForShow { .. })
+        ));
+
+        move_tooltip_target(&mut test_app, any_window, px(100.));
+
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear(cx);
+            })
+            .unwrap();
+
+        assert!(active_tooltip.borrow().is_none());
     }
 
     #[test]
