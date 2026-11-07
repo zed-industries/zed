@@ -437,19 +437,15 @@ impl WorktreePickerDelegate {
     }
 
     fn build_fixed_entries(&self) -> Vec<WorktreeEntry> {
-        worktree_create_targets(
-            self.has_multiple_repositories,
-            self.default_branch.clone(),
-            self.current_branch_name.as_deref(),
-        )
-        .into_iter()
-        .map(|target| match target {
-            WorktreeCreateTarget::CurrentBranch => WorktreeEntry::CreateFromCurrentBranch,
-            WorktreeCreateTarget::DefaultBranch(default_branch) => {
-                WorktreeEntry::CreateFromDefaultBranch { default_branch }
-            }
-        })
-        .collect()
+        worktree_create_targets(self.has_multiple_repositories, self.default_branch.clone())
+            .into_iter()
+            .map(|target| match target {
+                WorktreeCreateTarget::CurrentBranch => WorktreeEntry::CreateFromCurrentBranch,
+                WorktreeCreateTarget::DefaultBranch(default_branch) => {
+                    WorktreeEntry::CreateFromDefaultBranch { default_branch }
+                }
+            })
+            .collect()
     }
 
     fn all_repo_worktrees(&self) -> &[GitWorktree] {
@@ -2067,6 +2063,18 @@ mod tests {
         let (_fs, worktree_picker, _repository, _worktree_path, mut cx) =
             init_worktree_picker_test(cx).await;
 
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.current_branch_name = Some("main".to_string());
+                picker.delegate.default_branch = Some(RemoteBranchName {
+                    remote_name: "origin".to_string(),
+                    branch_name: "main".to_string(),
+                });
+                picker.refresh(window, cx);
+            });
+        });
+        cx.run_until_parked();
+
         worktree_picker.update(&mut cx, |worktree_picker, cx| {
             worktree_picker.picker.update(cx, |picker, _| {
                 assert_eq!(picker.delegate.selected_index, 0);
@@ -2076,6 +2084,10 @@ mod tests {
                     }
                     _ => panic!("remote default branch should be the first create target"),
                 }
+                assert!(matches!(
+                    picker.delegate.matches.get(1),
+                    Some(WorktreeEntry::CreateFromCurrentBranch)
+                ));
             })
         });
 
