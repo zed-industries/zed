@@ -17044,6 +17044,50 @@ async fn test_autoclose_nested_brackets_in_plain_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_dead_key_composition_over_autoclosed_quote(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "\"".to_string(),
+                    end: "\"".to_string(),
+                    close: true,
+                    surround: true,
+                    newline: false,
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        None,
+    ));
+    cx.language_registry().add(language.clone());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("\"", window, cx);
+        editor.handle_input("hello", window, cx);
+        editor.replace_and_mark_text_in_range(None, "\"", None, window, cx);
+
+        assert_eq!(editor.text(cx), "\"hello\"");
+        assert_eq!(
+            editor.marked_text_ranges(cx),
+            Some(vec![
+                MultiBufferOffsetUtf16(OffsetUtf16(6))..MultiBufferOffsetUtf16(OffsetUtf16(7))
+            ])
+        );
+
+        editor.replace_text_in_range(None, "\"", window, cx);
+    });
+
+    cx.assert_editor_state("\"hello\"ˇ");
+}
+
+#[gpui::test]
 async fn test_autoclose_and_auto_surround_pairs(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

@@ -268,7 +268,8 @@ impl Editor {
                             // If the selection is followed by an auto-inserted closing bracket,
                             // then don't insert that closing bracket again; just move the selection
                             // past the closing bracket.
-                            let should_skip = selection.end == region.range.end.to_point(&snapshot)
+                            let should_skip = autoclose
+                                && selection.end == region.range.end.to_point(&snapshot)
                                 && text.as_ref() == region.pair.end.as_str()
                                 && snapshot.contains_str_at(region.range.end, text.as_ref());
                             if should_skip {
@@ -2976,7 +2977,32 @@ impl EntityInputHandler for Editor {
                     ..MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.end));
                 Some(this.selection_replacement_ranges(range_utf16, cx))
             } else {
-                None
+                let display_snapshot = this.display_snapshot(cx);
+                let selections = this
+                    .selections
+                    .all::<MultiBufferOffsetUtf16>(&display_snapshot);
+                let snapshot = this.buffer.read(cx).read(cx);
+                let mut replaces_autoclosed_text = false;
+                let ranges = this
+                    .selections_with_autoclose_regions(selections, &snapshot)
+                    .map(|(selection, autoclose_region)| {
+                        if let Some(region) = autoclose_region
+                            && text == region.pair.end
+                            && snapshot.contains_str_at(region.range.end, text)
+                        {
+                            replaces_autoclosed_text = true;
+                            let start = region.range.end.to_offset_utf16(&snapshot);
+                            let end = MultiBufferOffsetUtf16(OffsetUtf16(
+                                start.0.0 + text.encode_utf16().count(),
+                            ));
+                            start..end
+                        } else {
+                            selection.range()
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                replaces_autoclosed_text.then_some(ranges)
             };
 
             let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
