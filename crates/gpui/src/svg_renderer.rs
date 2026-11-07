@@ -306,12 +306,20 @@ fn rasterize_tree(tree: &usvg::Tree, size: SvgSize) -> Result<Pixmap, usvg::Erro
     Ok(pixmap)
 }
 
+/// Asset paths the SVG renderer bundles for text (Mermaid labels, icons, etc.).
+///
+/// Keep the IBM Plex faces aligned with `mermaid_render`'s native measurement set.
+pub const BUNDLED_SVG_FONT_PATHS: &[&str] = &[
+    "fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf",
+    "fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf",
+    "fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf",
+    "fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf",
+    "fonts/lilex/Lilex-Regular.ttf",
+];
+
 fn load_bundled_fonts(asset_source: &dyn AssetSource, db: &mut usvg::fontdb::Database) {
-    let font_paths = [
-        "fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf",
-        "fonts/lilex/Lilex-Regular.ttf",
-    ];
-    for path in font_paths {
+    // Same IBM Plex faces mermaid_render measures with, so measured and painted text match.
+    for path in BUNDLED_SVG_FONT_PATHS {
         match asset_source.load(path) {
             Ok(Some(data)) => db.load_font_data(data.into_owned()),
             Ok(None) => log::warn!("Bundled font not found: {path}"),
@@ -356,11 +364,63 @@ fn fix_generic_font_families(db: &mut usvg::fontdb::Database) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use usvg::fontdb::{Database, Family, Query};
+    use std::borrow::Cow;
+    use usvg::fontdb::{Database, Family, Query, Style, Weight};
 
     const IBM_PLEX_REGULAR: &[u8] =
         include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
+    const IBM_PLEX_ITALIC: &[u8] =
+        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf");
+    const IBM_PLEX_SEMIBOLD: &[u8] =
+        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf");
+    const IBM_PLEX_SEMIBOLD_ITALIC: &[u8] =
+        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf");
     const LILEX_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
+
+    struct BundledFontAssets;
+
+    impl AssetSource for BundledFontAssets {
+        fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+            let bytes: Option<&'static [u8]> = match path {
+                "fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf" => Some(IBM_PLEX_REGULAR),
+                "fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf" => Some(IBM_PLEX_ITALIC),
+                "fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf" => Some(IBM_PLEX_SEMIBOLD),
+                "fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf" => {
+                    Some(IBM_PLEX_SEMIBOLD_ITALIC)
+                }
+                "fonts/lilex/Lilex-Regular.ttf" => Some(LILEX_REGULAR),
+                _ => None,
+            };
+            Ok(bytes.map(Cow::Borrowed))
+        }
+
+        fn list(&self, _path: &str) -> Result<Vec<SharedString>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn bundled_fonts_provide_ibm_plex_italic() {
+        let assets = BundledFontAssets;
+        for path in BUNDLED_SVG_FONT_PATHS {
+            assert!(
+                assets.load(path).unwrap().is_some(),
+                "test AssetSource missing bytes for {path}"
+            );
+        }
+        let mut db = Database::new();
+        load_bundled_fonts(&assets, &mut db);
+        let id = db
+            .query(&Query {
+                families: &[Family::Name("IBM Plex Sans")],
+                style: Style::Italic,
+                ..Default::default()
+            })
+            .expect("load_bundled_fonts must resolve IBM Plex Sans Italic");
+        let face = db.face(id).expect("italic face");
+        assert_eq!(face.style, Style::Italic);
+        assert_eq!(face.weight, Weight(400));
+    }
 
     #[test]
     fn renders_parsed_svg_at_requested_size() -> Result<()> {

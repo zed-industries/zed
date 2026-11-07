@@ -231,7 +231,9 @@ fn detect_diagram_type(e: &BytesStart<'_>) -> DiagramType {
     for token in class.split_whitespace() {
         match token {
             "flowchart" => return DiagramType::Flowchart,
-            "mindmap" => return DiagramType::Mindmap,
+            // merman labels the root SVG `mindmapDiagram` (aria-roledescription is
+            // still `mindmap`); accept both so section-class recovery runs.
+            "mindmap" | "mindmapDiagram" => return DiagramType::Mindmap,
             "classDiagram" => return DiagramType::ClassDiagram,
             "statediagram" => return DiagramType::StateDiagram,
             "journey" => return DiagramType::Unhandled,
