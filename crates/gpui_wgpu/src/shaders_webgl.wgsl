@@ -206,19 +206,41 @@ fn load_shadow(instance_id: u32) -> Shadow {
     );
 }
 
-fn load_path_vertex(vertex_id: u32) -> PathRasterizationVertex {
-    var cursor = instance_cursor(vertex_id * 26u);
-    return PathRasterizationVertex(
+fn load_path_tile(instance_id: u32) -> PathTile {
+    var cursor = instance_cursor(instance_id * 11u);
+    return PathTile(
+        read_word(&cursor),
+        read_word(&cursor),
+        read_word(&cursor),
+        read_word(&cursor),
         read_vec2_f32(&cursor),
         read_vec2_f32(&cursor),
-        read_background(&cursor),
-        read_bounds(&cursor),
+        read_vec2_f32(&cursor),
+        read_i32(&cursor),
     );
 }
 
-fn load_path_sprite(instance_id: u32) -> PathSprite {
-    var cursor = instance_cursor(instance_id * 4u);
-    return PathSprite(read_bounds(&cursor));
+// The renderer rewrites each tile's `paint` and `curve_start` to absolute indices into the shared
+// instance texture, so these index it directly.
+fn load_path_curve(index: u32) -> PathCurve {
+    var cursor = instance_cursor(index * 9u);
+    return PathCurve(
+        read_vec2_f32(&cursor),
+        read_vec2_f32(&cursor),
+        read_vec2_f32(&cursor),
+        read_vec2_f32(&cursor),
+        read_f32(&cursor),
+    );
+}
+
+fn load_path_paint(index: u32) -> PathPaint {
+    var cursor = instance_cursor(index * 27u);
+    return PathPaint(
+        read_bounds(&cursor),
+        read_bounds(&cursor),
+        read_background(&cursor),
+        read_word(&cursor),
+    );
 }
 
 fn load_underline(instance_id: u32) -> Underline {
