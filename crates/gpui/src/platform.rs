@@ -598,6 +598,19 @@ pub trait Platform: 'static {
         Task::ready(Ok(self.read_from_clipboard()))
     }
 
+    /// Reports the representations the clipboard offers without retrieving their contents.
+    ///
+    /// Implementations must not fetch payloads, decode images, trigger delayed rendering,
+    /// or show a permission prompt. Backends without a suitable metadata query return
+    /// [`ClipboardReadError::Unavailable`]. Backends with locally available metadata return
+    /// a ready task; implementations that must ask another process wait off the UI thread
+    /// with a bounded timeout.
+    ///
+    /// An error means availability is unknown, not that the clipboard is empty.
+    fn clipboard_content_types(&self) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        Task::ready(Err(ClipboardReadError::Unavailable))
+    }
+
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -3104,7 +3117,26 @@ pub struct ClipboardItem {
     pub entries: Vec<ClipboardEntry>,
 }
 
-/// An error produced by [`Platform::read_from_clipboard_async`].
+bitflags::bitflags! {
+    /// The representations the clipboard offers without retrieving their contents.
+    ///
+    /// Several flags can be set at once; the consuming application decides which ones
+    /// it accepts. An empty set means none of these representations are offered.
+    /// Availability does not guarantee a successful read or determine which representation
+    /// a general clipboard read will return.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct ClipboardContentTypes: u8 {
+        /// The clipboard offers text.
+        const TEXT = 1 << 0;
+        /// The clipboard offers an image.
+        const IMAGE = 1 << 1;
+        /// The clipboard offers paths to external files or directories.
+        const EXTERNAL_PATHS = 1 << 2;
+    }
+}
+
+/// An error produced by [`Platform::read_from_clipboard_async`] or
+/// [`Platform::clipboard_content_types`].
 ///
 /// Callers surface these failures to users, so the variants distinguish
 /// conditions that call for different user-facing guidance.
@@ -3120,6 +3152,8 @@ pub enum ClipboardReadError {
     /// The clipboard contents could not be converted into a
     /// [`ClipboardItem`].
     UnsupportedContent,
+    /// The clipboard owner did not respond in time.
+    TimedOut,
 }
 
 impl std::fmt::Display for ClipboardReadError {
@@ -3132,6 +3166,7 @@ impl std::fmt::Display for ClipboardReadError {
             Self::UnsupportedContent => {
                 formatter.write_str("the clipboard contents are unsupported")
             }
+            Self::TimedOut => formatter.write_str("the clipboard owner did not respond in time"),
         }
     }
 }
@@ -3183,6 +3218,22 @@ impl ClipboardItem {
         }
     }
 
+    /// Returns the union of this item's entry types without cloning or decoding payloads.
+    ///
+    /// Types are reported even for empty payloads. An item with no entries returns an empty set.
+    pub fn content_types(&self) -> ClipboardContentTypes {
+        self.entries
+            .iter()
+            .fold(ClipboardContentTypes::empty(), |types, entry| {
+                types
+                    | match entry {
+                        ClipboardEntry::String(_) => ClipboardContentTypes::TEXT,
+                        ClipboardEntry::Image(_) => ClipboardContentTypes::IMAGE,
+                        ClipboardEntry::ExternalPaths(_) => ClipboardContentTypes::EXTERNAL_PATHS,
+                    }
+            })
+    }
+
     /// Concatenates together all the ClipboardString entries in the item.
     /// Returns None if there were no ClipboardString entries.
     pub fn text(&self) -> Option<String> {
@@ -3195,14 +3246,16 @@ impl ClipboardItem {
         }
 
         if answer.is_empty() {
-            for entry in self.entries.iter() {
-                if let ClipboardEntry::ExternalPaths(paths) = entry {
-                    for path in &paths.0 {
-                        use std::fmt::Write as _;
-                        _ = write!(answer, "{}", path.display());
-                    }
-                }
-            }
+            answer = self
+                .entries
+                .iter()
+                .flat_map(|entry| match entry {
+                    ClipboardEntry::ExternalPaths(paths) => paths.paths(),
+                    _ => &[],
+                })
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
         }
 
         if !answer.is_empty() {
@@ -3816,6 +3869,57 @@ mod frame_signal_tests {
         let signal = PlatformFrameSignal::new();
         signal.record(Instant::now(), FrameRequestSource::LocalSchedule);
         assert_eq!(signal.take(), None);
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+    use crate::ExternalPaths;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_clipboard_item_text_joins_paths_with_newlines() {
+        let item = ClipboardItem {
+            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
+                [PathBuf::from("first.txt"), PathBuf::from("second.txt")]
+                    .into_iter()
+                    .collect(),
+            ))],
+        };
+        assert_eq!(item.text().as_deref(), Some("first.txt\nsecond.txt"));
+    }
+
+    #[test]
+    fn test_clipboard_item_content_types() {
+        let text = ClipboardEntry::from("text".to_string());
+        let image = ClipboardEntry::Image(Image::empty());
+        let paths = ClipboardEntry::ExternalPaths(ExternalPaths(
+            [PathBuf::from("/example.txt")].into_iter().collect(),
+        ));
+
+        for (entries, expected) in [
+            (vec![text.clone()], ClipboardContentTypes::TEXT),
+            (vec![image.clone()], ClipboardContentTypes::IMAGE),
+            (vec![paths.clone()], ClipboardContentTypes::EXTERNAL_PATHS),
+            (
+                vec![text, image, paths],
+                ClipboardContentTypes::TEXT
+                    | ClipboardContentTypes::IMAGE
+                    | ClipboardContentTypes::EXTERNAL_PATHS,
+            ),
+            (vec![], ClipboardContentTypes::empty()),
+            (
+                vec![ClipboardEntry::from(String::new())],
+                ClipboardContentTypes::TEXT,
+            ),
+            (
+                vec![ClipboardEntry::ExternalPaths(ExternalPaths::default())],
+                ClipboardContentTypes::EXTERNAL_PATHS,
+            ),
+        ] {
+            assert_eq!(ClipboardItem { entries }.content_types(), expected);
+        }
     }
 }
 

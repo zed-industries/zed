@@ -1034,6 +1034,10 @@ impl Platform for WindowsPlatform {
         read_from_clipboard()
     }
 
+    fn clipboard_content_types(&self) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        Task::ready(Ok(clipboard_content_types()))
+    }
+
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
         // CredWriteW rejects larger blobs with the opaque RPC error
         // 0x800706F7 "The stub received bad data", so fail with a clear
@@ -1919,8 +1923,8 @@ unsafe fn username_and_password(credential: &CREDENTIALW) -> Result<(String, Vec
 mod tests {
     use std::ffi::{OsStr, OsString};
 
-    use crate::{read_from_clipboard, write_to_clipboard};
-    use gpui::ClipboardItem;
+    use crate::{clipboard_content_types, read_from_clipboard, write_to_clipboard};
+    use gpui::{ClipboardContentTypes, ClipboardItem, Image, ImageFormat};
     use windows::Win32::Security::Credentials::{
         CRED_PERSIST_SESSION, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree, CredReadW,
         CredWriteW,
@@ -2002,6 +2006,7 @@ mod tests {
     fn test_clipboard() {
         let item = ClipboardItem::new_string("你好，我是张小白".to_string());
         write_to_clipboard(item.clone());
+        assert_eq!(clipboard_content_types(), ClipboardContentTypes::TEXT);
         assert_eq!(read_from_clipboard(), Some(item));
 
         let item = ClipboardItem::new_string("12345".to_string());
@@ -2022,5 +2027,12 @@ mod tests {
                 vec![12],
             )),
         );
+
+        let image = Image::from_bytes(
+            ImageFormat::Svg,
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>"#.to_vec(),
+        );
+        write_to_clipboard(ClipboardItem::new_image(&image));
+        assert_eq!(clipboard_content_types(), ClipboardContentTypes::IMAGE);
     }
 }

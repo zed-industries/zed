@@ -22,7 +22,6 @@ use collections::HashMap;
 use filedescriptor::Pipe;
 use gpui_util::ResultExt as _;
 use http_client::Url;
-use smallvec::SmallVec;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
 use wayland_client::event_created_child;
@@ -91,7 +90,7 @@ use crate::linux::{
     DOUBLE_CLICK_INTERVAL, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT, SCROLL_LINES,
     capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
     keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, new_xkb_context,
-    open_uri_internal, read_fd_with_timeout, reveal_path_internal,
+    open_uri_internal, parse_uri_list, read_fd_with_timeout, reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
@@ -102,13 +101,13 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, ExternalDragPayload,
-    FileDragPaths, FileDropEvent, ForegroundExecutor, GraphicalEnvironment, KeyDownEvent,
-    KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta,
-    ScrollEvent, ScrollSource, SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind,
-    WindowParams, point, px, size,
+    AnyWindowHandle, Bounds, Capslock, ClipboardContentTypes, ClipboardReadError, CursorStyle,
+    DevicePixels, ExternalDragPayload, FileDragPaths, FileDropEvent, ForegroundExecutor,
+    GraphicalEnvironment, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
+    Pixels, PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout,
+    PlatformWindow, Point, ScrollDelta, ScrollEvent, ScrollSource, SharedString, Size, Task,
+    TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -1491,6 +1490,12 @@ impl WaylandConnection {
 
     pub(crate) fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
         self.0.borrow_mut().clipboard.read()
+    }
+
+    pub(crate) fn clipboard_content_types(
+        &self,
+    ) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        Task::ready(Ok(self.0.borrow().clipboard.content_types()))
     }
 
     pub(crate) fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -2932,11 +2937,11 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let fd = pipe.read;
                     drop(pipe.write);
 
-                    let read_task = state.common.borrow().background_executor.spawn(async {
-                        let buffer = read_fd_with_timeout(fd, PIPE_READ_TIMEOUT)?;
-                        let text = String::from_utf8(buffer)?;
-                        anyhow::Ok(text)
-                    });
+                    let read_task = state
+                        .common
+                        .borrow()
+                        .background_executor
+                        .spawn(async { read_fd_with_timeout(fd, PIPE_READ_TIMEOUT) });
 
                     let this = this.clone();
                     state
@@ -2953,17 +2958,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 }
                             };
 
-                            let paths: SmallVec<[_; 2]> = file_list
-                                .lines()
-                                .filter_map(|path| Url::parse(path).log_err())
-                                .filter_map(|url| match url.to_file_path() {
-                                    Ok(url) => Some(url),
-                                    Err(()) => {
-                                        log::error!("Failed turn {url:?} into a file path");
-                                        None
-                                    }
-                                })
-                                .collect();
+                            let paths = parse_uri_list(&file_list);
                             let position = Point::new(x.into(), y.into());
 
                             // Prevent dropping text from other programs.
@@ -3214,6 +3209,7 @@ impl Dispatch<XdgDialogV1, ()> for WaylandClientStatePtr {
 
 #[cfg(test)]
 mod tests {
+    use smallvec::SmallVec;
     use std::cell::Cell;
 
     use super::*;

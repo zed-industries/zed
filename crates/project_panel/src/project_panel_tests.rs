@@ -8,7 +8,7 @@ use git::{
 };
 use gpui::{
     AnyWindowHandle, Empty, Entity, InputEvent as _, KeyDownEvent, Keystroke, Size, TestAppContext,
-    VisualTestContext,
+    TestClipboardContentTypes, VisualTestContext,
 };
 use itertools::iproduct;
 use language::{
@@ -2441,6 +2441,115 @@ async fn test_paste_external_paths(cx: &mut gpui::TestAppContext) {
             "          new_file.rs  <== selected",
         ],
     );
+}
+
+#[gpui::test]
+async fn test_context_menu_paste_state(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_files(1, DockSide::Left, cx).await;
+    let cx = &mut cx;
+    select_path(&panel, "root/file_0.txt", cx);
+
+    let text = GpuiClipboardEntry::from("clipboard text".to_string());
+    let paths = GpuiClipboardEntry::ExternalPaths(ExternalPaths(smallvec![PathBuf::from(path!(
+        "/external/file.txt"
+    ))]));
+    let unavailable = TestClipboardContentTypes::Result(Err(ClipboardReadError::Unavailable));
+    for (response, entries, paste_disabled, expected_reads) in [
+        (TestClipboardContentTypes::FromClipboard, vec![], true, 0),
+        (
+            TestClipboardContentTypes::FromClipboard,
+            vec![text.clone()],
+            true,
+            0,
+        ),
+        (
+            TestClipboardContentTypes::FromClipboard,
+            vec![paths.clone()],
+            false,
+            0,
+        ),
+        (
+            TestClipboardContentTypes::FromClipboard,
+            vec![text.clone(), paths.clone()],
+            false,
+            0,
+        ),
+        (unavailable.clone(), vec![paths], false, 1),
+        (unavailable, vec![text.clone()], true, 1),
+        (
+            TestClipboardContentTypes::Result(Err(ClipboardReadError::TimedOut)),
+            vec![text],
+            false,
+            0,
+        ),
+    ] {
+        cx.write_to_clipboard(ClipboardItem { entries });
+        cx.set_clipboard_content_types_response(response);
+        let reads_before = cx.clipboard_read_count();
+        let menu = deploy_context_menu_for_selection(&panel, cx);
+        assert_eq!(
+            menu.read_with(cx, |menu, _| menu.is_action_disabled(&Paste)),
+            Some(paste_disabled)
+        );
+        assert_eq!(cx.clipboard_read_count() - reads_before, expected_reads);
+    }
+
+    // Copying also writes the paths to the system clipboard as text, so only the internal
+    // entries keep Paste enabled here.
+    cx.set_clipboard_content_types_response(TestClipboardContentTypes::FromClipboard);
+    panel.update_in(cx, |panel, window, cx| panel.copy(&Copy, window, cx));
+    let menu = deploy_context_menu_for_selection(&panel, cx);
+    assert_eq!(
+        menu.read_with(cx, |menu, _| menu.is_action_disabled(&Paste)),
+        Some(false)
+    );
+}
+
+#[gpui::test]
+async fn test_context_menu_pending_clipboard_query(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (panel, mut cx) = open_panel_with_files(1, DockSide::Left, cx).await;
+    let cx = &mut cx;
+    select_path(&panel, "root/file_0.txt", cx);
+    cx.set_clipboard_content_types_response(TestClipboardContentTypes::Pending);
+
+    let menu = deploy_context_menu_for_selection(&panel, cx);
+    assert_eq!(
+        menu.read_with(cx, |menu, _| menu.is_action_disabled(&Paste)),
+        Some(false)
+    );
+    assert_eq!(cx.pending_clipboard_content_types_queries(), 1);
+    cx.resolve_clipboard_content_types_queries(Ok(ClipboardContentTypes::TEXT));
+    cx.run_until_parked();
+    assert_eq!(
+        menu.read_with(cx, |menu, _| menu.is_action_disabled(&Paste)),
+        Some(true)
+    );
+
+    let replaced_menu = deploy_context_menu_for_selection(&panel, cx);
+    cx.run_until_parked();
+    let menu = deploy_context_menu_for_selection(&panel, cx);
+    cx.resolve_clipboard_content_types_queries(Ok(ClipboardContentTypes::TEXT));
+    cx.run_until_parked();
+    assert_eq!(
+        menu.read_with(cx, |menu, _| menu.is_action_disabled(&Paste)),
+        Some(true)
+    );
+    assert_eq!(
+        replaced_menu.read_with(cx, |menu, _| menu.is_action_disabled(&Paste)),
+        Some(false)
+    );
+
+    let menu = deploy_context_menu_for_selection(&panel, cx);
+    panel.update_in(cx, |panel, window, cx| panel.copy(&Copy, window, cx));
+    cx.resolve_clipboard_content_types_queries(Ok(ClipboardContentTypes::TEXT));
+    cx.run_until_parked();
+    assert_eq!(
+        menu.read_with(cx, |menu, _| menu.is_action_disabled(&Paste)),
+        Some(false)
+    );
+    assert_eq!(cx.clipboard_read_count(), 0);
 }
 
 #[gpui::test]
@@ -11365,6 +11474,30 @@ async fn test_hide_hidden_entries(cx: &mut gpui::TestAppContext) {
         &expanded,
         "With hide_hidden=false, deeply nested hidden directories and their contents should be visible"
     );
+}
+
+fn deploy_context_menu_for_selection(
+    panel: &Entity<ProjectPanel>,
+    cx: &mut VisualTestContext,
+) -> Entity<ContextMenu> {
+    panel.update_in(cx, |panel, window, cx| {
+        let entry_id = panel
+            .selection
+            .expect("an entry should be selected")
+            .entry_id;
+        panel.deploy_context_menu(
+            ContextMenuPlacement::AtMouse(point(px(1.), px(1.))),
+            entry_id,
+            window,
+            cx,
+        );
+        panel
+            .context_menu
+            .as_ref()
+            .expect("context menu should be open")
+            .menu
+            .clone()
+    })
 }
 
 pub(crate) fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestContext) {

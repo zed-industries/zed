@@ -10,12 +10,12 @@ use ctor::ctor;
 use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
 use gpui::{
-    Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
-    CursorStyle, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
-    OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, PowerMode, Result, SystemMenuType,
-    Task, ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
-    popup::PopupNotSupportedError,
+    Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor,
+    ClipboardContentTypes, ClipboardItem, ClipboardReadError, CursorStyle, ForegroundExecutor,
+    GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, PowerMode, Result, SystemMenuType, Task, ThermalState, WindowAppearance,
+    WindowKind, WindowParams, WindowingRequest, popup::PopupNotSupportedError,
 };
 use gpui_apple::{
     keychain,
@@ -1206,6 +1206,11 @@ impl Platform for MacPlatform {
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
         state.general_pasteboard.read()
+    }
+
+    fn clipboard_content_types(&self) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        let state = self.0.lock();
+        Task::ready(Ok(state.general_pasteboard.content_types()))
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
