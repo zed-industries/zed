@@ -177,15 +177,11 @@ fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {
     return to_device_position_impl(position);
 }
 
-fn to_device_position_transformed_impl(position: vec2<f32>, transform: TransformationMatrix) -> vec4<f32> {
+fn to_device_position_transformed(unit_vertex: vec2<f32>, bounds: Bounds, transform: TransformationMatrix) -> vec4<f32> {
+    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
     //Note: Rust side stores it as row-major, so transposing here
     let transformed = transpose(transform.rotation_scale) * position + transform.translation;
     return to_device_position_impl(transformed);
-}
-
-fn to_device_position_transformed(unit_vertex: vec2<f32>, bounds: Bounds, transform: TransformationMatrix) -> vec4<f32> {
-    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
-    return to_device_position_transformed_impl(position, transform);
 }
 
 fn to_tile_position(unit_vertex: vec2<f32>, tile: AtlasTile) -> vec2<f32> {
@@ -216,23 +212,10 @@ fn clip_to_mask(unit_vertex: vec2<f32>, bounds: Bounds, mask: Bounds) -> Clipped
     let corner = min(bounds.origin + bounds.size, mask.origin + mask.size);
     let size = max(corner - origin, vec2<f32>(0.0));
 
-    let position = origin + unit_vertex * size;
-    return ClippedVertex(position, (position - bounds.origin) / bounds.size);
-}
-
-fn transform_is_axis_aligned(transform: TransformationMatrix) -> bool {
-    let m = transform.rotation_scale;
-    return m[0][1] == 0.0 && m[1][0] == 0.0 && m[0][0] != 0.0 && m[1][1] != 0.0;
-}
-
-// Maps the screen-space mask into pre-transform space. Only valid for
-// axis-aligned transformations.
-fn mask_in_transform_space(mask: Bounds, transform: TransformationMatrix) -> Bounds {
-    let scale = vec2<f32>(transform.rotation_scale[0][0], transform.rotation_scale[1][1]);
-    let p0 = (mask.origin - transform.translation) / scale;
-    let p1 = (mask.origin + mask.size - transform.translation) / scale;
-    let origin = min(p0, p1);
-    return Bounds(origin, max(p0, p1) - origin);
+    var result: ClippedVertex;
+    result.position = origin + unit_vertex * size;
+    result.unit_vertex = (result.position - bounds.origin) / bounds.size;
+    return result;
 }
 
 // https://gamedev.stackexchange.com/questions/92015/optimized-linear-to-srgb-glsl
@@ -571,8 +554,8 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     let quad = load_quad(instance_id);
 
     var out = QuadVarying();
-    let vertex = clip_to_mask(unit_vertex, quad.bounds, quad.content_mask);
-    out.position = to_device_position_impl(vertex.position);
+    let clipped = clip_to_mask(unit_vertex, quad.bounds, quad.content_mask);
+    out.position = to_device_position_impl(clipped.position);
 
     let gradient = prepare_gradient_color(
         quad.background.tag,
@@ -1009,8 +992,8 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
     }
 
     var out = ShadowVarying();
-    let vertex = clip_to_mask(unit_vertex, geometry, shadow.content_mask);
-    out.position = to_device_position_impl(vertex.position);
+    let clipped = clip_to_mask(unit_vertex, geometry, shadow.content_mask);
+    out.position = to_device_position_impl(clipped.position);
     out.color = hsla_to_rgba(shadow.color);
     out.shadow_id = instance_id;
     return out;
@@ -1075,7 +1058,8 @@ struct PathRasterizationVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) st_position: vec2<f32>,
     @location(1) @interpolate(flat) vertex_id: u32,
-    @location(2) clip_distances: vec4<f32>,
+    //TODO: use `clip_distance` once Naga supports it
+    @location(3) clip_distances: vec4<f32>,
 }
 
 @vertex
@@ -1183,8 +1167,8 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
     let underline = load_underline(instance_id);
 
     var out = UnderlineVarying();
-    let vertex = clip_to_mask(unit_vertex, underline.bounds, underline.content_mask);
-    out.position = to_device_position_impl(vertex.position);
+    let clipped = clip_to_mask(unit_vertex, underline.bounds, underline.content_mask);
+    out.position = to_device_position_impl(clipped.position);
     out.color = hsla_to_rgba(underline.color);
     out.underline_id = instance_id;
     return out;
@@ -1234,7 +1218,7 @@ struct MonoSpriteVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) color: vec4<f32>,
-    @location(2) clip_distances: vec4<f32>,
+    @location(3) clip_distances: vec4<f32>,
 }
 
 @vertex
@@ -1243,20 +1227,11 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     let sprite = load_mono_sprite(instance_id);
 
     var out = MonoSpriteVarying();
-    if (transform_is_axis_aligned(sprite.transformation)) {
-        let mask = mask_in_transform_space(sprite.content_mask, sprite.transformation);
-        let vertex = clip_to_mask(unit_vertex, sprite.bounds, mask);
-        out.position = to_device_position_transformed_impl(vertex.position, sprite.transformation);
-        out.tile_position = to_tile_position(vertex.unit_vertex, sprite.tile);
-        out.clip_distances = vec4<f32>(1.0);
-    } else {
-        // A rotated sprite intersected with the axis-aligned mask isn't
-        // representable as a quad, so fall back to per-fragment clipping.
-        out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
-        out.tile_position = to_tile_position(unit_vertex, sprite.tile);
-        out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
-    }
+    out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+
+    out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
+    out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     return out;
 }
 
@@ -1265,6 +1240,7 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
     let alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, gamma_params.grayscale_enhanced_contrast, gamma_params.gamma_ratios);
 
+    // Alpha clip after using the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
     }
@@ -1296,11 +1272,11 @@ struct PolySpriteVarying {
 fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PolySpriteVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = load_poly_sprite(instance_id);
-    let vertex = clip_to_mask(unit_vertex, sprite.bounds, sprite.content_mask);
 
     var out = PolySpriteVarying();
-    out.position = to_device_position_impl(vertex.position);
-    out.tile_position = to_tile_position(vertex.unit_vertex, sprite.tile);
+    let clipped = clip_to_mask(unit_vertex, sprite.bounds, sprite.content_mask);
+    out.position = to_device_position_impl(clipped.position);
+    out.tile_position = to_tile_position(clipped.unit_vertex, sprite.tile);
     out.sprite_id = instance_id;
     return out;
 }
@@ -1346,11 +1322,12 @@ struct SurfaceVarying {
 @vertex
 fn vs_surface(@builtin(vertex_index) vertex_id: u32) -> SurfaceVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let vertex = clip_to_mask(unit_vertex, surface_locals.bounds, surface_locals.content_mask);
 
     var out = SurfaceVarying();
-    out.position = to_device_position_impl(vertex.position);
-    out.texture_position = vertex.unit_vertex;
+    let clipped = clip_to_mask(unit_vertex, surface_locals.bounds, surface_locals.content_mask);
+    out.position = to_device_position_impl(clipped.position);
+    // The whole texture is copied, so sample at the vertex's position within the unclipped bounds.
+    out.texture_position = clipped.unit_vertex;
     return out;
 }
 
