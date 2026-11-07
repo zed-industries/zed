@@ -739,6 +739,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg_attr(not(debug_assertions), ignore)]
     async fn tabs_separate_rows_and_keep_footer_visible(cx: &mut gpui::TestAppContext) {
         let app_state = cx.update(AppState::test);
         let fs = app_state.fs.clone();
