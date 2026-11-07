@@ -8,7 +8,7 @@ use gpui::{
     MissingGlyphSink, Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
     SUBPIXEL_VARIANTS_Y, ShapedGlyph, Size, TextRenderingMode, point, px, size,
 };
-use gpui_wgpu::CosmicTextSystem;
+use gpui_cosmic_text::CosmicTextSystem;
 use parking_lot::RwLock;
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
