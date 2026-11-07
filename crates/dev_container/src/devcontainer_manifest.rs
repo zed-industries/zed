@@ -3467,7 +3467,7 @@ fn normalize_label_path(path: &str) -> String {
 #[cfg(test)]
 mod test {
     use std::{
-        collections::HashMap,
+        collections::{HashMap, VecDeque},
         ffi::OsStr,
         path::{Path, PathBuf},
         process::{ExitStatus, Output},
@@ -7703,13 +7703,19 @@ RUN echo $RUBY_VERSION2
 
     pub(crate) struct TestCommandRunner {
         commands_recorded: Mutex<Vec<TestCommand>>,
+        results: Mutex<VecDeque<Result<Output, std::io::Error>>>,
     }
 
     impl TestCommandRunner {
         fn new() -> Self {
             Self {
                 commands_recorded: Mutex::new(Vec::new()),
+                results: Mutex::new(VecDeque::new()),
             }
+        }
+
+        fn push_result(&self, result: Result<Output, std::io::Error>) {
+            self.results.lock().expect("poisoned").push_back(result);
         }
 
         fn commands_by_program(&self, program: &str) -> Vec<TestCommand> {
@@ -7725,15 +7731,20 @@ RUN echo $RUBY_VERSION2
     #[async_trait]
     impl CommandRunner for TestCommandRunner {
         async fn run_command(&self, command: &mut Command) -> Result<Output, std::io::Error> {
-            let mut record = self.commands_recorded.lock().expect("poisoned");
+            {
+                let mut record = self.commands_recorded.lock().expect("poisoned");
+                record.push(TestCommand {
+                    program: command.get_program().display().to_string(),
+                    args: command
+                        .get_args()
+                        .map(|a| a.display().to_string())
+                        .collect(),
+                });
+            }
 
-            record.push(TestCommand {
-                program: command.get_program().display().to_string(),
-                args: command
-                    .get_args()
-                    .map(|a| a.display().to_string())
-                    .collect(),
-            });
+            if let Some(result) = self.results.lock().expect("poisoned").pop_front() {
+                return result;
+            }
 
             Ok(Output {
                 status: ExitStatus::default(),
@@ -7741,6 +7752,72 @@ RUN echo $RUBY_VERSION2
                 stderr: vec![],
             })
         }
+    }
+
+    #[cfg(unix)]
+    fn failed_exit_status() -> ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        ExitStatus::from_raw(1 << 8)
+    }
+
+    #[cfg(windows)]
+    fn failed_exit_status() -> ExitStatus {
+        use std::os::windows::process::ExitStatusExt;
+        ExitStatus::from_raw(1)
+    }
+
+    fn failed_initialize_output() -> Output {
+        Output {
+            status: failed_exit_status(),
+            stdout: Vec::new(),
+            stderr: b"initialize command failed".to_vec(),
+        }
+    }
+
+    #[gpui::test]
+    async fn failed_initialize_command_failure_propagates_from_build_and_run(
+        cx: &mut TestAppContext,
+    ) {
+        let (test_dependencies, mut devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"
+                {
+                    "image": "mcr.microsoft.com/devcontainers/typescript-node:1-18-bookworm",
+                    "initializeCommand": ["sh", "-c", "exit 1"]
+                }
+                "#,
+        )
+        .await
+        .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        test_dependencies
+            .command_runner
+            .push_result(Ok(failed_initialize_output()));
+
+        let result = devcontainer_manifest.build_and_run().await;
+
+        assert!(matches!(
+            result,
+            Err(DevContainerError::DevContainerScriptsFailed)
+        ));
+        assert_eq!(
+            test_dependencies
+                .command_runner
+                .commands_by_program("sh")
+                .len(),
+            1,
+            "only the failing initialize command should be executed"
+        );
+        assert!(
+            test_dependencies
+                .docker
+                .exec_commands_recorded
+                .lock()
+                .expect("poisoned")
+                .is_empty(),
+            "no remote lifecycle script should run after failed initialization"
+        );
     }
 
     fn fake_http_client() -> Arc<dyn HttpClient> {
