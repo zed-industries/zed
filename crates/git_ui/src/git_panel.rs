@@ -5308,65 +5308,69 @@ impl GitPanel {
     }
 
     pub fn create_pull_request(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let result = (|| -> anyhow::Result<()> {
-            let repo = self
-                .active_repository
-                .clone()
-                .ok_or_else(|| anyhow::anyhow!("No active repository"))?;
-
-            let (branch, remote_origin, remote_upstream) = {
-                let repository = repo.read(cx);
-                (
-                    repository.branch.clone(),
-                    repository.remote_origin_url.clone(),
-                    repository.remote_upstream_url.clone(),
-                )
-            };
-
-            let branch = branch.ok_or_else(|| anyhow::anyhow!("No active branch"))?;
-            let source_branch = branch
-                .upstream
-                .as_ref()
-                .filter(|upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(_)))
-                .and_then(|upstream| upstream.branch_name())
-                .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
-            let source_branch = source_branch.to_string();
-
-            let remote_url = branch
-                .upstream
-                .as_ref()
-                .and_then(|upstream| match upstream.remote_name() {
-                    Some("upstream") => remote_upstream.as_deref(),
-                    Some(_) => remote_origin.as_deref(),
-                    None => None,
-                })
-                .or(remote_origin.as_deref())
-                .or(remote_upstream.as_deref())
-                .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
-            let remote_url = remote_url.to_string();
-
-            let provider_registry = GitHostingProviderRegistry::global(cx);
-            let Some((provider, parsed_remote)) =
-                git::parse_git_remote_url(provider_registry, &remote_url)
-            else {
-                return Err(anyhow::anyhow!("Unsupported remote URL: {}", remote_url));
-            };
-
-            let Some(url) = provider.build_create_pull_request_url(&parsed_remote, &source_branch)
-            else {
-                return Err(anyhow::anyhow!("Unable to construct pull request URL"));
-            };
-
-            cx.open_url(url.as_str());
-            Ok(())
-        })();
-
-        if let Err(err) = result {
-            log::error!("Error while creating pull request {:?}", err);
-            cx.defer_in(window, |panel, _window, cx| {
-                panel.show_error_toast("create pull request", err, cx);
-            });
+        match self.create_pull_request_url(cx) {
+            Ok(url) => cx.open_url(&url),
+            Err(err) => {
+                log::error!("Error while creating pull request {:?}", err);
+                cx.defer_in(window, |panel, _window, cx| {
+                    panel.show_error_toast("create pull request", err, cx);
+                });
+            }
         }
+    }
+
+    /// Builds the URL for creating a pull request for the current branch using
+    /// the repository's git hosting provider. Used both by the
+    /// `CreatePullRequest` action and the post-push toast.
+    fn create_pull_request_url(&self, cx: &App) -> anyhow::Result<String> {
+        let repo = self
+            .active_repository
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("No active repository"))?;
+
+        let (branch, remote_origin, remote_upstream) = {
+            let repository = repo.read(cx);
+            (
+                repository.branch.clone(),
+                repository.remote_origin_url.clone(),
+                repository.remote_upstream_url.clone(),
+            )
+        };
+
+        let branch = branch.ok_or_else(|| anyhow::anyhow!("No active branch"))?;
+        let source_branch = branch
+            .upstream
+            .as_ref()
+            .filter(|upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(_)))
+            .and_then(|upstream| upstream.branch_name())
+            .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
+        let source_branch = source_branch.to_string();
+
+        let remote_url = branch
+            .upstream
+            .as_ref()
+            .and_then(|upstream| match upstream.remote_name() {
+                Some("upstream") => remote_upstream.as_deref(),
+                Some(_) => remote_origin.as_deref(),
+                None => None,
+            })
+            .or(remote_origin.as_deref())
+            .or(remote_upstream.as_deref())
+            .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
+        let remote_url = remote_url.to_string();
+
+        let provider_registry = GitHostingProviderRegistry::global(cx);
+        let Some((provider, parsed_remote)) =
+            git::parse_git_remote_url(provider_registry, &remote_url)
+        else {
+            return Err(anyhow::anyhow!("Unsupported remote URL: {}", remote_url));
+        };
+
+        let url = provider
+            .build_create_pull_request_url(&parsed_remote, &source_branch)
+            .ok_or_else(|| anyhow::anyhow!("Unable to construct pull request URL"))?;
+
+        Ok(url.to_string())
     }
 
     fn askpass_delegate(
@@ -6674,6 +6678,7 @@ impl GitPanel {
         };
 
         let is_push = matches!(action, RemoteAction::Push(_, _));
+        let git_panel = cx.weak_entity();
 
         workspace.update(cx, |workspace, cx| {
             let SuccessMessage { message, style } = remote_output::format_output(&action, info);
@@ -6688,7 +6693,24 @@ impl GitPanel {
                         .color(Color::Muted),
                 );
                 match (style, is_push) {
-                    (PushPrLink { label, url }, _) => {
+                    (
+                        CreatePullRequest {
+                            label,
+                            fallback_url,
+                        },
+                        _,
+                    ) => this.action(label, move |_window, cx| {
+                        // Prefer the URL built from the git hosting provider,
+                        // matching the `CreatePullRequest` action, and only
+                        // fall back to the link printed by the remote.
+                        let url = git_panel
+                            .read_with(cx, |panel, cx| panel.create_pull_request_url(cx))
+                            .ok()
+                            .and_then(|url| url.log_err())
+                            .unwrap_or_else(|| fallback_url.clone());
+                        cx.open_url(&url);
+                    }),
+                    (OpenPullRequest { label, url }, _) => {
                         this.action(label, move |_window, cx| cx.open_url(&url))
                     }
                     (Toast | ToastWithLog { .. }, true) => {
