@@ -235,7 +235,9 @@ impl StagedDiff {
         let mut unstage_all = false;
         self.workspace
             .read_with(cx, |workspace, cx| {
-                if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+                if let Some(git_panel) =
+                    GitPanel::panel_for_repository(workspace, diff.repo(cx), cx)
+                {
                     unstage_all = git_panel.read(cx).can_unstage_all();
                 }
             })
@@ -534,9 +536,12 @@ impl StagedDiffToolbar {
     }
 
     fn unstage_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let repo = self
+            .staged_diff(cx)
+            .and_then(|item| item.read(cx).diff.read(cx).repo(cx));
         self.workspace
             .update(cx, |workspace, cx| {
-                let Some(panel) = workspace.panel::<GitPanel>(cx) else {
+                let Some(panel) = GitPanel::panel_for_repository(workspace, repo, cx) else {
                     return;
                 };
                 panel.update(cx, |panel, cx| {

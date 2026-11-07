@@ -2450,6 +2450,7 @@ impl GitStore {
                     self.display_diffs.remove(&repo_id);
                     self.repositories.remove(&repo_id);
                     self.worktree_ids.remove(&repo_id);
+                    cx.emit(GitStoreEvent::RepositoryRemoved(repo_id));
                     if let Some(updates_tx) =
                         downstream.as_ref().map(|downstream| &downstream.updates_tx)
                     {
@@ -2664,6 +2665,7 @@ impl GitStore {
             }
             self.display_diffs.remove(&id);
             self.repositories.remove(&id);
+            cx.emit(GitStoreEvent::RepositoryRemoved(id));
             if let Some(updates_tx) = updates_tx.as_ref() {
                 updates_tx
                     .unbounded_send(DownstreamUpdate::RemoveRepository(id))
@@ -6932,6 +6934,12 @@ impl Repository {
                 let Some(this) = this.upgrade() else {
                     bail!("git store was dropped");
                 };
+                // Another queued opener may have created the buffer since this job was submitted.
+                if let Some(buffer) =
+                    this.read_with(&cx, |this, _| this.commit_message_buffer.clone())
+                {
+                    return Ok(buffer);
+                }
                 match state {
                     RepositoryState::Local(..) => {
                         this.update(&mut cx, |_, cx| {
