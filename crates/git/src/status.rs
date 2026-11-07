@@ -544,7 +544,8 @@ impl FromStr for TreeDiff {
                 .ok_or_else(|| anyhow!("expected to find new_sha"))?;
             let status = fields
                 .next()
-                .and_then(|s| {\n                    if s.len() == 1 {
+                .and_then(|s| {
+                    if s.len() == 1 {
                         s.as_bytes().first()
                     } else {
                         None
