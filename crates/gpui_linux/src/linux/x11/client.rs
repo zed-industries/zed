@@ -159,13 +159,13 @@ pub struct Xdnd {
     position: Point<Pixels>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct PointerDeviceState {
     horizontal: ScrollAxisState,
     vertical: ScrollAxisState,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 struct ScrollAxisState {
     /// Valuator number for looking up this axis's scroll value.
     valuator_number: Option<u16>,
@@ -407,8 +407,12 @@ impl X11Connection {
             supports_xinput_gestures,
         );
 
-        let pointer_device_states =
-            current_pointer_device_states(&xcb_connection, &BTreeMap::new()).unwrap_or_default();
+        let pointer_device_states = query_xinput_devices(&xcb_connection)
+            .map(|devices| pointer_device_states_from_devices(&devices))
+            .unwrap_or_default();
+        if pointer_device_states.is_empty() {
+            log::info!("Found no xinput mouse pointers.");
+        }
 
         let atoms = XcbAtoms::new(&xcb_connection)
             .context("Failed to get XCB atoms")?
@@ -1423,27 +1427,21 @@ impl X11Client {
                 }));
                 window.set_hovered(false);
             }
-            Event::XinputHierarchy(event) => {
+            Event::XinputHierarchy(_) => {
                 let mut state = self.0.borrow_mut();
-                // Temporarily use `state.pointer_device_states` to only store pointers that still have valid scroll values.
-                // Any change to a device invalidates its scroll values.
-                for info in event.infos {
-                    if is_pointer_device(info.type_) {
-                        state.pointer_device_states.remove(&info.deviceid);
-                    }
-                }
-                if let Some(pointer_device_states) = current_pointer_device_states(
-                    &state.xcb_connection,
-                    &state.pointer_device_states,
-                ) {
-                    state.pointer_device_states = pointer_device_states;
-                }
+                let devices = query_xinput_devices(&state.xcb_connection).unwrap_or_default();
+                update_pointer_device_states_after_hierarchy_change(
+                    &mut state.pointer_device_states,
+                    &devices,
+                );
             }
             Event::XinputDeviceChanged(event) => {
                 let mut state = self.0.borrow_mut();
-                if let Some(pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
-                    reset_pointer_device_scroll_positions(pointer);
-                }
+                update_pointer_device_state_after_device_change(
+                    &mut state.pointer_device_states,
+                    event.sourceid,
+                    &event.classes,
+                );
             }
             Event::XinputGesturePinchBegin(event) => {
                 let window = self.get_window(event.event)?;
@@ -2453,60 +2451,98 @@ fn xdnd_send_status(
     xcb_connection.flush().log_err();
 }
 
-/// Recomputes `pointer_device_states` by querying all pointer devices.
-/// When a device is present in `scroll_values_to_preserve`, its value for `ScrollAxisState.scroll_value` is used.
-fn current_pointer_device_states(
-    xcb_connection: &XCBConnection,
-    scroll_values_to_preserve: &BTreeMap<xinput::DeviceId, PointerDeviceState>,
-) -> Option<BTreeMap<xinput::DeviceId, PointerDeviceState>> {
-    let devices_query_result = get_reply(
+fn query_xinput_devices(xcb_connection: &XCBConnection) -> Option<Vec<xinput::XIDeviceInfo>> {
+    get_reply(
         || "Failed to query XInput devices",
         xcb_connection.xinput_xi_query_device(XINPUT_ALL_DEVICES),
     )
-    .log_err()?;
+    .log_err()
+    .map(|reply| reply.infos)
+}
 
-    let mut pointer_device_states = BTreeMap::new();
-    pointer_device_states.extend(
-        devices_query_result
-            .infos
-            .iter()
-            .filter(|info| is_pointer_device(info.type_))
-            .filter_map(|info| {
-                let scroll_data = info
-                    .classes
-                    .iter()
-                    .filter_map(|class| class.data.as_scroll())
-                    .copied()
-                    .rev()
-                    .collect::<Vec<_>>();
-                let old_state = scroll_values_to_preserve.get(&info.deviceid);
-                let old_horizontal = old_state.map(|state| &state.horizontal);
-                let old_vertical = old_state.map(|state| &state.vertical);
-                let horizontal = scroll_data
-                    .iter()
-                    .find(|data| data.scroll_type == xinput::ScrollType::HORIZONTAL)
-                    .map(|data| scroll_data_to_axis_state(data, old_horizontal));
-                let vertical = scroll_data
-                    .iter()
-                    .find(|data| data.scroll_type == xinput::ScrollType::VERTICAL)
-                    .map(|data| scroll_data_to_axis_state(data, old_vertical));
-                if horizontal.is_none() && vertical.is_none() {
-                    None
-                } else {
-                    Some((
-                        info.deviceid,
-                        PointerDeviceState {
-                            horizontal: horizontal.unwrap_or_else(Default::default),
-                            vertical: vertical.unwrap_or_else(Default::default),
-                        },
-                    ))
-                }
-            }),
-    );
-    if pointer_device_states.is_empty() {
-        log::error!("Found no xinput mouse pointers.");
+fn pointer_device_states_from_devices(
+    devices: &[xinput::XIDeviceInfo],
+) -> BTreeMap<xinput::DeviceId, PointerDeviceState> {
+    devices
+        .iter()
+        // The X server floats a device while it is disabled, for example around a suspend, and
+        // while a client holds an XI2 grab of that device, attaching it again without a hierarchy
+        // event when the grab ends. A floating device sends no events through device groups, so
+        // keeping it is harmless, and lets it scroll as soon as it is attached again.
+        .filter(|info| {
+            is_pointer_device(info.type_) || info.type_ == xinput::DeviceType::FLOATING_SLAVE
+        })
+        .filter_map(|info| {
+            let state = pointer_device_state_from_classes(&info.classes)?;
+            Some((info.deviceid, state))
+        })
+        .collect()
+}
+
+fn pointer_device_state_from_classes(
+    classes: &[xinput::DeviceClass],
+) -> Option<PointerDeviceState> {
+    let scroll_data = classes
+        .iter()
+        .filter_map(|class| class.data.as_scroll())
+        .copied()
+        .rev()
+        .collect::<Vec<_>>();
+    let horizontal = scroll_data
+        .iter()
+        .find(|data| data.scroll_type == xinput::ScrollType::HORIZONTAL)
+        .map(scroll_data_to_axis_state);
+    let vertical = scroll_data
+        .iter()
+        .find(|data| data.scroll_type == xinput::ScrollType::VERTICAL)
+        .map(scroll_data_to_axis_state);
+    if horizontal.is_none() && vertical.is_none() {
+        None
+    } else {
+        Some(PointerDeviceState {
+            horizontal: horizontal.unwrap_or_else(Default::default),
+            vertical: vertical.unwrap_or_else(Default::default),
+        })
     }
-    Some(pointer_device_states)
+}
+
+/// Updates `pointer_device_states` after a change to the XInput device hierarchy, given the
+/// devices queried after the change.
+///
+/// No scroll value is kept, since a device's scroll valuators can move without a hierarchy event
+/// flagging the device, as while a client's XI2 grab of the device floats it.
+fn update_pointer_device_states_after_hierarchy_change(
+    pointer_device_states: &mut BTreeMap<xinput::DeviceId, PointerDeviceState>,
+    devices: &[xinput::XIDeviceInfo],
+) {
+    let had_pointers = !pointer_device_states.is_empty();
+    *pointer_device_states = pointer_device_states_from_devices(devices);
+    // Hierarchy changes come in bursts, and to every window, so this is logged when the last
+    // pointer goes rather than for each change.
+    if had_pointers && pointer_device_states.is_empty() {
+        log::info!("Found no xinput mouse pointers.");
+    }
+}
+
+/// Updates the scroll state of a device from the classes that a device changed event reports.
+///
+/// The X server sends this event when a device's classes change, and when a device starts sending
+/// events through its device group after another device did, before its first event, so a device
+/// that is not known yet is added here. The scroll values are reset, since either change can move
+/// the device's scroll valuators.
+fn update_pointer_device_state_after_device_change(
+    pointer_device_states: &mut BTreeMap<xinput::DeviceId, PointerDeviceState>,
+    device_id: xinput::DeviceId,
+    classes: &[xinput::DeviceClass],
+) {
+    match pointer_device_state_from_classes(classes) {
+        Some(pointer) => {
+            pointer_device_states.insert(device_id, pointer);
+        }
+        None => {
+            pointer_device_states.remove(&device_id);
+        }
+    }
 }
 
 /// Returns true if the device is a pointer device. Does not include pointer device groups.
@@ -2514,14 +2550,11 @@ fn is_pointer_device(type_: xinput::DeviceType) -> bool {
     type_ == xinput::DeviceType::SLAVE_POINTER
 }
 
-fn scroll_data_to_axis_state(
-    data: &xinput::DeviceClassDataScroll,
-    old_axis_state_with_valid_scroll_value: Option<&ScrollAxisState>,
-) -> ScrollAxisState {
+fn scroll_data_to_axis_state(data: &xinput::DeviceClassDataScroll) -> ScrollAxisState {
     ScrollAxisState {
         valuator_number: Some(data.number),
         multiplier: SCROLL_LINES / fp3232_to_f32(data.increment),
-        scroll_value: old_axis_state_with_valid_scroll_value.and_then(|state| state.scroll_value),
+        scroll_value: None,
     }
 }
 
@@ -3211,5 +3244,258 @@ mod tests {
 
         // Assert pressing space while on the Czech layout still types a space.
         assert_eq!(key_event_state.key_get_utf8(space), " ");
+    }
+
+    fn scroll_class(
+        number: u16,
+        scroll_type: xinput::ScrollType,
+        increment: i32,
+    ) -> xinput::DeviceClass {
+        xinput::DeviceClass {
+            len: 0,
+            sourceid: 0,
+            data: xinput::DeviceClassData::Scroll(xinput::DeviceClassDataScroll {
+                number,
+                scroll_type,
+                flags: xinput::ScrollFlags::default(),
+                increment: xinput::Fp3232 {
+                    integral: increment,
+                    frac: 0,
+                },
+            }),
+        }
+    }
+
+    // The scroll classes of a mouse that scrolls horizontally with valuator 2 and vertically with
+    // valuator 3, by `increment` for each wheel click.
+    fn mouse_classes(increment: i32) -> Vec<xinput::DeviceClass> {
+        vec![
+            scroll_class(2, xinput::ScrollType::HORIZONTAL, increment),
+            scroll_class(3, xinput::ScrollType::VERTICAL, increment),
+        ]
+    }
+
+    fn device(
+        deviceid: xinput::DeviceId,
+        type_: xinput::DeviceType,
+        classes: Vec<xinput::DeviceClass>,
+    ) -> xinput::XIDeviceInfo {
+        xinput::XIDeviceInfo {
+            deviceid,
+            type_,
+            attachment: 0,
+            enabled: true,
+            name: Vec::new(),
+            classes,
+        }
+    }
+
+    fn mouse(deviceid: xinput::DeviceId, type_: xinput::DeviceType) -> xinput::XIDeviceInfo {
+        device(deviceid, type_, mouse_classes(1))
+    }
+
+    // A touchscreen, which has no scroll class.
+    fn touchscreen(deviceid: xinput::DeviceId) -> xinput::XIDeviceInfo {
+        device(deviceid, xinput::DeviceType::SLAVE_POINTER, Vec::new())
+    }
+
+    fn mouse_state(increment: f32, scroll_value: Option<f32>) -> PointerDeviceState {
+        let axis = |valuator_number| ScrollAxisState {
+            valuator_number: Some(valuator_number),
+            multiplier: SCROLL_LINES / increment,
+            scroll_value,
+        };
+        PointerDeviceState {
+            horizontal: axis(2),
+            vertical: axis(3),
+        }
+    }
+
+    // Handles motion from `device_id` that moves its vertical scroll valuator to `scroll_value`.
+    fn scroll(
+        pointer_device_states: &mut BTreeMap<xinput::DeviceId, PointerDeviceState>,
+        device_id: xinput::DeviceId,
+        scroll_value: i32,
+    ) -> Option<Point<f32>> {
+        let event = xinput::MotionEvent {
+            sourceid: device_id,
+            valuator_mask: vec![1 << 3],
+            axisvalues: vec![xinput::Fp3232 {
+                integral: scroll_value,
+                frac: 0,
+            }],
+            ..Default::default()
+        };
+        let pointer = pointer_device_states.get_mut(&device_id)?;
+        get_scroll_delta_and_update_state(pointer, &event)
+    }
+
+    fn vertical_scroll_delta(from: i32, to: i32) -> Option<Point<f32>> {
+        Some(Point::new(0.0, (from - to) as f32 * SCROLL_LINES))
+    }
+
+    #[test]
+    fn pointer_device_states_keep_floating_devices_that_can_scroll() {
+        let devices = [
+            // A device group takes the classes of the device that last sent events through it.
+            mouse(2, xinput::DeviceType::MASTER_POINTER),
+            mouse(10, xinput::DeviceType::SLAVE_POINTER),
+            // A disabled mouse, which the X server floats until it is enabled again.
+            xinput::XIDeviceInfo {
+                enabled: false,
+                ..mouse(11, xinput::DeviceType::FLOATING_SLAVE)
+            },
+            touchscreen(12),
+            device(13, xinput::DeviceType::SLAVE_KEYBOARD, Vec::new()),
+        ];
+
+        assert_eq!(
+            pointer_device_states_from_devices(&devices),
+            BTreeMap::from([(10, mouse_state(1.0, None)), (11, mouse_state(1.0, None))])
+        );
+    }
+
+    #[test]
+    fn disabled_mouse_stays_known_while_floating() {
+        let mut pointer_device_states =
+            pointer_device_states_from_devices(&[mouse(10, xinput::DeviceType::SLAVE_POINTER)]);
+        assert_eq!(scroll(&mut pointer_device_states, 10, 10), None);
+        assert_eq!(
+            scroll(&mut pointer_device_states, 10, 12),
+            vertical_scroll_delta(10, 12)
+        );
+
+        // The X server disables the devices one by one, and floats each one right after reporting
+        // that it was disabled, so the queries that follow find the mouse floating.
+        let disabled_mouse = xinput::XIDeviceInfo {
+            enabled: false,
+            ..mouse(10, xinput::DeviceType::FLOATING_SLAVE)
+        };
+        for _ in 0..3 {
+            update_pointer_device_states_after_hierarchy_change(
+                &mut pointer_device_states,
+                std::slice::from_ref(&disabled_mouse),
+            );
+            assert_eq!(
+                pointer_device_states,
+                BTreeMap::from([(10, mouse_state(1.0, None))])
+            );
+        }
+
+        // The X server attaches the mouse again before reporting that it was enabled.
+        update_pointer_device_states_after_hierarchy_change(
+            &mut pointer_device_states,
+            &[mouse(10, xinput::DeviceType::SLAVE_POINTER)],
+        );
+        assert_eq!(
+            pointer_device_states,
+            BTreeMap::from([(10, mouse_state(1.0, None))])
+        );
+
+        // The first scroll only records the position of the scroll valuator, which may have moved
+        // since the last one.
+        assert_eq!(scroll(&mut pointer_device_states, 10, 40), None);
+        assert_eq!(
+            scroll(&mut pointer_device_states, 10, 42),
+            vertical_scroll_delta(40, 42)
+        );
+    }
+
+    #[test]
+    fn mouse_floated_by_a_grab_scrolls_again_once_attached() {
+        let mut pointer_device_states = pointer_device_states_from_devices(&[
+            mouse(10, xinput::DeviceType::SLAVE_POINTER),
+            mouse(11, xinput::DeviceType::SLAVE_POINTER),
+        ]);
+        assert_eq!(scroll(&mut pointer_device_states, 10, 10), None);
+
+        // A client takes an XI2 grab of mouse 10, which floats it, while another device changes.
+        update_pointer_device_states_after_hierarchy_change(
+            &mut pointer_device_states,
+            &[
+                mouse(10, xinput::DeviceType::FLOATING_SLAVE),
+                mouse(11, xinput::DeviceType::SLAVE_POINTER),
+            ],
+        );
+        assert_eq!(
+            pointer_device_states.get(&10),
+            Some(&mouse_state(1.0, None))
+        );
+
+        // The grab ends, which attaches mouse 10 again without a hierarchy event. Its scroll
+        // valuator moved for the grabbing client, so the first scroll only records its position.
+        assert_eq!(scroll(&mut pointer_device_states, 10, 30), None);
+        assert_eq!(
+            scroll(&mut pointer_device_states, 10, 32),
+            vertical_scroll_delta(30, 32)
+        );
+    }
+
+    #[test]
+    fn hierarchy_change_forgets_removed_devices() {
+        let mut pointer_device_states = pointer_device_states_from_devices(&[
+            mouse(10, xinput::DeviceType::SLAVE_POINTER),
+            mouse(11, xinput::DeviceType::SLAVE_POINTER),
+        ]);
+
+        // Mouse 11 was unplugged, and a touchscreen was plugged in with the same id.
+        update_pointer_device_states_after_hierarchy_change(
+            &mut pointer_device_states,
+            &[
+                mouse(10, xinput::DeviceType::SLAVE_POINTER),
+                touchscreen(11),
+            ],
+        );
+
+        assert_eq!(
+            pointer_device_states,
+            BTreeMap::from([(10, mouse_state(1.0, None))])
+        );
+    }
+
+    #[test]
+    fn device_change_adds_a_mouse_that_is_not_known() {
+        let mut pointer_device_states = BTreeMap::new();
+
+        // The X server reports the classes of a device that starts sending events through its
+        // device group before its first event.
+        update_pointer_device_state_after_device_change(
+            &mut pointer_device_states,
+            10,
+            &mouse_classes(1),
+        );
+        assert_eq!(
+            pointer_device_states,
+            BTreeMap::from([(10, mouse_state(1.0, None))])
+        );
+
+        assert_eq!(scroll(&mut pointer_device_states, 10, 10), None);
+        assert_eq!(
+            scroll(&mut pointer_device_states, 10, 12),
+            vertical_scroll_delta(10, 12)
+        );
+    }
+
+    #[test]
+    fn device_change_updates_the_scroll_classes() {
+        let mut pointer_device_states =
+            pointer_device_states_from_devices(&[mouse(10, xinput::DeviceType::SLAVE_POINTER)]);
+        assert_eq!(scroll(&mut pointer_device_states, 10, 10), None);
+
+        // The driver doubles the scroll increment.
+        update_pointer_device_state_after_device_change(
+            &mut pointer_device_states,
+            10,
+            &mouse_classes(2),
+        );
+        assert_eq!(
+            pointer_device_states,
+            BTreeMap::from([(10, mouse_state(2.0, None))])
+        );
+
+        // A device without scroll axes reuses the id, and its classes are reported before its
+        // first event.
+        update_pointer_device_state_after_device_change(&mut pointer_device_states, 10, &[]);
+        assert!(pointer_device_states.is_empty());
     }
 }
