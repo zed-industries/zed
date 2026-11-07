@@ -680,6 +680,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::AudioInputDeviceName>(render_input_audio_device_dropdown)
         .add_basic_renderer::<settings::AudioOutputDeviceName>(render_output_audio_device_dropdown)
         .add_basic_renderer::<settings::TerminalBell>(render_dropdown)
+        .add_basic_renderer::<settings::TerminalTabTitle>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
