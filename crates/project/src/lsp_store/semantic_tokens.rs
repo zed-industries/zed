@@ -545,6 +545,7 @@ impl LspStore {
             && let Some(LanguageServerState::Running { adapter, .. }) =
                 local.language_servers.get(&server_id)
         {
+            let serves_language = self.language_server_serves_language(&adapter.name(), language);
             let context = document_selector_context_for_language(language, adapter);
             if let Some(registrations) = local
                 .language_server_dynamic_registrations
@@ -556,7 +557,11 @@ impl LspStore {
                 })
             {
                 for registration in registrations.values().rev() {
-                    if document_selector_matches(registration.document_selector.as_ref(), &context)
+                    if (serves_language || registration.document_selector.is_some())
+                        && document_selector_matches(
+                            registration.document_selector.as_ref(),
+                            &context,
+                        )
                         && let Some(provider) = registration
                             .server_capabilities
                             .semantic_tokens_provider
@@ -565,6 +570,9 @@ impl LspStore {
                         return Some(semantic_tokens_provider_legend(provider));
                     }
                 }
+            }
+            if !serves_language {
+                return None;
             }
             if let Some(provider) = local
                 .initial_server_capabilities
@@ -576,6 +584,13 @@ impl LspStore {
         }
 
         if let Some(initial_capabilities) = self.lsp_server_initial_capabilities.get(&server_id) {
+            let serves_language = language.is_none_or(|language| {
+                self.language_server_statuses
+                    .get(&server_id)
+                    .is_none_or(|status| {
+                        self.language_server_serves_language(&status.name, language)
+                    })
+            });
             let context = self.remote_document_selector_context(
                 server_id,
                 language,
@@ -589,6 +604,9 @@ impl LspStore {
                 // Token indices are only meaningful with the provider's legend, so do not
                 // guess when the guest cannot reconstruct the host's selector context.
                 for registration in registrations.values().rev() {
+                    if !serves_language && registration.document_selector.is_none() {
+                        continue;
+                    }
                     let matches = match context.as_ref() {
                         Some(context) => document_selector_matches(
                             registration.document_selector.as_ref(),
@@ -608,6 +626,9 @@ impl LspStore {
                 }
             }
 
+            if !serves_language {
+                return None;
+            }
             let provider = initial_capabilities.semantic_tokens_provider.as_ref()?;
             return Some(semantic_tokens_provider_legend(provider));
         }

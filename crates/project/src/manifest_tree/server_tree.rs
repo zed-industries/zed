@@ -122,6 +122,12 @@ impl InnerTreeNode {
     pub(crate) fn id(&self) -> Option<LanguageServerId> {
         self.id.get().copied()
     }
+
+    /// The root the server was started for, which differs from the root it is recorded under
+    /// in worktrees that reused it.
+    pub(crate) fn launch_path(&self) -> &ProjectPath {
+        &self.disposition.path
+    }
 }
 
 impl LanguageServerTree {
@@ -164,6 +170,17 @@ impl LanguageServerTree {
         let manifest_location = self.manifest_location_for_path(&path, manifest_name, delegate, cx);
         let adapters = self.adapters_for_language(&manifest_location, &language_name, cx);
         self.init_with_adapters(manifest_location, language_name, adapters, cx)
+    }
+
+    /// Like [`Self::walk`], for a root that servers were already started for.
+    pub(crate) fn walk_root<'a>(
+        &'a mut self,
+        root_path: ProjectPath,
+        language_name: LanguageName,
+        cx: &'a mut App,
+    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
+        let adapters = self.adapters_for_language(&root_path, &language_name, cx);
+        self.init_with_adapters(root_path, language_name, adapters, cx)
     }
 
     fn init_with_adapters<'a>(
@@ -415,41 +432,26 @@ impl ServerTreeRebase {
             .new_tree
             .adapters_for_language(&manifest, &language_name, cx);
 
+        let old_contents = &self.old_contents;
         self.new_tree
             .init_with_adapters(manifest, language_name, adapters, cx)
-            .filter_map(|node| {
-                // Inspect result of the query and initialize it ourselves before
-                // handing it off to the caller.
-                let live_node = node.0.upgrade()?;
+            .filter_map(move |node| adopt_old_server_id(old_contents, node))
+    }
 
-                if live_node.id.get().is_some() {
-                    return Some(node);
-                }
-
-                let disposition = &live_node.disposition;
-                let Some((existing_node, _)) = self
-                    .old_contents
-                    .get(&disposition.path.worktree_id)
-                    .and_then(|worktree_nodes| worktree_nodes.roots.get(&disposition.path.path))
-                    .and_then(|roots| roots.get(&disposition.server_name))
-                    .filter(|(old_node, _)| {
-                        // Only compare settings that require server restart.
-                        // Dynamic settings (settings.settings) can be updated via DidChangeConfiguration
-                        // without restarting the server.
-                        disposition.toolchain == old_node.disposition.toolchain
-                            && disposition.settings.binary == old_node.disposition.settings.binary
-                            && disposition.settings.initialization_options
-                                == old_node.disposition.settings.initialization_options
-                    })
-                else {
-                    return Some(node);
-                };
-                if let Some(existing_id) = existing_node.id.get() {
-                    live_node.id.set(*existing_id).ok();
-                }
-
-                Some(node)
-            })
+    /// Like [`Self::walk`], for a root that servers were already started for.
+    pub(crate) fn walk_root<'a>(
+        &'a mut self,
+        root_path: ProjectPath,
+        language_name: LanguageName,
+        cx: &'a mut App,
+    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
+        let adapters = self
+            .new_tree
+            .adapters_for_language(&root_path, &language_name, cx);
+        let old_contents = &self.old_contents;
+        self.new_tree
+            .init_with_adapters(root_path, language_name, adapters, cx)
+            .filter_map(move |node| adopt_old_server_id(old_contents, node))
     }
 
     /// Returns IDs of servers that are no longer referenced (and can be shut down).
@@ -479,4 +481,42 @@ impl ServerTreeRebase {
     pub(crate) fn server_tree(&mut self) -> &mut LanguageServerTree {
         &mut self.new_tree
     }
+}
+
+/// Gives the node the ID of the server of the old tree at the same place, if any, unless the node
+/// was already initialized.
+fn adopt_old_server_id(
+    old_contents: &BTreeMap<WorktreeId, ServersForWorktree>,
+    node: LanguageServerTreeNode,
+) -> Option<LanguageServerTreeNode> {
+    // Inspect result of the query and initialize it ourselves before
+    // handing it off to the caller.
+    let live_node = node.0.upgrade()?;
+
+    if live_node.id.get().is_some() {
+        return Some(node);
+    }
+
+    let disposition = &live_node.disposition;
+    let Some((existing_node, _)) = old_contents
+        .get(&disposition.path.worktree_id)
+        .and_then(|worktree_nodes| worktree_nodes.roots.get(&disposition.path.path))
+        .and_then(|roots| roots.get(&disposition.server_name))
+        .filter(|(old_node, _)| {
+            // Only compare settings that require server restart.
+            // Dynamic settings (settings.settings) can be updated via DidChangeConfiguration
+            // without restarting the server.
+            disposition.toolchain == old_node.disposition.toolchain
+                && disposition.settings.binary == old_node.disposition.settings.binary
+                && disposition.settings.initialization_options
+                    == old_node.disposition.settings.initialization_options
+        })
+    else {
+        return Some(node);
+    };
+    if let Some(existing_id) = existing_node.id.get() {
+        live_node.id.set(*existing_id).ok();
+    }
+
+    Some(node)
 }
