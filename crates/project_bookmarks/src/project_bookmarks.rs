@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 use futures::future::{FutureExt, Shared};
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatchCandidate, match_strings};
@@ -8,11 +8,9 @@ use gpui::{
 };
 use language::Buffer;
 use picker::{MatchLocation, Picker, PickerDelegate, PreviewUpdate};
-use project::WorktreeId;
-use project::bookmark_store::ProjectBookmark;
-use project::{Project, ProjectPath, bookmark_store::BookmarkStore};
+use project::Project;
+use project::bookmark_store::{BookmarkStore, ProjectBookmark};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
-use util::rel_path::RelPath;
 use workspace::Workspace;
 
 actions!(
@@ -45,7 +43,7 @@ pub fn init(cx: &mut App) {
 }
 
 struct Match {
-    pub path: ProjectPath,
+    pub display_path: SharedString,
     pub label: SharedString,
     pub buffer: Entity<Buffer>,
     pub positions: Vec<usize>,
@@ -58,7 +56,6 @@ struct ProjectBookmarksDelegate {
     project: Entity<Project>,
     selected_match_index: usize,
     matches: Vec<Match>,
-    worktree_root_names: HashMap<WorktreeId, Arc<RelPath>>,
     bookmarks: Shared<Task<Arc<Vec<ProjectBookmark>>>>,
 }
 
@@ -68,15 +65,6 @@ impl ProjectBookmarksDelegate {
         bookmark_store.update(cx, |bookmark_store, cx| {
             bookmark_store.forget_failed_paths(cx)
         });
-
-        let worktree_root_names = project
-            .read(cx)
-            .visible_worktrees(cx)
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                (worktree.id(), worktree.root_name().into_arc())
-            })
-            .collect();
 
         let bookmarks = cx
             .spawn(async move |cx| {
@@ -92,50 +80,27 @@ impl ProjectBookmarksDelegate {
             project,
             selected_match_index: 0,
             matches: Vec::new(),
-            worktree_root_names,
             bookmarks,
         }
     }
 
-    fn with_optional_worktree_root_name(
-        &self,
-        worktree_id: WorktreeId,
-        rel_path: &RelPath,
-    ) -> Option<Arc<RelPath>> {
-        if self.worktree_root_names.len() > 1 {
-            self.worktree_root_names
-                .get(&worktree_id)
-                .map(|root_name| root_name.join(rel_path).into())
-        } else {
-            Some(rel_path.into_arc())
-        }
-    }
-
-    fn labels_for_match(&self, bookmark_match: &Match, cx: &App) -> (HighlightedLabel, Div) {
-        let path_style = self.project.read(cx).path_style(cx);
+    fn labels_for_match(&self, bookmark_match: &Match) -> (HighlightedLabel, Div) {
         let Match {
             label,
             positions,
-            path: project_path,
+            display_path,
             ..
         } = bookmark_match;
-
-        let full_path_name =
-            self.with_optional_worktree_root_name(project_path.worktree_id, &project_path.path);
 
         (
             HighlightedLabel::new(label.clone(), positions.clone()),
             h_flex()
                 .min_w_0()
                 .child(
-                    Label::new(
-                        full_path_name
-                            .unwrap_or(project_path.path.clone())
-                            .display(path_style),
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .truncate_start(),
+                    Label::new(display_path.clone())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .truncate_start(),
                 )
                 .child(
                     Label::new(format!(":{}", bookmark_match.line_number))
@@ -201,6 +166,14 @@ impl PickerDelegate for ProjectBookmarksDelegate {
 
             picker
                 .update(cx, |picker, cx| {
+                    let visible_worktree_ids = picker
+                        .delegate
+                        .project
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .map(|worktree| worktree.read(cx).id())
+                        .collect::<HashSet<_>>();
+                    let has_multiple_visible_worktrees = visible_worktree_ids.len() > 1;
                     picker.delegate.matches = matches
                         .into_iter()
                         .filter_map(|mat| {
@@ -211,19 +184,20 @@ impl PickerDelegate for ProjectBookmarksDelegate {
                                 ..
                             } = bookmarks.get(mat.candidate_id)?;
 
-                            let project_path = picker
-                                .delegate
-                                .project
-                                .read(cx)
-                                .project_path_for_absolute_path(path, cx)?;
-
-                            let line_number = {
-                                let snapshot = buffer.read(cx).text_snapshot();
-                                snapshot.summary_for_anchor::<text::Point>(anchor).row + 1
-                            };
+                            let snapshot = buffer.read(cx).snapshot();
+                            let display_path = snapshot
+                                .file()
+                                .and_then(|file| {
+                                    let include_root = has_multiple_visible_worktrees
+                                        || !visible_worktree_ids.contains(&file.worktree_id(cx));
+                                    snapshot.resolve_file_path(include_root, cx)
+                                })
+                                .unwrap_or_else(|| path.to_string_lossy().into_owned());
+                            let line_number =
+                                snapshot.summary_for_anchor::<text::Point>(anchor).row + 1;
 
                             Some(Match {
-                                path: project_path,
+                                display_path: display_path.into(),
                                 label: mat.string,
                                 positions: mat.positions,
                                 buffer: buffer.clone(),
@@ -285,10 +259,10 @@ impl PickerDelegate for ProjectBookmarksDelegate {
         match_index: usize,
         selected: bool,
         _window: &mut Window,
-        cx: &mut Context<picker::Picker<Self>>,
+        _cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let bookmark_match = self.matches.get(match_index)?;
-        let (bookmark_label, full_path_label) = self.labels_for_match(bookmark_match, cx);
+        let (bookmark_label, full_path_label) = self.labels_for_match(bookmark_match);
         let icon = Icon::new(IconName::Bookmark)
             .size(IconSize::Small)
             .color(Color::Info);
@@ -339,8 +313,9 @@ mod tests {
     use editor::Editor;
     use gpui::{Entity, TestAppContext, VisualTestContext};
     use menu::{Confirm, SecondaryConfirm};
-    use project::ProjectPath;
+    use project::{ProjectPath, bookmark_store::SerializedBookmark};
     use serde_json::json;
+    use std::path::PathBuf;
     use text::Point;
     use util::{path, rel_path::rel_path};
     use workspace::{AppState, MultiWorkspace};
@@ -382,6 +357,16 @@ mod tests {
             assert_eq!(picker.delegate.matches.len(), 1);
             assert_eq!(picker.delegate.match_count(), 1);
             assert_eq!(picker.delegate.selected_index(), 0);
+            assert_eq!(
+                picker
+                    .delegate
+                    .matches
+                    .first()
+                    .expect("matching bookmark should exist")
+                    .display_path
+                    .as_ref(),
+                "one.txt"
+            );
         });
 
         cx.dispatch_action(Confirm);
@@ -402,6 +387,158 @@ mod tests {
             assert_eq!(selection.start, selection.end);
             assert_eq!(selection.start, Point::new(2, 0));
         });
+    }
+
+    #[gpui::test]
+    async fn test_project_bookmarks_displays_single_file_and_external_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "single.txt": "bookmark\n",
+                    "external-a": { "note.txt": "bookmark\n" },
+                    "external-b": { "note.txt": "bookmark\n" },
+                }),
+            )
+            .await;
+
+        let project =
+            Project::test(app_state.fs.clone(), [path!("/root/single.txt").as_ref()], cx).await;
+        let bookmark_store = project.read_with(cx, |project, _| project.bookmark_store());
+        let bookmarks = [
+            path!("/root/single.txt"),
+            path!("/root/external-a/note.txt"),
+            path!("/root/external-b/note.txt"),
+        ]
+        .into_iter()
+        .map(|path| {
+            (
+                Arc::from(std::path::Path::new(path)),
+                vec![SerializedBookmark {
+                    row: 0,
+                    label: "same label".to_string(),
+                }],
+            )
+        })
+        .collect();
+        bookmark_store
+            .update(cx, |bookmark_store, cx| {
+                bookmark_store.load_serialized_bookmarks(bookmarks, cx)
+            })
+            .await
+            .expect("serialized bookmarks should load");
+
+        let (picker, _workspace, cx) = build_bookmarks_picker(project, cx);
+        picker.read_with(cx, |picker, cx| {
+            let project = picker.delegate.project.read(cx);
+            assert_eq!(project.visible_worktrees(cx).count(), 1);
+            assert_eq!(project.worktrees(cx).count(), 3);
+
+            let mut paths = picker
+                .delegate
+                .matches
+                .iter()
+                .map(|bookmark_match| bookmark_match.display_path.as_ref())
+                .collect::<Vec<_>>();
+            paths.sort_unstable();
+            let mut expected_paths = vec![
+                "single.txt",
+                path!("/root/external-a/note.txt"),
+                path!("/root/external-b/note.txt"),
+            ];
+            expected_paths.sort_unstable();
+            assert_eq!(paths, expected_paths);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_project_bookmarks_updates_paths_after_worktree_removal(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "first": { "shared.txt": "bookmark\n" },
+                    "second": { "shared.txt": "bookmark\n" },
+                }),
+            )
+            .await;
+
+        let project =
+            Project::test(app_state.fs.clone(), [path!("/root/first").as_ref()], cx).await;
+        let first_worktree_id = project.read_with(cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .next()
+                .expect("first worktree should exist")
+                .read(cx)
+                .id()
+        });
+        add_bookmark(&project, first_worktree_id, "shared.txt", 0, "same label", cx).await;
+
+        let (picker, workspace, cx) = build_bookmarks_picker(project.clone(), cx);
+        let display_paths = |picker: &Entity<Picker<ProjectBookmarksDelegate>>,
+                             cx: &VisualTestContext| {
+            picker.read_with(cx, |picker, _| {
+                picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(|bookmark_match| PathBuf::from(bookmark_match.display_path.as_ref()))
+                    .collect::<HashSet<_>>()
+            })
+        };
+        assert_eq!(
+            display_paths(&picker, cx),
+            HashSet::from([PathBuf::from("shared.txt")])
+        );
+        cx.dispatch_action(menu::Cancel);
+        cx.run_until_parked();
+        drop(picker);
+
+        let (second_worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/root/second"), true, cx)
+            })
+            .await
+            .expect("second worktree should open");
+        let second_worktree_id = second_worktree.read_with(cx, |worktree, _| worktree.id());
+        add_bookmark(&project, second_worktree_id, "shared.txt", 0, "same label", cx).await;
+        drop(second_worktree);
+
+        let picker = open_bookmarks_picker(&workspace, cx);
+        assert_eq!(
+            display_paths(&picker, cx),
+            HashSet::from([
+                PathBuf::from("first").join("shared.txt"),
+                PathBuf::from("second").join("shared.txt"),
+            ])
+        );
+
+        project.update(cx, |project, cx| {
+            project.remove_worktree(second_worktree_id, cx);
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.update_matches(String::new(), window, cx);
+        });
+        cx.run_until_parked();
+
+        project.read_with(cx, |project, cx| {
+            assert_eq!(project.visible_worktrees(cx).count(), 1);
+            assert!(project.worktree_for_id(second_worktree_id, cx).is_none());
+        });
+        assert_eq!(
+            display_paths(&picker, cx),
+            HashSet::from([
+                PathBuf::from("shared.txt"),
+                PathBuf::from("second").join("shared.txt"),
+            ])
+        );
     }
 
     #[gpui::test]
