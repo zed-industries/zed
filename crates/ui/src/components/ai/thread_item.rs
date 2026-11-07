@@ -412,14 +412,14 @@ impl RenderOnce for ThreadItem {
             AgentThreadStatus::Error | AgentThreadStatus::WaitingForConfirmation
         );
 
-        let linked_worktrees: Vec<ThreadItemWorktreeInfo> = self
+        let worktrees: Vec<_> = self
             .worktrees
             .into_iter()
             .filter(|wt| wt.kind == WorktreeKind::Linked)
             .filter(|wt| wt.worktree_name.is_some() || wt.branch_name.is_some())
             .collect();
 
-        let has_worktree = !linked_worktrees.is_empty();
+        let has_worktree = !worktrees.is_empty();
 
         let has_metadata = has_project_name
             || has_project_paths
@@ -496,122 +496,195 @@ impl RenderOnce for ThreadItem {
                     h_flex()
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
-                        .when(self.archived, |this| {
-                            this.child(
-                                Icon::new(IconName::Archive).size(IconSize::XSmall).color(
-                                    Color::Custom(cx.theme().colors().icon_muted.opacity(0.5)),
-                                ),
-                            )
-                        })
-                        .when(
-                            has_project_name || has_project_paths || has_worktree,
-                            |this| {
-                                this.when_some(self.project_name, |this, name| {
+                        .child(
+                            h_flex()
+                                .min_w_0()
+                                .gap_1()
+                                .when(self.archived, |this| {
                                     this.child(
-                                        Label::new(name).size(LabelSize::Small).color(Color::Muted),
+                                        Icon::new(IconName::Archive).size(IconSize::XSmall).color(
+                                            Color::Custom(
+                                                cx.theme().colors().icon_muted.opacity(0.5),
+                                            ),
+                                        ),
                                     )
                                 })
                                 .when(
-                                    has_project_name && (has_project_paths || has_worktree),
+                                    has_project_name || has_project_paths || has_worktree,
+                                    |this| {
+                                        this.when_some(self.project_name, |this, name| {
+                                            this.child(
+                                                Label::new(name)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        })
+                                        .when(
+                                            has_project_name && (has_project_paths || has_worktree),
+                                            |this| this.child(dot_separator()),
+                                        )
+                                        .when_some(project_paths, |this, paths| {
+                                            this.child(
+                                                Label::new(paths)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        })
+                                        .when(has_project_paths && has_worktree, |this| {
+                                            this.child(dot_separator())
+                                        })
+                                        .children(
+                                            worktrees.into_iter().enumerate().map(
+                                                |(index, worktree)| {
+                                                    let ThreadItemWorktreeInfo {
+                                                        worktree_name,
+                                                        branch_name,
+                                                        highlight_positions,
+                                                        ..
+                                                    } = worktree;
+                                                    // Flex shrinks in proportion to size, so weighting
+                                                    // by length makes the longer label give up
+                                                    // more space and keeps the two closer in width.
+                                                    let worktree_shrink = worktree_name
+                                                        .as_ref()
+                                                        .map_or(1.0, |name| {
+                                                            name.chars().count() as f32
+                                                        });
+                                                    let branch_shrink =
+                                                        branch_name.as_ref().map_or(1.0, |name| {
+                                                            name.chars().count() as f32
+                                                        });
+                                                    let worktree_tooltip = worktree_name.clone();
+                                                    let branch_tooltip = branch_name.clone();
+                                                    let worktree_label =
+                                                        worktree_name.map(|name| {
+                                                            if highlight_positions.is_empty() {
+                                                                Label::new(name)
+                                                                    .size(LabelSize::Small)
+                                                                    .color(Color::Muted)
+                                                                    .truncate()
+                                                                    .into_any_element()
+                                                            } else {
+                                                                HighlightedLabel::new(
+                                                                    name,
+                                                                    highlight_positions,
+                                                                )
+                                                                .size(LabelSize::Small)
+                                                                .color(Color::Muted)
+                                                                .truncate()
+                                                                .into_any_element()
+                                                            }
+                                                        });
+
+                                                    let branch_label = branch_name.map(|branch| {
+                                                        Label::new(branch)
+                                                            .size(LabelSize::Small)
+                                                            .color(Color::Muted)
+                                                            .truncate()
+                                                            .into_any_element()
+                                                    });
+
+                                                    let show_separator = worktree_label.is_some()
+                                                        && branch_label.is_some();
+                                                    // The git icons' SVGs have built-in side
+                                                    // padding, which makes the gap after a
+                                                    // preceding `•` look wider than the one
+                                                    // before it.
+                                                    let offset_leading_icon = index == 0
+                                                        && (has_project_name || has_project_paths);
+
+                                                    h_flex()
+                                                        .min_w_0()
+                                                        .gap_1()
+                                                        .when(offset_leading_icon, |this| {
+                                                            this.ml_neg_0p5()
+                                                        })
+                                                        .when_some(worktree_label, |this, label| {
+                                                            this.child(
+                                                                h_flex()
+                                                                    .min_w_0()
+                                                                    .gap_0p5()
+                                                                    .flex_shrink(worktree_shrink)
+                                                                    .id(("worktree", index))
+                                                                    .when_some(
+                                                                        worktree_tooltip,
+                                                                        |this, name| {
+                                                                            this.tooltip(
+                                                                                Tooltip::text(name),
+                                                                            )
+                                                                        },
+                                                                    )
+                                                                    .child(
+                                                                        Icon::new(
+                                                                            IconName::GitWorktree,
+                                                                        )
+                                                                        .size(IconSize::XSmall)
+                                                                        .color(Color::Muted),
+                                                                    )
+                                                                    .child(label),
+                                                            )
+                                                        })
+                                                        .when(show_separator, |this| {
+                                                            this.child(
+                                                                dot_separator().flex_shrink_0(),
+                                                            )
+                                                        })
+                                                        .when_some(branch_label, |this, label| {
+                                                            this.child(
+                                                                h_flex()
+                                                                    .min_w_0()
+                                                                    .gap_0p5()
+                                                                    .flex_shrink(branch_shrink)
+                                                                    .id(("branch", index))
+                                                                    .when_some(
+                                                                        branch_tooltip,
+                                                                        |this, name| {
+                                                                            this.tooltip(
+                                                                                Tooltip::text(name),
+                                                                            )
+                                                                        },
+                                                                    )
+                                                                    .when(show_separator, |this| {
+                                                                        this.ml_neg_0p5()
+                                                                    })
+                                                                    .child(
+                                                                        Icon::new(
+                                                                            IconName::GitBranch,
+                                                                        )
+                                                                        .size(IconSize::XSmall)
+                                                                        .color(Color::Muted),
+                                                                    )
+                                                                    .child(label),
+                                                            )
+                                                        })
+                                                },
+                                            ),
+                                        )
+                                    },
+                                )
+                                .when(
+                                    (has_project_name || has_project_paths || has_worktree)
+                                        && (has_diff_stats || has_timestamp),
                                     |this| this.child(dot_separator()),
                                 )
-                                .when_some(project_paths, |this, paths| {
+                                .when(has_diff_stats, |this| {
+                                    this.child(DiffStat::new(
+                                        diff_stat_id,
+                                        added_count,
+                                        removed_count,
+                                    ))
+                                })
+                                .when(has_diff_stats && has_timestamp, |this| {
+                                    this.child(dot_separator())
+                                })
+                                .when(has_timestamp, |this| {
                                     this.child(
-                                        Label::new(paths)
+                                        Label::new(timestamp.clone())
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
                                     )
-                                })
-                                .when(has_project_paths && has_worktree, |this| {
-                                    this.child(dot_separator())
-                                })
-                                .children(
-                                    linked_worktrees.into_iter().map(|wt| {
-                                        let worktree_label = wt.worktree_name.clone().map(|name| {
-                                            if wt.highlight_positions.is_empty() {
-                                                Label::new(name)
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted)
-                                                    .truncate()
-                                                    .into_any_element()
-                                            } else {
-                                                HighlightedLabel::new(
-                                                    name,
-                                                    wt.highlight_positions.clone(),
-                                                )
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted)
-                                                .truncate()
-                                                .into_any_element()
-                                            }
-                                        });
-
-                                        // When only the branch is shown, lead with a branch icon;
-                                        // otherwise keep the worktree icon (which "covers" both the
-                                        // worktree and any accompanying branch).
-                                        let chip_icon = if wt.worktree_name.is_none()
-                                            && wt.branch_name.is_some()
-                                        {
-                                            IconName::GitBranch
-                                        } else {
-                                            IconName::GitWorktree
-                                        };
-
-                                        let branch_label = wt.branch_name.map(|branch| {
-                                            Label::new(branch)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted)
-                                                .truncate()
-                                                .into_any_element()
-                                        });
-
-                                        let show_separator =
-                                            worktree_label.is_some() && branch_label.is_some();
-
-                                        h_flex()
-                                            .min_w_0()
-                                            .gap_0p5()
-                                            .child(
-                                                Icon::new(chip_icon)
-                                                    .size(IconSize::XSmall)
-                                                    .color(Color::Muted),
-                                            )
-                                            .when_some(worktree_label, |this, label| {
-                                                this.child(label)
-                                            })
-                                            .when(show_separator, |this| {
-                                                this.child(
-                                                    Label::new("/")
-                                                        .size(LabelSize::Small)
-                                                        .color(separator_color)
-                                                        .flex_shrink_0(),
-                                                )
-                                            })
-                                            .when_some(branch_label, |this, label| {
-                                                this.child(label)
-                                            })
-                                    }),
-                                )
-                            },
-                        )
-                        .when(
-                            (has_project_name || has_project_paths || has_worktree)
-                                && (has_diff_stats || has_timestamp),
-                            |this| this.child(dot_separator()),
-                        )
-                        .when(has_diff_stats, |this| {
-                            this.child(DiffStat::new(diff_stat_id, added_count, removed_count))
-                        })
-                        .when(has_diff_stats && has_timestamp, |this| {
-                            this.child(dot_separator())
-                        })
-                        .when(has_timestamp, |this| {
-                            this.child(
-                                Label::new(timestamp.clone())
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                        }),
+                                }),
+                        ),
                 )
             })
             .when(show_tooltip, |this| {

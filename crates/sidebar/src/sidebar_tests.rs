@@ -3813,6 +3813,22 @@ async fn test_thread_switcher_preserves_closed_terminal_linked_worktree_workspac
         "linked worktree workspace should start closed"
     );
 
+    cx.update(|_, cx| {
+        feature_flags::FeatureFlagStore::init(cx);
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.feature_flags = Some(settings::settings_content::FeatureFlagsMap(
+                    [(
+                        "agent-thread-worktree-label".to_string(),
+                        "branch".to_string(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ));
+            });
+        });
+    });
+
     focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
@@ -3831,6 +3847,9 @@ async fn test_thread_switcher_preserves_closed_terminal_linked_worktree_workspac
         {
             ThreadSwitcherEntry::Terminal(entry) => {
                 assert_eq!(entry.metadata.terminal_id, terminal_id);
+                assert_eq!(entry.worktrees.len(), 1);
+                assert_eq!(entry.worktrees[0].worktree_name, None);
+                assert_eq!(entry.worktrees[0].branch_name, Some("feature-a".into()));
                 match &entry.workspace {
                     ThreadEntryWorkspace::Closed {
                         folder_paths,
