@@ -297,6 +297,12 @@ impl Session {
                 .unwrap_or_else(temp_dir)
         };
 
+        let project_environment = self
+            .editor
+            .upgrade()
+            .and_then(|editor| editor.read(cx).project().cloned())
+            .map(|project| project.read(cx).environment().clone());
+
         telemetry::event!(
             "Kernel Status Changed",
             kernel_language,
@@ -311,6 +317,7 @@ impl Session {
                 kernel_specification,
                 entity_id,
                 working_directory,
+                project_environment,
                 self.fs.clone(),
                 session_view,
                 window,
@@ -320,6 +327,7 @@ impl Session {
                 env_specification.as_local_spec(),
                 entity_id,
                 working_directory,
+                project_environment,
                 self.fs.clone(),
                 session_view,
                 window,
