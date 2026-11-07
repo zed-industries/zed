@@ -1402,8 +1402,20 @@ mod tests {
             assert!(diff.read(cx).operations().is_none());
         });
         if style == DiffViewStyle::Unified && !historical {
+            let observed_base = std::rc::Rc::new(std::cell::RefCell::new(None));
+            let _subscription = cx.update(|_, cx| {
+                let buffer = opened.read(cx).buffer().clone();
+                cx.observe(&buffer, {
+                    let opened = opened.clone();
+                    let observed_base = observed_base.clone();
+                    move |_, cx| {
+                        *observed_base.borrow_mut() = editor_diff_base_text(opened.read(cx), cx);
+                    }
+                })
+            });
             opened.update(cx, |editor, cx| editor.show_uncommitted_changes(cx));
             cx.run_until_parked();
+            assert_eq!(observed_base.borrow().as_deref(), Some(head));
             opened.read_with(cx, |editor, cx| {
                 assert!(editor.git_diff_base_name(cx).is_none());
                 assert_eq!(editor_diff_base_text(editor, cx).as_deref(), Some(head));

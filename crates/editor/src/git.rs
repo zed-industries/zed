@@ -3365,9 +3365,9 @@ impl Editor {
                 for diff in diffs.into_iter().filter_map(|diff| diff.log_err()) {
                     buffer.add_diff(diff, cx);
                 }
+                // Attaching an already-computed diff does not notify the multi-buffer.
+                cx.notify();
             });
-            // Attaching an already-computed diff does not notify the multi-buffer.
-            editor.update(cx, |_, cx| cx.notify());
         })
     }
 }
