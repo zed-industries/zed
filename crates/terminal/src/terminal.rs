@@ -2,6 +2,7 @@ mod mappings;
 
 mod alacritty;
 mod pty_info;
+pub use pty_info::has_child_processes;
 pub mod terminal_settings;
 
 #[cfg(not(windows))]
@@ -1052,7 +1053,7 @@ impl TerminalBuilder {
             selection_phase: SelectionPhase::Ended,
             hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
-            is_remote_terminal: false,
+            origin: TerminalOrigin::Local,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             mouse_down_hyperlink: None,
@@ -1102,7 +1103,7 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         path_hyperlink_regexes: Vec<String>,
         path_hyperlink_timeout: Duration,
-        is_remote_terminal: bool,
+        origin: TerminalOrigin,
         window_id: u64,
         cx: &App,
         activation_script: Vec<String>,
@@ -1299,7 +1300,10 @@ impl TerminalBuilder {
                     }
                 };
 
-                let pty_info = PtyProcessInfo::new(ProcessIdGetter::from(&pty));
+                // macOS PTYs are spawned through `/usr/bin/login`, which runs
+                // the shell as its child, unless a shell program was configured.
+                let shell_is_wrapped = cfg!(target_os = "macos") && shell_params.is_none();
+                let pty_info = PtyProcessInfo::new(ProcessIdGetter::from(&pty), shell_is_wrapped);
 
                 //And connect them together
                 let pty_tx =
@@ -1315,6 +1319,7 @@ impl TerminalBuilder {
             };
 
             let no_task = task.is_none();
+            let is_remote = origin.is_remote();
             let terminal = Terminal {
                 task,
                 terminal_type,
@@ -1342,7 +1347,7 @@ impl TerminalBuilder {
                     path_hyperlink_timeout,
                 ),
                 vi_mode_enabled: false,
-                is_remote_terminal,
+                origin,
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
                 mouse_down_hyperlink: None,
@@ -1366,7 +1371,7 @@ impl TerminalBuilder {
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
-                cwd_history: if is_remote_terminal {
+                cwd_history: if is_remote {
                     Vec::new()
                 } else {
                     working_directory
@@ -1519,6 +1524,31 @@ enum TerminalType {
     DisplayOnly,
 }
 
+/// Where a terminal's shell runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalOrigin {
+    /// The shell runs on this machine, so its child processes are visible here.
+    Local,
+    /// The shell runs on the SSH host. `terminal_id` is the value the shell
+    /// carries in its environment, which is how the remote server finds it:
+    /// its pid is only meaningful on that host.
+    Remote { terminal_id: String },
+}
+
+impl TerminalOrigin {
+    pub fn is_remote(&self) -> bool {
+        matches!(self, TerminalOrigin::Remote { .. })
+    }
+
+    /// The value this terminal's remote shell carries in `ZED_TERMINAL_ID`.
+    pub fn terminal_id(&self) -> Option<&str> {
+        match self {
+            TerminalOrigin::Local => None,
+            TerminalOrigin::Remote { terminal_id } => Some(terminal_id),
+        }
+    }
+}
+
 pub struct Terminal {
     terminal_type: TerminalType,
     /// Set for non-PTY terminals (see [`HeadlessTerminal`]); owns the spawned
@@ -1548,7 +1578,7 @@ pub struct Terminal {
     hyperlink_regex_searches: RegexSearches,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
-    is_remote_terminal: bool,
+    origin: TerminalOrigin,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<GpuiPoint<Pixels>>,
     mouse_down_hyperlink: Option<HyperlinkMatch>,
@@ -2322,7 +2352,7 @@ impl Terminal {
 
     fn write_input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
         let input = input.into();
-        if !self.is_remote_terminal && input.contains(&b'\r') {
+        if !self.origin.is_remote() && input.contains(&b'\r') {
             let term = self.term.lock_unfair();
             self.pending_cwd_boundary = Some(Self::scrollback_position(
                 term.grid().cursor.point.line.0,
@@ -2965,7 +2995,7 @@ impl Terminal {
     }
 
     pub fn working_directory(&self) -> Option<PathBuf> {
-        if self.is_remote_terminal {
+        if self.origin.is_remote() {
             // We can't yet reliably detect the working directory of a shell on the
             // SSH host. Until we can do that, it doesn't make sense to display
             // the working directory on the client and persist that.
@@ -2987,6 +3017,23 @@ impl Terminal {
         }
     }
 
+    /// Whether this terminal's shell has a child process running.
+    ///
+    /// This only answers for terminals whose shell runs on this host. A remote
+    /// shell runs on the SSH host, so the caller has to ask the remote server
+    /// through the terminal's [`TerminalOrigin`] instead.
+    pub fn has_child_processes(&self) -> bool {
+        match &self.terminal_type {
+            TerminalType::Pty { info, .. } => info.has_child_processes(),
+            TerminalType::DisplayOnly => false,
+        }
+    }
+
+    /// Where this terminal's shell runs.
+    pub fn origin(&self) -> &TerminalOrigin {
+        &self.origin
+    }
+
     /// Returns the working directory of the process that's connected to the PTY.
     /// That means it returns the working directory of the local shell or program
     /// that's running inside the terminal.
@@ -3005,7 +3052,7 @@ impl Terminal {
     }
 
     pub(crate) fn record_cwd_change(&mut self, new_working_directory: PathBuf) {
-        if self.is_remote_terminal {
+        if self.origin.is_remote() {
             return;
         }
 
@@ -3035,7 +3082,7 @@ impl Terminal {
     fn cwd_at_line(&self, line: i32, history_size: usize) -> Option<PathBuf> {
         // Once the scrollback cap is reached, evictions move retained lines without changing
         // `history_size`, so stored row offsets no longer identify their original lines.
-        if self.is_remote_terminal
+        if self.origin.is_remote()
             || self.cwd_history.is_empty()
             || history_size >= self.term_config.scrolling_history
         {
@@ -3291,7 +3338,7 @@ impl Terminal {
             self.template.max_scroll_history_lines,
             self.template.path_hyperlink_regexes.clone(),
             self.template.path_hyperlink_timeout,
-            self.is_remote_terminal,
+            self.origin.clone(),
             self.template.window_id,
             cx,
             self.activation_script.clone(),
@@ -3832,7 +3879,7 @@ mod tests {
                     None,
                     vec![],
                     Duration::ZERO,
-                    false,
+                    TerminalOrigin::Local,
                     0,
                     cx,
                     vec![],
@@ -3876,7 +3923,7 @@ mod tests {
                     None,
                     vec![],
                     Duration::ZERO,
-                    false,
+                    TerminalOrigin::Local,
                     0,
                     cx,
                     vec![],
@@ -4339,6 +4386,63 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_has_child_processes_tracks_running_commands(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.executor().allow_parking();
+
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    TerminalMode::interactive(),
+                    task::Shell::System,
+                    HashMap::default(),
+                    SettingsCursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    Duration::ZERO,
+                    TerminalOrigin::Local,
+                    0,
+                    cx,
+                    Vec::new(),
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+
+        assert_running_process_eventually(&terminal, false, cx).await;
+
+        // An interactive shell runs a command as its child.
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"sleep 30\r".to_vec());
+        });
+        assert_running_process_eventually(&terminal, true, cx).await;
+
+        // Interrupting the command returns the terminal to the shell.
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"\x03".to_vec());
+        });
+        assert_running_process_eventually(&terminal, false, cx).await;
+
+        // A background job counts as well, so the answer does not depend on
+        // which platform the terminal runs on.
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"sleep 30 &\r".to_vec());
+        });
+        assert_running_process_eventually(&terminal, true, cx).await;
+
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"kill $!\r".to_vec());
+        });
+        assert_running_process_eventually(&terminal, false, cx).await;
+    }
+
     // TODO should be tested on Linux too, but does not work there well
     #[cfg(target_os = "macos")]
     #[gpui::test(iterations = 10)]
@@ -4360,7 +4464,7 @@ mod tests {
                     None,
                     vec![],
                     Duration::ZERO,
-                    false,
+                    TerminalOrigin::Local,
                     0,
                     cx,
                     Vec::new(),
@@ -4427,7 +4531,7 @@ mod tests {
                     None,
                     vec![],
                     Duration::ZERO,
-                    false,
+                    TerminalOrigin::Local,
                     0,
                     cx,
                     Vec::new(),
@@ -4492,7 +4596,7 @@ mod tests {
                     None,
                     Vec::new(),
                     Duration::ZERO,
-                    false,
+                    TerminalOrigin::Local,
                     0,
                     cx,
                     Vec::new(),
@@ -6097,6 +6201,33 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    async fn assert_running_process_eventually(
+        terminal: &Entity<Terminal>,
+        expected: bool,
+        cx: &mut TestAppContext,
+    ) {
+        for _ in 0..100 {
+            if terminal.read_with(cx, |terminal, _| terminal.has_child_processes()) == expected {
+                return;
+            }
+            cx.background_executor
+                .timer(Duration::from_millis(10))
+                .await;
+        }
+        let process_info = terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+            TerminalType::Pty { info, .. } => format!(
+                "pid={:?}, fallback_pid={:?}, current={:?}",
+                info.pid(),
+                info.pid_getter().fallback_pid(),
+                info.load_for_test()
+                    .map(|p| format!("{} {:?}", p.name, p.argv))
+            ),
+            TerminalType::DisplayOnly => "display-only".to_string(),
+        });
+        panic!("Expected has_child_processes to be {expected}; process info: {process_info:?}");
+    }
+
     /// Test that kill_active_task properly terminates both the foreground process
     /// and the shell, allowing wait_for_completed_task to complete and output to be captured.
     #[cfg(unix)]
@@ -6438,7 +6569,9 @@ mod tests {
     #[test]
     fn test_remote_terminal_does_not_record_local_cwd() {
         let mut terminal = make_display_only_terminal();
-        terminal.is_remote_terminal = true;
+        terminal.origin = TerminalOrigin::Remote {
+            terminal_id: "test".to_string(),
+        };
         terminal.write_input(b"\r".to_vec());
         terminal.record_cwd_change(PathBuf::from("/local/ssh/cwd"));
 

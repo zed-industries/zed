@@ -16,7 +16,7 @@ use std::{
 };
 use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
-    Terminal, TerminalBuilder, TerminalMode, insert_zed_terminal_env,
+    Terminal, TerminalBuilder, TerminalMode, TerminalOrigin, insert_zed_terminal_env,
     terminal_settings::TerminalSettings,
 };
 use util::{
@@ -28,6 +28,10 @@ use crate::{Project, ProjectPath};
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,
 }
+
+/// `ProtoClient::request` has no timeout of its own, so a remote host that
+/// never answers would otherwise leave a close waiting forever.
+const REMOTE_TERMINAL_QUERY_TIMEOUT: Duration = Duration::from_secs(3);
 
 impl Project {
     pub fn active_entry_directory(&self, cx: &App) -> Option<PathBuf> {
@@ -68,6 +72,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let is_via_remote = self.remote_client.is_some();
+        let origin = terminal_origin(is_via_remote);
 
         let path: Option<Arc<Path>> = if let Some(cwd) = &spawn_task.cwd {
             if is_via_remote {
@@ -189,6 +194,7 @@ impl Project {
                                         Some((&shell, &args)),
                                         env,
                                         path,
+                                        origin.terminal_id(),
                                         remote_client,
                                         cx,
                                     )?
@@ -200,6 +206,7 @@ impl Project {
                                         .map(|command| (command, &spawn_task.args)),
                                     env,
                                     path,
+                                    origin.terminal_id(),
                                     remote_client,
                                     cx,
                                 )?,
@@ -248,7 +255,7 @@ impl Project {
                         settings.max_scroll_history_lines,
                         settings.path_hyperlink_regexes,
                         Duration::from_millis(settings.path_hyperlink_timeout_ms),
-                        is_via_remote,
+                        origin,
                         cx.entity_id().as_u64(),
                         cx,
                         activation_script,
@@ -318,6 +325,7 @@ impl Project {
     ) -> Task<Result<Entity<Terminal>>> {
         let path = cwd.map(|p| Arc::from(&*p));
         let is_via_remote = !force_local && self.remote_client.is_some();
+        let origin = terminal_origin(is_via_remote);
 
         let mut settings_location = None;
         if let Some(path) = path.as_ref()
@@ -437,7 +445,14 @@ impl Project {
                                         Some((program, args))
                                     }
                                 };
-                                create_remote_shell(spawn_command, env, path, remote_client, cx)?
+                                create_remote_shell(
+                                    spawn_command,
+                                    env,
+                                    path,
+                                    origin.terminal_id(),
+                                    remote_client,
+                                    cx,
+                                )?
                             }
                             None => (settings.shell, env),
                         }
@@ -452,7 +467,7 @@ impl Project {
                         settings.max_scroll_history_lines,
                         settings.path_hyperlink_regexes,
                         Duration::from_millis(settings.path_hyperlink_timeout_ms),
-                        is_via_remote,
+                        origin,
                         cx.entity_id().as_u64(),
                         cx,
                         activation_script,
@@ -497,6 +512,13 @@ impl Project {
         if terminal.read(cx).task().is_some() {
             return self.create_terminal_shell(cwd, cx);
         }
+        // A clone gets its own shell, and with it its own remote marker. The
+        // old marker is part of the SSH command a copied terminal would
+        // otherwise reuse, which would make the remote server answer for the
+        // wrong shell.
+        if terminal.read(cx).origin().is_remote() {
+            return self.create_terminal_shell(cwd, cx);
+        }
         let local_path = if self.is_via_remote_server() {
             None
         } else {
@@ -530,6 +552,46 @@ impl Project {
 
                 terminal_handle
             })
+        })
+    }
+
+    /// Whether closing this terminal would terminate work that is still
+    /// running.
+    ///
+    /// Asks the SSH host whether the shell carrying `terminal_id` has a child
+    /// process running. A terminal whose remote answer cannot be obtained
+    /// counts as having one, because the alternative is ending work without
+    /// asking.
+    pub fn remote_terminal_has_child_processes(
+        &self,
+        terminal_id: &str,
+        cx: &App,
+    ) -> Task<bool> {
+        let Some(remote_client) = self.remote_client() else {
+            return Task::ready(true);
+        };
+
+        let terminal_id = terminal_id.to_string();
+        let proto_client = remote_client.read(cx).proto_client();
+        let executor = cx.background_executor().clone();
+        let timeout_executor = executor.clone();
+        executor.spawn(async move {
+            let request = proto_client.request(proto::HasTerminalChildProcesses {
+                project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                terminal_id,
+            });
+            smol::future::or(
+                async move {
+                    request
+                        .await
+                        .map_or(true, |response| response.has_child_processes)
+                },
+                async move {
+                    timeout_executor.timer(REMOTE_TERMINAL_QUERY_TIMEOUT).await;
+                    true
+                },
+            )
+            .await
         })
     }
 
@@ -641,14 +703,33 @@ impl Project {
     }
 }
 
+/// Builds the origin for a terminal that is about to be spawned. A remote
+/// shell gets an id the remote server can match against its environment,
+/// since the shell's pid is only meaningful on the SSH host.
+fn terminal_origin(is_via_remote: bool) -> TerminalOrigin {
+    if is_via_remote {
+        TerminalOrigin::Remote {
+            terminal_id: uuid::Uuid::new_v4().to_string(),
+        }
+    } else {
+        TerminalOrigin::Local
+    }
+}
+
 fn create_remote_shell(
     spawn_command: Option<(&String, &Vec<String>)>,
     mut env: HashMap<String, String>,
     working_directory: Option<Arc<Path>>,
+    terminal_id: Option<&str>,
     remote_client: Entity<RemoteClient>,
     cx: &mut App,
 ) -> Result<(Shell, HashMap<String, String>)> {
     insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
+    if let Some(terminal_id) = terminal_id {
+        // The remote server matches this variable to find the shell on its own
+        // host, whose pid the client cannot know.
+        env.insert("ZED_TERMINAL_ID".to_string(), terminal_id.to_string());
+    }
 
     let (program, args) = match spawn_command {
         Some((program, args)) => (Some(program.clone()), args),
