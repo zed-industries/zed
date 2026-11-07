@@ -99,6 +99,8 @@ struct GammaParams {
 const M_PI_F: f32 = 3.1415926;
 const GRAYSCALE_FACTORS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
+const SIMPLE_PRIMITIVE_FLAG: u32 = 0x80000000u;
+
 struct Bounds {
     origin: vec2<f32>,
     size: vec2<f32>,
@@ -136,7 +138,7 @@ struct Background {
     // 2u is PatternSlash
     // 3u is Checkerboard
     tag: u32,
-    // 0u is sRGB linear color
+    // 0u is sRGB color
     // 1u is Oklab color
     color_space: u32,
     solid: Hsla,
@@ -407,55 +409,60 @@ fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
 }
 
 
-struct GradientColor {
-    solid: vec4<f32>,
+struct PreparedBackground {
     color0: vec4<f32>,
     color1: vec4<f32>,
+    tag: u32,
 }
 
-fn prepare_gradient_color(tag: u32, color_space: u32,
-    solid: Hsla, colors: array<LinearColorStop, 2>) -> GradientColor {
-    var result = GradientColor();
+fn prepare_background(background: Background) -> PreparedBackground {
+    var result: PreparedBackground;
+    result.tag = background.tag;
+    result.color1 = vec4<f32>(0.0);
 
-    if (tag == 0u || tag == 2u || tag == 3u) {
-        result.solid = hsla_to_rgba(solid);
-    } else if (tag == 1u) {
-        // The hsla_to_rgba is returns a linear sRGB color
-        result.color0 = hsla_to_rgba(colors[0].color);
-        result.color1 = hsla_to_rgba(colors[1].color);
-
-        // Prepare color space in vertex for avoid conversion
-        // in fragment shader for performance reasons
-        if (color_space == 0u) {
-            // sRGB
+    if (background.tag == 1u) {
+        // `hsla_to_rgba` returns linear sRGB. Converting the endpoints to the
+        // interpolation space once avoids converting at every stop evaluation.
+        result.color0 = hsla_to_rgba(background.colors[0].color);
+        result.color1 = hsla_to_rgba(background.colors[1].color);
+        if (background.color_space == 0u) {
             result.color0 = linear_to_srgba(result.color0);
             result.color1 = linear_to_srgba(result.color1);
-        } else if (color_space == 1u) {
-            // Oklab
+        } else if (background.color_space == 1u) {
             result.color0 = linear_srgb_to_oklab(result.color0);
             result.color1 = linear_srgb_to_oklab(result.color1);
         }
+    } else {
+        result.color0 = hsla_to_rgba(background.solid);
     }
 
     return result;
 }
 
-fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
-    solid_color: vec4<f32>, color0: vec4<f32>, color1: vec4<f32>) -> vec4<f32> {
-    var background_color = vec4<f32>(0.0);
+// Ordered (Bayer 4x4) dither threshold, remapped to [-1, +1].
+fn dither_offset(position: vec2<f32>) -> f32 {
+    let cell = vec2<u32>(position) & vec2<u32>(3u);
+    let z = cell.x ^ cell.y;
+    let threshold = ((z & 1u) << 3u)
+        | ((cell.y & 1u) << 2u)
+        | (z & 2u)
+        | ((cell.y & 2u) >> 1u);
+    return (f32(threshold) + 0.5) * (1.0 / 8.0) - 1.0;
+}
 
-    switch (background.tag) {
-        default: {
-            return solid_color;
-        }
+fn background_color(prepared: PreparedBackground, background: Background, bounds: Bounds,
+    position: vec2<f32>) -> vec4<f32> {
+    var color = prepared.color0;
+    if (prepared.tag == 0u) {
+        return color;
+    }
+
+    switch (prepared.tag) {
         case 1u: {
-            // Linear gradient background.
             // -90 degrees to match the CSS gradient angle.
-            let angle = background.gradient_angle_or_pattern_height;
-            let radians = (angle % 360.0 - 90.0) * M_PI_F / 180.0;
+            let radians = (background.gradient_angle_or_pattern_height % 360.0 - 90.0)
+                * M_PI_F / 180.0;
             var direction = vec2<f32>(cos(radians), sin(radians));
-            let stop0_percentage = background.colors[0].percentage;
-            let stop1_percentage = background.colors[1].percentage;
 
             // Expand the short side to be the same as the long side
             if (bounds.size.x > bounds.size.y) {
@@ -464,66 +471,64 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
                 direction.x *= bounds.size.x / bounds.size.y;
             }
 
-            // Get the t value for the linear gradient with the color stop percentages.
-            let half_size = bounds.size / 2.0;
-            let center = bounds.origin + half_size;
-            let center_to_point = position - center;
-            var t = dot(center_to_point, direction) / length(direction);
-            // Check the direct to determine the use x or y
-            if (abs(direction.x) > abs(direction.y)) {
-                t = (t + half_size.x) / bounds.size.x;
+            let extent = select(bounds.size.y, bounds.size.x, abs(direction.x) > abs(direction.y));
+            let direction_length = length(direction);
+            let span = background.colors[1].percentage - background.colors[0].percentage;
+            // The half-extent term is exactly half of `extent`, so the
+            // position-independent part reduces to this.
+            let offset = 0.5 - background.colors[0].percentage;
+
+            // t = dot(position - center, gradient.xy) + gradient.z
+            var gradient = vec3<f32>(0.0);
+            if (direction_length != 0.0 && extent != 0.0) {
+                if (span == 0.0) {
+                    const STEP: f32 = 1e30;
+                    gradient = vec3<f32>(direction / (direction_length * extent) * STEP, offset * STEP);
+                } else {
+                    gradient = vec3<f32>(direction / (direction_length * extent * span), offset / span);
+                }
+            }
+            let center = bounds.origin + bounds.size * 0.5;
+            let t = saturate(dot(position - center, gradient.xy) + gradient.z);
+            color = mix(prepared.color0, prepared.color1, t);
+            if (background.color_space == 1u) {
+                color = oklab_to_linear_srgb(color);
             } else {
-                t = (t + half_size.y) / bounds.size.y;
+                color = srgba_to_linear(color);
             }
 
-            // Adjust t based on the stop percentages
-            t = (t - stop0_percentage) / (stop1_percentage - stop0_percentage);
-            t = clamp(t, 0.0, 1.0);
-
-            switch (background.color_space) {
-                default: {
-                    background_color = srgba_to_linear(mix(color0, color1, t));
-                }
-                case 1u: {
-                    let oklab_color = mix(color0, color1, t);
-                    background_color = oklab_to_linear_srgb(oklab_color);
-                }
-            }
+            // Dither to reduce banding in gradients (especially dark/alpha).
+            let dither = dither_offset(position);
+            color = vec4<f32>(color.rgb + dither * 1.0 / 255.0, color.a + dither * 1.5 / 255.0);
         }
         case 2u: {
             // pattern slash
-            let gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
-            let pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
-            let pattern_interval = (gradient_angle_or_pattern_height % 65535.0f) / 255.0f;
+            let pattern_height_encoded = background.gradient_angle_or_pattern_height;
+            let pattern_width = (pattern_height_encoded / 65535.0) / 255.0;
+            let pattern_interval = (pattern_height_encoded % 65535.0) / 255.0;
             let pattern_height = pattern_width + pattern_interval;
+            // Only the rotated x coordinate is used, and multiplying by the
+            // rotation reduces it to dot(v, vec2(cos a, sin a)).
             let stripe_angle = M_PI_F / 4.0;
+            let stripe_direction = vec2<f32>(cos(stripe_angle), sin(stripe_angle));
             let pattern_period = pattern_height * sin(stripe_angle);
-            let rotation = mat2x2<f32>(
-                cos(stripe_angle), -sin(stripe_angle),
-                sin(stripe_angle), cos(stripe_angle)
-            );
-            let relative_position = position - bounds.origin;
-            let rotated_point = rotation * relative_position;
-            let pattern = rotated_point.x % pattern_period;
-            let distance = min(pattern, pattern_period - pattern) - pattern_period * (pattern_width / pattern_height) /  2.0f;
-            background_color = solid_color;
-            background_color.a *= saturate(0.5 - distance);
+            let threshold = pattern_period * (pattern_width / pattern_height) / 2.0;
+            let pattern = dot(position - bounds.origin, stripe_direction) % pattern_period;
+            let distance = min(pattern, pattern_period - pattern) - threshold;
+            color.a *= saturate(0.5 - distance);
         }
         case 3u: {
             // checkerboard
-            let size = background.gradient_angle_or_pattern_height;
+            let cell_size = background.gradient_angle_or_pattern_height;
             let relative_position = position - bounds.origin;
-
-            let x_index = floor(relative_position.x / size);
-            let y_index = floor(relative_position.y / size);
-            let should_be_colored = (x_index + y_index) % 2.0;
-
-            background_color = solid_color;
-            background_color.a *= saturate(should_be_colored);
+            let x_index = floor(relative_position.x / cell_size);
+            let y_index = floor(relative_position.y / cell_size);
+            color.a *= saturate((x_index + y_index) % 2.0);
         }
+        default: {}
     }
 
-    return background_color;
+    return color;
 }
 
 // --- quads --- //
@@ -539,13 +544,32 @@ struct Quad {
     border_widths: Edges,
 }
 
+fn has_rounded_corners(corner_radii: Corners) -> bool {
+    return corner_radii.top_left != 0.0
+        || corner_radii.top_right != 0.0
+        || corner_radii.bottom_right != 0.0
+        || corner_radii.bottom_left != 0.0;
+}
+
+fn has_border(border_widths: Edges) -> bool {
+    return border_widths.top != 0.0
+        || border_widths.right != 0.0
+        || border_widths.bottom != 0.0
+        || border_widths.left != 0.0;
+}
+
+fn is_shaped(quad: Quad) -> bool {
+    return has_rounded_corners(quad.corner_radii) || has_border(quad.border_widths);
+}
+
 struct QuadVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) border_color: vec4<f32>,
     @location(1) @interpolate(flat) quad_id: u32,
-    @location(2) @interpolate(flat) background_solid: vec4<f32>,
-    @location(3) @interpolate(flat) background_color0: vec4<f32>,
-    @location(4) @interpolate(flat) background_color1: vec4<f32>,
+    // Inter-stage values can't be structs, so `PreparedBackground` is flattened.
+    @location(2) @interpolate(flat) background_color0: vec4<f32>,
+    @location(3) @interpolate(flat) background_color1: vec4<f32>,
+    @location(4) @interpolate(flat) background_tag: u32,
 }
 
 @vertex
@@ -557,40 +581,27 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     let clipped = clip_to_mask(unit_vertex, quad.bounds, quad.content_mask);
     out.position = to_device_position_impl(clipped.position);
 
-    let gradient = prepare_gradient_color(
-        quad.background.tag,
-        quad.background.color_space,
-        quad.background.solid,
-        quad.background.colors
-    );
-    out.background_solid = gradient.solid;
-    out.background_color0 = gradient.color0;
-    out.background_color1 = gradient.color1;
     out.border_color = hsla_to_rgba(quad.border_color);
-    out.quad_id = instance_id;
+    let simple = !is_shaped(quad) && quad.background.tag == 0u;
+    out.quad_id = instance_id | select(0u, SIMPLE_PRIMITIVE_FLAG, simple);
+    let background = prepare_background(quad.background);
+    out.background_color0 = background.color0;
+    out.background_color1 = background.color1;
+    out.background_tag = background.tag;
     return out;
 }
 
 @fragment
 fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
-    let quad = load_quad(input.quad_id);
-
-    let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
-        input.background_solid, input.background_color0, input.background_color1);
-
-    let unrounded = quad.corner_radii.top_left == 0.0 &&
-        quad.corner_radii.bottom_left == 0.0 &&
-        quad.corner_radii.top_right == 0.0 &&
-        quad.corner_radii.bottom_right == 0.0;
-
-    // Fast path when the quad is not rounded and doesn't have any border
-    if (quad.border_widths.top == 0.0 &&
-            quad.border_widths.left == 0.0 &&
-            quad.border_widths.right == 0.0 &&
-            quad.border_widths.bottom == 0.0 &&
-            unrounded) {
-        return blend_color(background_color, 1.0);
+    if ((input.quad_id & SIMPLE_PRIMITIVE_FLAG) != 0u) {
+        return blend_color(input.background_color0, 1.0);
     }
+
+    let quad = load_quad(input.quad_id);
+    let prepared = PreparedBackground(input.background_color0, input.background_color1,
+        input.background_tag);
+    let background = background_color(prepared, quad.background, quad.bounds, input.position.xy);
+    let unrounded = !has_rounded_corners(quad.corner_radii);
 
     let size = quad.bounds.size;
     let half_size = size / 2.0;
@@ -655,7 +666,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // However, that might negatively impact performance in the case of
     // reasonable sizes for rounded corners.
     if (is_within_inner_straight_border && !is_near_rounded_corner) {
-        return blend_color(background_color, 1.0);
+        return blend_color(background, 1.0);
     }
 
     // Signed distance of the point to the outside edge of the quad's border. It
@@ -689,7 +700,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // Negative when inside the border
     let border_sdf = max(inner_sdf, outer_sdf);
 
-    var color = background_color;
+    var color = background;
     if (border_sdf < antialias_threshold) {
         var border_color = input.border_color;
 
@@ -889,8 +900,8 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
         // Blend the border on top of the background and then linearly interpolate
         // between the two as we slide inside the background.
-        let blended_border = over(background_color, border_color);
-        color = mix(background_color, blended_border,
+        let blended_border = over(background, border_color);
+        color = mix(background, blended_border,
                     saturate(antialias_threshold - inner_sdf));
     }
 
@@ -1096,14 +1107,8 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
         let distance = f / length(gradient);
         alpha = saturate(0.5 - distance);
     }
-    let prepared_gradient = prepare_gradient_color(
-        background.tag,
-        background.color_space,
-        background.solid,
-        background.colors,
-    );
-    let color = gradient_color(background, input.position.xy, bounds,
-        prepared_gradient.solid, prepared_gradient.color0, prepared_gradient.color1);
+    let color = background_color(prepare_background(background), background, bounds,
+        input.position.xy);
     return vec4<f32>(color.rgb * color.a * alpha, color.a * alpha);
 }
 
@@ -1170,7 +1175,7 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
     let clipped = clip_to_mask(unit_vertex, underline.bounds, underline.content_mask);
     out.position = to_device_position_impl(clipped.position);
     out.color = hsla_to_rgba(underline.color);
-    out.underline_id = instance_id;
+    out.underline_id = instance_id | select(0u, SIMPLE_PRIMITIVE_FLAG, underline.wavy == 0u);
     return out;
 }
 
@@ -1179,12 +1184,11 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     const WAVE_FREQUENCY: f32 = 2.0;
     const WAVE_HEIGHT_RATIO: f32 = 0.8;
 
-    let underline = load_underline(input.underline_id);
-    if (underline.wavy == 0u)
-    {
+    if ((input.underline_id & SIMPLE_PRIMITIVE_FLAG) != 0u) {
         return blend_color(input.color, input.color.a);
     }
 
+    let underline = load_underline(input.underline_id);
     let half_thickness = underline.thickness * 0.5;
 
     let st = (input.position.xy - underline.bounds.origin) / underline.bounds.size.y - vec2<f32>(0.0, 0.5);
@@ -1266,6 +1270,7 @@ struct PolySpriteVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
     @location(1) @interpolate(flat) sprite_id: u32,
+    @location(2) @interpolate(flat) opacity: f32,
 }
 
 @vertex
@@ -1277,22 +1282,25 @@ fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     let clipped = clip_to_mask(unit_vertex, sprite.bounds, sprite.content_mask);
     out.position = to_device_position_impl(clipped.position);
     out.tile_position = to_tile_position(clipped.unit_vertex, sprite.tile);
-    out.sprite_id = instance_id;
+    let simple = !has_rounded_corners(sprite.corner_radii) && sprite.grayscale == 0u;
+    out.sprite_id = instance_id | select(0u, SIMPLE_PRIMITIVE_FLAG, simple);
+    out.opacity = sprite.opacity;
     return out;
 }
 
 @fragment
 fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
-    let sample = textureSample(t_sprite, s_sprite, input.tile_position);
-    let sprite = load_poly_sprite(input.sprite_id);
-    let distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
-
-    var color = sample;
-    if (sprite.grayscale != 0u) {
-        let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
-        color = vec4<f32>(vec3<f32>(grayscale), sample.a);
+    var color = textureSample(t_sprite, s_sprite, input.tile_position);
+    if ((input.sprite_id & SIMPLE_PRIMITIVE_FLAG) != 0u) {
+        return blend_color(color, input.opacity);
     }
-    return blend_color(color, sprite.opacity * saturate(0.5 - distance));
+
+    let sprite = load_poly_sprite(input.sprite_id);
+    if (sprite.grayscale != 0u) {
+        color = vec4<f32>(vec3<f32>(dot(color.rgb, GRAYSCALE_FACTORS)), color.a);
+    }
+    let distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+    return blend_color(color, input.opacity * saturate(0.5 - distance));
 }
 
 // --- surfaces --- //

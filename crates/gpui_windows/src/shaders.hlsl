@@ -98,6 +98,8 @@ struct TransformationMatrix {
 static const float M_PI_F = 3.141592653f;
 static const float3 GRAYSCALE_FACTORS = float3(0.2126f, 0.7152f, 0.0722f);
 
+static const uint SIMPLE_PRIMITIVE_FLAG = 1u << 31;
+
 float4 to_device_position_impl(float2 position) {
     float2 device_position = position / global_viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0);
     return float4(device_position, 0., 1.);
@@ -531,7 +533,6 @@ struct QuadFragmentInput {
     nointerpolation uint quad_id: TEXCOORD0;
     float4 position: SV_Position;
     nointerpolation float4 border_color: COLOR0;
-    nointerpolation uint simple: TEXCOORD1;
     PreparedBackground background;
 };
 
@@ -549,14 +550,14 @@ QuadFragmentInput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_
     QuadFragmentInput output;
     output.position = device_position;
     output.border_color = border_color;
-    output.quad_id = quad_id;
-    output.simple = !is_shaped(quad) && quad.background.tag == 0u ? 1u : 0u;
+    bool simple = !is_shaped(quad) && quad.background.tag == 0u;
+    output.quad_id = quad_id | (simple ? SIMPLE_PRIMITIVE_FLAG : 0u);
     output.background = prepare_background(quad.background);
     return output;
 }
 
 float4 quad_fragment(QuadFragmentInput input): SV_Target {
-    if (input.simple != 0u) {
+    if ((input.quad_id & SIMPLE_PRIMITIVE_FLAG) != 0u) {
         return input.background.color0;
     }
 
@@ -1055,7 +1056,6 @@ struct UnderlineFragmentInput {
   nointerpolation uint underline_id: TEXCOORD0;
   float4 position: SV_Position;
   nointerpolation float4 color: COLOR;
-  nointerpolation uint simple: TEXCOORD1;
 };
 
 StructuredBuffer<Underline> underlines: register(t1);
@@ -1071,8 +1071,7 @@ UnderlineFragmentInput underline_vertex(uint vertex_id: SV_VertexID, uint instan
     UnderlineFragmentInput output;
     output.position = device_position;
     output.color = color;
-    output.underline_id = underline_id;
-    output.simple = underline.wavy == 0u ? 1u : 0u;
+    output.underline_id = underline_id | (underline.wavy == 0u ? SIMPLE_PRIMITIVE_FLAG : 0u);
     return output;
 }
 
@@ -1080,7 +1079,7 @@ float4 underline_fragment(UnderlineFragmentInput input): SV_Target {
     const float WAVE_FREQUENCY = 2.0;
     const float WAVE_HEIGHT_RATIO = 0.8;
 
-    if (input.simple != 0u) {
+    if ((input.underline_id & SIMPLE_PRIMITIVE_FLAG) != 0u) {
         return input.color;
     }
 
@@ -1190,8 +1189,7 @@ struct PolychromeSpriteFragmentInput {
     nointerpolation uint sprite_id: TEXCOORD0;
     float4 position: SV_Position;
     float2 tile_position: POSITION;
-    nointerpolation uint simple: TEXCOORD1;
-    nointerpolation float opacity: TEXCOORD2;
+    nointerpolation float opacity: TEXCOORD1;
 };
 
 StructuredBuffer<PolychromeSprite> poly_sprites: register(t1);
@@ -1207,16 +1205,15 @@ PolychromeSpriteFragmentInput polychrome_sprite_vertex(uint vertex_id: SV_Vertex
     PolychromeSpriteFragmentInput output;
     output.position = device_position;
     output.tile_position = tile_position;
-    output.sprite_id = sprite_id;
-    output.simple = !has_rounded_corners(sprite.corner_radii) && sprite.grayscale == 0u
-        ? 1u : 0u;
+    bool simple = !has_rounded_corners(sprite.corner_radii) && sprite.grayscale == 0u;
+    output.sprite_id = sprite_id | (simple ? SIMPLE_PRIMITIVE_FLAG : 0u);
     output.opacity = sprite.opacity;
     return output;
 }
 
 float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Target {
     float4 color = t_sprite.Sample(s_sprite, input.tile_position);
-    if (input.simple != 0u) {
+    if ((input.sprite_id & SIMPLE_PRIMITIVE_FLAG) != 0u) {
         return float4(color.rgb, color.a * input.opacity);
     }
 
