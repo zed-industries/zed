@@ -312,6 +312,11 @@ impl BookmarkStore {
             unreachable!("resolve_if_needed should have converted to Loaded");
         };
 
+        // Overlapping worktrees can open the same path in different buffers.
+        if buffer_bookmarks.buffer != buffer {
+            return;
+        }
+
         let snapshot = buffer.read(cx).text_snapshot();
 
         let existing_index = buffer_bookmarks.bookmarks.iter().position(|existing| {
@@ -345,6 +350,10 @@ impl BookmarkStore {
             return None;
         };
 
+        if &buffer_bookmarks.buffer != buffer {
+            return None;
+        }
+
         let snapshot = buffer.read(cx).text_snapshot();
 
         buffer_bookmarks.bookmarks.iter().find(|existing| {
@@ -370,6 +379,10 @@ impl BookmarkStore {
         else {
             return;
         };
+
+        if &buffer_bookmarks.buffer != buffer {
+            return;
+        }
 
         let snapshot = buffer.read(cx).text_snapshot();
         let row = anchor.summary::<Point>(&snapshot).row;
@@ -404,6 +417,10 @@ impl BookmarkStore {
         let Some(BookmarkEntry::Loaded(file_bookmarks)) = self.bookmarks.get(&abs_path) else {
             return Vec::new();
         };
+
+        if file_bookmarks.buffer != buffer {
+            return Vec::new();
+        }
 
         file_bookmarks
             .bookmarks
