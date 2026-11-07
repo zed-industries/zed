@@ -16,6 +16,7 @@ use project::{
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
     worktree_store::WorktreeStore,
 };
+use remote::RemoteConnectionIdentity;
 use smallvec::SmallVec;
 use theme::ActiveTheme;
 use ui::{
@@ -26,7 +27,7 @@ use ui_input::InputField;
 
 use util::{ResultExt, paths::PathStyle};
 
-use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
+use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity, WorkspaceDb};
 
 pub struct SecurityModal {
     restricted_paths: HashMap<WorktreeId, RestrictedPath>,
@@ -35,6 +36,7 @@ pub struct SecurityModal {
     trust_parents: bool,
     worktree_store: WeakEntity<WorktreeStore>,
     remote_host: Option<RemoteHostLocation>,
+    connection_identity: Option<RemoteConnectionIdentity<'static>>,
     focus_handle: FocusHandle,
     project_list_scroll_handle: ScrollHandle,
     trusted: Option<bool>,
@@ -63,10 +65,17 @@ impl ModalView for SecurityModal {
         true
     }
 
-    fn on_before_dismiss(&mut self, _: &mut Window, _: &mut Context<Self>) -> DismissDecision {
+    fn on_before_dismiss(&mut self, _: &mut Window, cx: &mut Context<Self>) -> DismissDecision {
         match self.trusted {
             Some(false) => {
                 telemetry::event!("Open in Restricted", source = "Worktree Trust Modal");
+                let abs_paths = self
+                    .restricted_paths
+                    .values()
+                    .map(|restricted_path| restricted_path.abs_path.clone())
+                    .collect::<Vec<_>>();
+                WorkspaceDb::global(cx)
+                    .keep_worktrees_restricted(abs_paths, self.connection_identity.clone());
                 DismissDecision::Dismiss(true)
             }
             Some(true) => {
@@ -313,6 +322,7 @@ impl SecurityModal {
     pub fn new(
         worktree_store: WeakEntity<WorktreeStore>,
         remote_host: Option<impl Into<RemoteHostLocation>>,
+        connection_identity: Option<RemoteConnectionIdentity<'static>>,
         home_dir_task: Task<Option<PathBuf>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -329,6 +339,7 @@ impl SecurityModal {
         let mut this = Self {
             worktree_store,
             remote_host: remote_host.map(|host| host.into()),
+            connection_identity,
             restricted_paths: HashMap::default(),
             focus_handle: cx.focus_handle(),
             project_list_scroll_handle: ScrollHandle::new(),
