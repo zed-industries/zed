@@ -107,6 +107,109 @@ impl DiffHunkRenderer for HiddenUnstagedDiffHunkRenderer {
     }
 }
 
+/// Renders controls for copying hunks between the sides of a two-way diff,
+/// for diffs that support copying hunks to their base text.
+pub struct TwoWayDiffHunkRenderer;
+
+impl DiffHunkRenderer for TwoWayDiffHunkRenderer {
+    fn render_hunk_controls(
+        &self,
+        row: u32,
+        _status: &DiffHunkStatus,
+        hunk_range: Range<Anchor>,
+        _is_created_file: bool,
+        line_height: Pixels,
+        editor: &Entity<Editor>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let supports_copy_to_base = hunk_range
+            .start
+            .buffer_id()
+            .and_then(|buffer_id| editor.read(cx).buffer().read(cx).diff_for(buffer_id))
+            .and_then(|diff| diff.read(cx).operations())
+            .is_some_and(|operations| operations.supports_copy_to_base());
+        if !supports_copy_to_base {
+            return gpui::Empty.into_any_element();
+        }
+
+        h_flex()
+            .h(line_height)
+            .mr_1()
+            .gap_1()
+            .px_0p5()
+            .pb_1()
+            .border_x_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .rounded_b_lg()
+            .bg(cx.theme().colors().editor_background)
+            .block_mouse_except_scroll()
+            .shadow_md()
+            .child(
+                IconButton::new(("copy-hunk-to-left", row as u64), IconName::ArrowLeft)
+                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .tooltip({
+                        let focus_handle = editor.focus_handle(cx);
+                        move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Copy Hunk to Left",
+                                &CopyHunkToLeft,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_event, window, cx| {
+                            editor.update(cx, |editor, cx| {
+                                let snapshot = editor.snapshot(window, cx);
+                                let point = hunk_range.start.to_point(&snapshot.buffer_snapshot());
+                                editor.copy_hunks_to_left_in_ranges(vec![point..point], window, cx);
+                            });
+                        }
+                    }),
+            )
+            .child(
+                IconButton::new(("copy-hunk-to-right", row as u64), IconName::ArrowRight)
+                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .tooltip({
+                        let focus_handle = editor.focus_handle(cx);
+                        move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Copy Hunk to Right",
+                                &CopyHunkToRight,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_event, window, cx| {
+                            editor.update(cx, |editor, cx| {
+                                let snapshot = editor.snapshot(window, cx);
+                                let point = hunk_range.start.to_point(&snapshot.buffer_snapshot());
+                                editor.copy_hunks_to_right_in_ranges(
+                                    vec![point..point],
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn render_hunk_as_staged(&self, _status: &DiffHunkStatus, _cx: &App) -> bool {
+        false
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum DisplayDiffHunk {
     Folded {
@@ -494,6 +597,86 @@ impl Editor {
             .map(|s| s.range())
             .collect();
         self.restore_hunks_in_ranges(selections, window, cx);
+    }
+
+    pub fn copy_hunk_to_left(
+        &mut self,
+        _: &CopyHunkToLeft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selections = self
+            .selections
+            .all(&self.display_snapshot(cx))
+            .into_iter()
+            .map(|selection| selection.range())
+            .collect();
+        self.copy_hunks_to_left_in_ranges(selections, window, cx);
+    }
+
+    pub fn copy_hunk_to_right(
+        &mut self,
+        _: &CopyHunkToRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selections = self
+            .selections
+            .all(&self.display_snapshot(cx))
+            .into_iter()
+            .map(|selection| selection.range())
+            .collect();
+        self.copy_hunks_to_right_in_ranges(selections, window, cx);
+    }
+
+    fn copy_hunks_to_left_in_ranges(
+        &mut self,
+        ranges: Vec<Range<Point>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hunks = self.snapshot(window, cx).hunks_for_ranges(ranges);
+        for hunks in self.resolve_diff_hunks(hunks, cx) {
+            let Some(operations) = hunks.diff.read(cx).operations() else {
+                continue;
+            };
+            if !operations.supports_copy_to_base() {
+                continue;
+            }
+            let Some(buffer) = hunks.buffer else {
+                continue;
+            };
+            let buffer = buffer.read(cx);
+            let base_text_edits = hunks
+                .hunks
+                .into_iter()
+                .map(|hunk| {
+                    let text = buffer.text_for_range(hunk.buffer_range).collect::<String>();
+                    (hunk.diff_base_byte_range, text)
+                })
+                .collect::<Vec<_>>();
+            if !base_text_edits.is_empty() {
+                operations.copy_to_base(hunks.diff, base_text_edits, cx);
+            }
+        }
+    }
+
+    fn copy_hunks_to_right_in_ranges(
+        &mut self,
+        ranges: Vec<Range<Point>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hunks = self.snapshot(window, cx).hunks_for_ranges(ranges);
+        let mut hunks = self.resolve_diff_hunks(hunks, cx);
+        hunks.retain(|hunks| {
+            hunks
+                .diff
+                .read(cx)
+                .operations()
+                .is_some_and(|operations| operations.supports_copy_to_base())
+        });
+        self.restore_resolved_diff_hunks_in_target(hunks, window, cx);
     }
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
@@ -1738,6 +1921,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let hunks = self.resolve_diff_hunks(hunks, cx);
+        self.restore_resolved_diff_hunks_in_target(hunks, window, cx);
+    }
+
+    fn restore_resolved_diff_hunks_in_target(
+        &mut self,
+        hunks: Vec<ResolvedDiffHunks>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if hunks.is_empty() {
             return;
         }
