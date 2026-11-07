@@ -15,7 +15,7 @@ use gpui::{
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
-use ui::{DocumentationAside, IntoElement, prelude::*};
+use ui::{DocumentationAside, IntoElement, Tooltip, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
@@ -317,6 +317,7 @@ impl PickerDelegate for ModelPickerDelegate {
                 Some(
                     div()
                         .id(("model-picker-menu-child", ix))
+                        .tooltip(Tooltip::text(model_info.name.clone()))
                         .when_some(model_info.description.clone(), |this, description| {
                             this.on_hover(cx.listener(move |menu, hovered, _, cx| {
                                 if *hovered {
