@@ -1480,13 +1480,29 @@ pub trait PlatformHeadlessRenderer {
     /// Returns the sprite atlas used by this renderer.
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
-    /// Waits for frames submitted by [`Self::render_scene`] to finish, then returns
-    /// how long the GPU spent executing each frame since the last call, in
-    /// submission order. Renderers that can't time GPU work return no frames.
-    fn take_gpu_frame_times(&mut self) -> Result<Vec<std::time::Duration>> {
-        Ok(Vec::new())
+    /// Waits for frames submitted by [`Self::render_scene`] since the last call to
+    /// finish, then returns their GPU statistics. Fails with [`GpuStatsUnsupported`]
+    /// when this renderer can't measure GPU work.
+    #[cfg(feature = "bench-support")]
+    fn take_gpu_stats(&mut self) -> Result<GpuStats> {
+        Err(GpuStatsUnsupported.into())
     }
 }
+
+/// GPU statistics for frames submitted by [`PlatformHeadlessRenderer::render_scene`].
+#[cfg(feature = "bench-support")]
+#[derive(Clone, Debug, Default)]
+pub struct GpuStats {
+    /// How long the GPU spent executing each frame, in submission order.
+    pub frame_times: Vec<std::time::Duration>,
+}
+
+/// Returned by [`PlatformHeadlessRenderer::take_gpu_stats`] when the renderer
+/// can't measure GPU work.
+#[cfg(feature = "bench-support")]
+#[derive(Debug, thiserror::Error)]
+#[error("this renderer can't measure GPU work")]
+pub struct GpuStatsUnsupported;
 
 /// Type alias for runnables with metadata.
 /// Previously an enum with a single variant, now simplified to a direct type alias.

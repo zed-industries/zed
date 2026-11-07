@@ -16,6 +16,8 @@ use objc2_core_video::{
     CVPixelBufferGetWidthOfPlane, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVReturnSuccess,
 };
 use objc2_foundation::{NSRange, NSString};
+#[cfg(any(test, feature = "bench-support"))]
+use objc2_metal::MTLCommandBufferStatus;
 #[cfg(target_os = "macos")]
 use objc2_metal::MTLCopyAllDevices;
 use objc2_metal::{
@@ -27,11 +29,11 @@ use objc2_metal::{
     MTLTextureDescriptor, MTLTextureType, MTLTextureUsage, MTLViewport,
 };
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-use objc2_metal::{MTLBlitCommandEncoder, MTLCommandBufferStatus, MTLOrigin, MTLRegion, MTLSize};
+use objc2_metal::{MTLBlitCommandEncoder, MTLOrigin, MTLRegion, MTLSize};
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use parking_lot::Mutex;
 
-#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+#[cfg(feature = "bench-support")]
 use std::collections::VecDeque;
 use std::{cell::Cell, mem, mem::MaybeUninit, ops::Range, ptr, slice, sync::Arc};
 
@@ -1896,11 +1898,13 @@ pub struct MetalHeadlessRenderer {
     renderer: MetalRenderer,
     /// Frames submitted by `render_scene` whose GPU time hasn't been read yet,
     /// in submission order.
+    #[cfg(feature = "bench-support")]
     pending_frames: VecDeque<Retained<ProtocolObject<dyn MTLCommandBuffer>>>,
+    #[cfg(feature = "bench-support")]
     gpu_frame_times: Vec<std::time::Duration>,
 }
 
-#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+#[cfg(feature = "bench-support")]
 impl MetalHeadlessRenderer {
     /// Reads the GPU time of each pending frame that has finished, so the
     /// pending queue doesn't keep growing across a long measurement.
@@ -1938,7 +1942,9 @@ impl MetalHeadlessRenderer {
         let renderer = MetalRenderer::new_headless(instance_buffer_pool)?;
         Ok(Self {
             renderer,
+            #[cfg(feature = "bench-support")]
             pending_frames: VecDeque::new(),
+            #[cfg(feature = "bench-support")]
             gpu_frame_times: Vec::new(),
         })
     }
@@ -1956,20 +1962,29 @@ impl gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
 
     fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> anyhow::Result<()> {
         let command_buffer = self.renderer.render_scene(scene, size)?;
-        self.pending_frames.push_back(command_buffer);
-        self.collect_completed_frames()
+        #[cfg(feature = "bench-support")]
+        {
+            self.pending_frames.push_back(command_buffer);
+            self.collect_completed_frames()?;
+        }
+        #[cfg(not(feature = "bench-support"))]
+        drop(command_buffer);
+        Ok(())
     }
 
     fn sprite_atlas(&self) -> Arc<dyn gpui::PlatformAtlas> {
         self.renderer.sprite_atlas().clone()
     }
 
-    fn take_gpu_frame_times(&mut self) -> Result<Vec<std::time::Duration>> {
+    #[cfg(feature = "bench-support")]
+    fn take_gpu_stats(&mut self) -> Result<gpui::GpuStats> {
         for command_buffer in &self.pending_frames {
             command_buffer.waitUntilCompleted();
         }
         self.collect_completed_frames()?;
-        Ok(mem::take(&mut self.gpu_frame_times))
+        Ok(gpui::GpuStats {
+            frame_times: mem::take(&mut self.gpu_frame_times),
+        })
     }
 }
 
@@ -1983,6 +1998,7 @@ mod tests {
         CVPixelBufferUnlockBaseAddress, kCVPixelBufferIOSurfacePropertiesKey,
     };
 
+    #[cfg(feature = "bench-support")]
     #[test]
     fn headless_renderer_times_each_rendered_frame_on_the_gpu() -> Result<()> {
         use gpui::PlatformHeadlessRenderer as _;
@@ -2006,8 +2022,8 @@ mod tests {
         }
         renderer.render_scene_to_image(&scene, size(DevicePixels(32), DevicePixels(32)))?;
 
-        assert_eq!(renderer.take_gpu_frame_times()?.len(), 3);
-        assert!(renderer.take_gpu_frame_times()?.is_empty());
+        assert_eq!(renderer.take_gpu_stats()?.frame_times.len(), 3);
+        assert!(renderer.take_gpu_stats()?.frame_times.is_empty());
         Ok(())
     }
 

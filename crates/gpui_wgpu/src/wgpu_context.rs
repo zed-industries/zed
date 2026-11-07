@@ -226,8 +226,11 @@ impl WgpuContext {
                     };
 
                     // Lets benchmarks time frames on the GPU when the adapter supports it.
-                    let timestamp_query = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
-                    match Self::create_device(&adapter, timestamp_query).await {
+                    #[cfg(feature = "bench-support")]
+                    let additional_features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+                    #[cfg(not(feature = "bench-support"))]
+                    let additional_features = wgpu::Features::empty();
+                    match Self::create_device(&adapter, additional_features).await {
                         Ok((device, queue, dual_source_blending, color_texture_format)) => {
                             #[cfg(feature = "bench-support")]
                             if adapter_info.device_type == wgpu::DeviceType::Cpu {
