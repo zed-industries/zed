@@ -222,6 +222,7 @@ url.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 uuid.workspace = true
+video_viewer.workspace = true
 vim.workspace = true
 vim_mode_setting.workspace = true
 watch.workspace = true
