@@ -243,6 +243,25 @@ enum RendererState {
     Released,
 }
 
+#[derive(Default)]
+struct AcquireTimeouts {
+    /// Whether the previous attempt to acquire a surface texture timed out.
+    previous_timed_out: bool,
+}
+
+impl AcquireTimeouts {
+    /// Records whether an attempt to acquire a surface texture timed out, and returns whether to
+    /// configure the surface again, which replaces its swapchain. A single timeout can be a
+    /// passing stall, so it is retried on the same swapchain, but a second one in a row suggests
+    /// that the swapchain is stuck, as it can be after the system resumes from sleep. A new
+    /// swapchain gets the same single retry before it is replaced.
+    fn record(&mut self, timed_out: bool) -> bool {
+        let configure_again = timed_out && self.previous_timed_out;
+        self.previous_timed_out = timed_out && !configure_again;
+        configure_again
+    }
+}
+
 pub struct WgpuRenderer {
     /// Shared GPU context for device recovery coordination (unused on WASM).
     #[allow(dead_code)]
@@ -262,6 +281,7 @@ pub struct WgpuRenderer {
     observed_error_generation: u64,
     last_surface_error: Option<String>,
     needs_redraw: bool,
+    acquire_timeouts: AcquireTimeouts,
 }
 
 impl WgpuRenderer {
@@ -515,6 +535,7 @@ impl WgpuRenderer {
             observed_error_generation: 0,
             last_surface_error: None,
             needs_redraw: false,
+            acquire_timeouts: AcquireTimeouts::default(),
         })
     }
 }
@@ -1188,7 +1209,12 @@ impl WgpuRenderer {
             self.failed_frame_count = 0;
         }
 
-        let frame = match surface.get_current_texture() {
+        let surface_texture = surface.get_current_texture();
+        let configure_again = self.acquire_timeouts.record(matches!(
+            surface_texture,
+            wgpu::CurrentSurfaceTexture::Timeout
+        ));
+        let frame = match surface_texture {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 // Textures must be destroyed before the surface can be reconfigured.
@@ -1201,6 +1227,9 @@ impl WgpuRenderer {
                 return false;
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                if configure_again {
+                    surface.configure(&core.resources.device, &self.surface_config);
+                }
                 return false;
             }
             wgpu::CurrentSurfaceTexture::Validation => {
@@ -2955,5 +2984,23 @@ mod tests {
                 33.0_f32.to_bits(),
             ]
         );
+    }
+
+    #[test]
+    fn a_second_acquire_timeout_in_a_row_configures_the_surface_again() {
+        let mut timeouts = AcquireTimeouts::default();
+        assert!(!timeouts.record(true));
+        assert!(timeouts.record(true));
+        assert!(!timeouts.record(true));
+        assert!(timeouts.record(true));
+    }
+
+    #[test]
+    fn an_acquire_that_does_not_time_out_restarts_the_count() {
+        let mut timeouts = AcquireTimeouts::default();
+        assert!(!timeouts.record(true));
+        assert!(!timeouts.record(false));
+        assert!(!timeouts.record(true));
+        assert!(timeouts.record(true));
     }
 }
