@@ -1,4 +1,5 @@
 use collab_ui::collab_panel;
+use git_ui::project_diff::CompareWithBranch;
 use gpui::{App, Menu, MenuItem, OsAction};
 use project::DisableAiSettings;
 use release_channel::ReleaseChannel;
@@ -222,6 +223,32 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             name: "View".into(),
             disabled: false,
             items: view_items,
+        },
+        Menu {
+            name: "Git".into(),
+            disabled: false,
+            items: vec![
+                MenuItem::action("Git Panel", git_panel::ToggleFocus),
+                MenuItem::separator(),
+                MenuItem::action("Compare with Branch...", CompareWithBranch),
+                MenuItem::action("File History", git::FileHistory),
+                MenuItem::action("Blame", git::Blame),
+                MenuItem::action("Changes", git::Diff),
+                MenuItem::separator(),
+                MenuItem::action("Commit", git::Commit),
+                MenuItem::action("Stage All Changes", git::StageAll),
+                MenuItem::action("Unstage All Changes", git::UnstageAll),
+                MenuItem::separator(),
+                MenuItem::action("Push", git::Push),
+                MenuItem::action("Pull", git::Pull),
+                MenuItem::action("Fetch", git::Fetch),
+                MenuItem::separator(),
+                MenuItem::action("Branches...", zed_actions::git::Branch),
+                MenuItem::action("Stashes...", zed_actions::git::ViewStash),
+                MenuItem::action("Worktrees...", zed_actions::git::Worktree),
+                MenuItem::separator(),
+                MenuItem::action("Restore File", git::RestoreFile),
+            ],
         },
         Menu {
             name: "Go".into(),
