@@ -2896,6 +2896,7 @@ mod tests {
     use remote_server::{HeadlessAppState, HeadlessProject};
     use semver::Version;
     use serde_json::json;
+    use session::Session;
     use settings::{SaturatingBool, SettingsStore, SplicingVec, watch_config_file};
     use std::{
         path::{Path, PathBuf},
@@ -6448,6 +6449,7 @@ mod tests {
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
         init_test_with_state(cx, cx.update(AppState::test))
     }
 
@@ -7639,6 +7641,477 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_startup_restores_before_initial_unmatched_file(cx: &mut TestAppContext) {
+        check_startup_session_restore(path!("/session/third.txt"), false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_startup_restores_before_initial_matching_file(cx: &mut TestAppContext) {
+        check_startup_session_restore(path!("/session/first/new.txt"), false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_startup_restores_before_queued_unmatched_file(cx: &mut TestAppContext) {
+        check_startup_session_restore(path!("/session/third.txt"), true, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_startup_restores_before_queued_matching_file(cx: &mut TestAppContext) {
+        check_startup_session_restore(path!("/session/first/new.txt"), true, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_startup_without_restoration_opens_empty_tab(cx: &mut TestAppContext) {
+        for restore in [
+            workspace::RestoreOnStartupBehavior::LastSession,
+            workspace::RestoreOnStartupBehavior::EmptyTab,
+        ] {
+            let cx = &mut cx.new_app();
+            let app_state = init_test(cx);
+            cx.update(|cx| db::kvp::KeyValueStore::global(cx))
+                .write_kvp(onboarding::FIRST_OPEN.to_owned(), "false".to_owned())
+                .await
+                .unwrap();
+            if restore == workspace::RestoreOnStartupBehavior::EmptyTab {
+                app_state
+                    .fs
+                    .as_fake()
+                    .insert_tree(path!("/session"), json!({ "saved.txt": "saved file" }))
+                    .await;
+                let result = open_test_workspace_paths(
+                    vec![PathBuf::from(path!("/session/saved.txt"))],
+                    app_state.clone(),
+                    cx,
+                )
+                .await;
+                VisualTestContext::from_window(*result.window, cx).deactivate_window();
+                drop(result);
+                restart_startup_test_session(&app_state, cx).await;
+            }
+            cx.update(|cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.workspace.restore_on_startup = Some(restore);
+                    });
+                });
+            });
+            assert_eq!(cx.windows().len(), 0, "{restore:?}");
+            assert_eq!(cx.read(|cx| cx.active_window()), None, "{restore:?}");
+            let (sender, receiver) = mpsc::unbounded();
+            cx.update(|cx| crate::restore_and_open_workspaces(app_state, None, receiver, cx))
+                .await;
+            cx.run_until_parked();
+            assert_eq!(
+                startup_workspace_contents(cx),
+                vec![(Vec::new(), vec![(String::new(), false)])],
+                "{restore:?}"
+            );
+            drop(sender);
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_startup_opens_local_files_while_remote_connection_is_pending(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        server_cx.update(|cx| {
+            release_channel::init(Version::new(0, 0, 0), cx);
+            HeadlessProject::init(cx);
+        });
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs.insert_tree(path!("/remote"), json!({})).await;
+        let (connection_options, server_session, connect_guard) =
+            RemoteClient::fake_server(cx, server_cx);
+        let headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs,
+                    http_client: Arc::new(BlockedHttpClient),
+                    node_runtime: NodeRuntime::unavailable(),
+                    languages: Arc::new(LanguageRegistry::new(cx.background_executor().clone())),
+                    extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+        drop(connect_guard);
+        open_remote_project(
+            connection_options.clone(),
+            vec![PathBuf::from(path!("/remote"))],
+            app_state.clone(),
+            OpenOptions::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/"),
+                json!({
+                    "local": { "draft.txt": "", "initial.txt": "initial file" },
+                    "queued.txt": "queued file"
+                }),
+            )
+            .await;
+        let result = open_test_workspace_paths(
+            vec![
+                PathBuf::from(path!("/local")),
+                PathBuf::from(path!("/local/draft.txt")),
+            ],
+            app_state.clone(),
+            cx,
+        )
+        .await;
+        result
+            .window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace
+                    .active_item_as::<Editor>(cx)
+                    .unwrap()
+                    .update(cx, |editor, cx| {
+                        editor.insert("draft", window, cx);
+                    });
+            })
+            .unwrap();
+        drop(result);
+        restart_startup_test_session(&app_state, cx).await;
+        cx.executor().advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+        drop(headless);
+        assert!(!cx.read(|cx| remote::has_active_connection(&connection_options, cx)));
+        let (_server_session, connect_guard) =
+            RemoteClient::fake_server_with_opts(&connection_options, cx, server_cx);
+        let mut workspaces = crate::restorable_workspaces(&mut cx.to_async(), &app_state)
+            .await
+            .unwrap();
+        assert_eq!(workspaces.len(), 2);
+        let remote_workspace = workspaces
+            .iter_mut()
+            .find(|workspace| {
+                workspace.active_workspace.location != workspace::SerializedWorkspaceLocation::Local
+            })
+            .unwrap();
+        remote_workspace.active_workspace.location =
+            workspace::SerializedWorkspaceLocation::Remote(connection_options);
+        let request = |path: &str| RawOpenRequest {
+            urls: vec![format!("file://{}", urlencoding::encode(path))],
+            open_behavior: Some(cli::OpenBehavior::ExistingWindow),
+            ..RawOpenRequest::default()
+        };
+        let initial_request =
+            cx.update(|cx| OpenRequest::parse(request(path!("/local/initial.txt")), cx).unwrap());
+        let (sender, receiver) = mpsc::unbounded();
+        let mut startup = cx.spawn(async move |mut cx| {
+            crate::open_workspaces_on_startup(
+                Some(workspaces),
+                app_state,
+                Some(initial_request),
+                receiver,
+                &mut cx,
+            )
+            .await;
+        });
+        cx.run_until_parked();
+        assert!((&mut startup).now_or_never().is_none());
+        let local_windows = cx.read(|cx| {
+            workspace::workspace_windows_for_location(
+                &workspace::SerializedWorkspaceLocation::Local,
+                cx,
+            )
+            .collect::<Vec<_>>()
+        });
+        assert_eq!(local_windows.len(), 1);
+        let local_window = local_windows[0];
+        let bootstrap = cx
+            .windows()
+            .into_iter()
+            .find(|window| *window != *local_window)
+            .unwrap();
+        let mut expected = vec![
+            (Vec::new(), Vec::new()),
+            (
+                vec![PathBuf::from(path!("/local"))],
+                vec![
+                    ("draft".to_owned(), true),
+                    ("initial file".to_owned(), false),
+                ],
+            ),
+        ];
+        assert_eq!(startup_workspace_contents(cx), expected);
+        assert_eq!(cx.read(|cx| cx.active_window()), Some(*local_window));
+        bootstrap
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+        sender
+            .unbounded_send(request(path!("/queued.txt")))
+            .unwrap();
+        cx.run_until_parked();
+        expected[1].1.push(("queued file".to_owned(), false));
+        assert_eq!(startup_workspace_contents(cx), expected);
+        assert_eq!(cx.read(|cx| cx.active_window()), Some(*local_window));
+        assert!((&mut startup).now_or_never().is_none());
+        assert!(!connect_guard.is_canceled());
+        cx.dispatch_action(bootstrap, menu::Cancel);
+        startup.await;
+        cx.run_until_parked();
+        assert!(connect_guard.is_canceled());
+        assert_eq!(startup_workspace_contents(cx), expected);
+        assert_eq!(cx.read(|cx| cx.active_window()), Some(*local_window));
+        drop(connect_guard);
+        drop(sender);
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_startup_forced_new_window_for_saved_roots_keeps_both_drafts(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({ "file.txt": "" }))
+            .await;
+        let roots = vec![PathBuf::from(path!("/project"))];
+        let result = open_test_workspace_paths(roots.clone(), app_state.clone(), cx).await;
+        insert_startup_draft(result.window, "first draft", cx).await;
+
+        restart_startup_test_session(&app_state, cx).await;
+        let request = RawOpenRequest {
+            urls: vec![format!("file://{}", urlencoding::encode(path!("/project")))],
+            open_behavior: Some(cli::OpenBehavior::AlwaysNew),
+            ..RawOpenRequest::default()
+        };
+        let request = cx.update(|cx| OpenRequest::parse(request, cx).unwrap());
+        let (_sender, receiver) = mpsc::unbounded();
+        cx.update(|cx| {
+            crate::restore_and_open_workspaces(app_state.clone(), Some(request), receiver, cx)
+        })
+        .await;
+        cx.run_until_parked();
+        assert_eq!(
+            startup_workspace_contents(cx),
+            vec![
+                (roots.clone(), Vec::new()),
+                (roots.clone(), vec![("first draft".to_owned(), true)]),
+            ]
+        );
+        let new_window = cx
+            .windows()
+            .into_iter()
+            .filter_map(|window| window.downcast::<MultiWorkspace>())
+            .find(|window| {
+                window
+                    .read_with(cx, |multi_workspace, cx| {
+                        multi_workspace.workspace().read(cx).items(cx).count() == 0
+                    })
+                    .unwrap()
+            })
+            .unwrap();
+        insert_startup_draft(new_window, "second draft", cx).await;
+
+        restart_startup_test_session(&app_state, cx).await;
+        let (_sender, receiver) = mpsc::unbounded();
+        cx.update(|cx| crate::restore_and_open_workspaces(app_state.clone(), None, receiver, cx))
+            .await;
+        cx.run_until_parked();
+        assert_eq!(
+            startup_workspace_contents(cx),
+            vec![
+                (roots.clone(), vec![("first draft".to_owned(), true)]),
+                (roots, vec![("second draft".to_owned(), true)]),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_startup_keeps_focus_chosen_during_remote_restoration(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let (app_state, workspaces, connect_guard) =
+            remote_and_local_startup_workspaces(cx, server_cx).await;
+        let (_sender, receiver) = mpsc::unbounded();
+        let startup = cx.spawn(async move |mut cx| {
+            crate::open_workspaces_on_startup(Some(workspaces), app_state, None, receiver, &mut cx)
+                .await;
+        });
+        cx.run_until_parked();
+        let local_window = cx.read(|cx| {
+            workspace::workspace_windows_for_location(
+                &workspace::SerializedWorkspaceLocation::Local,
+                cx,
+            )
+            .next()
+            .unwrap()
+        });
+        assert_eq!(cx.read(|cx| cx.active_window()), Some(*local_window));
+        let bootstrap = cx
+            .windows()
+            .into_iter()
+            .find(|window| *window != *local_window)
+            .unwrap();
+        bootstrap
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+        cx.dispatch_action(bootstrap, menu::Cancel);
+        startup.await;
+        cx.run_until_parked();
+        assert_ne!(cx.read(|cx| cx.active_window()), Some(*local_window));
+        drop(connect_guard);
+    }
+
+    #[gpui::test]
+    async fn test_startup_reserves_saved_remote_rows_before_their_restore_starts(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        server_cx.update(|cx| {
+            release_channel::init(Version::new(0, 0, 0), cx);
+            HeadlessProject::init(cx);
+        });
+        let mut hosts = Vec::new();
+        for path in [path!("/first"), path!("/second")] {
+            let remote_fs = FakeFs::new(server_cx.executor());
+            remote_fs.insert_tree(path, json!({})).await;
+            let (connection_options, server_session, connect_guard) =
+                RemoteClient::fake_server(cx, server_cx);
+            let headless = server_cx.new(|cx| {
+                HeadlessProject::new(
+                    HeadlessAppState {
+                        session: server_session,
+                        fs: remote_fs,
+                        http_client: Arc::new(BlockedHttpClient),
+                        node_runtime: NodeRuntime::unavailable(),
+                        languages: Arc::new(LanguageRegistry::new(
+                            cx.background_executor().clone(),
+                        )),
+                        extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                        startup_time: std::time::Instant::now(),
+                    },
+                    false,
+                    cx,
+                )
+            });
+            drop(connect_guard);
+            open_remote_project(
+                connection_options.clone(),
+                vec![PathBuf::from(path)],
+                app_state.clone(),
+                OpenOptions::default(),
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
+            hosts.push((PathBuf::from(path), connection_options, headless));
+        }
+        restart_startup_test_session(&app_state, cx).await;
+        cx.executor().advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+        let mut workspaces = crate::restorable_workspaces(&mut cx.to_async(), &app_state)
+            .await
+            .unwrap();
+        assert_eq!(workspaces.len(), 2);
+        let mut connect_guards = Vec::new();
+        for workspace in &mut workspaces {
+            let (_, connection_options, _) = hosts
+                .iter()
+                .find(|(path, _, _)| workspace.active_workspace.paths.paths() == [path.clone()])
+                .unwrap();
+            workspace.active_workspace.location =
+                workspace::SerializedWorkspaceLocation::Remote(connection_options.clone());
+            let (_server_session, connect_guard) =
+                RemoteClient::fake_server_with_opts(connection_options, cx, server_cx);
+            connect_guards.push(connect_guard);
+        }
+        drop(hosts);
+        let waiting_workspace_id = workspaces[1].active_workspace.workspace_id;
+        let (_sender, receiver) = mpsc::unbounded();
+        let startup = cx.spawn(async move |mut cx| {
+            crate::open_workspaces_on_startup(Some(workspaces), app_state, None, receiver, &mut cx)
+                .await;
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        assert!(cx.read(|cx| workspace::is_workspace_id_reserved(waiting_workspace_id, cx)));
+        drop(startup);
+        drop(connect_guards);
+    }
+
+    #[gpui::test]
+    async fn test_startup_empty_cli_request_keeps_remote_frontmost_focus(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let (app_state, mut workspaces, connect_guard) =
+            remote_and_local_startup_workspaces(cx, server_cx).await;
+        workspaces.reverse();
+        let (cli_requests, cli_receiver) = mpsc::unbounded();
+        cli_requests
+            .unbounded_send(cli::CliRequest::Open {
+                paths: Vec::new(),
+                urls: Vec::new(),
+                diff_paths: Vec::new(),
+                diff_all: false,
+                wsl: None,
+                wait: false,
+                open_behavior: cli::OpenBehavior::Default,
+                env: None,
+                user_data_dir: None,
+                dev_container: false,
+                cwd: None,
+            })
+            .unwrap();
+        let request = OpenRequest {
+            kind: Some(OpenRequestKind::CliConnection((
+                cli_receiver,
+                Box::new(IgnoredCliResponses),
+            ))),
+            ..OpenRequest::default()
+        };
+        let (_sender, receiver) = mpsc::unbounded();
+        let startup = cx.spawn(async move |mut cx| {
+            crate::open_workspaces_on_startup(
+                Some(workspaces),
+                app_state,
+                Some(request),
+                receiver,
+                &mut cx,
+            )
+            .await;
+        });
+        cx.run_until_parked();
+        let local_window = cx.read(|cx| {
+            workspace::workspace_windows_for_location(
+                &workspace::SerializedWorkspaceLocation::Local,
+                cx,
+            )
+            .next()
+            .unwrap()
+        });
+        let restoring_window = cx
+            .windows()
+            .into_iter()
+            .find(|window| *window != *local_window)
+            .unwrap();
+        assert_eq!(cx.read(|cx| cx.active_window()), Some(restoring_window));
+        cx.dispatch_action(restoring_window, menu::Cancel);
+        startup.await;
+        drop(connect_guard);
+    }
+
+    #[gpui::test]
     async fn test_multi_workspace_session_restore(cx: &mut TestAppContext) {
         use collections::HashMap;
         use session::Session;
@@ -8612,6 +9085,202 @@ mod tests {
         });
     }
 
+    async fn check_startup_session_restore(
+        request_path: &str,
+        queued: bool,
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        cx.executor().set_num_cpus(1);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
+                        Some(SplicingVec::from(vec!["**/new.txt".to_owned()]));
+                });
+            });
+        });
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/session"),
+                json!({
+                    "first": { "saved.txt": "first saved file", "new.txt": "matching file" },
+                    "second.txt": "second saved file",
+                    "third.txt": "unmatched file"
+                }),
+            )
+            .await;
+
+        for (paths, draft) in [
+            (
+                vec![path!("/session/first"), path!("/session/first/saved.txt")],
+                "first draft",
+            ),
+            (vec![path!("/session/second.txt")], "second draft"),
+        ] {
+            let paths = paths.into_iter().map(PathBuf::from).collect();
+            let result = open_test_workspace_paths(paths, app_state.clone(), cx).await;
+            let editor = result
+                .window
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.workspace().update(cx, |workspace, cx| {
+                        Editor::new_in_workspace(workspace, window, cx)
+                    })
+                })
+                .unwrap()
+                .await
+                .unwrap();
+            result
+                .window
+                .update(cx, |_, window, cx| {
+                    editor.update(cx, |editor, cx| editor.insert(draft, window, cx));
+                })
+                .unwrap();
+        }
+        cx.run_until_parked();
+
+        let mut expected = vec![
+            (
+                vec![PathBuf::from(path!("/session/first"))],
+                vec![
+                    ("first draft".to_owned(), true),
+                    ("first saved file".to_owned(), false),
+                ],
+            ),
+            (
+                vec![PathBuf::from(path!("/session/second.txt"))],
+                vec![
+                    ("second draft".to_owned(), true),
+                    ("second saved file".to_owned(), false),
+                ],
+            ),
+        ];
+        assert_eq!(startup_workspace_contents(cx), expected);
+        if request_path == path!("/session/third.txt") {
+            expected.push((
+                vec![PathBuf::from(path!("/session/third.txt"))],
+                vec![("unmatched file".to_owned(), false)],
+            ));
+        } else {
+            expected[0].1.push(("matching file".to_owned(), false));
+        }
+
+        let _disable_scanner = cx.update(|cx| {
+            cx.observe_new::<Project>(|project, _, cx| {
+                project
+                    .worktree_store()
+                    .update(cx, |store, _| store.disable_scanner());
+            })
+        });
+        for restart in 0..2 {
+            restart_startup_test_session(&app_state, cx).await;
+            let resume = (restart == 0).then(|| {
+                let (resume, suspended) = futures::channel::oneshot::channel::<()>();
+                app_state.fs.as_fake().before_read_dir(
+                    path!("/session/first"),
+                    Box::pin(async move { suspended.await.unwrap() }),
+                );
+                resume
+            });
+            let (sender, receiver) = mpsc::unbounded();
+            let mut request = (restart == 0).then(|| RawOpenRequest {
+                urls: vec![format!("file://{}", urlencoding::encode(request_path))],
+                open_behavior: Some(cli::OpenBehavior::PreferNewWindow),
+                ..RawOpenRequest::default()
+            });
+            let initial_request = if queued {
+                None
+            } else {
+                request
+                    .take()
+                    .map(|request| cx.update(|cx| OpenRequest::parse(request, cx).unwrap()))
+            };
+            let mut startup = cx.update(|cx| {
+                crate::restore_and_open_workspaces(app_state.clone(), initial_request, receiver, cx)
+            });
+            if let Some(resume) = resume {
+                cx.run_until_parked();
+                assert!((&mut startup).now_or_never().is_none());
+                let restoring = cx.windows().into_iter().find_map(|window| {
+                    window
+                        .downcast::<MultiWorkspace>()
+                        .unwrap()
+                        .read_with(cx, |multi_workspace, cx| {
+                            let workspace = multi_workspace.workspace().read(cx);
+                            (workspace.root_paths(cx)
+                                == vec![Arc::<Path>::from(Path::new(path!("/session/first")))])
+                            .then(|| (workspace.is_restoring(), workspace.items(cx).count()))
+                        })
+                        .unwrap()
+                });
+                assert_eq!(restoring, Some((true, 0)));
+                let suspended_contents = startup_workspace_contents(cx);
+                if let Some(request) = request {
+                    sender.unbounded_send(request).unwrap();
+                    cx.run_until_parked();
+                    assert_eq!(startup_workspace_contents(cx), suspended_contents);
+                }
+                resume.send(()).unwrap();
+            }
+            startup.await;
+            cx.run_until_parked();
+            assert_eq!(startup_workspace_contents(cx), expected);
+            drop(sender);
+            cx.run_until_parked();
+        }
+    }
+
+    async fn restart_startup_test_session(app_state: &Arc<AppState>, cx: &mut TestAppContext) {
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+        for window in cx.windows() {
+            let window = window.downcast::<MultiWorkspace>().unwrap();
+            flush_workspace_serialization(&window, cx).await;
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .unwrap();
+        }
+        cx.run_until_parked();
+        cx.update(|cx| {
+            app_state.session.update(cx, |session, _| {
+                session.replace_session_for_test(Session::test_with_old_session(session_id));
+            });
+        });
+    }
+
+    fn startup_workspace_contents(cx: &TestAppContext) -> Vec<(Vec<PathBuf>, Vec<(String, bool)>)> {
+        let mut contents = cx
+            .windows()
+            .into_iter()
+            .map(|window| {
+                window
+                    .downcast::<MultiWorkspace>()
+                    .unwrap()
+                    .read_with(cx, |multi_workspace, cx| {
+                        let workspace = multi_workspace.workspace().read(cx);
+                        let roots = workspace
+                            .root_paths(cx)
+                            .iter()
+                            .map(|path| path.to_path_buf())
+                            .collect();
+                        let mut items = workspace
+                            .items_of_type::<Editor>(cx)
+                            .map(|editor| {
+                                let editor = editor.read(cx);
+                                (editor.text(cx), editor.is_dirty(cx))
+                            })
+                            .collect::<Vec<_>>();
+                        items.sort();
+                        (roots, items)
+                    })
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        contents.sort();
+        contents
+    }
+
     fn set_on_new_window(on_new_window: Option<settings::OnNewWindow>, cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -8620,6 +9289,28 @@ mod tests {
                 });
             });
         });
+    }
+
+    async fn insert_startup_draft(
+        window: WindowHandle<MultiWorkspace>,
+        draft: &str,
+        cx: &mut TestAppContext,
+    ) {
+        let editor = window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    Editor::new_in_workspace(workspace, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        window
+            .update(cx, |_, window, cx| {
+                editor.update(cx, |editor, cx| editor.insert(draft, window, cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
     }
 
     async fn open_test_workspace_paths(
@@ -8670,5 +9361,82 @@ mod tests {
             .items
             .iter()
             .any(|item| matches!(item, OwnedMenuItem::Action { name, .. } if name == item_name))
+    }
+
+    struct IgnoredCliResponses;
+
+    impl cli::CliResponseSink for IgnoredCliResponses {
+        fn send(&self, _: cli::CliResponse) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    async fn remote_and_local_startup_workspaces(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> (
+        Arc<AppState>,
+        Vec<workspace::SerializedMultiWorkspace>,
+        futures::channel::oneshot::Sender<()>,
+    ) {
+        let app_state = init_test(cx);
+        server_cx.update(|cx| {
+            release_channel::init(Version::new(0, 0, 0), cx);
+            HeadlessProject::init(cx);
+        });
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs.insert_tree(path!("/remote"), json!({})).await;
+        let (connection_options, server_session, connect_guard) =
+            RemoteClient::fake_server(cx, server_cx);
+        let headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs,
+                    http_client: Arc::new(BlockedHttpClient),
+                    node_runtime: NodeRuntime::unavailable(),
+                    languages: Arc::new(LanguageRegistry::new(cx.background_executor().clone())),
+                    extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+        drop(connect_guard);
+        open_remote_project(
+            connection_options.clone(),
+            vec![PathBuf::from(path!("/remote"))],
+            app_state.clone(),
+            OpenOptions::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/local"), json!({ "file.txt": "" }))
+            .await;
+        drop(
+            open_test_workspace_paths(vec![PathBuf::from(path!("/local"))], app_state.clone(), cx)
+                .await,
+        );
+        restart_startup_test_session(&app_state, cx).await;
+        cx.executor().advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+        drop(headless);
+        let (_server_session, connect_guard) =
+            RemoteClient::fake_server_with_opts(&connection_options, cx, server_cx);
+        let mut workspaces = crate::restorable_workspaces(&mut cx.to_async(), &app_state)
+            .await
+            .unwrap();
+        assert_eq!(workspaces.len(), 2);
+        workspaces.sort_by_key(|workspace| {
+            workspace.active_workspace.location == workspace::SerializedWorkspaceLocation::Local
+        });
+        workspaces[0].active_workspace.location =
+            workspace::SerializedWorkspaceLocation::Remote(connection_options);
+        (app_state, workspaces, connect_guard)
     }
 }

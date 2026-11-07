@@ -47,6 +47,105 @@ fn setup_multi_workspace<'a>(
 }
 
 #[gpui::test]
+async fn test_saved_workspaces_follow_project_group_lifetime(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let group_key = |path: &str| ProjectGroupKey::new(None, PathList::new(&[path]));
+    let saved = |workspace_id: i64, key: &str, path: &str| {
+        (
+            group_key(key),
+            SessionWorkspace {
+                workspace_id: WorkspaceId::from_i64(workspace_id),
+                location: SerializedWorkspaceLocation::Local,
+                paths: PathList::new(&[path]),
+                window_id: None,
+            },
+        )
+    };
+    let ssh = |args: Option<Vec<String>>| {
+        RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+            host: "host".into(),
+            args,
+            ..remote::SshConnectionOptions::default()
+        })
+    };
+    let remote_paths = PathList::new(&["/remote"]);
+    let saved_ids = |multi_workspace: &MultiWorkspace| {
+        multi_workspace
+            .saved_workspace_ids()
+            .map(i64::from)
+            .collect::<Vec<_>>()
+    };
+
+    multi_workspace.update_in(cx, |multi_workspace, _, cx| {
+        multi_workspace.restore_project_groups(
+            ["/repo", "/other"]
+                .into_iter()
+                .map(|path| SerializedProjectGroupState {
+                    key: group_key(path),
+                    expanded: true,
+                })
+                .chain([SerializedProjectGroupState {
+                    key: ProjectGroupKey::new(
+                        Some(ssh(Some(vec!["-v".to_owned()]))),
+                        remote_paths.clone(),
+                    ),
+                    expanded: true,
+                }])
+                .collect(),
+            cx,
+        );
+        multi_workspace.set_saved_workspaces(vec![
+            saved(1, "/repo", "/repo-branch"),
+            saved(2, "/other", "/other"),
+            saved(3, "/removed", "/removed"),
+            (
+                ProjectGroupKey::new(Some(ssh(None)), remote_paths.clone()),
+                SessionWorkspace {
+                    workspace_id: WorkspaceId::from_i64(4),
+                    location: SerializedWorkspaceLocation::Remote(ssh(None)),
+                    paths: remote_paths.clone(),
+                    window_id: None,
+                },
+            ),
+        ]);
+        assert_eq!(saved_ids(multi_workspace), vec![1, 2, 4]);
+    });
+    let cancelled_open = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.find_or_create_workspace(
+            remote_paths.clone(),
+            Some(ssh(Some(vec!["-v".to_owned()]))),
+            None,
+            |_, _, _| Task::ready(Ok(None)),
+            None,
+            OpenMode::Add,
+            None,
+            window,
+            cx,
+        )
+    });
+    assert!(cancelled_open.await.is_err());
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        assert_eq!(saved_ids(multi_workspace), vec![1, 2, 4]);
+        multi_workspace
+            .remove_project_group(&group_key("/repo"), window, cx)
+            .detach();
+        assert_eq!(saved_ids(multi_workspace), vec![2, 4]);
+    });
+
+    cx.update(|_window, cx| {
+        DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
+    });
+    cx.run_until_parked();
+    multi_workspace.read_with(cx, |multi_workspace, _| {
+        assert_eq!(saved_ids(multi_workspace), Vec::<i64>::new());
+    });
+}
+
+#[gpui::test]
 async fn test_sidebar_disabled_when_disable_ai_is_enabled(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());

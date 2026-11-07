@@ -100,12 +100,12 @@ impl HistoryManager {
 
     fn update_jump_list(&mut self, cx: &mut Context<'_, HistoryManager>) {
         let menus = vec![MenuItem::action("New Window", NewWindow)];
-        let entries = self
-            .history
-            .iter()
-            .rev()
-            .map(|entry| entry.path.clone())
-            .collect::<Vec<_>>();
+        let mut entries = Vec::<SmallVec<[PathBuf; 2]>>::new();
+        for entry in self.history.iter().rev() {
+            if !entries.contains(&entry.path) {
+                entries.push(entry.path.clone());
+            }
+        }
         let user_removed = cx.update_jump_list(menus, entries);
         let db = WorkspaceDb::global(cx);
         cx.spawn(async move |this, cx| {
@@ -125,7 +125,7 @@ impl HistoryManager {
                 }
             }) {
                 for id in deleted_ids.iter() {
-                    db.delete_workspace_by_id(*id).await.log_err();
+                    db.delete_workspace_with_same_roots(*id).await.log_err();
                 }
             }
         })

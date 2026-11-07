@@ -503,7 +503,7 @@ impl ProjectPicker {
                     }?;
 
                     let items = open_remote_project_with_existing_connection(
-                        connection, project, paths, app_state, window, None, None, cx,
+                        connection, project, paths, None, app_state, window, None, None, cx,
                     )
                     .await
                     .log_err()
