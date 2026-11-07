@@ -78,6 +78,34 @@ impl From<String> for WindowButtonLayoutContent {
     }
 }
 
+/// How the active file is shown in the title bar.
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowActiveFile {
+    /// Don't show the active file.
+    #[default]
+    Off,
+    /// Show only the file name, e.g. `main.rs`.
+    #[strum(serialize = "File Name")]
+    FileName,
+    /// Show the path relative to the project, e.g. `src/main.rs`.
+    #[strum(serialize = "Relative Path")]
+    RelativePath,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct TitleBarSettingsContent {
@@ -103,6 +131,12 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: true
     pub show_worktree_name: Option<bool>,
+    /// Whether to show the active file in the titlebar, and how.
+    ///
+    /// Can be `"off"`, `"file_name"` or `"relative_path"`.
+    ///
+    /// Default: off
+    pub show_active_file: Option<ShowActiveFile>,
     /// Whether to show the project host and name in the titlebar.
     ///
     /// Default: true
