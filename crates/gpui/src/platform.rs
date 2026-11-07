@@ -1495,6 +1495,12 @@ pub trait PlatformHeadlessRenderer {
 pub struct GpuStats {
     /// How long the GPU spent executing each frame, in submission order.
     pub frame_times: Vec<std::time::Duration>,
+    /// How many times vertex shaders ran for each frame, in submission order.
+    /// Unlike frame times, this doesn't depend on GPU clocks or load.
+    pub vertex_shader_invocations: Vec<u64>,
+    /// How many times fragment shaders ran for each frame, in submission order.
+    /// Unlike frame times, this doesn't depend on GPU clocks or load.
+    pub fragment_shader_invocations: Vec<u64>,
 }
 
 /// Returned by [`PlatformHeadlessRenderer::take_gpu_stats`] when the renderer

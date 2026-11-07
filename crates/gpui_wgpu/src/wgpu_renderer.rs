@@ -1446,7 +1446,7 @@ impl WgpuRendererCore {
         size: Size<DevicePixels>,
         premultiplied_alpha: bool,
         clear_color: wgpu::Color,
-        timestamps: Option<FrameTimestamps<'_>>,
+        queries: Option<&mut (dyn FrameQueries + 'static)>,
     ) -> Result<wgpu::SubmissionIndex> {
         anyhow::ensure!(
             size.width.0 > 0 && size.height.0 > 0,
@@ -1494,7 +1494,7 @@ impl WgpuRendererCore {
             bytemuck::bytes_of(&gamma_params),
         );
 
-        self.record_frame(scene, target_view, clear_color, timestamps)
+        self.record_frame(scene, target_view, clear_color, queries)
             .inspect_err(|_| {
                 // Queue writes are staged before encoding; flush them even if the frame fails.
                 self.resources.queue.submit(std::iter::empty());
@@ -1506,7 +1506,7 @@ impl WgpuRendererCore {
         scene: &Scene,
         frame_view: &wgpu::TextureView,
         clear_color: wgpu::Color,
-        timestamps: Option<FrameTimestamps<'_>>,
+        mut queries: Option<&mut (dyn FrameQueries + 'static)>,
     ) -> Result<wgpu::SubmissionIndex> {
         let mut instance_offset = 0;
         let instance_bindings = self
@@ -1535,7 +1535,9 @@ impl WgpuRendererCore {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main_pass"),
-                timestamp_writes: timestamps.map(|timestamps| timestamps.writes(true)),
+                timestamp_writes: queries
+                    .as_deref()
+                    .and_then(|queries| queries.timestamp_writes(true)),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: frame_view,
                     resolve_target: None,
@@ -1548,6 +1550,9 @@ impl WgpuRendererCore {
                 depth_stencil_attachment: None,
                 ..Default::default()
             });
+            if let Some(queries) = queries.as_deref_mut() {
+                queries.pass_began(&mut pass);
+            }
 
             for batch in scene.batches() {
                 match batch {
@@ -1569,16 +1574,22 @@ impl WgpuRendererCore {
                             continue;
                         }
 
+                        if let Some(queries) = queries.as_deref_mut() {
+                            queries.pass_ending(&mut pass);
+                        }
                         drop(pass);
                         let rasterized = self.draw_paths_to_intermediate(
                             &mut encoder,
                             paths,
                             &mut instance_offset,
+                            queries.as_deref_mut(),
                         )?;
 
                         pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("main_pass_continued"),
-                            timestamp_writes: timestamps.map(|timestamps| timestamps.writes(false)),
+                            timestamp_writes: queries
+                                .as_deref()
+                                .and_then(|queries| queries.timestamp_writes(false)),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: frame_view,
                                 resolve_target: None,
@@ -1591,6 +1602,9 @@ impl WgpuRendererCore {
                             depth_stencil_attachment: None,
                             ..Default::default()
                         });
+                        if let Some(queries) = queries.as_deref_mut() {
+                            queries.pass_began(&mut pass);
+                        }
 
                         if rasterized {
                             self.draw_paths_from_intermediate(
@@ -1642,6 +1656,9 @@ impl WgpuRendererCore {
                     // implemented by the WGPU renderer.
                     PrimitiveBatch::Surfaces(_surfaces) => {}
                 }
+            }
+            if let Some(queries) = queries {
+                queries.pass_ending(&mut pass);
             }
         }
 
@@ -1867,6 +1884,7 @@ impl WgpuRendererCore {
         encoder: &mut wgpu::CommandEncoder,
         paths: &[Path<ScaledPixels>],
         instance_offset: &mut u64,
+        mut queries: Option<&mut (dyn FrameQueries + 'static)>,
     ) -> Result<bool> {
         let mut vertices = Vec::new();
         for path in paths {
@@ -1916,6 +1934,9 @@ impl WgpuRendererCore {
                 ..Default::default()
             });
 
+            if let Some(queries) = queries.as_deref_mut() {
+                queries.pass_began(&mut pass);
+            }
             pass.set_pipeline(&resources.pipelines.path_rasterization);
             pass.set_bind_group(0, &resources.path_globals_bind_group, &[]);
             pass.set_bind_group(1, &vertex_binding.bind_group, &[]);
@@ -1927,6 +1948,9 @@ impl WgpuRendererCore {
                     ..vertex_binding.first_instance + vertices.len() as u32,
                 0..1,
             );
+            if let Some(queries) = queries {
+                queries.pass_ending(&mut pass);
+            }
         }
 
         Ok(true)
@@ -2346,92 +2370,215 @@ pub struct WgpuHeadlessRenderer {
     core: WgpuRendererCore,
     render_target: Option<HeadlessRenderTarget>,
     observed_error_generation: u64,
-    /// `None` when the device doesn't support timestamp queries.
+    /// `None` when the device supports neither timestamp nor pipeline statistics queries.
     #[cfg(feature = "bench-support")]
-    gpu_frame_timer: Option<GpuFrameTimer>,
+    gpu_frame_profiler: Option<GpuFrameProfiler>,
 }
 
-/// Times frames submitted by `render_scene` with GPU timestamp queries.
+/// Measures frames submitted by `render_scene` with GPU queries: a start and end
+/// timestamp per frame, and vertex and fragment shader invocations per render pass.
 ///
-/// Each frame writes its start and end time to its own pair of queries. Query sets
-/// are added as frames are submitted, so rendering never waits on the GPU; all
-/// pending frames are resolved and read back in one batch when stats are taken.
+/// Query sets are added as frames are submitted, so rendering never waits on the
+/// GPU; all pending queries are resolved and read back when stats are taken.
 #[cfg(all(not(target_family = "wasm"), feature = "bench-support"))]
-struct GpuFrameTimer {
-    query_sets: Vec<wgpu::QuerySet>,
+struct GpuFrameProfiler {
+    device: wgpu::Device,
     nanoseconds_per_tick: f64,
-    pending_frames: u32,
+    /// `None` when the device doesn't support timestamp queries.
+    timestamps: Option<QueryPool>,
+    /// `None` when the device doesn't support pipeline statistics queries.
+    pass_statistics: Option<QueryPool>,
+    /// The current frame's timestamp queries, as a query set index and query index.
+    frame_timestamps: Option<(usize, u32)>,
+    /// How many render passes each pending frame recorded statistics for.
+    passes_per_frame: Vec<u32>,
 }
 
 #[cfg(all(not(target_family = "wasm"), feature = "bench-support"))]
-impl GpuFrameTimer {
-    const FRAMES_PER_QUERY_SET: u32 = wgpu::QUERY_SET_MAX_QUERIES / 2;
-    const BYTES_PER_FRAME: u64 = 2 * std::mem::size_of::<u64>() as u64;
+impl GpuFrameProfiler {
+    /// Results are written in flag declaration order: vertex, then fragment.
+    const PASS_STATISTICS: wgpu::PipelineStatisticsTypes =
+        wgpu::PipelineStatisticsTypes::VERTEX_SHADER_INVOCATIONS
+            .union(wgpu::PipelineStatisticsTypes::FRAGMENT_SHADER_INVOCATIONS);
 
     fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Self> {
-        if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+        let features = device.features();
+        let timestamps = features
+            .contains(wgpu::Features::TIMESTAMP_QUERY)
+            .then(|| QueryPool::new(wgpu::QueryType::Timestamp, 1));
+        let pass_statistics = features
+            .contains(wgpu::Features::PIPELINE_STATISTICS_QUERY)
+            .then(|| {
+                QueryPool::new(
+                    wgpu::QueryType::PipelineStatistics(Self::PASS_STATISTICS),
+                    Self::PASS_STATISTICS.bits().count_ones(),
+                )
+            });
+        if timestamps.is_none() && pass_statistics.is_none() {
             return None;
         }
         Some(Self {
-            query_sets: Vec::new(),
+            device: device.clone(),
             nanoseconds_per_tick: f64::from(queue.get_timestamp_period()),
-            pending_frames: 0,
+            timestamps,
+            pass_statistics,
+            frame_timestamps: None,
+            passes_per_frame: Vec::new(),
         })
     }
 
-    fn next_frame(&mut self, device: &wgpu::Device) -> FrameTimestamps<'_> {
-        let query_set_index = (self.pending_frames / Self::FRAMES_PER_QUERY_SET) as usize;
-        if query_set_index == self.query_sets.len() {
-            self.query_sets
-                .push(device.create_query_set(&wgpu::QuerySetDescriptor {
-                    label: Some("gpu_frame_timestamps"),
-                    ty: wgpu::QueryType::Timestamp,
-                    count: Self::FRAMES_PER_QUERY_SET * 2,
-                }));
+    fn start_frame(&mut self) {
+        self.frame_timestamps = self
+            .timestamps
+            .as_mut()
+            .map(|timestamps| timestamps.reserve(&self.device, 2));
+        self.passes_per_frame.push(0);
+    }
+
+    fn take_stats(&mut self, queue: &wgpu::Queue) -> anyhow::Result<gpui::GpuStats> {
+        let mut stats = gpui::GpuStats::default();
+        if let Some(timestamps) = &mut self.timestamps {
+            let values = timestamps.read(&self.device, queue)?;
+            stats.frame_times = values
+                .chunks_exact(2)
+                .filter_map(|frame| match frame {
+                    [start, end] => end.checked_sub(*start),
+                    _ => None,
+                })
+                .map(|ticks| {
+                    std::time::Duration::from_nanos(
+                        (ticks as f64 * self.nanoseconds_per_tick) as u64,
+                    )
+                })
+                .collect();
         }
-        let start_index = (self.pending_frames % Self::FRAMES_PER_QUERY_SET) * 2;
-        self.pending_frames += 1;
-        FrameTimestamps {
-            query_set: &self.query_sets[query_set_index],
-            start_index,
+        let passes_per_frame = std::mem::take(&mut self.passes_per_frame);
+        if let Some(pass_statistics) = &mut self.pass_statistics {
+            let values = pass_statistics.read(&self.device, queue)?;
+            let mut passes = values.chunks_exact(2);
+            for pass_count in passes_per_frame {
+                let mut vertex_invocations = 0;
+                let mut fragment_invocations = 0;
+                for pass in passes.by_ref().take(pass_count as usize) {
+                    if let [vertex, fragment] = pass {
+                        vertex_invocations += vertex;
+                        fragment_invocations += fragment;
+                    }
+                }
+                stats.vertex_shader_invocations.push(vertex_invocations);
+                stats.fragment_shader_invocations.push(fragment_invocations);
+            }
+        }
+        Ok(stats)
+    }
+}
+
+#[cfg(all(not(target_family = "wasm"), feature = "bench-support"))]
+impl FrameQueries for GpuFrameProfiler {
+    fn timestamp_writes(
+        &self,
+        first_main_pass: bool,
+    ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
+        let (set_index, start_index) = self.frame_timestamps?;
+        Some(wgpu::RenderPassTimestampWrites {
+            query_set: self.timestamps.as_ref()?.sets.get(set_index)?,
+            beginning_of_pass_write_index: first_main_pass.then_some(start_index),
+            end_of_pass_write_index: Some(start_index + 1),
+        })
+    }
+
+    fn pass_began(&mut self, pass: &mut wgpu::RenderPass<'_>) {
+        let Some(pass_statistics) = &mut self.pass_statistics else {
+            return;
+        };
+        let (set_index, query_index) = pass_statistics.reserve(&self.device, 1);
+        if let Some(query_set) = pass_statistics.sets.get(set_index) {
+            pass.begin_pipeline_statistics_query(query_set, query_index);
+        }
+        if let Some(passes) = self.passes_per_frame.last_mut() {
+            *passes += 1;
         }
     }
 
-    fn take_frame_times(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) -> anyhow::Result<Vec<std::time::Duration>> {
-        let pending_frames = std::mem::take(&mut self.pending_frames);
-        if pending_frames == 0 {
+    fn pass_ending(&mut self, pass: &mut wgpu::RenderPass<'_>) {
+        if self.pass_statistics.is_some() {
+            pass.end_pipeline_statistics_query();
+        }
+    }
+}
+
+/// Query sets of one type, filled in order and read back all at once.
+#[cfg(all(not(target_family = "wasm"), feature = "bench-support"))]
+struct QueryPool {
+    ty: wgpu::QueryType,
+    values_per_query: u32,
+    sets: Vec<wgpu::QuerySet>,
+    reserved: u32,
+}
+
+#[cfg(all(not(target_family = "wasm"), feature = "bench-support"))]
+impl QueryPool {
+    const QUERIES_PER_SET: u32 = wgpu::QUERY_SET_MAX_QUERIES;
+
+    fn new(ty: wgpu::QueryType, values_per_query: u32) -> Self {
+        Self {
+            ty,
+            values_per_query,
+            sets: Vec::new(),
+            reserved: 0,
+        }
+    }
+
+    /// Reserves `count` consecutive queries in one query set, returning the set's
+    /// index and the first query's index. `count` must divide `QUERIES_PER_SET`.
+    fn reserve(&mut self, device: &wgpu::Device, count: u32) -> (usize, u32) {
+        let set_index = (self.reserved / Self::QUERIES_PER_SET) as usize;
+        if set_index == self.sets.len() {
+            self.sets
+                .push(device.create_query_set(&wgpu::QuerySetDescriptor {
+                    label: Some("gpu_frame_profiler_queries"),
+                    ty: self.ty,
+                    count: Self::QUERIES_PER_SET,
+                }));
+        }
+        let query_index = self.reserved % Self::QUERIES_PER_SET;
+        self.reserved += count;
+        (set_index, query_index)
+    }
+
+    /// Waits for every query reserved since the last call and returns their
+    /// values in reservation order.
+    fn read(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> anyhow::Result<Vec<u64>> {
+        let reserved = std::mem::take(&mut self.reserved);
+        if reserved == 0 {
             return Ok(Vec::new());
         }
-        let size = u64::from(pending_frames) * Self::BYTES_PER_FRAME;
+        let bytes_per_query = u64::from(self.values_per_query) * std::mem::size_of::<u64>() as u64;
+        let size = u64::from(reserved) * bytes_per_query;
         let resolve_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu_frame_timestamps_resolve"),
+            label: Some("gpu_frame_profiler_resolve"),
             size,
             usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu_frame_timestamps_readback"),
+            label: Some("gpu_frame_profiler_readback"),
             size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("gpu_frame_timestamps_encoder"),
+            label: Some("gpu_frame_profiler_encoder"),
         });
-        let mut remaining_frames = pending_frames;
-        for (index, query_set) in self.query_sets.iter().enumerate() {
-            if remaining_frames == 0 {
+        let mut remaining = reserved;
+        for (index, query_set) in self.sets.iter().enumerate() {
+            if remaining == 0 {
                 break;
             }
-            let frames = remaining_frames.min(Self::FRAMES_PER_QUERY_SET);
-            let offset =
-                index as u64 * u64::from(Self::FRAMES_PER_QUERY_SET) * Self::BYTES_PER_FRAME;
-            encoder.resolve_query_set(query_set, 0..frames * 2, &resolve_buffer, offset);
-            remaining_frames -= frames;
+            let queries = remaining.min(Self::QUERIES_PER_SET);
+            let offset = index as u64 * u64::from(Self::QUERIES_PER_SET) * bytes_per_query;
+            encoder.resolve_query_set(query_set, 0..queries, &resolve_buffer, offset);
+            remaining -= queries;
         }
         encoder.copy_buffer_to_buffer(&resolve_buffer, 0, &readback_buffer, 0, size);
         let submission = queue.submit(std::iter::once(encoder.finish()));
@@ -2446,24 +2593,13 @@ impl GpuFrameTimer {
                 submission_index: Some(submission),
                 timeout: Some(std::time::Duration::from_secs(30)),
             })
-            .context("waiting for GPU frame timestamps")?;
+            .context("waiting for GPU frame queries")?;
         receiver
             .recv_timeout(std::time::Duration::from_secs(30))
-            .context("receiving GPU frame timestamps")?
-            .context("mapping GPU frame timestamps")?;
-
+            .context("receiving GPU frame queries")?
+            .context("mapping GPU frame queries")?;
         let mapped = readback_buffer.slice(..).get_mapped_range()?;
-        let timestamps: &[u64] = bytemuck::cast_slice(&mapped);
-        Ok(timestamps
-            .chunks_exact(2)
-            .filter_map(|frame| match frame {
-                [start, end] => end.checked_sub(*start),
-                _ => None,
-            })
-            .map(|ticks| {
-                std::time::Duration::from_nanos((ticks as f64 * self.nanoseconds_per_tick) as u64)
-            })
-            .collect())
+        Ok(bytemuck::cast_slice(&mapped).to_vec())
     }
 }
 
@@ -2478,7 +2614,7 @@ impl WgpuHeadlessRenderer {
         // here on, including any while this renderer builds its pipelines.
         let observed_error_generation = context.errors().current_generation();
         #[cfg(feature = "bench-support")]
-        let gpu_frame_timer = GpuFrameTimer::new(&context.device, &context.queue);
+        let gpu_frame_profiler = GpuFrameProfiler::new(&context.device, &context.queue);
         let atlas = Arc::new(WgpuAtlas::from_context(&context));
         let core = WgpuRendererCore::new(
             &context,
@@ -2493,7 +2629,7 @@ impl WgpuHeadlessRenderer {
             render_target: None,
             observed_error_generation,
             #[cfg(feature = "bench-support")]
-            gpu_frame_timer,
+            gpu_frame_profiler,
         })
     }
 
@@ -2569,18 +2705,21 @@ impl WgpuHeadlessRenderer {
             .view
             .clone();
         #[cfg(feature = "bench-support")]
-        let timestamps = self
-            .gpu_frame_timer
+        let queries = self
+            .gpu_frame_profiler
             .as_mut()
             .filter(|_| time_on_gpu)
-            .map(|timer| timer.next_frame(&self.context.device));
+            .map(|profiler| {
+                profiler.start_frame();
+                profiler as &mut (dyn FrameQueries + 'static)
+            });
         #[cfg(not(feature = "bench-support"))]
-        let timestamps = {
+        let queries = {
             _ = time_on_gpu;
             None
         };
         self.core
-            .render_frame(scene, &view, size, false, wgpu::Color::BLACK, timestamps)?;
+            .render_frame(scene, &view, size, false, wgpu::Color::BLACK, queries)?;
         Ok(())
     }
 
@@ -2720,32 +2859,30 @@ impl gpui::PlatformHeadlessRenderer for WgpuHeadlessRenderer {
 
     #[cfg(feature = "bench-support")]
     fn take_gpu_stats(&mut self) -> anyhow::Result<gpui::GpuStats> {
-        let Some(timer) = &mut self.gpu_frame_timer else {
+        let Some(profiler) = &mut self.gpu_frame_profiler else {
             return Err(gpui::GpuStatsUnsupported.into());
         };
-        let frame_times = timer.take_frame_times(&self.context.device, &self.context.queue)?;
+        let stats = profiler.take_stats(&self.context.queue)?;
         self.check_gpu_errors()?;
-        Ok(gpui::GpuStats { frame_times })
+        Ok(stats)
     }
 }
 
-/// The pair of timestamp queries a frame writes its GPU start and end times to.
-#[derive(Clone, Copy)]
-struct FrameTimestamps<'a> {
-    query_set: &'a wgpu::QuerySet,
-    start_index: u32,
-}
+/// GPU queries a benchmark records while a frame is encoded.
+trait FrameQueries {
+    /// Timestamp writes for one of the frame's main passes. A frame spans several
+    /// main passes when paths are drawn: the first writes the start time, and every
+    /// pass writes the end time so the last one wins.
+    fn timestamp_writes(
+        &self,
+        first_main_pass: bool,
+    ) -> Option<wgpu::RenderPassTimestampWrites<'_>>;
 
-impl<'a> FrameTimestamps<'a> {
-    /// A frame can span several main passes when paths are drawn. The first pass
-    /// writes the start time, and every pass writes the end time so the last one wins.
-    fn writes(self, first_pass: bool) -> wgpu::RenderPassTimestampWrites<'a> {
-        wgpu::RenderPassTimestampWrites {
-            query_set: self.query_set,
-            beginning_of_pass_write_index: first_pass.then_some(self.start_index),
-            end_of_pass_write_index: Some(self.start_index + 1),
-        }
-    }
+    /// Called right after each of the frame's render passes begins.
+    fn pass_began(&mut self, pass: &mut wgpu::RenderPass<'_>);
+
+    /// Called right before each of the frame's render passes ends.
+    fn pass_ending(&mut self, pass: &mut wgpu::RenderPass<'_>);
 }
 
 fn instance_range(range: Range<usize>) -> Range<u32> {
@@ -2897,24 +3034,72 @@ mod tests {
 
     #[cfg(all(target_os = "linux", feature = "bench-support"))]
     #[test]
-    fn headless_renderer_times_each_rendered_frame_on_the_gpu() -> anyhow::Result<()> {
+    fn headless_renderer_measures_each_rendered_frame_on_the_gpu() -> anyhow::Result<()> {
         let mut renderer = WgpuHeadlessRenderer::new()?;
-        let mut scene = Scene::default();
-        scene.insert_primitive(solid_quad(0.0, 0.0, 32.0, 32.0, gpui::red()));
-        scene.finish();
-
-        let frame_count = GpuFrameTimer::FRAMES_PER_QUERY_SET as usize + 3;
-        for _ in 0..frame_count {
-            renderer.render_scene(&scene, device_size(32, 32))?;
-        }
-        renderer.render_scene_to_image(&scene, device_size(32, 32))?;
-
-        if renderer.gpu_frame_timer.is_none() {
+        let Some(profiler) = &renderer.gpu_frame_profiler else {
             assert!(renderer.take_gpu_stats().is_err());
             return Ok(());
+        };
+        let has_timestamps = profiler.timestamps.is_some();
+        let has_pass_statistics = profiler.pass_statistics.is_some();
+
+        let mut quad_scene = Scene::default();
+        quad_scene.insert_primitive(solid_quad(0.0, 0.0, 32.0, 32.0, gpui::red()));
+        quad_scene.finish();
+
+        // A path splits the frame into a main pass, a path rasterization pass, and a
+        // second main pass, so its statistics are summed across three passes.
+        let mut path = gpui::Path::new(gpui::point(gpui::px(0.), gpui::px(0.)));
+        path.line_to(gpui::point(gpui::px(16.), gpui::px(0.)));
+        path.line_to(gpui::point(gpui::px(16.), gpui::px(16.)));
+        path.content_mask = ContentMask {
+            bounds: path.bounds,
+        };
+        path.color = gpui::blue().into();
+        let mut path_scene = Scene::default();
+        path_scene.insert_primitive(solid_quad(0.0, 0.0, 32.0, 32.0, gpui::red()));
+        path_scene.insert_primitive(path.scale(1.));
+        path_scene.finish();
+
+        // More frames than one query set holds, to cover adding query sets.
+        let frame_count = QueryPool::QUERIES_PER_SET as usize + 3;
+        for frame in 0..frame_count {
+            let scene = if frame % 2 == 0 {
+                &quad_scene
+            } else {
+                &path_scene
+            };
+            renderer.render_scene(scene, device_size(32, 32))?;
         }
-        assert_eq!(renderer.take_gpu_stats()?.frame_times.len(), frame_count);
-        assert!(renderer.take_gpu_stats()?.frame_times.is_empty());
+        renderer.render_scene_to_image(&quad_scene, device_size(32, 32))?;
+
+        let stats = renderer.take_gpu_stats()?;
+        let expected_frames = |supported: bool| if supported { frame_count } else { 0 };
+        assert_eq!(stats.frame_times.len(), expected_frames(has_timestamps));
+        assert_eq!(
+            stats.vertex_shader_invocations.len(),
+            expected_frames(has_pass_statistics)
+        );
+        assert_eq!(
+            stats.fragment_shader_invocations.len(),
+            expected_frames(has_pass_statistics)
+        );
+        if let [quad_frame, path_frame, rest @ ..] = stats.fragment_shader_invocations.as_slice() {
+            assert!(*quad_frame > 0);
+            assert!(path_frame > quad_frame);
+            for (frame, invocations) in rest.iter().enumerate() {
+                let expected = if frame % 2 == 0 {
+                    quad_frame
+                } else {
+                    path_frame
+                };
+                assert_eq!(invocations, expected, "invocations should be deterministic");
+            }
+        }
+
+        let empty = renderer.take_gpu_stats()?;
+        assert!(empty.frame_times.is_empty());
+        assert!(empty.fragment_shader_invocations.is_empty());
         Ok(())
     }
 

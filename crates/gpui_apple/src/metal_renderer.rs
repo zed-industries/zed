@@ -1984,6 +1984,7 @@ impl gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
         self.collect_completed_frames()?;
         Ok(gpui::GpuStats {
             frame_times: mem::take(&mut self.gpu_frame_times),
+            ..Default::default()
         })
     }
 }

@@ -225,9 +225,11 @@ impl WgpuContext {
                         continue;
                     };
 
-                    // Lets benchmarks time frames on the GPU when the adapter supports it.
+                    // Lets benchmarks measure frames on the GPU when the adapter supports it.
                     #[cfg(feature = "bench-support")]
-                    let additional_features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+                    let additional_features = adapter.features()
+                        & (wgpu::Features::TIMESTAMP_QUERY
+                            | wgpu::Features::PIPELINE_STATISTICS_QUERY);
                     #[cfg(not(feature = "bench-support"))]
                     let additional_features = wgpu::Features::empty();
                     match Self::create_device(&adapter, additional_features).await {

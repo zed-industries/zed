@@ -3,7 +3,7 @@ name: gpui-bench
 description: >-
   Design, write, review, run, and interpret production-shaped GPUI Criterion
   benchmarks, including gpui::bench, BenchAppContext, renderer and task
-  benchmarks, headless Metal frame data, responsiveness and hang regressions,
+  benchmarks, headless GPU frame data, responsiveness and hang regressions,
   feature isolation from test-support, and before/after performance evidence.
 ---
 
@@ -258,9 +258,9 @@ Do not benchmark a detached entity and call the result rendering performance. Do
 
 `#[gpui::bench]` constructs its platform through `gpui::bench_platform` and requests `gpui_platform::current_headless_renderer`.
 
-On macOS, the headless renderer uses Metal without showing a window. `bench_renderer` shapes text with the platform text system, builds the scene, exercises the sprite atlas, and submits the frame to the GPU on present. This catches CPU rendering, glyph, atlas, scene, and GPU-submission regressions that a no-op renderer misses.
+The headless renderer uses Metal on macOS and wgpu (Vulkan) on Linux, without showing a window. `bench_renderer` shapes text with the platform text system, builds the scene, exercises the sprite atlas, and submits the frame to the GPU on present. This catches CPU rendering, glyph, atlas, scene, and GPU-submission regressions that a no-op renderer misses.
 
-On platforms without a headless renderer, GPUI still performs CPU-side window work, but presenting discards the scene and does not measure real GPU submission. State this limitation in results.
+Windows has no headless renderer yet. There, GPUI still performs CPU-side window work, but presenting discards the scene and does not measure real GPU submission. State this limitation in results.
 
 `BenchReport` is printed once per benchmark, and once per input for `inputs = ...` benchmarks, labeled with the Criterion benchmark id so the two can be correlated. Depending on the pinned revision, it can include:
 
@@ -271,7 +271,8 @@ On platforms without a headless renderer, GPUI still performs CPU-side window wo
 - foreground task, action, and input-dispatch durations;
 - p50, p90, p95, p99, and maximum durations;
 - total and maximum frame-budget overruns;
-- GPU frame time: how long the GPU spent executing each presented frame, from Metal command buffer times or wgpu timestamp queries. It's omitted when the renderer can't time GPU work.
+- GPU frame time: how long the GPU spent executing each presented frame, from Metal command buffer times or wgpu timestamp queries. It's omitted when the renderer can't time GPU work;
+- GPU vertex and fragment shader invocations per frame, from wgpu pipeline statistics queries (Vulkan and DX12). Unlike GPU frame time, these don't depend on GPU clocks or load, so they compare across revisions like instruction counts do. Overdraw shows up as fragment invocations.
 
 Frame-budget overruns are a synthetic missed-deadline proxy because the headless harness has no display vsync. Do not call them literal display-dropped frames. Supplement important results with app automation and an Instruments, xctrace, miniprof, or equivalent profile.
 
@@ -431,7 +432,7 @@ Before accepting a GPUI benchmark, verify:
 - [ ] The workload completes under bounded smoke and measured runs.
 - [ ] The same benchmark code runs on baseline and candidate.
 - [ ] Results include raw percentiles, maxima, and confidence information, and disclose regressions.
-- [ ] macOS headless Metal coverage or non-macOS limitations are stated.
+- [ ] Headless GPU coverage (Metal on macOS, wgpu on Linux) or its absence on Windows is stated.
 - [ ] A deterministic regression test covers the non-timing invariant where practical.
 - [ ] Benchmark and profile commands are bounded to five minutes and not run concurrently.
 

@@ -151,6 +151,12 @@ impl BenchReport {
                 .record(frame_time.as_nanos() as u64)
                 .ok();
         }
+        for invocations in stats.vertex_shader_invocations {
+            snapshot.gpu_vertex_invocations.record(invocations);
+        }
+        for invocations in stats.fragment_shader_invocations {
+            snapshot.gpu_fragment_invocations.record(invocations);
+        }
     }
 
     fn record_frame_timings<'i>(&self, events: impl IntoIterator<Item = &'i FrameEvent>) {
@@ -274,6 +280,23 @@ impl BenchReport {
         self.print_histogram("window draw", &frame_snapshot.draw);
         self.print_histogram("window present interval", &frame_snapshot.present_interval);
         self.print_histogram("GPU frame time", &frame_snapshot.gpu_frame_time);
+        for (name, counts) in [
+            (
+                "GPU vertex shader invocations",
+                &frame_snapshot.gpu_vertex_invocations,
+            ),
+            (
+                "GPU fragment shader invocations",
+                &frame_snapshot.gpu_fragment_invocations,
+            ),
+        ] {
+            if let Some(mean) = counts.mean() {
+                eprintln!(
+                    "  {name} per frame: mean {mean:.1}, min {}, max {}",
+                    counts.min, counts.max
+                );
+            }
+        }
         if !frame_snapshot.invalidations_per_frame.is_empty() {
             eprintln!(
                 "  invalidations per frame: mean {:.2}, max {}",
@@ -347,6 +370,8 @@ struct WindowFrameSnapshot {
     draw: Histogram<u64>,
     present_interval: Histogram<u64>,
     gpu_frame_time: Histogram<u64>,
+    gpu_vertex_invocations: ExactCounts,
+    gpu_fragment_invocations: ExactCounts,
     invalidations_per_frame: Histogram<u64>,
     foreground_work: DurationHistogram,
 }
@@ -358,6 +383,8 @@ impl WindowFrameSnapshot {
             draw: Histogram::new(3).expect("3 significant digits is valid"),
             present_interval: Histogram::new(3).expect("3 significant digits is valid"),
             gpu_frame_time: Histogram::new(3).expect("3 significant digits is valid"),
+            gpu_vertex_invocations: ExactCounts::default(),
+            gpu_fragment_invocations: ExactCounts::default(),
             invalidations_per_frame: Histogram::new(3).expect("3 significant digits is valid"),
             foreground_work: DurationHistogram::new(),
         }
@@ -368,7 +395,36 @@ impl WindowFrameSnapshot {
             && self.draw.is_empty()
             && self.present_interval.is_empty()
             && self.gpu_frame_time.is_empty()
+            && self.gpu_vertex_invocations.mean().is_none()
+            && self.gpu_fragment_invocations.mean().is_none()
             && self.foreground_work.histogram.is_empty()
+    }
+}
+
+/// Exact statistics for deterministic per-frame counts, which a histogram's
+/// bucketing (3 significant digits) would blur.
+#[derive(Default)]
+struct ExactCounts {
+    total: u128,
+    samples: u64,
+    min: u64,
+    max: u64,
+}
+
+impl ExactCounts {
+    fn record(&mut self, count: u64) {
+        self.min = if self.samples == 0 {
+            count
+        } else {
+            self.min.min(count)
+        };
+        self.max = self.max.max(count);
+        self.total += u128::from(count);
+        self.samples += 1;
+    }
+
+    fn mean(&self) -> Option<f64> {
+        (self.samples > 0).then(|| self.total as f64 / self.samples as f64)
     }
 }
 
@@ -1005,7 +1061,15 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let mut stats = GpuStats::default();
         for window in windows {
             match window.take_gpu_stats() {
-                Ok(window_stats) => stats.frame_times.extend(window_stats.frame_times),
+                Ok(window_stats) => {
+                    stats.frame_times.extend(window_stats.frame_times);
+                    stats
+                        .vertex_shader_invocations
+                        .extend(window_stats.vertex_shader_invocations);
+                    stats
+                        .fragment_shader_invocations
+                        .extend(window_stats.fragment_shader_invocations);
+                }
                 Err(error) if error.is::<GpuStatsUnsupported>() => {}
                 Err(error) => panic!("failed to wait for benchmark GPU work: {error:#}"),
             }
