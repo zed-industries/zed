@@ -30,7 +30,14 @@ use x11rb::{
 };
 
 use std::{
-    cell::RefCell, ffi::c_void, fmt::Display, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::Arc,
+    cell::RefCell,
+    ffi::c_void,
+    fmt::Display,
+    num::NonZeroU32,
+    ptr::NonNull,
+    rc::Rc,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
@@ -285,6 +292,7 @@ pub struct X11WindowState {
     visibility: WindowVisibility,
     hovered: bool,
     force_render_after_recovery: bool,
+    presentation_retry: PresentationRetry,
     fullscreen: bool,
     client_side_decorations_supported: bool,
     decorations: WindowDecorations,
@@ -304,6 +312,63 @@ impl X11WindowState {
         if let Some(renderer) = &mut self.renderer {
             renderer.update_transparency(is_transparent);
         }
+    }
+}
+
+/// Short, so that a brief stall recovers quickly.
+const FIRST_PRESENT_RETRY_DELAY: Duration = Duration::from_millis(100);
+
+/// Once the wait has grown this long, a lasting failure is still retried this often, so that a
+/// driver that recovers is noticed within this time.
+const MAX_PRESENT_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+/// Shorter runs of failures happen in normal use, for example while the window is resized.
+const PRESENT_STALL_LOGGED_AFTER: Duration = Duration::from_secs(1);
+
+/// When to present again after a frame failed to present, for example because acquiring a
+/// surface texture timed out after the system resumed from sleep. `refresh` checks it.
+#[derive(Default)]
+struct PresentationRetry {
+    /// When the first frame of the current run of failures failed to present.
+    first_failure_at: Option<Instant>,
+    failures_in_a_row: u32,
+    next_attempt_at: Option<Instant>,
+    /// Whether the run has lasted `PRESENT_STALL_LOGGED_AFTER`.
+    stalled: bool,
+    /// Whether the latest failure is the one that made the run last that long.
+    stall_started: bool,
+}
+
+impl PresentationRetry {
+    fn presented(&mut self) {
+        *self = Self::default();
+    }
+
+    fn failed(&mut self, now: Instant) {
+        let first_failure_at = *self.first_failure_at.get_or_insert(now);
+        let was_stalled = self.stalled;
+        self.stalled |=
+            now.saturating_duration_since(first_failure_at) >= PRESENT_STALL_LOGGED_AFTER;
+        self.stall_started = self.stalled && !was_stalled;
+
+        self.failures_in_a_row = self.failures_in_a_row.saturating_add(1);
+        // Each timed-out attempt blocks the main thread for 1-2 s, so the wait doubles with each
+        // failure in a row.
+        let delay = FIRST_PRESENT_RETRY_DELAY
+            .saturating_mul(2u32.saturating_pow(self.failures_in_a_row - 1))
+            .min(MAX_PRESENT_RETRY_DELAY);
+        self.next_attempt_at = Some(now + delay);
+    }
+
+    /// Whether the latest failure made the current run of failures long enough to log, which
+    /// happens once per run.
+    fn stall_started(&self) -> bool {
+        self.stall_started
+    }
+
+    fn is_due(&self, now: Instant) -> bool {
+        self.next_attempt_at
+            .is_some_and(|next_attempt_at| next_attempt_at <= now)
     }
 }
 
@@ -844,6 +909,7 @@ impl X11WindowState {
                 visibility: WindowVisibility::Hidden,
                 hovered: false,
                 force_render_after_recovery: false,
+                presentation_retry: PresentationRetry::default(),
                 fullscreen: false,
                 maximized_vertical: false,
                 maximized_horizontal: false,
@@ -1184,10 +1250,17 @@ impl X11WindowStatePtr {
     pub fn refresh(&self, mut request_frame_options: RequestFrameOptions) {
         let callback = self.callbacks.borrow_mut().request_frame.take();
         if let Some(mut fun) = callback {
+            let mut state = self.state.borrow_mut();
             // Expose events can present a frame before the refresh timer runs,
             // so every frame request must rebuild stale atlas references after recovery.
             request_frame_options.force_render |=
-                std::mem::take(&mut self.state.borrow_mut().force_render_after_recovery);
+                std::mem::take(&mut state.force_render_after_recovery);
+            // The window's refresh timer calls this on every frame while the window is visible,
+            // which is what presents a frame again once its retry is due. A hidden window waits
+            // until it is shown again.
+            request_frame_options.require_presentation |=
+                state.presentation_retry.is_due(Instant::now());
+            drop(state);
             fun(request_frame_options);
             self.callbacks.borrow_mut().request_frame = Some(fun);
         }
@@ -1775,7 +1848,16 @@ impl PlatformWindow for X11Window {
             return;
         }
 
-        renderer.draw(scene);
+        if renderer.draw(scene) {
+            inner.presentation_retry.presented();
+        } else {
+            inner.presentation_retry.failed(Instant::now());
+            if inner.presentation_retry.stall_started() {
+                log::warn!(
+                    "Failed to present frames for a second or more, retrying until one is presented"
+                );
+            }
+        }
 
         if renderer.needs_redraw() {
             inner.force_render_after_recovery = true;
@@ -2063,5 +2145,85 @@ struct TrivialDeactivationHandler {
 impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
     fn deactivate_accessibility(&mut self) {
         (self.callback)();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const JUST_BEFORE: Duration = Duration::from_millis(1);
+
+    #[test]
+    fn a_failed_frame_is_retried_once_the_delay_has_passed() {
+        let mut retry = PresentationRetry::default();
+        let failed_at = Instant::now();
+        retry.failed(failed_at);
+
+        assert!(!retry.is_due(failed_at));
+        assert!(!retry.is_due(failed_at + FIRST_PRESENT_RETRY_DELAY - JUST_BEFORE));
+        assert!(retry.is_due(failed_at + FIRST_PRESENT_RETRY_DELAY));
+        // The retry stays due until the next attempt is recorded, however late that frame is.
+        assert!(retry.is_due(failed_at + MAX_PRESENT_RETRY_DELAY * 10));
+    }
+
+    #[test]
+    fn the_retry_delay_doubles_with_each_failure_in_a_row_up_to_the_maximum() {
+        let mut retry = PresentationRetry::default();
+        let mut now = Instant::now();
+        let expected_delays =
+            [100, 200, 400, 800, 1600, 3200, 5000, 5000].map(Duration::from_millis);
+        for delay in expected_delays {
+            retry.failed(now);
+            assert!(!retry.is_due(now + delay - JUST_BEFORE));
+            assert!(retry.is_due(now + delay));
+            now += delay;
+        }
+    }
+
+    #[test]
+    fn a_presented_frame_ends_the_stall() {
+        let mut retry = PresentationRetry::default();
+        let now = Instant::now();
+        for _ in 0..5 {
+            retry.failed(now);
+        }
+
+        retry.presented();
+        assert!(!retry.is_due(now + MAX_PRESENT_RETRY_DELAY));
+
+        retry.failed(now);
+        assert!(!retry.is_due(now + FIRST_PRESENT_RETRY_DELAY - JUST_BEFORE));
+        assert!(retry.is_due(now + FIRST_PRESENT_RETRY_DELAY));
+    }
+
+    #[test]
+    fn a_run_of_failures_is_logged_once_it_has_lasted_a_second() {
+        let mut retry = PresentationRetry::default();
+        let start = Instant::now();
+        let stall_started = [0, 100, 300, 700, 1500, 3100, 6300].map(|milliseconds| {
+            retry.failed(start + Duration::from_millis(milliseconds));
+            retry.stall_started()
+        });
+        assert_eq!(
+            stall_started,
+            [false, false, false, false, true, false, false]
+        );
+    }
+
+    #[test]
+    fn each_run_of_failures_is_timed_from_its_own_first_failure() {
+        let mut retry = PresentationRetry::default();
+        let start = Instant::now();
+        retry.failed(start);
+        retry.failed(start + Duration::from_millis(900));
+        assert!(!retry.stall_started());
+
+        retry.presented();
+        retry.failed(start + Duration::from_millis(1000));
+        retry.failed(start + Duration::from_millis(1900));
+        assert!(!retry.stall_started());
+        retry.failed(start + Duration::from_millis(2000));
+        assert!(retry.stall_started());
     }
 }
