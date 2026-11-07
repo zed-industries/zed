@@ -39,10 +39,10 @@ fn resolve_line_range(start_line: Option<u32>, end_line: Option<u32>) -> (u32, u
 /// Lines exceeding this limit are truncated with [`LINE_TRUNCATION_MARKER`]
 /// to prevent minified assets, source maps, or long data rows from overflowing
 /// the model's context window.
-const MAX_LINE_LEN: usize = 2000;
+pub(super) const MAX_LINE_LEN: usize = 2000;
 
 /// Marker appended to lines that exceed [`MAX_LINE_LEN`].
-const LINE_TRUNCATION_MARKER: &str =
+pub(super) const LINE_TRUNCATION_MARKER: &str =
     const_format::formatcp!("... (line truncated to {MAX_LINE_LEN} chars)");
 
 /// Prefixes each line of `text` with its line number in `cat -n` format:
@@ -63,7 +63,7 @@ fn format_with_line_numbers(text: &str, start_line: u32) -> String {
     output
 }
 
-fn append_line_segment(
+pub(super) fn append_line_segment(
     output: &mut String,
     segment: &str,
     current_line_chars: &mut usize,
@@ -202,7 +202,7 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
 ///   This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.
 ///   Do NOT retry reading the same file without line numbers if you receive an outline.
 /// - Lines longer than 2000 characters are truncated with `... (line truncated to 2000 chars)`.
-///   Use `grep` or `terminal` to inspect the full content of very long lines.
+///   Use `terminal` to inspect the full content of very long lines.
 /// - This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.
 ///   Image files are returned as visual content that you can analyze directly.
 ///
