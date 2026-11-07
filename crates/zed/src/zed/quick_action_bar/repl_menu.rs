@@ -123,7 +123,7 @@ impl QuickActionBar {
                             menu.custom_row(move |_window, _cx| {
                                 h_flex()
                                     .child(
-                                        Label::new(format!("{}...", status.to_string()))
+                                        Label::new(format!("{}…", status.to_string()))
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
                                     )
