@@ -37,8 +37,7 @@ pub struct TrackedStatus {
 pub enum StatusCode {
     Modified,
     TypeChanged,
-    Added,
-    Deleted,
+    Added,\n    Deleted,
     Renamed,
     Copied,
     Unmodified,
@@ -118,8 +117,8 @@ impl FileStatus {
             }
             .into(),
             [b'D', b'D'] => UnmergedStatus {
-                first_head: UnmergedStatusCode::Added,
-                second_head: UnmergedStatusCode::Added,
+                first_head: UnmergedStatusCode::Deleted,
+                second_head: UnmergedStatusCode::Deleted,
             }
             .into(),
             [x, b'U'] => UnmergedStatus {
@@ -175,8 +174,7 @@ impl FileStatus {
             FileStatus::Tracked(tracked) => matches!(
                 (tracked.index_status, tracked.worktree_status),
                 (StatusCode::Modified, _) | (_, StatusCode::Modified)
-            ),
-            _ => false,
+            ),\n            _ => false,
         }
     }
 
@@ -620,7 +618,9 @@ mod tests {
 
     use crate::{
         repository::RepoPath,
-        status::{FileStatus, GitStatus, TreeDiff, TreeDiffStatus},
+        status::{
+            FileStatus, GitStatus, TreeDiff, TreeDiffStatus, UnmergedStatus, UnmergedStatusCode,
+        },
     };
 
     use super::{DiffStat, parse_numstat};
@@ -724,6 +724,98 @@ mod tests {
         let status: GitStatus = input.parse().unwrap();
         assert_eq!(status.entries.len(), 1);
         assert_eq!(status.entries[0].1, FileStatus::Untracked);
+    }
+
+    #[test]
+    fn test_unmerged_both_deleted_and_both_added() {
+        let status: GitStatus = "DD deleted.txt\0".parse().unwrap();
+        assert_eq!(status.entries.len(), 1);
+        assert_eq!(
+            status.entries[0],
+            (
+                RepoPath::new("deleted.txt").unwrap(),
+                FileStatus::Unmerged(UnmergedStatus {
+                    first_head: UnmergedStatusCode::Deleted,
+                    second_head: UnmergedStatusCode::Deleted,
+                }),
+            )
+        );
+
+        let status: GitStatus = "AA added.txt\0".parse().unwrap();
+        assert_eq!(status.entries.len(), 1);
+        assert_eq!(
+            status.entries[0],
+            (
+                RepoPath::new("added.txt").unwrap(),
+                FileStatus::Unmerged(UnmergedStatus {
+                    first_head: UnmergedStatusCode::Added,
+                    second_head: UnmergedStatusCode::Added,
+                }),
+            )
+        );
+    }
+
+    #[test]
+    fn test_all_unmerged_status_combinations() {
+        let cases = [
+            (
+                "DD deleted.txt\0",
+                "deleted.txt",
+                UnmergedStatusCode::Deleted,
+                UnmergedStatusCode::Deleted,
+            ),
+            (
+                "AA added.txt\0",
+                "added.txt",
+                UnmergedStatusCode::Added,
+                UnmergedStatusCode::Added,
+            ),
+            (
+                "AU added_by_us.txt\0",
+                "added_by_us.txt",
+                UnmergedStatusCode::Added,
+                UnmergedStatusCode::Updated,
+            ),
+            (
+                "UD deleted_by_them.txt\0",
+                "deleted_by_them.txt",
+                UnmergedStatusCode::Updated,
+                UnmergedStatusCode::Deleted,
+            ),
+            (
+                "UA added_by_them.txt\0",
+                "added_by_them.txt",
+                UnmergedStatusCode::Updated,
+                UnmergedStatusCode::Added,
+            ),
+            (
+                "DU deleted_by_us.txt\0",
+                "deleted_by_us.txt",
+                UnmergedStatusCode::Deleted,
+                UnmergedStatusCode::Updated,
+            ),
+            (
+                "UU both_modified.txt\0",
+                "both_modified.txt",
+                UnmergedStatusCode::Updated,
+                UnmergedStatusCode::Updated,
+            ),
+        ];
+
+        for (input, expected_path, first_head, second_head) in cases {
+            let status: GitStatus = input.parse().unwrap();
+            assert_eq!(status.entries.len(), 1);
+            assert_eq!(
+                status.entries[0],
+                (
+                    RepoPath::new(expected_path).unwrap(),
+                    FileStatus::Unmerged(UnmergedStatus {
+                        first_head,
+                        second_head,
+                    }),
+                )
+            );
+        }
     }
 
     #[test]
