@@ -1578,6 +1578,23 @@ impl Editor {
         }
     }
 
+    pub(super) fn record_last_edit_location(&mut self, cx: &mut Context<Self>) {
+        if !self.buffer.read(cx).is_singleton() {
+            return;
+        }
+        let (Some(workspace), Some(project_path)) =
+            (self.workspace(), self.active_project_path(cx))
+        else {
+            return;
+        };
+        let mut data = self.navigation_data(self.selections.newest_anchor().head(), cx);
+        data.is_last_edit_jump = true;
+        let item_id = cx.entity_id();
+        workspace.update(cx, |workspace, _| {
+            workspace.set_last_edit_location(item_id, project_path, Arc::new(data));
+        });
+    }
+
     pub(super) fn expand_excerpt(
         &mut self,
         excerpt_anchor: Anchor,
@@ -2346,6 +2363,7 @@ impl Editor {
             cursor_position,
             scroll_anchor,
             scroll_top_row,
+            is_last_edit_jump: false,
         }
     }
 

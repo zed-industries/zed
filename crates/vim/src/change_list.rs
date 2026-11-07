@@ -94,7 +94,25 @@ impl Vim {
 mod test {
     use indoc::indoc;
 
-    use crate::{state::Mode, test::NeovimBackedTestContext};
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
+
+    #[gpui::test]
+    async fn test_go_to_last_edit_location_sets_previous_context_mark(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇone\ntwo\nthree\nfour", Mode::Normal);
+        cx.simulate_keystrokes("j j i x escape g g");
+        cx.assert_state("ˇone\ntwo\nxthree\nfour", Mode::Normal);
+        cx.dispatch_action(workspace::pane::GoToLastEditLocation);
+        cx.run_until_parked();
+        cx.assert_state("one\ntwo\nxˇthree\nfour", Mode::Normal);
+        cx.simulate_keystrokes("\' \'");
+        cx.assert_state("ˇone\ntwo\nxthree\nfour", Mode::Normal);
+    }
 
     #[gpui::test]
     async fn test_change_list_insert(cx: &mut gpui::TestAppContext) {
