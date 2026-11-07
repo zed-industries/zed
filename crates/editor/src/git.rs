@@ -3366,6 +3366,8 @@ impl Editor {
                     buffer.add_diff(diff, cx);
                 }
             });
+            // Attaching an already-computed diff does not notify the multi-buffer.
+            editor.update(cx, |_, cx| cx.notify());
         })
     }
 }
