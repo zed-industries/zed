@@ -2684,6 +2684,15 @@ pub struct WindowOptions {
 
     /// Whether to render the window using the Display P3 color space on macOS.
     pub use_display_p3: bool,
+
+    /// Whether to draw GPUI content above the window's native child windows on Windows.
+    ///
+    /// By default, child windows (such as an embedded WebView2) are drawn above GPUI content.
+    /// Set this when the app draws its own UI over a child window, such as controls over an
+    /// embedded video player. The child window then shows only where GPUI content is
+    /// transparent, which needs a `window_background` other than
+    /// [`WindowBackgroundAppearance::Opaque`]. Has no effect when DirectComposition is disabled.
+    pub draw_above_child_windows: bool,
 }
 
 /// The variables that can be configured when creating a new window
@@ -2752,6 +2761,9 @@ pub struct WindowParams {
 
     #[cfg(target_os = "macos")]
     pub use_display_p3: bool,
+
+    #[cfg(target_os = "windows")]
+    pub draw_above_child_windows: bool,
 }
 
 /// Represents the status of how a window should be opened.
@@ -2816,6 +2828,7 @@ impl Default for WindowOptions {
             window_decorations: None,
             tabbing_identifier: None,
             use_display_p3: false,
+            draw_above_child_windows: false,
         }
     }
 }
