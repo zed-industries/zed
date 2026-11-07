@@ -542,6 +542,7 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>> {
+        self.fs.increment_git_status_call_count();
         let workdir_path = self.dot_git_path.parent().unwrap();
 
         // Load gitignores

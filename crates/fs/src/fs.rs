@@ -1466,6 +1466,7 @@ struct FakeFsState {
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
     read_dir_call_count: usize,
+    git_status_call_count: usize,
     read_dir_hooks: BTreeMap<PathBuf, BoxFuture<'static, ()>>,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
@@ -1861,6 +1862,7 @@ impl FakeFs {
             buffered_events: Vec::new(),
             events_paused: false,
             read_dir_call_count: 0,
+            git_status_call_count: 0,
             metadata_call_count: 0,
             read_dir_hooks: Default::default(),
             path_write_counts: Default::default(),
@@ -2813,6 +2815,15 @@ impl FakeFs {
     /// How many `metadata` calls have been issued.
     pub fn metadata_call_count(&self) -> usize {
         self.state.lock().metadata_call_count
+    }
+
+    /// How many `status` calls have been issued against fake git repositories.
+    pub fn git_status_call_count(&self) -> usize {
+        self.state.lock().git_status_call_count
+    }
+
+    pub(crate) fn increment_git_status_call_count(&self) {
+        self.state.lock().git_status_call_count += 1;
     }
 
     /// How many write operations have been issued for a specific path.

@@ -5124,12 +5124,27 @@ impl GitStore {
             .values()
             .map(|repo| (repo.read(cx).work_directory_abs_path.clone(), repo.clone()))
             .collect::<Vec<_>>();
+        let worktree = worktree.read(cx);
         let mut entries: Vec<_> = updated_entries
             .iter()
             .map(|(path, _, _)| path.clone())
+            .filter(|path| {
+                // Changes below a gitignored path cannot affect `git status` unless the
+                // path was force-added, in which case git already reports a status for it.
+                // Skipping these avoids spawning `git status` and three `git diff --numstat`
+                // for every write into ignored build/cache directories.
+                if !Self::is_path_gitignored(worktree, path) {
+                    return true;
+                }
+                let abs_path = worktree.absolutize(path);
+                self.repositories.values().any(|repo| {
+                    let repo = repo.read(cx);
+                    repo.abs_path_to_repo_path(&abs_path)
+                        .is_some_and(|repo_path| repo.status_for_path(&repo_path).is_some())
+                })
+            })
             .collect();
         entries.sort();
-        let worktree = worktree.read(cx);
 
         let entries = entries
             .into_iter()
@@ -5194,6 +5209,16 @@ impl GitStore {
 
             paths_by_git_repo
         })
+    }
+
+    /// Returns whether `path` is covered by a gitignore rule, according to the
+    /// worktree snapshot. For paths that no longer exist (e.g. deletions), the
+    /// nearest existing ancestor decides: gitignore cannot un-ignore anything
+    /// below an ignored directory.
+    fn is_path_gitignored(worktree: &Worktree, path: &RelPath) -> bool {
+        path.ancestors()
+            .find_map(|ancestor| worktree.entry_for_path(ancestor))
+            .is_some_and(|entry| entry.is_ignored)
     }
 }
 
