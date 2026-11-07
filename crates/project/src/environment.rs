@@ -21,6 +21,9 @@ pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
     local_environments: HashMap<(Shell, Arc<Path>), Shared<Task<Option<HashMap<String, String>>>>>,
     remote_environments: HashMap<(Shell, Arc<Path>), Shared<Task<Option<HashMap<String, String>>>>>,
+    /// The system `PATH` at the time the entries in `local_environments` were captured,
+    /// used to notice environment changes that happened while Zed was running.
+    captured_system_path: Option<String>,
     environment_error_messages: VecDeque<String>,
     environment_error_messages_tx: mpsc::UnboundedSender<String>,
     worktree_store: WeakEntity<WorktreeStore>,
@@ -56,6 +59,7 @@ impl ProjectEnvironment {
         Self {
             cli_environment,
             local_environments: Default::default(),
+            captured_system_path: util::shell_env::registry_path(),
             remote_environments: Default::default(),
             environment_error_messages: Default::default(),
             environment_error_messages_tx: tx,
@@ -203,6 +207,8 @@ impl ProjectEnvironment {
             return Task::ready(Some(cli_environment)).shared();
         }
 
+        self.invalidate_environments_if_system_path_changed();
+
         self.local_environments
             .entry((shell.clone(), abs_path.clone()))
             .or_insert_with(|| {
@@ -279,6 +285,26 @@ impl ProjectEnvironment {
                 .shared()
             })
             .clone()
+    }
+
+    /// Discards captured environments when the system `PATH` changed since they were
+    /// captured.
+    ///
+    /// Installing a tool updates `PATH` in the registry and broadcasts `WM_SETTINGCHANGE`,
+    /// but a running process never sees that in its own environment block. Without this, an
+    /// environment captured before the install stays cached for the rest of the session, so
+    /// new terminals keep missing the newly installed tool (zed-industries/zed#51349).
+    fn invalidate_environments_if_system_path_changed(&mut self) {
+        let system_path = util::shell_env::registry_path();
+        if system_path == self.captured_system_path {
+            return;
+        }
+
+        if !self.local_environments.is_empty() {
+            log::info!("system PATH changed, discarding cached project environments");
+        }
+        self.local_environments.clear();
+        self.captured_system_path = system_path;
     }
 
     pub fn peek_environment_error(&self) -> Option<&String> {
