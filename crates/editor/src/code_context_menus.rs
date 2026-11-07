@@ -1613,7 +1613,13 @@ impl CompletionsMenu {
         matches
     }
 
-    pub fn preserve_markdown_cache(&mut self, prev_menu: CompletionsMenu) {
+    pub fn toggle_documentation(&mut self, cx: &mut Context<Editor>) {
+        self.show_completion_documentation = !self.show_completion_documentation;
+        cx.notify();
+    }
+
+    pub fn preserve_documentation_state(&mut self, prev_menu: CompletionsMenu) {
+        self.show_completion_documentation = prev_menu.show_completion_documentation;
         self.markdown_cache = prev_menu.markdown_cache.clone();
 
         // Convert ForCandidate cache keys to ForCompletionMatch keys.
@@ -2171,6 +2177,108 @@ impl CodeActionsMenu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    async fn test_completion_documentation_toggle_from_focused_markdown(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::{
+            ShowCompletions, ToggleCompletionDocumentation, editor_tests::init_test,
+            test::editor_lsp_test_context::EditorLspTestContext,
+        };
+        use futures::StreamExt;
+
+        init_test(cx, |settings| {
+            settings.defaults.show_completion_documentation = Some(false);
+        });
+        cx.update(|cx| {
+            cx.bind_keys([gpui::KeyBinding::new(
+                "cmd-i",
+                ToggleCompletionDocumentation,
+                Some("Editor && showing_completions"),
+            )]);
+        });
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions::default()),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        let mut requests =
+            cx.set_request_handler::<lsp::request::Completion, _, _>(|_, _, _| async {
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "alpha".into(),
+                        documentation: Some(lsp::Documentation::MarkupContent(
+                            lsp::MarkupContent {
+                                kind: lsp::MarkupKind::Markdown,
+                                value: "# Alpha\n\nCompletion documentation".into(),
+                            },
+                        )),
+                        ..Default::default()
+                    },
+                ])))
+            });
+
+        cx.set_state("obj.ˇ");
+        cx.dispatch_action(ShowCompletions);
+        requests.next().await.expect("completion request");
+        cx.run_until_parked();
+        cx.simulate_keystroke("cmd-i");
+        cx.run_until_parked();
+        let documentation_bounds = cx.update_editor(|editor, _, _| {
+            let context_menu = editor.context_menu.borrow();
+            let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref() else {
+                panic!("expected a completion menu");
+            };
+            menu.scroll_handle_aside.bounds()
+        });
+        assert!(!documentation_bounds.is_empty());
+        cx.simulate_click(
+            documentation_bounds.origin + gpui::point(px(16.), px(8.)),
+            gpui::Modifiers::none(),
+        );
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
+            assert!(!editor.focus_handle.is_focused(window));
+            assert!(
+                editor
+                    .context_menu
+                    .borrow()
+                    .as_ref()
+                    .expect("completion menu")
+                    .focused(window, cx)
+            );
+        });
+
+        cx.simulate_keystroke("cmd-i");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, _| {
+            assert!(editor.focus_handle.is_focused(window));
+            let context_menu = editor.context_menu.borrow();
+            let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref() else {
+                panic!("expected the completion menu to stay open");
+            };
+            assert!(menu.visible());
+            assert!(!menu.show_completion_documentation);
+        });
+        cx.simulate_keystroke("cmd-i");
+        cx.run_until_parked();
+        cx.update_editor(|editor, _, _| {
+            let context_menu = editor.context_menu.borrow();
+            let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref() else {
+                panic!("expected a completion menu");
+            };
+            assert!(menu.show_completion_documentation);
+        });
+    }
 
     fn bold() -> HighlightStyle {
         FontWeight::BOLD.into()

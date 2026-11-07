@@ -894,6 +894,8 @@ actions!(
         EditLogBreakpoint,
         /// Toggles automatic signature help.
         ToggleAutoSignatureHelp,
+        /// Toggles inline and side documentation for the current completion session.
+        ToggleCompletionDocumentation,
         /// Toggles inline git blame display.
         ToggleGitBlameInline,
         /// Opens the git commit for the blame at cursor.
