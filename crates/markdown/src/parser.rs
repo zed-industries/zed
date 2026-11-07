@@ -717,6 +717,8 @@ pub(crate) fn parse_markdown_with_options(
             pulldown_cmark::Event::InlineHtml(html) => {
                 if parse_html && is_br_tag(&html) {
                     state.push_event(range, MarkdownEvent::HardBreak)
+                } else if parse_html {
+                    state.push_event(range, MarkdownEvent::SubstitutedText(String::new()))
                 } else {
                     state.push_event(range, MarkdownEvent::InlineHtml)
                 }
