@@ -60,12 +60,12 @@ use futures::{
 };
 use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AppContext, AsyncApp, AsyncWindowContext, Axis,
-    Bounds, ClipboardItem, Context, Corners, CursorStyle, Decorations, DragMoveEvent, Entity,
-    EntityId, EventEmitter, FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext,
-    Keystroke, ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
-    Size, Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity,
-    WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas, point, relative, size,
-    transparent_black,
+    Bounds, ClipboardItem, Context, Corners, CursorStyle, Decorations, Deferred, DragMoveEvent,
+    Entity, EntityId, EventEmitter, FocusHandle, Focusable, Global, HitboxBehavior, Hsla,
+    KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
+    ResizeEdge, Size, Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling,
+    WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas, deferred,
+    point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -7115,26 +7115,33 @@ impl Workspace {
         self.update_window_edited(window, cx);
     }
 
-    fn render_notifications(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Option<Div> {
+    fn render_notifications(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Deferred> {
         if self.notifications.is_empty() {
             None
         } else {
             Some(
-                div()
-                    .absolute()
-                    .right_3()
-                    .bottom_3()
-                    .w_112()
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    .justify_end()
-                    .gap_2()
-                    .children(
-                        self.notifications
-                            .iter()
-                            .map(|(_, notification)| notification.clone().into_any_element()),
-                    ),
+                deferred(
+                    div()
+                        .absolute()
+                        .right_3()
+                        .bottom_3()
+                        .w_112()
+                        .h_full()
+                        .flex()
+                        .flex_col()
+                        .justify_end()
+                        .gap_2()
+                        .children(
+                            self.notifications
+                                .iter()
+                                .map(|(_, notification)| notification.clone().into_any_element()),
+                        ),
+                )
+                .with_priority(1),
             )
         }
     }
