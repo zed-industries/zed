@@ -24,7 +24,7 @@ use project::{
     ProjectGroupKey,
     bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
-    trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
+    trusted_worktrees::DbTrustedPaths,
 };
 
 use language::{LanguageName, Toolchain, ToolchainScope};
@@ -1096,6 +1096,43 @@ impl Domain for WorkspaceDb {
                 port INTEGER
             ) STRICT;
             CREATE INDEX restricted_worktrees_absolute_path ON restricted_worktrees(absolute_path);
+        ),
+        sql!(
+            CREATE TABLE trusted_worktrees_2 (
+                trust_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                absolute_path TEXT,
+                connection_kind TEXT,
+                host TEXT,
+                user TEXT,
+                port INTEGER
+            ) STRICT;
+
+            INSERT INTO trusted_worktrees_2 (absolute_path)
+            SELECT absolute_path
+            FROM trusted_worktrees
+            WHERE user_name IS NULL AND host_name IS NULL;
+
+            INSERT INTO trusted_worktrees_2 (absolute_path, connection_kind, host, user, port)
+            SELECT DISTINCT
+                trusted.absolute_path,
+                connections.kind,
+                trusted.host_name,
+                connections.user,
+                connections.port
+            FROM trusted_worktrees AS trusted
+            JOIN remote_connections AS connections ON
+                (connections.kind = "ssh"
+                    AND connections.host = trusted.host_name
+                    AND connections.user IS trusted.user_name)
+                OR (connections.kind = "wsl"
+                    AND connections.distro = trusted.host_name
+                    AND connections.user IS trusted.user_name)
+                OR (connections.kind = "docker"
+                    AND connections.container_id = trusted.host_name
+                    AND connections.name IS trusted.user_name);
+
+            DROP TABLE trusted_worktrees;
+            ALTER TABLE trusted_worktrees_2 RENAME TO trusted_worktrees;
         ),
     ];
 
@@ -2607,7 +2644,7 @@ impl WorkspaceDb {
 
     pub(crate) async fn save_trusted_worktrees(
         &self,
-        trusted_worktrees: HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>,
+        trusted_worktrees: DbTrustedPaths,
     ) -> anyhow::Result<()> {
         use anyhow::Context as _;
         use db::sqlez::statement::Statement;
@@ -2627,10 +2664,10 @@ impl WorkspaceDb {
             .collect::<Vec<_>>();
         let mut first_worktree;
         let mut last_worktree = 0_usize;
-        for (count, placeholders) in std::iter::once("(?, ?, ?)")
+        for (count, placeholders) in std::iter::once("(?, ?, ?, ?, ?)")
             .cycle()
             .take(trusted_worktrees.len())
-            .chunks(MAX_QUERY_PLACEHOLDERS / 3)
+            .chunks(MAX_QUERY_PLACEHOLDERS / 5)
             .into_iter()
             .map(|chunk| {
                 let mut count = 0;
@@ -2646,7 +2683,7 @@ impl WorkspaceDb {
             first_worktree = last_worktree;
             last_worktree = last_worktree + count;
             let query = format!(
-                r#"INSERT INTO trusted_worktrees(absolute_path, user_name, host_name)
+                r#"INSERT INTO trusted_worktrees(absolute_path, connection_kind, host, user, port)
 VALUES {placeholders};"#
             );
 
@@ -2660,16 +2697,8 @@ VALUES {placeholders};"#
                         &abs_path.as_ref().map(|abs_path| abs_path.as_ref()),
                         next_index,
                     )?;
-                    next_index = statement.bind(
-                        &host
-                            .as_ref()
-                            .and_then(|host| Some(host.user_name.as_ref()?.as_str())),
-                        next_index,
-                    )?;
-                    next_index = statement.bind(
-                        &host.as_ref().map(|host| host.host_identifier.as_str()),
-                        next_index,
-                    )?;
+                    next_index =
+                        statement.bind(&remote_identity_columns(host.as_ref()), next_index)?;
                 }
                 statement.exec()
             })
@@ -2683,19 +2712,9 @@ VALUES {placeholders};"#
         let trusted_worktrees = self.trusted_worktrees()?;
         Ok(trusted_worktrees
             .into_iter()
-            .filter_map(|(abs_path, user_name, host_name)| {
-                let db_host = match (user_name, host_name) {
-                    (None, Some(host_name)) => Some(RemoteHostLocation {
-                        user_name: None,
-                        host_identifier: SharedString::new(host_name),
-                    }),
-                    (Some(user_name), Some(host_name)) => Some(RemoteHostLocation {
-                        user_name: Some(SharedString::new(user_name)),
-                        host_identifier: SharedString::new(host_name),
-                    }),
-                    _ => None,
-                };
-                Some((db_host, abs_path?))
+            .filter_map(|(abs_path, kind, host, user, port)| {
+                let remote_host = remote_identity_from_columns(kind, host, user, port)?;
+                Some((remote_host, abs_path?))
             })
             .fold(HashMap::default(), |mut acc, (remote_host, abs_path)| {
                 acc.entry(remote_host)
@@ -2706,8 +2725,8 @@ VALUES {placeholders};"#
     }
 
     query! {
-        fn trusted_worktrees() -> Result<Vec<(Option<PathBuf>, Option<String>, Option<String>)>> {
-            SELECT absolute_path, user_name, host_name
+        fn trusted_worktrees() -> Result<Vec<(Option<PathBuf>, Option<String>, Option<String>, Option<String>, Option<u16>)>> {
+            SELECT absolute_path, connection_kind, host, user, port
             FROM trusted_worktrees
         }
     }
@@ -2810,6 +2829,40 @@ fn remote_identity_columns(
             (Some("mock"), Some(id.to_string()), None, None)
         }
     }
+}
+
+fn remote_identity_from_columns(
+    kind: Option<String>,
+    host: Option<String>,
+    user: Option<String>,
+    port: Option<u16>,
+) -> Option<Option<RemoteConnectionIdentity<'static>>> {
+    let Some(kind) = kind else {
+        return Some(None);
+    };
+    #[cfg(any(test, feature = "test-support"))]
+    if kind == "mock" {
+        let id = host?.parse().ok()?;
+        return Some(Some(RemoteConnectionIdentity::Mock { id }));
+    }
+    let host = Cow::Owned(host?);
+    let user = user.map(Cow::Owned);
+    let identity = match RemoteConnectionKind::deserialize(&kind)? {
+        RemoteConnectionKind::Ssh => RemoteConnectionIdentity::Ssh {
+            host,
+            username: user,
+            port,
+        },
+        RemoteConnectionKind::Wsl => RemoteConnectionIdentity::Wsl {
+            distro_name: host,
+            user,
+        },
+        RemoteConnectionKind::Docker => RemoteConnectionIdentity::Docker {
+            container_id: host,
+            remote_user: user?,
+        },
+    };
+    Some(Some(identity))
 }
 
 fn is_worktree_kept_restricted(
@@ -3464,6 +3517,148 @@ mod tests {
             .unwrap(),
             Some(0)
         );
+    }
+
+    #[test]
+    fn test_trusted_worktrees_migration_splits_hosts_by_known_connections() {
+        let connection = Connection::open_memory(Some(
+            "test_trusted_worktrees_migration_splits_hosts_by_known_connections",
+        ));
+        let old_migrations = &WorkspaceDb::MIGRATIONS[..WorkspaceDb::MIGRATIONS.len() - 1];
+        connection
+            .migrate(WorkspaceDb::NAME, old_migrations, &mut |_, _, _| false)
+            .unwrap();
+        connection
+            .exec(
+                "
+                INSERT INTO remote_connections (kind, host, port, user, distro, name, container_id)
+                VALUES
+                    ('ssh', 'server', 2222, 'user', NULL, NULL, NULL),
+                    ('ssh', 'server', 2223, 'user', NULL, NULL, NULL),
+                    ('ssh', 'server', 2224, 'other', NULL, NULL, NULL),
+                    ('ssh', 'no-user', NULL, NULL, NULL, NULL, NULL),
+                    ('wsl', NULL, NULL, 'user', 'Ubuntu', NULL, NULL),
+                    ('docker', NULL, NULL, 'vscode', NULL, 'dev', 'container');
+                INSERT INTO trusted_worktrees (absolute_path, user_name, host_name)
+                VALUES
+                    ('/local', NULL, NULL),
+                    ('/ssh', 'user', 'server'),
+                    ('/ssh_no_user', NULL, 'no-user'),
+                    ('/wsl', 'user', 'Ubuntu'),
+                    ('/docker', 'dev', 'container'),
+                    ('/unknown_connection', 'user', 'forgotten'),
+                    ('/unknown_shape', 'user', NULL);",
+            )
+            .unwrap()()
+        .unwrap();
+
+        connection
+            .migrate(
+                WorkspaceDb::NAME,
+                WorkspaceDb::MIGRATIONS,
+                &mut |_, _, _| false,
+            )
+            .unwrap();
+
+        let migrated_rows = connection
+            .select::<(
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<u16>,
+            )>(
+                "SELECT absolute_path, connection_kind, host, user, port
+                FROM trusted_worktrees
+                ORDER BY absolute_path, port",
+            )
+            .unwrap()()
+        .unwrap();
+        let row = |path: &str, kind: Option<&str>, host: Option<&str>, user: Option<&str>, port| {
+            (
+                path.to_string(),
+                kind.map(String::from),
+                host.map(String::from),
+                user.map(String::from),
+                port,
+            )
+        };
+        assert_eq!(
+            migrated_rows,
+            Vec::from([
+                row(
+                    "/docker",
+                    Some("docker"),
+                    Some("container"),
+                    Some("vscode"),
+                    None
+                ),
+                row("/local", None, None, None, None),
+                row(
+                    "/ssh",
+                    Some("ssh"),
+                    Some("server"),
+                    Some("user"),
+                    Some(2222)
+                ),
+                row(
+                    "/ssh",
+                    Some("ssh"),
+                    Some("server"),
+                    Some("user"),
+                    Some(2223)
+                ),
+                row("/ssh_no_user", Some("ssh"), Some("no-user"), None, None),
+                row("/wsl", Some("wsl"), Some("Ubuntu"), Some("user"), None),
+            ])
+        );
+    }
+
+    #[gpui::test]
+    async fn test_trusted_worktrees_round_trip_all_connection_kinds() {
+        let db = WorkspaceDb::open_test_db("test_trusted_worktrees_round_trip").await;
+        let connections = [
+            None,
+            Some(RemoteConnectionIdentity::Ssh {
+                host: Cow::Borrowed("server"),
+                username: Some(Cow::Borrowed("user")),
+                port: Some(2222),
+            }),
+            Some(RemoteConnectionIdentity::Ssh {
+                host: Cow::Borrowed("server"),
+                username: Some(Cow::Borrowed("user")),
+                port: Some(2223),
+            }),
+            Some(RemoteConnectionIdentity::Ssh {
+                host: Cow::Borrowed("server"),
+                username: None,
+                port: None,
+            }),
+            Some(RemoteConnectionIdentity::Wsl {
+                distro_name: Cow::Borrowed("server"),
+                user: Some(Cow::Borrowed("user")),
+            }),
+            Some(RemoteConnectionIdentity::Docker {
+                container_id: Cow::Borrowed("server"),
+                remote_user: Cow::Borrowed("user"),
+            }),
+            Some(RemoteConnectionIdentity::Mock { id: 7 }),
+        ];
+        let trusted_paths = connections
+            .into_iter()
+            .map(|connection_identity| {
+                (
+                    connection_identity,
+                    HashSet::from_iter([PathBuf::from("/project")]),
+                )
+            })
+            .collect::<DbTrustedPaths>();
+
+        db.save_trusted_worktrees(trusted_paths.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(db.fetch_trusted_worktrees().unwrap(), trusted_paths);
     }
 
     #[test]

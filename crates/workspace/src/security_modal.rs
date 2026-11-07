@@ -13,7 +13,7 @@ use gpui::{
 
 use project::{
     WorktreeId,
-    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
+    trusted_worktrees::{PathTrust, TrustedWorktrees},
     worktree_store::WorktreeStore,
 };
 use remote::RemoteConnectionIdentity;
@@ -35,8 +35,7 @@ pub struct SecurityModal {
     _home_dir_task: Task<()>,
     trust_parents: bool,
     worktree_store: WeakEntity<WorktreeStore>,
-    remote_host: Option<RemoteHostLocation>,
-    connection_identity: Option<RemoteConnectionIdentity<'static>>,
+    remote_host: Option<RemoteConnectionIdentity<'static>>,
     focus_handle: FocusHandle,
     project_list_scroll_handle: ScrollHandle,
     trusted: Option<bool>,
@@ -49,7 +48,7 @@ pub struct SecurityModal {
 struct RestrictedPath {
     abs_path: Arc<Path>,
     is_file: bool,
-    host: Option<RemoteHostLocation>,
+    host: Option<RemoteConnectionIdentity<'static>>,
 }
 
 impl Focusable for SecurityModal {
@@ -75,7 +74,7 @@ impl ModalView for SecurityModal {
                     .map(|restricted_path| restricted_path.abs_path.clone())
                     .collect::<Vec<_>>();
                 WorkspaceDb::global(cx)
-                    .keep_worktrees_restricted(abs_paths, self.connection_identity.clone());
+                    .keep_worktrees_restricted(abs_paths, self.remote_host.clone());
                 DismissDecision::Dismiss(true)
             }
             Some(true) => {
@@ -155,28 +154,14 @@ impl Render for SecurityModal {
                                                 } else {
                                                     Some(restricted_path.abs_path.as_ref())
                                                 }?;
+                                                let path = self.shorten_path(abs_path, path_style);
                                                 let label = match &restricted_path.host {
-                                                    Some(remote_host) => {
-                                                        match &remote_host.user_name {
-                                                            Some(user_name) => format!(
-                                                                "{} ({}@{})",
-                                                                self.shorten_path(abs_path, path_style)
-                                                                    .display(),
-                                                                user_name,
-                                                                remote_host.host_identifier
-                                                            ),
-                                                            None => format!(
-                                                                "{} ({})",
-                                                                self.shorten_path(abs_path, path_style)
-                                                                    .display(),
-                                                                remote_host.host_identifier
-                                                            ),
-                                                        }
-                                                    }
-                                                    None => self
-                                                        .shorten_path(abs_path, path_style)
-                                                        .display()
-                                                        .to_string(),
+                                                    Some(remote_host) => format!(
+                                                        "{} ({})",
+                                                        path.display(),
+                                                        remote_host_label(remote_host),
+                                                    ),
+                                                    None => path.display().to_string(),
                                                 };
                                                 Some(
                                                     h_flex()
@@ -321,8 +306,7 @@ impl Render for SecurityModal {
 impl SecurityModal {
     pub fn new(
         worktree_store: WeakEntity<WorktreeStore>,
-        remote_host: Option<impl Into<RemoteHostLocation>>,
-        connection_identity: Option<RemoteConnectionIdentity<'static>>,
+        remote_host: Option<RemoteConnectionIdentity<'static>>,
         home_dir_task: Task<Option<PathBuf>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -338,8 +322,7 @@ impl SecurityModal {
         });
         let mut this = Self {
             worktree_store,
-            remote_host: remote_host.map(|host| host.into()),
-            connection_identity,
+            remote_host,
             restricted_paths: HashMap::default(),
             focus_handle: cx.focus_handle(),
             project_list_scroll_handle: ScrollHandle::new(),
@@ -569,9 +552,40 @@ fn validate_trust_scope(
     Ok(expanded)
 }
 
+fn remote_host_label(remote_host: &RemoteConnectionIdentity<'_>) -> String {
+    let (user, host) = match remote_host {
+        RemoteConnectionIdentity::Ssh {
+            host,
+            username,
+            port,
+        } => (
+            username.as_deref(),
+            match port {
+                Some(port) if host.contains(':') => format!("[{host}]:{port}"),
+                Some(port) => format!("{host}:{port}"),
+                None => host.to_string(),
+            },
+        ),
+        RemoteConnectionIdentity::Wsl { distro_name, user } => {
+            (user.as_deref(), distro_name.to_string())
+        }
+        RemoteConnectionIdentity::Docker {
+            container_id,
+            remote_user,
+        } => (Some(remote_user.as_ref()), container_id.to_string()),
+        #[cfg(any(test, feature = "test-support"))]
+        RemoteConnectionIdentity::Mock { id } => (None, format!("mock-{id}")),
+    };
+    match user {
+        Some(user) => format!("{user}@{host}"),
+        None => host,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use remote::{RemoteConnectionOptions, SshConnectionOptions};
 
     #[test]
     fn accepts_ancestor_or_equal() {
@@ -686,5 +700,32 @@ mod tests {
             validate_trust_scope("~", project, Some(home), style).unwrap(),
             PathBuf::from("/Users/me"),
         );
+    }
+
+    #[test]
+    fn remote_host_label_matches_ssh_connection_string() {
+        for (host, username, port) in [
+            ("server", Some("user"), Some(2222)),
+            ("server", Some("user"), None),
+            ("server", None, Some(2222)),
+            ("server", None, None),
+            ("::1", Some("user"), Some(2222)),
+            ("::1", None, None),
+            ("127.0.0.1", None, Some(2222)),
+        ] {
+            let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: host.into(),
+                username: username.map(String::from),
+                port,
+                ..SshConnectionOptions::default()
+            });
+            let RemoteConnectionOptions::Ssh(ssh_options) = &options else {
+                unreachable!();
+            };
+            assert_eq!(
+                remote_host_label(&options.identity()),
+                ssh_options.connection_string(),
+            );
+        }
     }
 }
