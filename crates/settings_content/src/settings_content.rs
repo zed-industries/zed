@@ -199,6 +199,7 @@ pub struct SettingsContent {
     pub call_hierarchy: Option<CallHierarchySettingsContent>,
 
     pub git_panel: Option<GitPanelSettingsContent>,
+    pub git_graph: Option<GitGraphSettingsContent>,
 
     pub tabs: Option<ItemSettingsContent>,
     pub tab_bar: Option<TabBarSettingsContent>,
@@ -405,7 +406,7 @@ impl SettingsContent {
 fallible_options::flattened_deserialize!(SettingsContent {
     sections: { project, theme, extension, workspace, editor, remote },
     options: {
-        call_hierarchy, command_palette, file_finder, git_panel, tabs, tab_bar, tab_switcher, status_bar, preview_tabs, agent,
+        call_hierarchy, command_palette, file_finder, git_panel, git_graph, tabs, tab_bar, tab_switcher, status_bar, preview_tabs, agent,
         agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
         git,
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
@@ -739,6 +740,10 @@ pub struct CallSettingsContent {
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct GitPanelSettingsContent {
+    /// Whether to show relative or absolute dates in commit history.
+    ///
+    /// Default: relative
+    pub date_style: Option<GitDateStyle>,
     /// Whether to show the panel button in the status bar.
     ///
     /// Default: true
@@ -827,6 +832,15 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: expanded
     pub commit_editor: Option<GitPanelCommitEditor>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct GitGraphSettingsContent {
+    /// Whether to show relative or absolute dates in graph rows.
+    ///
+    /// Default: absolute
+    pub date_style: Option<GitDateStyle>,
 }
 
 #[derive(
