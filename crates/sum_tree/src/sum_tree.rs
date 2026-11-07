@@ -1269,11 +1269,15 @@ where
 pub enum Node<T: Item> {
     Internal {
         height: u8,
+        // The summary for the whole internal node. Searches can skip visiting
+        // this node based on it.
         summary: T::Summary,
         child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }, u8>,
         child_trees: ArrayVec<SumTree<T>, { 2 * TREE_BASE }, u8>,
     },
     Leaf {
+        // The summary for the whole leaf node. Searches can skip visiting this
+        // node based on it.
         summary: T::Summary,
         items: ArrayVec<T, { 2 * TREE_BASE }, u8>,
         item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }, u8>,
@@ -1591,6 +1595,95 @@ mod tests {
     }
 
     #[test]
+    fn test_cursor_prev_after_seek_to_first_item() {
+        let tree = SumTree::from_iter([0u8], ());
+        let mut cursor = tree.cursor::<Count>(());
+
+        // count         0       1
+        // items         |---0---|
+        // target        ^ Right
+        // seek          [=======] start=0, end=1, item=Some(0)
+        assert!(cursor.seek(&Count(0), Bias::Right));
+        assert_eq!(cursor.item(), Some(&0));
+
+        // count         0       1
+        // items         |---0---|
+        // target        ^ Right
+        // seek          [=======] start=0, end=1, item=Some(0)
+        // prev          ^ start=end=0, item=None
+        cursor.prev();
+        assert_eq!(cursor.item(), None);
+        assert_eq!(cursor.start(), &Count(0));
+        assert_eq!(cursor.end(), Count(0));
+        assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.next_item(), Some(&0));
+
+        // Note that another call to `prev()` does nothing.
+        cursor.prev();
+        assert_eq!(cursor.item(), None);
+        assert_eq!(cursor.start(), &Count(0));
+
+        // count         0       1
+        // items         |---0---|
+        // target        ^ Right
+        // seek          [=======] start=0, end=1, item=Some(0)
+        // prev          ^ start=end=0, item=None
+        // next          [=======] start=0, end=1, item=Some(0)
+        // And a next() moves to the first item again.
+        cursor.next();
+        assert_eq!(cursor.item(), Some(&0));
+        assert_eq!(cursor.start(), &Count(0));
+        assert_eq!(cursor.end(), Count(1));
+    }
+
+    #[test]
+    fn test_cursor_slice_from_before_first_item() {
+        let tree = SumTree::from_iter([10u8, 20], ());
+        let mut cursor = tree.cursor::<Count>(());
+
+        // After this block, the cursor is "before the first item".
+        // count         0       1       2
+        // items         |--10---|--20---|
+        // prev                  [=======] start=1, end=2
+        // prev          [=======] start=0, end=1
+        // prev          ^ before-first; start=end=0, at_end=false
+        cursor.prev();
+        assert_eq!(cursor.item(), Some(&20));
+        cursor.prev();
+        assert_eq!(cursor.item(), Some(&10));
+        cursor.prev();
+        assert_eq!(cursor.item(), None);
+        assert_eq!(cursor.start(), &Count(0));
+        assert_eq!(cursor.end(), Count(0));
+        assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.next_item(), Some(&10));
+
+        // count         0       1       2
+        // items         |--10---|--20---|
+        // prev                  [=======] start=1, end=2
+        // prev          [=======] start=0, end=1
+        // prev          ^ before-first; start=end=0, at_end=false
+        //
+        // then,
+        //
+        // target                        ^ Right
+        // slice         |--10---|--20---|
+        // cursor                        ^ start=end=2, at_end=true
+        let slice = cursor.slice(&Count(2), Bias::Right);
+        assert_eq!(slice.items(()), [10, 20]);
+        assert_eq!(cursor.item(), None);
+        assert_eq!(cursor.start(), &Count(2));
+        assert_eq!(cursor.end(), Count(2));
+        assert_eq!(cursor.prev_item(), Some(&20));
+        assert_eq!(cursor.next_item(), None);
+        assert!(cursor.at_end());
+
+        cursor.next();
+        assert_eq!(cursor.item(), None);
+        assert_eq!(cursor.start(), &Count(2));
+    }
+
+    #[test]
     fn test_cursor() {
         // Empty tree
         let tree = SumTree::<u8>::default();
@@ -1779,6 +1872,212 @@ mod tests {
         assert_eq!(cursor.slice(&Count(6), Bias::Right).items(()), vec![6]);
     }
 
+    // A survey of the return values of [`Cursor::seek()`] (and related
+    // functions).
+    //
+    // Note that this test is meant as documentation. The return values can be
+    // confusing at times and we might want to change them.
+    //
+    // The return value of `seek()` is position-oriented rather than
+    // item-oriented. `seek()` is basically concerned with finding the exact
+    // _position_ that was targeted. That's not necessarily linked to the
+    // attachment of any item -- there are cases where `true` is returned with
+    // no item attached, as well as cases where `false` is returned with an item
+    // attached.
+    //
+    // Note that some of these scenarios require items with variable
+    // "dimension-width", something that simpler dimensions like `Count` (where
+    // all items have a width of exactly 1) do not provide. This test uses the
+    // `Sum` dimension to exercise those scenarios.
+    #[test]
+    fn test_seek_return_values() {
+        // More specifically, the return value of `seek()` is governed by
+        // `cursor.start()` and `cursor.end()`, rather than `cursor.item()`.
+        // After traversing the tree, the cursor might or might not be attached
+        // to any particular item, but it will always have some dimension-span,
+        // from `start` to `end`. The return value, then, is based on this span:
+        // for a left-bias, it depends on whether `end` is the target position;
+        // for a right-bias, it depends on whether `start` is the target
+        // position.
+        //
+        // For the cases where an item is attached, these requirements translate
+        // into: a left-biased search returning true if the attached item _ends
+        // exactly_ at the seeked position; and a right-biased search returning
+        // true if the item _starts exactly_ at the seeked position.
+        //
+        // In particular, note that for positions that are "within" an item
+        // (such as one item that spans sums from two to four, and we seeked for
+        // three), `seek()` will always return false, which can be confusing.
+
+        // Below is a survey of different scenarios and the return values of
+        // `seek()`.
+        '_empty_tree: {
+            let tree = SumTree::<u8>::default();
+            let mut cursor = tree.cursor::<Sum>(());
+
+            // sum           0
+            // items         (empty)
+            // cursor        ^ start=end=0, item=None
+            //
+            // Because there are no items in the tree, the cursor's start and
+            // end positions are (by default) 0. In that case, it will always
+            // return true for seeking 0 (as it's both starting and ending at
+            // the seeked position, even if no item is attached).
+            assert!(cursor.seek(&Sum(0), Bias::Left) && cursor.item() == None);
+            assert!(cursor.seek(&Sum(0), Bias::Right) && cursor.item() == None);
+
+            // For other targets, it would return false as expected.
+            assert!(!cursor.seek(&Sum(3), Bias::Left));
+            assert!(!cursor.seek(&Sum(5), Bias::Right));
+        }
+
+        '_single_item_tree: {
+            let tree = SumTree::from_iter([5_u8], ());
+            let mut cursor = tree.cursor::<Sum>(());
+
+            // sum           0   1   2   3   4   5
+            // items         |---------5---------|
+            // target   Left ^
+            // cursor        [===================] start=0, end=5
+            //
+            // With left bias, it attaches to the first item, (with value 5) and
+            // asks whether it ends at 0 (false).
+            assert!(!cursor.seek(&Sum(0), Bias::Left) && cursor.item() == Some(&5));
+
+            // sum           0   1   2   3   4   5
+            // items         |---------5---------|
+            // target        ^ Right
+            // cursor        [===================] start=0, end=5
+            //
+            // With right bias, it checks whether 5 starts exactly at 0 (true).
+            assert!(cursor.seek(&Sum(0), Bias::Right) && cursor.item() == Some(&5));
+
+            // For a target position that is _inside_ the attached item, it
+            // always returns false.
+            assert!(!cursor.seek(&Sum(3), Bias::Left) && cursor.item() == Some(&5));
+            assert!(!cursor.seek(&Sum(3), Bias::Right) && cursor.item() == Some(&5));
+
+            // sum           0   1   2   3   4   5
+            // items         |---------5---------|
+            // target                       Left ^
+            // cursor        [===================] start=0, end=5
+            // It ends exactly at 5, so it returns true.
+            assert!(cursor.seek(&Sum(5), Bias::Left) && cursor.item() == Some(&5));
+
+            // sum           0   1   2   3   4   5
+            // items         |---------5---------|
+            // target                            ^ Right
+            // cursor                            ^ start=end=5, item=None
+            // With right bias, the cursor would skip over 5 and attach to the
+            // next item. Because there is no next item, both the cursor's start
+            // and end will be at 5.
+            //
+            // Which then makes `seek()` return true.
+            assert!(cursor.seek(&Sum(5), Bias::Right) && cursor.item() == None);
+
+            // For seeks with a dimension past the last item, it will always
+            // return false, as there's no case where either start or end can
+            // become that value.
+            assert!(!cursor.seek(&Sum(6), Bias::Left) && cursor.item() == None);
+            assert!(!cursor.seek(&Sum(6), Bias::Right) && cursor.item() == None);
+        }
+
+        '_multi_item_tree: {
+            let tree = SumTree::from_iter([5_u8, 1, 2], ());
+            let mut cursor = tree.cursor::<Sum>(());
+
+            // sum           0   1   2   3   4   5   6   7   8
+            // items         |---------5---------|-1-|---2---|
+            // cursor        [===================] start=0, end=5
+            //
+            // The same logic applies for seeking to position zero: attaches to
+            // first item, checks start or end.
+            assert!(!cursor.seek(&Sum(0), Bias::Left) && cursor.item() == Some(&5));
+            assert!(cursor.seek(&Sum(0), Bias::Right) && cursor.item() == Some(&5));
+
+            // And again, for any target position _inside_ any item, it returns false.
+            assert!(!cursor.seek(&Sum(4), Bias::Left) && cursor.item() == Some(&5));
+            assert!(!cursor.seek(&Sum(4), Bias::Right) && cursor.item() == Some(&5));
+
+            assert!(!cursor.seek(&Sum(7), Bias::Left) && cursor.item() == Some(&2));
+            assert!(!cursor.seek(&Sum(7), Bias::Right) && cursor.item() == Some(&2));
+
+            // Target positions at the boundary between two items are the reason for bias.
+            // Both return true as expected, but the attached item depends on the bias.
+            //
+            // sum           0   1   2   3   4   5   6   7   8
+            // items         |---------5---------|-1-|---2---|
+            // target                       Left ^
+            // cursor        [===================] start=0, end=5
+            assert!(cursor.seek(&Sum(5), Bias::Left) && cursor.item() == Some(&5));
+
+            // sum           0   1   2   3   4   5   6   7   8
+            // items         |---------5---------|-1-|---2---|
+            // target                            ^ Right
+            // cursor                            [===] start=5, end=6
+            assert!(cursor.seek(&Sum(5), Bias::Right) && cursor.item() == Some(&1));
+
+            // Likewise.
+            assert!(cursor.seek(&Sum(6), Bias::Left) && cursor.item() == Some(&1));
+            assert!(cursor.seek(&Sum(6), Bias::Right) && cursor.item() == Some(&2));
+
+            // sum           0   1   2   3   4   5   6   7   8
+            // items         |---------5---------|-1-|---2---|
+            // target                                   Left ^
+            // cursor                                [=======] start=6, end=8
+            assert!(cursor.seek(&Sum(8), Bias::Left) && cursor.item() == Some(&2));
+            // And note again that a right-biased seek for the last dimension of
+            // the tree still returns true, but attaches to no item.
+            // sum           0   1   2   3   4   5   6   7   8
+            // items         |---------5---------|-1-|---2---|
+            // target                                        ^ Right
+            // cursor                                        ^ start=end=8
+            assert!(cursor.seek(&Sum(8), Bias::Right) && cursor.item() == None);
+        }
+    }
+
+    // Trees with items with zero-width (regarding the traversed dimension) can
+    // be a bit tricky as well. Note that the "zero-widthness" of an item
+    // depends on the dimension being considered. In this case, we are always
+    // traversing based on sum, so it depends on their numeric value.
+    #[test]
+    fn test_seek_with_zero_width_item() {
+        let tree = SumTree::from_iter([2_u8, 2, 0, 1], ());
+        let mut cursor = tree.cursor::<Sum>(());
+
+        // sum           0   1   2   3   4   5
+        // items         |---2---|---2---|-1-|
+        // zero                          ^ item 0, width 0
+        // target                   Left ^
+        // cursor                [=======] start=2, end=4
+        //
+        // Attaching to the second 2 already makes end = target, so it does not
+        // move on to the 0.
+        assert!(cursor.seek(&Sum(4), Bias::Left));
+        assert_eq!(cursor.start(), &Sum(2));
+        assert_eq!(cursor.end(), Sum(4));
+        assert_eq!(cursor.item(), Some(&2));
+
+        // sum           0   1   2   3   4   5
+        // items         |---2---|---2---|-1-|
+        // zero                          ^ item 0, width 0
+        // target                        ^ Right
+        // cursor                        [===] start=4, end=5
+        //
+        // Attaching to the second 2 makes end = target, but a right-bias search
+        // is inclusive and moves on.
+        // Attaching to 0 _still_ makes end = target, so again it moves on.
+        // And finally attaching to 1 makes end > target, and the search stops.
+        assert!(cursor.seek(&Sum(4), Bias::Right));
+        assert_eq!(cursor.start(), &Sum(4));
+        assert_eq!(cursor.end(), Sum(5));
+        assert_eq!(cursor.item(), Some(&1));
+
+        // But note that the 0 still exists in the tree.
+        assert_eq!(cursor.prev_item(), Some(&0));
+        assert_eq!(tree.iter().copied().collect::<Vec<_>>(), [2, 2, 0, 1]);
+    }
+
     #[test]
     fn test_edit() {
         let mut tree = SumTree::<u8>::default();
@@ -1829,7 +2128,7 @@ mod tests {
     struct Count(usize);
 
     #[derive(Ord, PartialOrd, Default, Eq, PartialEq, Clone, Debug)]
-    struct Sum(usize);
+    pub(super) struct Sum(pub(super) usize);
 
     impl Item for u8 {
         type Summary = IntegersSummary;
