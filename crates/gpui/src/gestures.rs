@@ -1075,6 +1075,7 @@ fn scroll_event(
     ScrollEvent {
         position,
         delta: ScrollDelta::Pixels(delta),
+        wheel_notches: None,
         modifiers: Modifiers::default(),
         touch_phase,
         source: ScrollSource::Touch,
