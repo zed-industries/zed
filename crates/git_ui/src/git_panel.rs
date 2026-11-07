@@ -4233,13 +4233,17 @@ impl GitPanel {
         } else if message.trim().is_empty() {
             return None;
         }
+        // Rewrapping must not touch the trailer block: joining or wrapping lines
+        // such as `Signed-off-by:` makes git fail to recognize them as trailers,
+        // which (among other things) makes `--signoff` append a duplicate DCO line.
+        let (body, trailers) = split_commit_trailers(&message);
         let buffer = cx.new(|cx| {
-            let mut buffer = Buffer::local(message, cx);
+            let mut buffer = Buffer::local(body, cx);
             buffer.set_language(git_commit_language, cx);
             buffer
         });
         let editor = cx.new(|cx| Editor::for_buffer(buffer, None, window, cx));
-        let wrapped_message = editor.update(cx, |editor, cx| {
+        let mut wrapped_message = editor.update(cx, |editor, cx| {
             editor.select_all(&Default::default(), window, cx);
             editor.rewrap(
                 RewrapOptions {
@@ -4251,6 +4255,15 @@ impl GitPanel {
             );
             editor.text(cx)
         });
+        if !trailers.is_empty() {
+            if !wrapped_message.trim().is_empty() {
+                wrapped_message.truncate(wrapped_message.trim_end().len());
+                wrapped_message.push_str("\n\n");
+            } else {
+                wrapped_message.clear();
+            }
+            wrapped_message.push_str(trailers);
+        }
         if wrapped_message.trim().is_empty() {
             return None;
         }
@@ -10698,6 +10711,54 @@ pub(crate) fn commit_title_exceeds_limit(title: &str, max_length: usize) -> bool
     max_length > 0 && title.chars().count() > max_length
 }
 
+/// Splits a commit message into its body and trailing trailer block.
+///
+/// Mirrors git's own notion of a trailer block: the last paragraph of the
+/// message, when every line in it is either a `Token: value` trailer or a
+/// whitespace-indented continuation line. The subject paragraph is never a
+/// trailer block. The returned trailer slice starts at its first line and
+/// keeps the message's original trailing whitespace.
+pub(crate) fn split_commit_trailers(message: &str) -> (&str, &str) {
+    let content = message.trim_end();
+    // Locate the start of the last paragraph; blank lines may contain whitespace.
+    let mut paragraph_start = 0;
+    let mut offset = 0;
+    let mut after_blank = false;
+    for line in content.split_inclusive('\n') {
+        if line.trim().is_empty() {
+            after_blank = true;
+        } else if after_blank {
+            paragraph_start = offset;
+            after_blank = false;
+        }
+        offset += line.len();
+    }
+    let paragraph = &content[paragraph_start..];
+    if paragraph_start == 0 || content[..paragraph_start].trim().is_empty() {
+        return (message, "");
+    }
+
+    let is_trailer_line = |line: &str| {
+        if line.starts_with([' ', '\t']) {
+            return !line.trim().is_empty();
+        }
+        let Some((token, value)) = line.split_once(':') else {
+            return false;
+        };
+        !token.is_empty()
+            && token
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+            && value.starts_with(' ')
+    };
+    // A continuation line can't open the block.
+    if paragraph.starts_with([' ', '\t']) || !paragraph.lines().all(is_trailer_line) {
+        return (message, "");
+    }
+
+    (&message[..paragraph_start], &message[paragraph_start..])
+}
+
 #[cfg(test)]
 mod tests {
     use editor::SplittableEditor;
@@ -13515,6 +13576,138 @@ mod tests {
             let current_message = panel.commit_message_buffer(cx).read(cx).text();
             assert_eq!(current_message, "");
         });
+    }
+
+    #[test]
+    fn test_split_commit_trailers() {
+        assert_eq!(split_commit_trailers("subject"), ("subject", ""));
+        assert_eq!(
+            split_commit_trailers("Signed-off-by: A <a@x>"),
+            ("Signed-off-by: A <a@x>", "")
+        );
+        assert_eq!(
+            split_commit_trailers("subject\n\nbody text"),
+            ("subject\n\nbody text", "")
+        );
+        assert_eq!(
+            split_commit_trailers("subject\n\nSigned-off-by: A <a@x>\n"),
+            ("subject\n\n", "Signed-off-by: A <a@x>\n")
+        );
+        assert_eq!(
+            split_commit_trailers(
+                "subject\n\nbody\n\nSigned-off-by: A <a@x>\nCo-authored-by: B <b@x>\n\n"
+            ),
+            (
+                "subject\n\nbody\n\n",
+                "Signed-off-by: A <a@x>\nCo-authored-by: B <b@x>\n\n"
+            )
+        );
+        // Folded continuation lines belong to the trailer block.
+        assert_eq!(
+            split_commit_trailers("subject\n\nKey: first\n  continued"),
+            ("subject\n\n", "Key: first\n  continued")
+        );
+        // A paragraph with a non-trailer line is body text.
+        assert_eq!(
+            split_commit_trailers("subject\n\nSigned-off-by: A <a@x>\nnot a trailer"),
+            ("subject\n\nSigned-off-by: A <a@x>\nnot a trailer", "")
+        );
+        // A colon without a following space (e.g. a URL) is not a trailer.
+        assert_eq!(
+            split_commit_trailers("subject\n\nhttp://example.com"),
+            ("subject\n\nhttp://example.com", "")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_commit_message_rewrap_preserves_trailers(cx: &mut TestAppContext) {
+        init_test(cx);
+        // Mirror the shipped defaults for the Git Commit language; the test
+        // settings store doesn't carry per-language overrides.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(
+                        r#"{"languages": {"Git Commit": {"allow_rewrap": "anywhere", "preferred_line_length": 72}}}"#,
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": { "main.rs": "fn main() {}" }
+                }
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[("src/main.rs", StatusCode::Modified.worktree())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .git_store()
+                .read(cx)
+                .repositories()
+                .values()
+                .next()
+                .unwrap()
+                .clone()
+        });
+        repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        register_git_commit_language(&project, cx);
+        let panel = workspace.update_in(cx, GitPanel::new);
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel
+                    .commit_editor
+                    .read(cx)
+                    .language_at(MultiBufferOffset(0), cx)
+                    .map(|language| language.name()),
+                Some("Git Commit".into()),
+                "commit buffer should use the Git Commit language so rewrap applies"
+            );
+        });
+
+        let long_line = "word ".repeat(20);
+        let long_line = long_line.trim_end();
+        // One trailer longer than 72 columns (would be broken) and two short
+        // ones (would be joined onto one line) if the block were rewrapped.
+        let trailers = "Signed-off-by: Firstname Middlename Lastname <firstname.middlename.lastname@example.com>\n\
+                        Co-authored-by: B <b@example.com>\n\
+                        Reviewed-by: C <c@example.com>\n";
+        let message = format!("subject\n\n{long_line}\n\n{trailers}");
+
+        let committed = panel.update_in(cx, |panel, window, cx| {
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, message.as_str())], None, cx);
+            });
+            panel.custom_or_suggested_commit_message(window, cx).unwrap()
+        });
+
+        let (body, committed_trailers) = split_commit_trailers(&committed);
+        assert_eq!(committed_trailers, trailers);
+        assert!(
+            body.lines().all(|line| line.len() <= 72),
+            "body should be rewrapped: {body:?}"
+        );
+        assert!(body.lines().count() > 3, "long body line should wrap");
     }
 
     #[gpui::test]
