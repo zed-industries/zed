@@ -5907,6 +5907,130 @@ async fn test_dot_git_event_explained_by_filtered_sibling_does_not_emit_git_repo
 }
 
 #[gpui::test]
+async fn test_linked_worktree_git_dir_event_explained_by_filtered_sibling_does_not_emit_git_repo_update(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // Same hazard as above, but for a linked worktree's private git dir: git
+    // creates transient files like `index.lock` directly inside
+    // `.git/worktrees/<name>/`, so on Windows the watcher reports a Changed
+    // event for that directory itself alongside the file's own event. Acting
+    // on the bare directory event would turn every ignored lock file into a
+    // git rescan, and since Zed's own rescans take the linked worktree's
+    // index.lock, that feeds back into an infinite loop of git scans.
+    init_test(cx);
+
+    use git::repository::Worktree as GitWorktree;
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/main_repo"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/main_repo/.git")),
+        false,
+        GitWorktree {
+            path: PathBuf::from(path!("/linked_worktree")),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    fs.write(
+        path!("/linked_worktree/file.txt").as_ref(),
+        "content".as_bytes(),
+    )
+    .await
+    .unwrap();
+
+    let worktree = Worktree::local(
+        path!("/linked_worktree").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let linked_git_dir = PathBuf::from(path!("/main_repo/.git/worktrees/feature"));
+
+    // The exact batch Windows delivers when git creates index.lock in the
+    // linked worktree's git dir.
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(linked_git_dir.clone(), Some(PathEventKind::Changed));
+        fs.emit_fs_event(
+            linked_git_dir.join("index.lock"),
+            Some(PathEventKind::Created),
+        );
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            !got_git_update,
+            "a bare linked worktree git dir event accompanied only by a filtered \
+             index.lock event should NOT emit UpdatedGitRepositories"
+        );
+    }
+
+    // A meaningful change in the same batch must still trigger a rescan.
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(linked_git_dir.clone(), Some(PathEventKind::Changed));
+        fs.emit_fs_event(
+            linked_git_dir.join("index.lock"),
+            Some(PathEventKind::Created),
+        );
+        fs.emit_fs_event(linked_git_dir.join("HEAD"), Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            got_git_update,
+            "a meaningful change in the linked worktree git dir in the same batch \
+             as a filtered event should still emit UpdatedGitRepositories"
+        );
+    }
+
+    // A standalone bare event for the linked worktree git dir (event
+    // coalescing) must still trigger a rescan.
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(linked_git_dir, Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            got_git_update,
+            "a standalone bare linked worktree git dir event should still emit \
+             UpdatedGitRepositories"
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_ref_updates_in_dot_git_subdirectories_are_detected(cx: &mut TestAppContext) {
     // On Linux and FreeBSD the native file watcher is non-recursive: watching `.git`
     // does not deliver events for files nested below it, like the loose refs that git
