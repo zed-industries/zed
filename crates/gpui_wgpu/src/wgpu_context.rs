@@ -225,7 +225,9 @@ impl WgpuContext {
                         continue;
                     };
 
-                    match Self::create_device(&adapter).await {
+                    // Lets benchmarks time frames on the GPU when the adapter supports it.
+                    let timestamp_query = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+                    match Self::create_device(&adapter, timestamp_query).await {
                         Ok((device, queue, dual_source_blending, color_texture_format)) => {
                             #[cfg(feature = "bench-support")]
                             if adapter_info.device_type == wgpu::DeviceType::Cpu {
@@ -400,7 +402,7 @@ impl WgpuContext {
         };
 
         let (device, queue, dual_source_blending, color_texture_format) =
-            Self::create_device(&adapter).await?;
+            Self::create_device(&adapter, wgpu::Features::empty()).await?;
         let errors = DeviceErrorState::install(&device);
         log::info!(
             "Browser graphics initialized: requested={preference:?}, selected={backend:?}, \
@@ -424,12 +426,13 @@ impl WgpuContext {
 
     async fn create_device(
         adapter: &wgpu::Adapter,
+        additional_features: wgpu::Features,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, TextureFormat)> {
         let dual_source_blending = adapter
             .features()
             .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
 
-        let mut required_features = wgpu::Features::empty();
+        let mut required_features = additional_features;
         if dual_source_blending {
             required_features |= wgpu::Features::DUAL_SOURCE_BLENDING;
         } else {
@@ -662,7 +665,7 @@ impl WgpuContext {
         }
 
         let (device, queue, dual_source_blending, color_atlas_texture_format) =
-            Self::create_device(adapter).await?;
+            Self::create_device(adapter, wgpu::Features::empty()).await?;
         // Test with the configuration the renderer will use, so that it doesn't need to
         // configure the surface a second time.
         let (surface_config, _, _) =

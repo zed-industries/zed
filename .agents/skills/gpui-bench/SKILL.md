@@ -270,7 +270,8 @@ On platforms without a headless renderer, GPUI still performs CPU-side window wo
 - invalidations per frame;
 - foreground task, action, and input-dispatch durations;
 - p50, p90, p95, p99, and maximum durations;
-- total and maximum frame-budget overruns.
+- total and maximum frame-budget overruns;
+- GPU frame time: how long the GPU spent executing each presented frame, from Metal command buffer times or wgpu timestamp queries. It's omitted when the renderer can't time GPU work.
 
 Frame-budget overruns are a synthetic missed-deadline proxy because the headless harness has no display vsync. Do not call them literal display-dropped frames. Supplement important results with app automation and an Instruments, xctrace, miniprof, or equivalent profile.
 

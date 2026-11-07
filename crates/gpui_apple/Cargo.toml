@@ -50,6 +50,7 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
     "std",
     "block2",
     "dispatch2",
+    "objc2-core-foundation",
     "MTLAllocation",
     "MTLBlitCommandEncoder",
     "MTLBuffer",

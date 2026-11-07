@@ -1479,6 +1479,13 @@ pub trait PlatformHeadlessRenderer {
 
     /// Returns the sprite atlas used by this renderer.
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+
+    /// Waits for frames submitted by [`Self::render_scene`] to finish, then returns
+    /// how long the GPU spent executing each frame since the last call, in
+    /// submission order. Renderers that can't time GPU work return no frames.
+    fn take_gpu_frame_times(&mut self) -> Result<Vec<std::time::Duration>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Type alias for runnables with metadata.

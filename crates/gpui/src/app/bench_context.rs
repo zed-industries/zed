@@ -141,6 +141,17 @@ impl BenchReport {
         &self.metrics
     }
 
+    fn record_gpu_frame_times(&self, frame_times: Vec<Duration>) {
+        let mut snapshot = self.frame_snapshot.borrow_mut();
+        for frame_time in frame_times {
+            // Infallible: the histogram auto-resizes.
+            snapshot
+                .gpu_frame_time
+                .record(frame_time.as_nanos() as u64)
+                .ok();
+        }
+    }
+
     fn record_frame_timings<'i>(&self, events: impl IntoIterator<Item = &'i FrameEvent>) {
         let mut snapshot = self.frame_snapshot.borrow_mut();
         // `.ok()` on `record`: this operation is infallible (the histograms auto-resize).
@@ -261,6 +272,7 @@ impl BenchReport {
         self.print_histogram("window dirty-to-draw", &frame_snapshot.dirty_to_draw);
         self.print_histogram("window draw", &frame_snapshot.draw);
         self.print_histogram("window present interval", &frame_snapshot.present_interval);
+        self.print_histogram("GPU frame time", &frame_snapshot.gpu_frame_time);
         if !frame_snapshot.invalidations_per_frame.is_empty() {
             eprintln!(
                 "  invalidations per frame: mean {:.2}, max {}",
@@ -333,6 +345,7 @@ struct WindowFrameSnapshot {
     dirty_to_draw: Histogram<u64>,
     draw: Histogram<u64>,
     present_interval: Histogram<u64>,
+    gpu_frame_time: Histogram<u64>,
     invalidations_per_frame: Histogram<u64>,
     foreground_work: DurationHistogram,
 }
@@ -343,6 +356,7 @@ impl WindowFrameSnapshot {
             dirty_to_draw: Histogram::new(3).expect("3 significant digits is valid"),
             draw: Histogram::new(3).expect("3 significant digits is valid"),
             present_interval: Histogram::new(3).expect("3 significant digits is valid"),
+            gpu_frame_time: Histogram::new(3).expect("3 significant digits is valid"),
             invalidations_per_frame: Histogram::new(3).expect("3 significant digits is valid"),
             foreground_work: DurationHistogram::new(),
         }
@@ -352,6 +366,7 @@ impl WindowFrameSnapshot {
         self.dirty_to_draw.is_empty()
             && self.draw.is_empty()
             && self.present_interval.is_empty()
+            && self.gpu_frame_time.is_empty()
             && self.foreground_work.histogram.is_empty()
     }
 }
@@ -671,6 +686,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     pub fn bench_iter(&mut self, mut benchmark: impl FnMut(&mut Self)) {
         let bencher = self.take_bencher("bench_iter");
         self.dispatch_pending_frames(|| true);
+        self.take_gpu_frame_times();
         let collector = TraceScope::start(self.foreground_journal_collector());
         self.report.metrics.discard_pending();
         let mut iterations = 0;
@@ -685,6 +701,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         self.report.record_frame_timings(events.frame_events.iter());
         self.report
             .record_foreground_events(events.foreground_events());
+        self.record_gpu_frame_times();
         self.replace_bencher(bencher);
     }
 
@@ -745,9 +762,13 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                 // dropped; settling here releases their entities before the
                 // next setup, so per-iteration state cannot accumulate
                 // across a measurement.
+                // Records the previous measured iteration's GPU work outside timing,
+                // then discards GPU work from this iteration's setup.
+                setup_context.record_gpu_frame_times();
                 setup_context.settle();
                 let input = setup(&mut setup_context);
                 setup_context.dispatch_pending_frames(|| true);
+                setup_context.take_gpu_frame_times();
                 MeasuredTaskInput {
                     input,
                     trace_scope: Some(TraceScope::start(
@@ -777,6 +798,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             criterion::BatchSize::PerIteration,
         );
         report.metrics.record_sample(iterations.get());
+        self.record_gpu_frame_times();
         self.replace_bencher(bencher);
     }
 
@@ -806,6 +828,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let bencher = self.take_bencher("bench_renderer");
         let dispatcher = self.background_executor.dispatcher().clone();
         self.dispatch_pending_frames(|| true);
+        self.take_gpu_frame_times();
         let collector = TraceScope::start(self.foreground_journal_collector());
         self.report.metrics.discard_pending();
         let mut iterations = 0;
@@ -833,6 +856,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         self.report.record_frame_timings(events.frame_events.iter());
         self.report
             .record_foreground_events(events.foreground_events());
+        self.record_gpu_frame_times();
         self.replace_bencher(bencher);
     }
 
@@ -880,9 +904,13 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
         bencher.iter_batched_ref(
             || {
+                // Records the previous measured iteration's GPU work outside timing,
+                // then discards GPU work from this iteration's setup.
+                setup_context.record_gpu_frame_times();
                 setup_context.settle();
                 let input = setup(&mut setup_context);
                 setup_context.dispatch_pending_frames(|| true);
+                setup_context.take_gpu_frame_times();
                 MeasuredTaskInput {
                     input,
                     trace_scope: Some(TraceScope::start(
@@ -958,7 +986,33 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             criterion::BatchSize::PerIteration,
         );
         report.metrics.record_sample(iterations.get());
+        self.record_gpu_frame_times();
         self.replace_bencher(bencher);
+    }
+
+    /// Waits for GPU work submitted by every open window and returns the GPU
+    /// execution time of each frame completed since the last call.
+    fn take_gpu_frame_times(&self) -> Vec<Duration> {
+        let windows: Vec<_> = self
+            .app
+            .borrow_mut()
+            .windows
+            .values_mut()
+            .filter_map(|window| window.as_deref_mut()?.platform_window.as_test().cloned())
+            .collect();
+        windows
+            .iter()
+            .flat_map(|window| {
+                window
+                    .take_gpu_frame_times()
+                    .expect("failed to wait for benchmark GPU work")
+            })
+            .collect()
+    }
+
+    fn record_gpu_frame_times(&self) {
+        self.report
+            .record_gpu_frame_times(self.take_gpu_frame_times());
     }
 
     fn dispatch_pending_frames(&self, mut should_continue: impl FnMut() -> bool) -> bool {

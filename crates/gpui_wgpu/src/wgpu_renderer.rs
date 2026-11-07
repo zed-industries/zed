@@ -1226,6 +1226,7 @@ impl WgpuRenderer {
             size,
             premultiplied_alpha,
             wgpu::Color::TRANSPARENT,
+            None,
         ) {
             log::error!("{error:#}");
             return false;
@@ -1445,6 +1446,7 @@ impl WgpuRendererCore {
         size: Size<DevicePixels>,
         premultiplied_alpha: bool,
         clear_color: wgpu::Color,
+        timestamps: Option<FrameTimestamps<'_>>,
     ) -> Result<wgpu::SubmissionIndex> {
         anyhow::ensure!(
             size.width.0 > 0 && size.height.0 > 0,
@@ -1492,7 +1494,7 @@ impl WgpuRendererCore {
             bytemuck::bytes_of(&gamma_params),
         );
 
-        self.record_frame(scene, target_view, clear_color)
+        self.record_frame(scene, target_view, clear_color, timestamps)
             .inspect_err(|_| {
                 // Queue writes are staged before encoding; flush them even if the frame fails.
                 self.resources.queue.submit(std::iter::empty());
@@ -1504,6 +1506,7 @@ impl WgpuRendererCore {
         scene: &Scene,
         frame_view: &wgpu::TextureView,
         clear_color: wgpu::Color,
+        timestamps: Option<FrameTimestamps<'_>>,
     ) -> Result<wgpu::SubmissionIndex> {
         let mut instance_offset = 0;
         let instance_bindings = self
@@ -1532,6 +1535,7 @@ impl WgpuRendererCore {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main_pass"),
+                timestamp_writes: timestamps.map(|timestamps| timestamps.writes(true)),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: frame_view,
                     resolve_target: None,
@@ -1574,6 +1578,7 @@ impl WgpuRendererCore {
 
                         pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("main_pass_continued"),
+                            timestamp_writes: timestamps.map(|timestamps| timestamps.writes(false)),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: frame_view,
                                 resolve_target: None,
@@ -2341,6 +2346,125 @@ pub struct WgpuHeadlessRenderer {
     core: WgpuRendererCore,
     render_target: Option<HeadlessRenderTarget>,
     observed_error_generation: u64,
+    /// `None` when the device doesn't support timestamp queries.
+    gpu_frame_timer: Option<GpuFrameTimer>,
+}
+
+/// Times frames submitted by `render_scene` with GPU timestamp queries.
+///
+/// Each frame writes its start and end time to its own pair of queries. The
+/// queries are resolved and read back in one batch when frame times are taken, or
+/// when the query set fills up, which is the only time timing blocks on the GPU.
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "bench-support", feature = "test-support")
+))]
+struct GpuFrameTimer {
+    query_set: wgpu::QuerySet,
+    resolve_buffer: wgpu::Buffer,
+    readback_buffer: wgpu::Buffer,
+    nanoseconds_per_tick: f64,
+    pending_frames: u32,
+    frame_times: Vec<std::time::Duration>,
+}
+
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "bench-support", feature = "test-support")
+))]
+impl GpuFrameTimer {
+    const MAX_PENDING_FRAMES: u32 = wgpu::QUERY_SET_MAX_QUERIES / 2;
+    const BYTES_PER_FRAME: u64 = 2 * std::mem::size_of::<u64>() as u64;
+
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Self> {
+        if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            return None;
+        }
+        let size = u64::from(Self::MAX_PENDING_FRAMES) * Self::BYTES_PER_FRAME;
+        Some(Self {
+            query_set: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("gpu_frame_timestamps"),
+                ty: wgpu::QueryType::Timestamp,
+                count: Self::MAX_PENDING_FRAMES * 2,
+            }),
+            resolve_buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gpu_frame_timestamps_resolve"),
+                size,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
+            readback_buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gpu_frame_timestamps_readback"),
+                size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            }),
+            nanoseconds_per_tick: f64::from(queue.get_timestamp_period()),
+            pending_frames: 0,
+            frame_times: Vec::new(),
+        })
+    }
+
+    fn next_frame(&self) -> FrameTimestamps<'_> {
+        FrameTimestamps {
+            query_set: &self.query_set,
+            start_index: self.pending_frames * 2,
+        }
+    }
+
+    fn read_pending_frames(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> anyhow::Result<()> {
+        if self.pending_frames == 0 {
+            return Ok(());
+        }
+        let size = u64::from(self.pending_frames) * Self::BYTES_PER_FRAME;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("gpu_frame_timestamps_encoder"),
+        });
+        encoder.resolve_query_set(
+            &self.query_set,
+            0..self.pending_frames * 2,
+            &self.resolve_buffer,
+            0,
+        );
+        encoder.copy_buffer_to_buffer(&self.resolve_buffer, 0, &self.readback_buffer, 0, size);
+        let submission = queue.submit(std::iter::once(encoder.finish()));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.readback_buffer
+            .slice(..size)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).ok();
+            });
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(std::time::Duration::from_secs(30)),
+            })
+            .context("waiting for GPU frame timestamps")?;
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .context("receiving GPU frame timestamps")?
+            .context("mapping GPU frame timestamps")?;
+
+        let mapped = self.readback_buffer.slice(..size).get_mapped_range()?;
+        let timestamps: &[u64] = bytemuck::cast_slice(&mapped);
+        for frame in timestamps.chunks_exact(2) {
+            if let [start, end] = frame
+                && let Some(ticks) = end.checked_sub(*start)
+            {
+                self.frame_times.push(std::time::Duration::from_nanos(
+                    (ticks as f64 * self.nanoseconds_per_tick) as u64,
+                ));
+            }
+        }
+        drop(mapped);
+        self.readback_buffer.unmap();
+        self.pending_frames = 0;
+        Ok(())
+    }
 }
 
 #[cfg(all(
@@ -2353,6 +2477,7 @@ impl WgpuHeadlessRenderer {
         // The device may be shared with earlier renderers; observe only errors raised from
         // here on, including any while this renderer builds its pipelines.
         let observed_error_generation = context.errors().current_generation();
+        let gpu_frame_timer = GpuFrameTimer::new(&context.device, &context.queue);
         let atlas = Arc::new(WgpuAtlas::from_context(&context));
         let core = WgpuRendererCore::new(
             &context,
@@ -2366,6 +2491,7 @@ impl WgpuHeadlessRenderer {
             core,
             render_target: None,
             observed_error_generation,
+            gpu_frame_timer,
         })
     }
 
@@ -2426,7 +2552,12 @@ impl WgpuHeadlessRenderer {
         Ok(())
     }
 
-    fn render(&mut self, scene: &Scene, size: Size<DevicePixels>) -> anyhow::Result<()> {
+    fn render(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+        time_on_gpu: bool,
+    ) -> anyhow::Result<()> {
         self.check_gpu_errors()?;
         self.ensure_render_target(size)?;
         let view = self
@@ -2435,8 +2566,23 @@ impl WgpuHeadlessRenderer {
             .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
             .view
             .clone();
-        self.core
-            .render_frame(scene, &view, size, false, wgpu::Color::BLACK)?;
+        let mut timer = self.gpu_frame_timer.as_mut().filter(|_| time_on_gpu);
+        if let Some(timer) = timer.as_mut()
+            && timer.pending_frames == GpuFrameTimer::MAX_PENDING_FRAMES
+        {
+            timer.read_pending_frames(&self.context.device, &self.context.queue)?;
+        }
+        self.core.render_frame(
+            scene,
+            &view,
+            size,
+            false,
+            wgpu::Color::BLACK,
+            timer.as_ref().map(|timer| timer.next_frame()),
+        )?;
+        if let Some(timer) = timer {
+            timer.pending_frames += 1;
+        }
         Ok(())
     }
 
@@ -2562,16 +2708,45 @@ impl gpui::PlatformHeadlessRenderer for WgpuHeadlessRenderer {
         scene: &Scene,
         size: Size<DevicePixels>,
     ) -> anyhow::Result<image::RgbaImage> {
-        self.render(scene, size)?;
+        self.render(scene, size, false)?;
         self.read_image()
     }
 
     fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> anyhow::Result<()> {
-        self.render(scene, size)
+        self.render(scene, size, true)
     }
 
     fn sprite_atlas(&self) -> Arc<dyn gpui::PlatformAtlas> {
         self.core.atlas.clone()
+    }
+
+    fn take_gpu_frame_times(&mut self) -> anyhow::Result<Vec<std::time::Duration>> {
+        let Some(timer) = &mut self.gpu_frame_timer else {
+            return Ok(Vec::new());
+        };
+        timer.read_pending_frames(&self.context.device, &self.context.queue)?;
+        let frame_times = std::mem::take(&mut timer.frame_times);
+        self.check_gpu_errors()?;
+        Ok(frame_times)
+    }
+}
+
+/// The pair of timestamp queries a frame writes its GPU start and end times to.
+#[derive(Clone, Copy)]
+struct FrameTimestamps<'a> {
+    query_set: &'a wgpu::QuerySet,
+    start_index: u32,
+}
+
+impl<'a> FrameTimestamps<'a> {
+    /// A frame can span several main passes when paths are drawn. The first pass
+    /// writes the start time, and every pass writes the end time so the last one wins.
+    fn writes(self, first_pass: bool) -> wgpu::RenderPassTimestampWrites<'a> {
+        wgpu::RenderPassTimestampWrites {
+            query_set: self.query_set,
+            beginning_of_pass_write_index: first_pass.then_some(self.start_index),
+            end_of_pass_write_index: Some(self.start_index + 1),
+        }
     }
 }
 
@@ -2719,6 +2894,30 @@ mod tests {
         assert_pixel(&image, 24, 16, RED);
         assert_pixel(&image, 40, 16, BLUE);
         assert_pixel(&image, 56, 16, BLUE);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_times_each_rendered_frame_on_the_gpu() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let mut scene = Scene::default();
+        scene.insert_primitive(solid_quad(0.0, 0.0, 32.0, 32.0, gpui::red()));
+        scene.finish();
+
+        let frame_count = GpuFrameTimer::MAX_PENDING_FRAMES as usize + 3;
+        for _ in 0..frame_count {
+            renderer.render_scene(&scene, device_size(32, 32))?;
+        }
+        renderer.render_scene_to_image(&scene, device_size(32, 32))?;
+
+        let expected_frames = if renderer.gpu_frame_timer.is_some() {
+            frame_count
+        } else {
+            0
+        };
+        assert_eq!(renderer.take_gpu_frame_times()?.len(), expected_frames);
+        assert!(renderer.take_gpu_frame_times()?.is_empty());
         Ok(())
     }
 

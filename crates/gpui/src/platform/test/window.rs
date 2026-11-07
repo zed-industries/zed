@@ -83,6 +83,14 @@ impl HasDisplayHandle for TestWindow {
 }
 
 impl TestWindow {
+    #[cfg(feature = "bench-support")]
+    pub(crate) fn take_gpu_frame_times(&self) -> anyhow::Result<Vec<std::time::Duration>> {
+        match self.0.lock().renderer.as_mut() {
+            Some(renderer) => renderer.take_gpu_frame_times(),
+            None => Ok(Vec::new()),
+        }
+    }
+
     pub(crate) fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
