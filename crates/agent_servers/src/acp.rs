@@ -805,9 +805,12 @@ fn apply_subagent_update(
 ) -> Result<Entity<AcpThread>> {
     let parent_session_id = parent.read(cx).session_id().clone();
     let session_id = update.session_id.clone();
+    let parent_work_dirs = parent.read(cx).work_dirs().cloned();
     if let Some(subagent) = parent.read(cx).subagent(&session_id).cloned() {
         subagent.update(cx, |subagent, cx| {
-            subagent.update_subagent_association(update, cx)
+            subagent.update_subagent_association(update, cx)?;
+            subagent.inherit_subagent_work_dirs(parent_work_dirs.as_ref(), cx);
+            anyhow::Ok(())
         })?;
         return Ok(subagent);
     }
@@ -843,7 +846,9 @@ fn apply_subagent_update(
         .agent_owned()
     });
     subagent.update(cx, |subagent, cx| {
-        subagent.update_subagent_association(update, cx)
+        subagent.update_subagent_association(update, cx)?;
+        subagent.inherit_subagent_work_dirs(parent_work_dirs.as_ref(), cx);
+        anyhow::Ok(())
     })?;
     // Unlike a session Zed opened, releasing a subagent must not close it: the agent
     // releases subagents when their parent closes.

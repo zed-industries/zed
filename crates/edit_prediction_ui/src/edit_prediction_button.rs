@@ -78,6 +78,10 @@ impl Render for EditPredictionButton {
 
         let language_settings = all_language_settings(None, cx);
 
+        if !language_settings.edit_predictions.button {
+            return div().hidden();
+        }
+
         match language_settings.edit_predictions.provider {
             EditPredictionProvider::Copilot => {
                 let Some(copilot) = EditPredictionStore::try_global(cx)
@@ -1480,10 +1484,14 @@ impl StatusItemView for EditPredictionButton {
     }
 
     fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
-        // This button is already gated on having a non-disabled edit
-        // prediction provider, which the user manages through provider/AI
-        // settings.
-        None
+        Some(HideStatusItem::new(|settings| {
+            settings
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_default()
+                .button = Some(false);
+        }))
     }
 }
 
