@@ -1243,8 +1243,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                         sha,
                                         repo.downgrade(),
                                         workspace.weak_handle(),
-                                        None,
-                                        None,
+                                        Default::default(),
                                         window,
                                         cx,
                                     );
