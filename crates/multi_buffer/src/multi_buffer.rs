@@ -6076,6 +6076,16 @@ impl MultiBufferSnapshot {
             {
                 target_indent = next_line_indent;
                 target_row.0 += 1;
+            } else if let Some(previous_row) = target_row.0.checked_sub(1) {
+                // Likewise, if the current row is at the end of an indented block (e.g. a closing
+                // bracket), we want to return the block it closes rather than its parent.
+                let previous_line_indent = self.line_indent_for_row(MultiBufferRow(previous_row));
+                if !previous_line_indent.is_line_empty()
+                    && target_indent.raw_len() < previous_line_indent.raw_len()
+                {
+                    target_indent = previous_line_indent;
+                    target_row.0 = previous_row;
+                }
             }
         }
 
