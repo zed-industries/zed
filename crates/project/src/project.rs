@@ -41,7 +41,7 @@ use crate::{
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
-    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
+    trusted_worktrees::{PathTrust, TrustedWorktrees},
     worktree_store::WorktreeIdCounter,
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
@@ -1515,7 +1515,7 @@ impl Project {
                 (
                     remote.proto_client(),
                     remote.path_style(),
-                    RemoteHostLocation::from(remote.connection_options()),
+                    remote.connection_options().identity().into_owned(),
                 )
             });
             let worktree_store = cx.new(|cx| {

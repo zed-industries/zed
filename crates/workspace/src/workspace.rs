@@ -102,7 +102,7 @@ use project::{
     git_store::{GitStoreEvent, RepositoryEvent},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
-    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, TrustedWorktreesEvent},
+    trusted_worktrees::{TrustedWorktrees, TrustedWorktreesEvent},
 };
 use release_channel::ReleaseChannel;
 use remote::{
@@ -9341,9 +9341,6 @@ impl Workspace {
         if has_restricted_worktrees {
             let project = self.project().read(cx);
             let remote_host = project
-                .remote_connection_options(cx)
-                .map(RemoteHostLocation::from);
-            let connection_identity = project
                 .remote_connection_identity(cx)
                 .map(RemoteConnectionIdentity::into_owned);
             let worktree_store = project.worktree_store().downgrade();
@@ -9360,14 +9357,7 @@ impl Workspace {
                 })
             };
             self.toggle_modal(window, cx, |window, cx| {
-                SecurityModal::new(
-                    worktree_store,
-                    remote_host,
-                    connection_identity,
-                    home_dir_task,
-                    window,
-                    cx,
-                )
+                SecurityModal::new(worktree_store, remote_host, home_dir_task, window, cx)
             });
         }
     }
