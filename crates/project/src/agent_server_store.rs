@@ -32,6 +32,8 @@ use crate::agent_registry_store::{AgentRegistryStore, RegistryAgent, RegistryTar
 
 use crate::worktree_store::WorktreeStore;
 
+const ARCHIVE_CACHE_FORMAT_VERSION: u8 = 2;
+
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct AgentServerCommand {
     #[serde(rename = "command")]
@@ -1043,9 +1045,10 @@ fn versioned_archive_cache_dir(
     let archive_hash = format!("{:x}", archive_hasher.finalize());
 
     base_dir.join(format!(
-        "v_{sanitized_version}_{}_{}",
+        "v_{sanitized_version}_{}_{}_{}",
         &version_hash[..16],
         &archive_hash[..16],
+        ARCHIVE_CACHE_FORMAT_VERSION,
     ))
 }
 
@@ -2096,6 +2099,7 @@ mod tests {
             .expect("cache directory should have a file name");
 
         assert!(file_name.starts_with("v_release-2.3.5_"));
+        assert!(file_name.ends_with("_2"));
         assert_ne!(slash_version_dir, colon_version_dir);
 
         let lowercase_checksum_dir = versioned_archive_cache_dir(
