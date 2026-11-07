@@ -2795,7 +2795,8 @@ impl GitRepository for RealGitRepository {
                     cmd.arg("--amend");
                 }
 
-                if options.signoff {
+                let signoff = options.signoff && !message.contains("Signed-off-by:");
+                if signoff {
                     cmd.arg("--signoff");
                 }
 
