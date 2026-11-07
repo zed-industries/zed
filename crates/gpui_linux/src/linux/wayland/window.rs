@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
     ffi::c_void,
+    ops::Range,
     ptr::NonNull,
     rc::Rc,
     sync::Arc,
@@ -767,7 +768,7 @@ enum FrameLoop {
 pub(crate) struct WaylandWindow(pub WaylandWindowStatePtr);
 pub enum ImeInput {
     InsertText(String),
-    SetMarkedText(String),
+    SetMarkedText(String, Option<Range<usize>>),
     UnmarkText,
     DeleteText,
 }
@@ -1487,8 +1488,8 @@ impl WaylandWindowStatePtr {
                 ImeInput::InsertText(text) => {
                     input_handler.replace_text_in_range(None, &text);
                 }
-                ImeInput::SetMarkedText(text) => {
-                    input_handler.replace_and_mark_text_in_range(None, &text, None);
+                ImeInput::SetMarkedText(text, new_selected_range) => {
+                    input_handler.replace_and_mark_text_in_range(None, &text, new_selected_range);
                 }
                 ImeInput::UnmarkText => {
                     input_handler.unmark_text();
