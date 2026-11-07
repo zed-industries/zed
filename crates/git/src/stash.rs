@@ -143,6 +143,16 @@ fn parse_stash_message(input: &str) -> (Option<&str>, &str) {
         }
     }
 
+    // Handle "index on <branch>: <message>" pattern
+    if let Some(stripped) = input.strip_prefix("index on ").or_else(|| input.strip_prefix("Index on "))
+        && let Some(colon_pos) = stripped.find(": ")
+    {
+        let branch = &stripped[..colon_pos];
+        let message = &stripped[colon_pos + 2..];
+        if !branch.is_empty() && !message.is_empty() {
+            return (Some(branch), message);
+        }
+    }
     // Fallback: treat entire input as message with no branch
     (None, input)
 }
@@ -187,6 +197,15 @@ mod tests {
         let (branch, message) = parse_stash_message("On branch-name:");
         assert_eq!(branch, None);
         assert_eq!(message, "On branch-name:");
+        // Index on format
+        let (branch, message) = parse_stash_message("index on main: index changes");
+        assert_eq!(branch, Some("main"));
+        assert_eq!(message, "index changes");
+
+        let (branch, message) = parse_stash_message("Index on feature: index wip");
+        assert_eq!(branch, Some("feature"));
+        assert_eq!(message, "index wip");
+
     }
 
     #[test]
