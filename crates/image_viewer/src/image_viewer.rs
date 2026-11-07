@@ -1,7 +1,7 @@
 mod image_info;
 mod image_viewer_settings;
 
-use std::{path::Path, sync::Arc};
+use std::{io::Cursor, path::Path, sync::Arc};
 
 use anyhow::Context as _;
 use editor::{
@@ -10,13 +10,14 @@ use editor::{
 };
 use file_icons::FileIcons;
 use gpui::{
-    AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId, InteractiveElement,
-    IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, PinchEvent, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollEvent, Style,
-    Styled, Subscription, Task, WeakEntity, Window, actions, checkerboard, div, img, point, px,
-    size,
+    AnyElement, App, Bounds, ClipboardItem, Context, DispatchPhase, Element, ElementId, Entity,
+    EventEmitter, FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId,
+    InteractiveElement, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, PinchEvent, Pixels, Point, Render, RenderImage, ScrollDelta,
+    ScrollEvent, Style, Styled, Subscription, Task, WeakEntity, Window, actions, checkerboard, div,
+    img, point, px, size,
 };
+use image::ImageDecoder as _;
 use language::File as _;
 use persistence::ImageViewerDb;
 use project::{
@@ -31,6 +32,7 @@ use workspace::{
     WorkspaceId, delete_unloaded_items,
     invalid_item_view::InvalidItemView,
     item::{HighlightedText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
+    notifications::NotifyResultExt as _,
 };
 
 pub use crate::image_info::*;
@@ -48,7 +50,9 @@ actions!(
         /// Fit the image to view.
         FitToView,
         /// Zoom to actual size (100%).
-        ZoomToActualSize
+        ZoomToActualSize,
+        /// Copy the image to the clipboard.
+        CopyImage
     ]
 );
 
@@ -73,6 +77,7 @@ pub struct ImageView {
     image_size: Option<(u32, u32)>,
     pending_image: Option<Arc<gpui::Image>>,
     displayed_image: Option<DisplayedImage>,
+    copy_image_task: Option<Task<()>>,
 }
 
 struct DisplayedImage {
@@ -182,6 +187,7 @@ impl ImageView {
             image_size,
             pending_image: Some(pending_image),
             displayed_image: None,
+            copy_image_task: None,
         }
     }
 
@@ -205,6 +211,31 @@ impl ImageView {
             }
             ImageItemEvent::ReloadNeeded => {}
         }
+    }
+
+    fn copy_image(&mut self, _: &CopyImage, _window: &mut Window, cx: &mut Context<Self>) {
+        // Cancel any conversion still in flight so it can't overwrite this newer copy.
+        self.copy_image_task = None;
+
+        let image = self.image_item.read(cx).image.clone();
+        if image.format == gpui::ImageFormat::Png {
+            cx.write_to_clipboard(ClipboardItem::new_image(&image));
+            return;
+        }
+
+        // Many apps that accept pasted images (presentation tools, browsers) only read PNG or
+        // TIFF from the clipboard, so formats like WebP or BMP are converted first.
+        let conversion = cx.background_spawn(async move { convert_to_png(&image) });
+        self.copy_image_task = Some(cx.spawn(async move |_, cx| {
+            let result = conversion
+                .await
+                .map_err(|error| format!("Failed to copy image: {error:#}"));
+            cx.update(|cx| {
+                if let Some(png_image) = result.notify_app_err(cx) {
+                    cx.write_to_clipboard(ClipboardItem::new_image(&png_image));
+                }
+            });
+        }));
     }
 
     fn zoom_in(&mut self, _: &ZoomIn, _window: &mut Window, cx: &mut Context<Self>) {
@@ -355,6 +386,25 @@ impl ImageView {
         let zoom_factor = 1.0 + event.delta;
         self.set_zoom(self.zoom_level * zoom_factor, Some(event.position), cx);
     }
+}
+
+fn convert_to_png(image: &gpui::Image) -> anyhow::Result<gpui::Image> {
+    let mut decoder = image::ImageReader::new(Cursor::new(&image.bytes))
+        .with_guessed_format()
+        .context("detecting image format")?
+        .into_decoder()
+        .context("creating image decoder")?;
+    // The viewer displays the image with its EXIF orientation applied, and that metadata
+    // isn't carried over to the PNG, so bake it into the pixels.
+    let orientation = decoder.orientation().context("reading image orientation")?;
+    let mut decoded = image::DynamicImage::from_decoder(decoder).context("decoding image")?;
+    decoded.apply_orientation(orientation);
+
+    let mut png_bytes = Vec::new();
+    decoded
+        .write_to(Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+        .context("encoding image as PNG")?;
+    Ok(gpui::Image::from_bytes(gpui::ImageFormat::Png, png_bytes))
 }
 
 struct ImageContentElement {
@@ -658,6 +708,7 @@ impl Item for ImageView {
             image_size: self.image_size,
             pending_image: None,
             displayed_image: None,
+            copy_image_task: None,
         })))
     }
 
@@ -768,6 +819,7 @@ impl Render for ImageView {
         div()
             .track_focus(&self.focus_handle(cx))
             .key_context("ImageViewer")
+            .on_action(cx.listener(Self::copy_image))
             .on_action(cx.listener(Self::zoom_in))
             .on_action(cx.listener(Self::zoom_out))
             .on_action(cx.listener(Self::reset_zoom))
@@ -1088,7 +1140,7 @@ pub fn init(cx: &mut App) {
 mod tests {
     use super::*;
     use fs::{FakeFs, Fs as _};
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{ClipboardEntry, TestAppContext, VisualTestContext};
     use settings::SettingsStore;
     use util::rel_path::rel_path;
 
@@ -1346,6 +1398,62 @@ mod tests {
         cx.draw(point(px(0.), px(0.)), size(px(1.), px(1.)), |_, _| {
             split_image_view.clone().into_any_element()
         });
+    }
+
+    fn dispatch_copy_image(image_view: &Entity<ImageView>, cx: &mut VisualTestContext) {
+        cx.update(|window, cx| image_view.read(cx).focus_handle(cx).focus(window, cx));
+        draw_window(cx);
+        cx.dispatch_action(CopyImage);
+        cx.run_until_parked();
+    }
+
+    fn copied_image(cx: &mut VisualTestContext) -> gpui::Image {
+        let clipboard_item = cx
+            .update(|_, cx| cx.read_from_clipboard())
+            .expect("an image should have been copied to the clipboard");
+        match clipboard_item.entries() {
+            [ClipboardEntry::Image(image)] => image.clone(),
+            entries => panic!("expected a single image entry, got {entries:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_copy_image_converts_to_png(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+        let (image_view, cx) = cx
+            .add_window_view(|window, cx| ImageView::new(image_item.clone(), project, window, cx));
+        replace_image(&image_item, test_image(200), cx);
+
+        dispatch_copy_image(&image_view, cx);
+
+        let copied_image = copied_image(cx);
+        assert_eq!(copied_image.format, gpui::ImageFormat::Png);
+        let decoded =
+            image::load_from_memory_with_format(&copied_image.bytes, image::ImageFormat::Png)
+                .expect("the copied image should be a valid PNG")
+                .into_rgb8();
+        assert_eq!(decoded.dimensions(), (1, 1));
+        assert_eq!(
+            decoded.get_pixel(0, 0).0,
+            [200, 0, 0],
+            "the copied PNG should contain the currently loaded image"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_png_image_keeps_original_bytes(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+        let (image_view, cx) = cx
+            .add_window_view(|window, cx| ImageView::new(image_item.clone(), project, window, cx));
+        let png_image =
+            Arc::new(convert_to_png(&test_image(50)).expect("test image should convert to PNG"));
+        replace_image(&image_item, png_image.clone(), cx);
+
+        dispatch_copy_image(&image_view, cx);
+
+        assert_eq!(copied_image(cx), *png_image);
     }
 }
 
