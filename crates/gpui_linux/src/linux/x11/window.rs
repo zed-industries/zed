@@ -29,8 +29,15 @@ use x11rb::{
     xcb_ffi::XCBConnection,
 };
 
+use calloop::ping::Ping;
 use std::{
-    cell::RefCell, ffi::c_void, fmt::Display, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::Arc,
+    cell::{Cell, RefCell},
+    ffi::c_void,
+    fmt::Display,
+    num::NonZeroU32,
+    ptr::NonNull,
+    rc::Rc,
+    sync::Arc,
 };
 
 use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
@@ -313,6 +320,11 @@ pub(crate) struct X11WindowStatePtr {
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb: Rc<XCBConnection>,
     pub(crate) x_window: xproto::Window,
+    // A frame was asked for since the refresh timer last ran, and the
+    // client's ping that restarts the timer once it has parked for being
+    // idle. Apart from `state` so a waker can ring them during any borrow.
+    pub(crate) woken: Rc<Cell<bool>>,
+    pub(crate) frame_wake: Rc<RefCell<Option<Ping>>>,
 }
 
 impl rwh::HasWindowHandle for RawWindow {
@@ -958,6 +970,8 @@ impl X11Window {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb: xcb.clone(),
             x_window,
+            woken: Rc::new(Cell::new(false)),
+            frame_wake: Rc::new(RefCell::new(None)),
         };
 
         let state = ptr.state.borrow_mut();
@@ -1385,6 +1399,28 @@ impl X11WindowStatePtr {
 }
 
 impl PlatformWindow for X11Window {
+    // GPUI calls the waker when the window first needs a frame, and
+    // `schedule_frame` when a frame left work for the next one. Both only
+    // Mark the window and ring the client's ping, whose handler restarts a
+    // parked refresh timer (`X11ClientState::unpark_woken`).
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        let woken = self.0.woken.clone();
+        let frame_wake = self.0.frame_wake.clone();
+        Some(Rc::new(move || {
+            woken.set(true);
+            if let Some(ping) = frame_wake.borrow().as_ref() {
+                ping.ping();
+            }
+        }))
+    }
+
+    fn schedule_frame(&self) {
+        self.0.woken.set(true);
+        if let Some(ping) = self.0.frame_wake.borrow().as_ref() {
+            ping.ping();
+        }
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.state.borrow().bounds
     }
