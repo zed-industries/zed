@@ -390,7 +390,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_project_bookmarks_displays_single_file_and_external_paths(cx: &mut TestAppContext) {
+    async fn test_project_bookmarks_displays_single_file_and_external_paths(
+        cx: &mut TestAppContext,
+    ) {
         let app_state = init_test(cx);
         app_state
             .fs
@@ -405,8 +407,12 @@ mod tests {
             )
             .await;
 
-        let project =
-            Project::test(app_state.fs.clone(), [path!("/root/single.txt").as_ref()], cx).await;
+        let project = Project::test(
+            app_state.fs.clone(),
+            [path!("/root/single.txt").as_ref()],
+            cx,
+        )
+        .await;
         let bookmark_store = project.read_with(cx, |project, _| project.bookmark_store());
         let bookmarks = [
             path!("/root/single.txt"),
@@ -479,7 +485,15 @@ mod tests {
                 .read(cx)
                 .id()
         });
-        add_bookmark(&project, first_worktree_id, "shared.txt", 0, "same label", cx).await;
+        add_bookmark(
+            &project,
+            first_worktree_id,
+            "shared.txt",
+            0,
+            "same label",
+            cx,
+        )
+        .await;
 
         let (picker, workspace, cx) = build_bookmarks_picker(project.clone(), cx);
         let display_paths = |picker: &Entity<Picker<ProjectBookmarksDelegate>>,
@@ -508,7 +522,15 @@ mod tests {
             .await
             .expect("second worktree should open");
         let second_worktree_id = second_worktree.read_with(cx, |worktree, _| worktree.id());
-        add_bookmark(&project, second_worktree_id, "shared.txt", 0, "same label", cx).await;
+        add_bookmark(
+            &project,
+            second_worktree_id,
+            "shared.txt",
+            0,
+            "same label",
+            cx,
+        )
+        .await;
         drop(second_worktree);
 
         let picker = open_bookmarks_picker(&workspace, cx);

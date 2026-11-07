@@ -210,15 +210,17 @@ impl EditorPreview {
             (window.viewport_size().height / MIN_LINE_HEIGHT_PX).ceil() as u32 + MARGIN;
 
         self.preview_editor.update(cx, |editor, cx| {
+            let snapshot = buffer.read(cx).text_snapshot();
             let focus_row = highlight
                 .as_ref()
-                .map(|hl| {
-                    hl.anchor_range
-                        .start
-                        .to_point(&buffer.read(cx).text_snapshot())
-                        .row
-                })
+                .map(|highlight| highlight.anchor_range.start.to_point(&snapshot).row)
                 .unwrap_or_default();
+            let highlight_empty_last_line = highlight.as_ref().is_some_and(|highlight| {
+                let max_point = snapshot.max_point();
+                max_point.column == 0
+                    && highlight.anchor_range.start.to_point(&snapshot) == max_point
+                    && highlight.anchor_range.end.to_point(&snapshot) == max_point
+            });
 
             let multi_buffer = editor.buffer().clone();
             multi_buffer.update(cx, |multi_buffer, cx| {
@@ -238,17 +240,24 @@ impl EditorPreview {
                 return;
             };
 
-            let mb = multi_buffer.read(cx).snapshot(cx);
-            let Some(range) = mb
+            let multibuffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+            let Some(range) = multibuffer_snapshot
                 .anchor_in_excerpt(highlight.anchor_range.start)
-                .zip(mb.anchor_in_excerpt(highlight.anchor_range.end))
+                .zip(multibuffer_snapshot.anchor_in_excerpt(highlight.anchor_range.end))
                 .map(|(start, end)| start..end)
             else {
                 return;
             };
 
+            let row_range = if highlight_empty_last_line {
+                // A regular zero-column endpoint excludes its row; Max includes the empty EOF row.
+                range.start..multi_buffer::Anchor::Max
+            } else {
+                range.clone()
+            };
+
             editor.highlight_rows::<SearchMatchLineHighlight>(
-                range.clone(),
+                row_range,
                 |cx| cx.theme().colors().editor_active_line_background,
                 RowHighlightOptions::default(),
                 cx,
