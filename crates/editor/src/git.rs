@@ -8,6 +8,12 @@ use ::git::{
 use buffer_diff::{BufferDiff, DiffHunkStatus, DiffHunkStatusKind};
 use project::git_store::Repository;
 
+#[derive(Clone, PartialEq, Eq)]
+pub(super) enum GitDiffBaseOverride {
+    Branch(Entity<project::git_store::diff_buffer_list::DiffBufferList>),
+    Uncommitted,
+}
+
 #[derive(Clone)]
 struct ResolvedDiffHunk {
     buffer_range: Range<text::Anchor>,
@@ -3235,7 +3241,10 @@ pub fn render_diff_hunk_controls(
 
 impl Editor {
     pub fn git_diff_base_name(&self, cx: &App) -> Option<gpui::SharedString> {
-        match self.git_diff_base_override.as_ref()?.read(cx).diff_base() {
+        let GitDiffBaseOverride::Branch(branch_diff) = self.git_diff_base_override.as_ref()? else {
+            return None;
+        };
+        match branch_diff.read(cx).diff_base() {
             project::git_store::diff_buffer_list::DiffBase::Merge { base_ref } => {
                 Some(base_ref.clone())
             }
@@ -3243,22 +3252,48 @@ impl Editor {
         }
     }
 
-    pub fn set_git_diff_base_override(
+    pub(super) fn set_branch_diff_base(
         &mut self,
-        branch_diff: Option<Entity<project::git_store::diff_buffer_list::DiffBufferList>>,
+        branch_diff: Entity<project::git_store::diff_buffer_list::DiffBufferList>,
         cx: &mut Context<Self>,
     ) {
-        if self.git_diff_base_override == branch_diff {
+        self.set_git_diff_base_override(Some(GitDiffBaseOverride::Branch(branch_diff)), cx);
+    }
+
+    pub fn show_uncommitted_changes(&mut self, cx: &mut Context<Self>) {
+        self.set_git_diff_base_override(Some(GitDiffBaseOverride::Uncommitted), cx);
+    }
+
+    pub fn switch_to_uncommitted_changes_on_edit(&self) -> bool {
+        self.switch_to_uncommitted_changes_on_edit
+    }
+
+    pub fn set_switch_to_uncommitted_changes_on_edit(
+        &mut self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.switch_to_uncommitted_changes_on_edit = enabled;
+        cx.notify();
+    }
+
+    pub(super) fn set_git_diff_base_override(
+        &mut self,
+        diff_base: Option<GitDiffBaseOverride>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.git_diff_base_override == diff_base {
             return;
         }
-        self.git_diff_base_override = branch_diff.clone();
-        self.git_diff_base_subscription = branch_diff.map(|branch_diff| {
-            cx.subscribe(
+        self.git_diff_base_override = diff_base.clone();
+        self.git_diff_base_subscription = diff_base.and_then(|diff_base| match diff_base {
+            GitDiffBaseOverride::Branch(branch_diff) => Some(cx.subscribe(
                 &branch_diff,
                 |this, _, _: &project::git_store::diff_buffer_list::BranchDiffEvent, cx| {
                     this.reload_git_diff(cx);
                 },
-            )
+            )),
+            GitDiffBaseOverride::Uncommitted => None,
         });
         self.reload_git_diff(cx);
     }
@@ -3282,7 +3317,11 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut tasks = Vec::new();
-        let branch_diff = self.git_diff_base_override.clone();
+        let diff_base = self.git_diff_base_override.clone();
+        let branch_diff = match &diff_base {
+            Some(GitDiffBaseOverride::Branch(branch_diff)) => Some(branch_diff.clone()),
+            _ => None,
+        };
         let revision = self.git_diff_base_revision;
         let expected_base = branch_diff
             .as_ref()
@@ -3292,9 +3331,12 @@ impl Editor {
             git_store.update(cx, |git_store, cx| {
                 for buffer in buffers {
                     if project::File::from_dyn(buffer.read(cx).file()).is_some() {
-                        tasks.push(match branch_diff.as_ref() {
-                            Some(branch_diff) => {
+                        tasks.push(match diff_base.as_ref() {
+                            Some(GitDiffBaseOverride::Branch(branch_diff)) => {
                                 git_store.open_diff_against_branch(buffer, branch_diff, cx)
+                            }
+                            Some(GitDiffBaseOverride::Uncommitted) => {
+                                git_store.open_uncommitted_diff(buffer, cx)
                             }
                             None => git_store.open_display_diff(buffer, cx),
                         });
@@ -3310,7 +3352,7 @@ impl Editor {
             if editor.read_with(cx, |editor, cx| {
                 editor.diff_hunk_renderer.is_some()
                     || editor.git_diff_base_revision != revision
-                    || editor.git_diff_base_override != branch_diff
+                    || editor.git_diff_base_override != diff_base
                     || branch_diff
                         .as_ref()
                         .map(|base| base.read(cx).diff_base().clone())

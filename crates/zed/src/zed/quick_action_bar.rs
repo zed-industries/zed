@@ -119,6 +119,7 @@ impl Render for QuickActionBar {
         let supports_code_lens = editor.update(cx, |editor, cx| editor.supports_code_lens(cx));
         let editor_value = editor.read(cx);
         let git_diff_base_button = editor_value.git_diff_base_name(cx).map(|base_ref| {
+            let switch_on_edit = editor_value.switch_to_uncommitted_changes_on_edit();
             let editor = editor.downgrade();
             PopoverMenu::new("file-git-diff-base")
                 .trigger_with_tooltip(
@@ -133,13 +134,31 @@ impl Render for QuickActionBar {
                 .menu(move |window, cx| {
                     let editor = editor.clone();
                     Some(ContextMenu::build(window, cx, move |menu, _, _| {
-                        menu.entry("Use Default Diff Base", None, move |_, cx| {
-                            editor
-                                .update(cx, |editor, cx| {
-                                    editor.set_git_diff_base_override(None, cx)
-                                })
-                                .log_err();
+                        menu.entry("Show Uncommitted Changes", None, {
+                            let editor = editor.clone();
+                            move |_, cx| {
+                                editor
+                                    .update(cx, |editor, cx| editor.show_uncommitted_changes(cx))
+                                    .log_err();
+                            }
                         })
+                        .separator()
+                        .toggleable_entry(
+                            "Switch to Uncommitted Changes on Edit",
+                            switch_on_edit,
+                            IconPosition::Start,
+                            None,
+                            move |_, cx| {
+                                editor
+                                    .update(cx, |editor, cx| {
+                                        editor.set_switch_to_uncommitted_changes_on_edit(
+                                            !switch_on_edit,
+                                            cx,
+                                        )
+                                    })
+                                    .log_err();
+                            },
+                        )
                     }))
                 })
         });
@@ -819,7 +838,10 @@ impl ToolbarItemView for QuickActionBar {
                         editor.inlay_hints_enabled(),
                         editor.supports_inlay_hints(cx),
                         editor.supports_semantic_tokens(cx),
-                        editor.git_diff_base_name(cx),
+                        (
+                            editor.git_diff_base_name(cx),
+                            editor.switch_to_uncommitted_changes_on_edit(),
+                        ),
                     )
                 });
                 self._inlay_hints_enabled_subscription =
@@ -834,7 +856,10 @@ impl ToolbarItemView for QuickActionBar {
                                 editor.inlay_hints_enabled(),
                                 editor.supports_inlay_hints(cx),
                                 editor.supports_semantic_tokens(cx),
-                                editor.git_diff_base_name(cx),
+                                (
+                                    editor.git_diff_base_name(cx),
+                                    editor.switch_to_uncommitted_changes_on_edit(),
+                                ),
                             )
                         });
                         let should_notify = inlay_hints_enabled != new_inlay_hints_enabled

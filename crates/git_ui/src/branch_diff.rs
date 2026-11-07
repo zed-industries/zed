@@ -1198,17 +1198,22 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_branch_excerpt_keeps_comparison(cx: &mut TestAppContext) {
-        open_branch_excerpt_keeps_comparison(cx, DiffViewStyle::Unified, false).await;
+        open_branch_excerpt_keeps_comparison(cx, DiffViewStyle::Unified, false, false).await;
     }
 
     #[gpui::test]
     async fn test_open_branch_excerpt_from_split_keeps_comparison(cx: &mut TestAppContext) {
-        open_branch_excerpt_keeps_comparison(cx, DiffViewStyle::Split, false).await;
+        open_branch_excerpt_keeps_comparison(cx, DiffViewStyle::Split, false, false).await;
     }
 
     #[gpui::test]
     async fn test_open_historical_branch_excerpt_opens_worktree(cx: &mut TestAppContext) {
-        open_branch_excerpt_keeps_comparison(cx, DiffViewStyle::Unified, true).await;
+        open_branch_excerpt_keeps_comparison(cx, DiffViewStyle::Unified, true, false).await;
+    }
+
+    #[gpui::test]
+    async fn test_open_branch_excerpt_switches_to_uncommitted_on_edit(cx: &mut TestAppContext) {
+        open_branch_excerpt_keeps_comparison(cx, DiffViewStyle::Unified, false, true).await;
     }
 
     fn editor_diff_base_text(editor: &Editor, cx: &App) -> Option<String> {
@@ -1222,12 +1227,15 @@ mod tests {
         cx: &mut TestAppContext,
         style: DiffViewStyle,
         historical: bool,
+        switch_on_edit: bool,
     ) {
         init_test(cx);
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.editor.diff_view_style = Some(style)
+                    settings.editor.diff_view_style = Some(style);
+                    settings.git.get_or_insert_default().diff_base =
+                        Some(settings::GitDiffBaseSetting::DefaultBranch);
                 });
             })
         });
@@ -1374,6 +1382,7 @@ mod tests {
         }
         opened.read_with(cx, |editor, cx| {
             assert!(!editor.read_only(cx));
+            assert!(!editor.switch_to_uncommitted_changes_on_edit());
             assert_eq!(
                 editor.git_diff_base_name(cx).as_deref(),
                 Some("review-base")
@@ -1391,6 +1400,59 @@ mod tests {
                 Some("one\nbase\nlast")
             );
             assert!(diff.read(cx).operations().is_none());
+        });
+        if style == DiffViewStyle::Unified && !historical {
+            opened.update(cx, |editor, cx| editor.show_uncommitted_changes(cx));
+            cx.run_until_parked();
+            opened.read_with(cx, |editor, cx| {
+                assert!(editor.git_diff_base_name(cx).is_none());
+                assert_eq!(editor_diff_base_text(editor, cx).as_deref(), Some(head));
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+                let snapshot = buffer.read(cx).snapshot();
+                let diff = editor
+                    .buffer()
+                    .read(cx)
+                    .diff_for(snapshot.remote_id())
+                    .unwrap();
+                assert_eq!(diff.read(cx).snapshot(cx).hunks(&snapshot).count(), 0);
+                assert_eq!(buffer.read(cx).text(), head);
+            });
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.activate_item(&branch, true, true, window, cx);
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                source.read(cx).focus_handle(cx).focus(window, cx);
+                window.dispatch_action(editor::actions::OpenExcerpts.boxed_clone(), cx);
+            });
+            cx.run_until_parked();
+        }
+        opened.update(cx, |editor, cx| {
+            editor.set_switch_to_uncommitted_changes_on_edit(switch_on_edit, cx);
+        });
+        let cloned_view = cx.update(|window, cx| {
+            opened.update(cx, |editor, cx| cx.new(|cx| editor.clone(window, cx)))
+        });
+        cloned_view.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor.switch_to_uncommitted_changes_on_edit(),
+                switch_on_edit
+            );
+        });
+        cloned_view.update(cx, |editor, cx| {
+            editor.set_switch_to_uncommitted_changes_on_edit(false, cx);
+        });
+        cx.update(|window, cx| {
+            opened.update(cx, |editor, cx| {
+                editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
+            });
+        });
+        cx.run_until_parked();
+        opened.read_with(cx, |editor, cx| {
+            assert_eq!(
+                editor.git_diff_base_name(cx).as_deref(),
+                Some("review-base")
+            );
         });
         cx.update(|window, cx| {
             opened.update(cx, |editor, cx| {
@@ -1424,10 +1486,73 @@ mod tests {
             let buffer = editor.buffer().read(cx).as_singleton().unwrap();
             assert!(buffer.read(cx).text().contains("typed from branch "));
             assert!(buffer.read(cx).is_dirty());
+            if switch_on_edit {
+                assert!(editor.git_diff_base_name(cx).is_none());
+                assert_eq!(editor_diff_base_text(editor, cx).as_deref(), Some(head));
+            } else {
+                assert_eq!(
+                    editor.git_diff_base_name(cx).as_deref(),
+                    Some("review-base")
+                );
+            }
         });
+        if switch_on_edit {
+            cloned_view.read_with(cx, |editor, cx| {
+                assert_eq!(
+                    editor.git_diff_base_name(cx).as_deref(),
+                    Some("review-base")
+                );
+            });
+            cx.update(|window, cx| {
+                opened.update(cx, |editor, cx| {
+                    editor.undo(&editor::actions::Undo, window, cx)
+                });
+            });
+            cx.run_until_parked();
+            opened.read_with(cx, |editor, cx| {
+                assert!(editor.git_diff_base_name(cx).is_none());
+                assert_eq!(editor_diff_base_text(editor, cx).as_deref(), Some(head));
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+                let snapshot = buffer.read(cx).snapshot();
+                let diff = editor
+                    .buffer()
+                    .read(cx)
+                    .diff_for(snapshot.remote_id())
+                    .unwrap();
+                assert_eq!(diff.read(cx).snapshot(cx).hunks(&snapshot).count(), 0);
+                assert_eq!(buffer.read(cx).text(), head);
+            });
+            let uncommitted_clone = cx.update(|window, cx| {
+                opened.update(cx, |editor, cx| cx.new(|cx| editor.clone(window, cx)))
+            });
+            cx.run_until_parked();
+            uncommitted_clone.read_with(cx, |editor, cx| {
+                assert!(editor.git_diff_base_name(cx).is_none());
+                assert_eq!(editor_diff_base_text(editor, cx).as_deref(), Some(head));
+            });
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.activate_item(&branch, true, true, window, cx);
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                source.read(cx).focus_handle(cx).focus(window, cx);
+                window.dispatch_action(editor::actions::OpenExcerpts.boxed_clone(), cx);
+            });
+            cx.run_until_parked();
+            opened.read_with(cx, |editor, cx| {
+                assert_eq!(
+                    editor.git_diff_base_name(cx).as_deref(),
+                    Some("review-base")
+                );
+                assert!(editor.switch_to_uncommitted_changes_on_edit());
+            });
+        }
         other_view.read_with(cx, |editor, cx| {
             assert!(editor.git_diff_base_name(cx).is_none());
-            assert_eq!(editor_diff_base_text(editor, cx).as_deref(), Some(head));
+            assert_eq!(
+                editor_diff_base_text(editor, cx).as_deref(),
+                Some("one\nbase\nlast")
+            );
         });
         cx.update(|window, cx| {
             opened.update(cx, |editor, cx| {
@@ -1453,7 +1578,14 @@ mod tests {
                 );
             });
         });
-        fs.set_merge_base_content_for_repo(dot_git, &[("a.txt", "one\nother base\nlast".into())]);
+        fs.with_git_state(dot_git, true, |state| {
+            let oid = git::Oid::from_bytes(&[42; 20]).unwrap();
+            state
+                .merge_base_contents
+                .insert(git::repository::RepoPath::new("a.txt").unwrap(), oid);
+            state.oids.insert(oid, b"one\nother base\nlast".to_vec());
+        })
+        .unwrap();
         branch.update(cx, |branch, cx| {
             branch.set_merge_base("other-base".into(), cx)
         });
@@ -1469,7 +1601,7 @@ mod tests {
             opened.update(cx, |editor, cx| cx.new(|cx| editor.clone(window, cx)))
         });
         cx.run_until_parked();
-        opened.update(cx, |editor, cx| editor.set_git_diff_base_override(None, cx));
+        opened.update(cx, |editor, cx| editor.show_uncommitted_changes(cx));
         cx.run_until_parked();
         opened.read_with(cx, |editor, cx| {
             assert!(editor.git_diff_base_name(cx).is_none());
@@ -1492,7 +1624,7 @@ mod tests {
         cx.read(|cx| {
             assert_eq!(
                 ProjectSettings::get_global(cx).git.diff_base,
-                settings::GitDiffBaseSetting::Head
+                settings::GitDiffBaseSetting::DefaultBranch
             )
         });
     }
