@@ -120,6 +120,10 @@ pub trait HttpClient: 'static + Send + Sync {
 
     fn proxy(&self) -> Option<&Url>;
 
+    fn no_proxy(&self) -> Option<&str> {
+        None
+    }
+
     fn send(
         &self,
         req: http::Request<AsyncBody>,
@@ -215,6 +219,10 @@ impl HttpClient for HttpClientWithProxy {
 
     fn proxy(&self) -> Option<&Url> {
         self.proxy.as_ref()
+    }
+
+    fn no_proxy(&self) -> Option<&str> {
+        self.client.no_proxy()
     }
 
     #[cfg(feature = "test-support")]
@@ -355,6 +363,10 @@ impl HttpClient for HttpClientWithUrl {
 
     fn proxy(&self) -> Option<&Url> {
         self.client.proxy.as_ref()
+    }
+
+    fn no_proxy(&self) -> Option<&str> {
+        self.client.no_proxy()
     }
 
     #[cfg(feature = "test-support")]
