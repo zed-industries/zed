@@ -6059,31 +6059,75 @@ impl MultiBufferSnapshot {
     pub async fn enclosing_indent(
         &self,
         mut target_row: MultiBufferRow,
+        tab_size: u32,
     ) -> Option<(Range<MultiBufferRow>, LineIndent)> {
         let max_row = MultiBufferRow(self.max_point().row);
-        if target_row >= max_row {
+        if target_row > max_row {
             return None;
-        }
-
-        let mut target_indent = self.line_indent_for_row(target_row);
-
-        // If the current row is at the start of an indented block, we want to return this
-        // block as the enclosing indent.
-        if !target_indent.is_line_empty() && target_row < max_row {
-            let next_line_indent = self.line_indent_for_row(MultiBufferRow(target_row.0 + 1));
-            if !next_line_indent.is_line_empty()
-                && target_indent.raw_len() < next_line_indent.raw_len()
-            {
-                target_indent = next_line_indent;
-                target_row.0 += 1;
-            }
         }
 
         const SEARCH_ROW_LIMIT: u32 = 25000;
         const SEARCH_WHITESPACE_ROW_LIMIT: u32 = 2500;
         const YIELD_INTERVAL: u32 = 100;
 
+        let mut target_indent = self.line_indent_for_row(target_row);
         let mut accessed_row_counter = 0;
+
+        if !target_indent.is_line_blank() {
+            let target_len = target_indent.len(tab_size);
+
+            // If the current row is at the start of an indented block, we want to return this
+            // block as the enclosing indent. Blank lines at the start of the block are skipped.
+            let block_start = (target_row < max_row)
+                .then(|| {
+                    self.line_indents(MultiBufferRow(target_row.0 + 1), |_| true)
+                        .take(SEARCH_WHITESPACE_ROW_LIMIT as usize)
+                        .find(|(_, indent, _)| !indent.is_line_blank())
+                })
+                .flatten()
+                .filter(|(_, indent, _)| indent.len(tab_size) > target_len);
+
+            if let Some((row, indent, _)) = block_start {
+                target_row = row;
+                target_indent = indent;
+            } else if target_row.0 > 0 {
+                // If the current row is at the end of an indented block (e.g. a closing `}` or
+                // `},`), we want to return this block as the enclosing indent, instead of its
+                // parent. That is the case when the line above is deeper, and the line opening
+                // its block has the same indent as the current row. Comparing against that line
+                // rather than counting indent levels works whatever the indent width, and skips
+                // blocks that are more than one level deeper. Blank lines at the end of the block
+                // are not skipped, as that would select the previous block for the first
+                // statement after it in indentation-based languages.
+                let previous_row = MultiBufferRow(target_row.0 - 1);
+                let previous_indent = self.line_indent_for_row(previous_row);
+                if !previous_indent.is_line_blank() && previous_indent.len(tab_size) > target_len
+                {
+                    let start = MultiBufferRow(previous_row.0.saturating_sub(SEARCH_ROW_LIMIT));
+                    let mut opening_indent = None;
+                    for (row, indent, _) in self.reversed_line_indents(previous_row, |_| true) {
+                        if row < start {
+                            break;
+                        }
+                        accessed_row_counter += 1;
+                        if accessed_row_counter == YIELD_INTERVAL {
+                            accessed_row_counter = 0;
+                            yield_now().await;
+                        }
+                        if !indent.is_line_empty() && indent.raw_len() < previous_indent.raw_len()
+                        {
+                            opening_indent = Some(indent);
+                            break;
+                        }
+                    }
+
+                    if opening_indent.is_some_and(|indent| indent.len(tab_size) == target_len) {
+                        target_row = previous_row;
+                        target_indent = previous_indent;
+                    }
+                }
+            }
+        }
 
         // If there is a blank line at the current row, search for the next non indented lines
         if target_indent.is_line_empty() {
