@@ -1471,6 +1471,7 @@ struct FakeFsState {
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
     remove_dir_errors: std::collections::HashMap<PathBuf, String>,
+    atomic_write_errors: std::collections::HashMap<PathBuf, String>,
     case_sensitive: bool,
 }
 
@@ -1867,6 +1868,7 @@ impl FakeFs {
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             trash: Mutex::new(SlotMap::with_key()),
             remove_dir_errors: Default::default(),
+            atomic_write_errors: Default::default(),
             case_sensitive: true,
         }));
         let native_watcher = fs_watcher::OsWatcher::with_backend(
@@ -2676,6 +2678,21 @@ impl FakeFs {
         .unwrap();
     }
 
+    /// Makes atomic writes to `path` fail until `clear_atomic_write_error` is called.
+    pub fn set_atomic_write_error(&self, path: impl AsRef<Path>, message: String) {
+        self.state
+            .lock()
+            .atomic_write_errors
+            .insert(Self::error_injection_path_key(path.as_ref()), message);
+    }
+
+    pub fn clear_atomic_write_error(&self, path: impl AsRef<Path>) {
+        self.state
+            .lock()
+            .atomic_write_errors
+            .remove(&Self::error_injection_path_key(path.as_ref()));
+    }
+
     pub fn set_create_worktree_error(&self, dot_git: &Path, message: Option<String>) {
         self.with_git_state(dot_git, true, |state| {
             state.simulated_create_worktree_error = message;
@@ -2688,21 +2705,18 @@ impl FakeFs {
         self.state
             .lock()
             .remove_dir_errors
-            .insert(Self::remove_dir_error_key(path.as_ref()), message);
+            .insert(Self::error_injection_path_key(path.as_ref()), message);
     }
 
     pub fn clear_remove_dir_error(&self, path: impl AsRef<Path>) {
         self.state
             .lock()
             .remove_dir_errors
-            .remove(&Self::remove_dir_error_key(path.as_ref()));
+            .remove(&Self::error_injection_path_key(path.as_ref()));
     }
 
-    /// Entry resolution in `try_entry` ignores drive prefixes, so the error
-    /// injection map must too.
-    /// Otherwise, on Windows, a key like `C:\workspace\dir` would never match a
-    /// lookup for `\workspace\dir`.
-    fn remove_dir_error_key(path: &Path) -> PathBuf {
+    /// FakeFs resolves entries without Windows drive prefixes, so injected errors use the same key.
+    fn error_injection_path_key(path: &Path) -> PathBuf {
         normalize_path(path)
             .components()
             .skip_while(|component| matches!(component, Component::Prefix(_)))
@@ -2846,7 +2860,7 @@ impl FakeFs {
             .state
             .lock()
             .remove_dir_errors
-            .get(&Self::remove_dir_error_key(&path))
+            .get(&Self::error_injection_path_key(&path))
         {
             anyhow::bail!("{message}");
         }
@@ -3304,6 +3318,15 @@ impl Fs for FakeFs {
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path.as_path());
+        let error = self
+            .state
+            .lock()
+            .atomic_write_errors
+            .get(&Self::error_injection_path_key(&path))
+            .cloned();
+        if let Some(error) = error {
+            anyhow::bail!("{error}");
+        }
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
