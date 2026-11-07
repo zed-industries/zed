@@ -10,8 +10,6 @@
       "Number" "String" "Boolean" "Symbol" "BigInt" "Proxy" "ArrayBuffer" "DataView")))
 
 ; Special identifiers
-(type_annotation) @type
-
 (type_identifier) @type
 
 (predefined_type) @type.builtin
@@ -179,8 +177,6 @@
     (function_expression)
     (arrow_function)
   ])
-
-(arrow_function) @function
 
 ; Parameters
 (required_parameter
