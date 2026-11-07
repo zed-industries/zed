@@ -224,7 +224,7 @@ fn tile_scene(tile: AtlasTile) -> Scene {
     match tile.texture_id.kind {
         AtlasTextureKind::Monochrome => scene.insert_primitive(MonochromeSprite {
             order: 0,
-            pad: 0,
+            is_glyph: 1,
             tile,
             bounds,
             content_mask,
