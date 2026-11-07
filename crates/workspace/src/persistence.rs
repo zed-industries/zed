@@ -24,7 +24,7 @@ use project::{
     ProjectGroupKey,
     bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
-    trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
+    trusted_worktrees::DbTrustedPaths,
 };
 
 use language::{LanguageName, Toolchain, ToolchainScope};
@@ -1064,6 +1064,53 @@ impl Domain for WorkspaceDb {
         ),
         sql!(
             ALTER TABLE workspaces ADD COLUMN native_window_state BLOB;
+        ),
+        sql!(
+            CREATE TABLE restricted_worktrees (
+                absolute_path BLOB NOT NULL,
+                connection_kind TEXT,
+                host TEXT,
+                user TEXT,
+                port INTEGER
+            ) STRICT;
+            CREATE INDEX restricted_worktrees_absolute_path ON restricted_worktrees(absolute_path);
+        ),
+        sql!(
+            CREATE TABLE trusted_worktrees_2 (
+                trust_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                absolute_path TEXT,
+                connection_kind TEXT,
+                host TEXT,
+                user TEXT,
+                port INTEGER
+            ) STRICT;
+
+            INSERT INTO trusted_worktrees_2 (absolute_path)
+            SELECT absolute_path
+            FROM trusted_worktrees
+            WHERE user_name IS NULL AND host_name IS NULL;
+
+            INSERT INTO trusted_worktrees_2 (absolute_path, connection_kind, host, user, port)
+            SELECT DISTINCT
+                trusted.absolute_path,
+                connections.kind,
+                trusted.host_name,
+                connections.user,
+                connections.port
+            FROM trusted_worktrees AS trusted
+            JOIN remote_connections AS connections ON
+                (connections.kind = "ssh"
+                    AND connections.host = trusted.host_name
+                    AND connections.user IS trusted.user_name)
+                OR (connections.kind = "wsl"
+                    AND connections.distro = trusted.host_name
+                    AND connections.user IS trusted.user_name)
+                OR (connections.kind = "docker"
+                    AND connections.container_id = trusted.host_name
+                    AND connections.name IS trusted.user_name);
+
+            DROP TABLE trusted_worktrees;
+            ALTER TABLE trusted_worktrees_2 RENAME TO trusted_worktrees;
         ),
     ];
 
@@ -2574,7 +2621,7 @@ impl WorkspaceDb {
 
     pub(crate) async fn save_trusted_worktrees(
         &self,
-        trusted_worktrees: HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>,
+        trusted_worktrees: DbTrustedPaths,
     ) -> anyhow::Result<()> {
         use anyhow::Context as _;
         use db::sqlez::statement::Statement;
@@ -2594,10 +2641,10 @@ impl WorkspaceDb {
             .collect::<Vec<_>>();
         let mut first_worktree;
         let mut last_worktree = 0_usize;
-        for (count, placeholders) in std::iter::once("(?, ?, ?)")
+        for (count, placeholders) in std::iter::once("(?, ?, ?, ?, ?)")
             .cycle()
             .take(trusted_worktrees.len())
-            .chunks(MAX_QUERY_PLACEHOLDERS / 3)
+            .chunks(MAX_QUERY_PLACEHOLDERS / 5)
             .into_iter()
             .map(|chunk| {
                 let mut count = 0;
@@ -2613,7 +2660,7 @@ impl WorkspaceDb {
             first_worktree = last_worktree;
             last_worktree = last_worktree + count;
             let query = format!(
-                r#"INSERT INTO trusted_worktrees(absolute_path, user_name, host_name)
+                r#"INSERT INTO trusted_worktrees(absolute_path, connection_kind, host, user, port)
 VALUES {placeholders};"#
             );
 
@@ -2627,16 +2674,8 @@ VALUES {placeholders};"#
                         &abs_path.as_ref().map(|abs_path| abs_path.as_ref()),
                         next_index,
                     )?;
-                    next_index = statement.bind(
-                        &host
-                            .as_ref()
-                            .and_then(|host| Some(host.user_name.as_ref()?.as_str())),
-                        next_index,
-                    )?;
-                    next_index = statement.bind(
-                        &host.as_ref().map(|host| host.host_identifier.as_str()),
-                        next_index,
-                    )?;
+                    next_index =
+                        statement.bind(&remote_identity_columns(host.as_ref()), next_index)?;
                 }
                 statement.exec()
             })
@@ -2650,19 +2689,9 @@ VALUES {placeholders};"#
         let trusted_worktrees = self.trusted_worktrees()?;
         Ok(trusted_worktrees
             .into_iter()
-            .filter_map(|(abs_path, user_name, host_name)| {
-                let db_host = match (user_name, host_name) {
-                    (None, Some(host_name)) => Some(RemoteHostLocation {
-                        user_name: None,
-                        host_identifier: SharedString::new(host_name),
-                    }),
-                    (Some(user_name), Some(host_name)) => Some(RemoteHostLocation {
-                        user_name: Some(SharedString::new(user_name)),
-                        host_identifier: SharedString::new(host_name),
-                    }),
-                    _ => None,
-                };
-                Some((db_host, abs_path?))
+            .filter_map(|(abs_path, kind, host, user, port)| {
+                let remote_host = remote_identity_from_columns(kind, host, user, port)?;
+                Some((remote_host, abs_path?))
             })
             .fold(HashMap::default(), |mut acc, (remote_host, abs_path)| {
                 acc.entry(remote_host)
@@ -2673,8 +2702,8 @@ VALUES {placeholders};"#
     }
 
     query! {
-        fn trusted_worktrees() -> Result<Vec<(Option<PathBuf>, Option<String>, Option<String>)>> {
-            SELECT absolute_path, user_name, host_name
+        fn trusted_worktrees() -> Result<Vec<(Option<PathBuf>, Option<String>, Option<String>, Option<String>, Option<u16>)>> {
+            SELECT absolute_path, connection_kind, host, user, port
             FROM trusted_worktrees
         }
     }
@@ -2684,6 +2713,146 @@ VALUES {placeholders};"#
             DELETE FROM trusted_worktrees
         }
     }
+
+    pub(crate) async fn has_undecided_restricted_worktrees(
+        &self,
+        abs_paths: Vec<Arc<Path>>,
+        connection_identity: Option<RemoteConnectionIdentity<'static>>,
+    ) -> Result<bool> {
+        self.write(move |connection| {
+            let columns = remote_identity_columns(connection_identity.as_ref());
+            for abs_path in &abs_paths {
+                if !is_worktree_kept_restricted(connection, abs_path, &columns)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })
+        .await
+    }
+
+    pub(crate) fn keep_worktrees_restricted(
+        &self,
+        abs_paths: Vec<Arc<Path>>,
+        connection_identity: Option<RemoteConnectionIdentity<'static>>,
+    ) {
+        // The write is queued by this call and runs even if the returned future is dropped.
+        drop(self.write(move |connection| {
+            connection
+                .with_savepoint("keep_worktrees_restricted", || {
+                    let columns = remote_identity_columns(connection_identity.as_ref());
+                    let mut insert =
+                        connection.exec_bound::<(&Path, RemoteIdentityColumns)>(sql!(
+                            INSERT INTO restricted_worktrees(absolute_path, connection_kind, host, user, port)
+                            VALUES (?, ?, ?, ?, ?)
+                        ))?;
+                    for abs_path in &abs_paths {
+                        if !is_worktree_kept_restricted(connection, abs_path, &columns)? {
+                            insert((abs_path.as_ref(), columns.clone()))?;
+                        }
+                    }
+                    Ok(())
+                })
+                .log_err();
+        }));
+    }
+
+    query! {
+        pub(crate) async fn clear_restricted_worktrees() -> Result<()> {
+            DELETE FROM restricted_worktrees
+        }
+    }
+}
+
+type RemoteIdentityColumns = (
+    Option<&'static str>,
+    Option<String>,
+    Option<String>,
+    Option<u16>,
+);
+
+fn remote_identity_columns(
+    connection_identity: Option<&RemoteConnectionIdentity<'_>>,
+) -> RemoteIdentityColumns {
+    match connection_identity {
+        None => (None, None, None, None),
+        Some(RemoteConnectionIdentity::Ssh {
+            host,
+            username,
+            port,
+        }) => (
+            Some(RemoteConnectionKind::Ssh.serialize()),
+            Some(host.to_string()),
+            username.as_ref().map(ToString::to_string),
+            *port,
+        ),
+        Some(RemoteConnectionIdentity::Wsl { distro_name, user }) => (
+            Some(RemoteConnectionKind::Wsl.serialize()),
+            Some(distro_name.to_string()),
+            user.as_ref().map(ToString::to_string),
+            None,
+        ),
+        Some(RemoteConnectionIdentity::Docker {
+            container_id,
+            remote_user,
+        }) => (
+            Some(RemoteConnectionKind::Docker.serialize()),
+            Some(container_id.to_string()),
+            Some(remote_user.to_string()),
+            None,
+        ),
+        #[cfg(any(test, feature = "test-support"))]
+        Some(RemoteConnectionIdentity::Mock { id }) => {
+            (Some("mock"), Some(id.to_string()), None, None)
+        }
+    }
+}
+
+fn remote_identity_from_columns(
+    kind: Option<String>,
+    host: Option<String>,
+    user: Option<String>,
+    port: Option<u16>,
+) -> Option<Option<RemoteConnectionIdentity<'static>>> {
+    let Some(kind) = kind else {
+        return Some(None);
+    };
+    #[cfg(any(test, feature = "test-support"))]
+    if kind == "mock" {
+        let id = host?.parse().ok()?;
+        return Some(Some(RemoteConnectionIdentity::Mock { id }));
+    }
+    let host = Cow::Owned(host?);
+    let user = user.map(Cow::Owned);
+    let identity = match RemoteConnectionKind::deserialize(&kind)? {
+        RemoteConnectionKind::Ssh => RemoteConnectionIdentity::Ssh {
+            host,
+            username: user,
+            port,
+        },
+        RemoteConnectionKind::Wsl => RemoteConnectionIdentity::Wsl {
+            distro_name: host,
+            user,
+        },
+        RemoteConnectionKind::Docker => RemoteConnectionIdentity::Docker {
+            container_id: host,
+            remote_user: user?,
+        },
+    };
+    Some(Some(identity))
+}
+
+fn is_worktree_kept_restricted(
+    connection: &Connection,
+    abs_path: &Path,
+    columns: &RemoteIdentityColumns,
+) -> Result<bool> {
+    let mut select = connection.select_row_bound::<(&Path, RemoteIdentityColumns), PathBuf>(sql!(
+        SELECT absolute_path
+        FROM restricted_worktrees
+        WHERE absolute_path = ? AND connection_kind IS ? AND host IS ? AND user IS ? AND port IS ?
+    ))?;
+    Ok(select((abs_path, columns.clone()))?.is_some())
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -3224,6 +3393,272 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(test_text_1, "test-text-1");
+    }
+
+    #[gpui::test]
+    async fn test_restricted_worktrees_are_scoped_to_path_and_connection() {
+        let db = WorkspaceDb::open_test_db("test_restricted_worktrees").await;
+        let path = Path::new("/project");
+        let other_path = Path::new("/other");
+        let ssh =
+            |username: Option<&'static str>, port: Option<u16>| RemoteConnectionIdentity::Ssh {
+                host: Cow::Borrowed("host"),
+                username: username.map(Cow::Borrowed),
+                port,
+            };
+        let declined_connection = ssh(Some("user"), Some(2222));
+
+        db.keep_worktrees_restricted(
+            Vec::from([Arc::from(path), Arc::from(path), Arc::from(other_path)]),
+            Some(declined_connection.clone()),
+        );
+
+        for (paths, connection_identity, expected_undecided) in [
+            (
+                Vec::from([path, other_path]),
+                Some(declined_connection.clone()),
+                false,
+            ),
+            (
+                Vec::from([path, Path::new("/project/nested")]),
+                Some(declined_connection.clone()),
+                true,
+            ),
+            (Vec::from([path]), None, true),
+            (Vec::from([path]), Some(ssh(None, Some(2222))), true),
+            (Vec::from([path]), Some(ssh(Some("user"), Some(2223))), true),
+            (Vec::from([path]), Some(ssh(Some("user"), None)), true),
+            (
+                Vec::from([path]),
+                Some(RemoteConnectionIdentity::Wsl {
+                    distro_name: Cow::Borrowed("host"),
+                    user: Some(Cow::Borrowed("user")),
+                }),
+                true,
+            ),
+        ] {
+            assert_eq!(
+                db.has_undecided_restricted_worktrees(
+                    paths.iter().copied().map(Arc::from).collect::<Vec<_>>(),
+                    connection_identity.clone(),
+                )
+                .await
+                .unwrap(),
+                expected_undecided,
+                "{paths:?} on {connection_identity:?}"
+            );
+        }
+
+        db.keep_worktrees_restricted(Vec::from([Arc::from(Path::new("/late"))]), None);
+        db.keep_worktrees_restricted(Vec::from([Arc::from(Path::new("/late"))]), None);
+        assert_eq!(
+            db.select_row::<i64>(sql!(SELECT COUNT(*) FROM restricted_worktrees))
+                .unwrap()()
+            .unwrap(),
+            Some(3)
+        );
+
+        db.clear_restricted_worktrees().await.unwrap();
+        assert_eq!(
+            db.select_row::<i64>(sql!(SELECT COUNT(*) FROM restricted_worktrees))
+                .unwrap()()
+            .unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn test_trusted_worktrees_migration_splits_hosts_by_known_connections() {
+        let connection = Connection::open_memory(Some(
+            "test_trusted_worktrees_migration_splits_hosts_by_known_connections",
+        ));
+        let old_migrations = &WorkspaceDb::MIGRATIONS[..WorkspaceDb::MIGRATIONS.len() - 1];
+        connection
+            .migrate(WorkspaceDb::NAME, old_migrations, &mut |_, _, _| false)
+            .unwrap();
+        connection
+            .exec(
+                "
+                INSERT INTO remote_connections (kind, host, port, user, distro, name, container_id)
+                VALUES
+                    ('ssh', 'server', 2222, 'user', NULL, NULL, NULL),
+                    ('ssh', 'server', 2223, 'user', NULL, NULL, NULL),
+                    ('ssh', 'server', 2224, 'other', NULL, NULL, NULL),
+                    ('ssh', 'no-user', NULL, NULL, NULL, NULL, NULL),
+                    ('wsl', NULL, NULL, 'user', 'Ubuntu', NULL, NULL),
+                    ('docker', NULL, NULL, 'vscode', NULL, 'dev', 'container');
+                INSERT INTO trusted_worktrees (absolute_path, user_name, host_name)
+                VALUES
+                    ('/local', NULL, NULL),
+                    ('/ssh', 'user', 'server'),
+                    ('/ssh_no_user', NULL, 'no-user'),
+                    ('/wsl', 'user', 'Ubuntu'),
+                    ('/docker', 'dev', 'container'),
+                    ('/unknown_connection', 'user', 'forgotten'),
+                    ('/unknown_shape', 'user', NULL);",
+            )
+            .unwrap()()
+        .unwrap();
+
+        connection
+            .migrate(
+                WorkspaceDb::NAME,
+                WorkspaceDb::MIGRATIONS,
+                &mut |_, _, _| false,
+            )
+            .unwrap();
+
+        let migrated_rows = connection
+            .select::<(
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<u16>,
+            )>(
+                "SELECT absolute_path, connection_kind, host, user, port
+                FROM trusted_worktrees
+                ORDER BY absolute_path, port",
+            )
+            .unwrap()()
+        .unwrap();
+        let row = |path: &str, kind: Option<&str>, host: Option<&str>, user: Option<&str>, port| {
+            (
+                path.to_string(),
+                kind.map(String::from),
+                host.map(String::from),
+                user.map(String::from),
+                port,
+            )
+        };
+        assert_eq!(
+            migrated_rows,
+            Vec::from([
+                row(
+                    "/docker",
+                    Some("docker"),
+                    Some("container"),
+                    Some("vscode"),
+                    None
+                ),
+                row("/local", None, None, None, None),
+                row(
+                    "/ssh",
+                    Some("ssh"),
+                    Some("server"),
+                    Some("user"),
+                    Some(2222)
+                ),
+                row(
+                    "/ssh",
+                    Some("ssh"),
+                    Some("server"),
+                    Some("user"),
+                    Some(2223)
+                ),
+                row("/ssh_no_user", Some("ssh"), Some("no-user"), None, None),
+                row("/wsl", Some("wsl"), Some("Ubuntu"), Some("user"), None),
+            ])
+        );
+    }
+
+    #[gpui::test]
+    async fn test_trusted_worktrees_round_trip_all_connection_kinds() {
+        let db = WorkspaceDb::open_test_db("test_trusted_worktrees_round_trip").await;
+        let connections = [
+            None,
+            Some(RemoteConnectionIdentity::Ssh {
+                host: Cow::Borrowed("server"),
+                username: Some(Cow::Borrowed("user")),
+                port: Some(2222),
+            }),
+            Some(RemoteConnectionIdentity::Ssh {
+                host: Cow::Borrowed("server"),
+                username: Some(Cow::Borrowed("user")),
+                port: Some(2223),
+            }),
+            Some(RemoteConnectionIdentity::Ssh {
+                host: Cow::Borrowed("server"),
+                username: None,
+                port: None,
+            }),
+            Some(RemoteConnectionIdentity::Wsl {
+                distro_name: Cow::Borrowed("server"),
+                user: Some(Cow::Borrowed("user")),
+            }),
+            Some(RemoteConnectionIdentity::Docker {
+                container_id: Cow::Borrowed("server"),
+                remote_user: Cow::Borrowed("user"),
+            }),
+            Some(RemoteConnectionIdentity::Mock { id: 7 }),
+        ];
+        let trusted_paths = connections
+            .into_iter()
+            .map(|connection_identity| {
+                (
+                    connection_identity,
+                    HashSet::from_iter([PathBuf::from("/project")]),
+                )
+            })
+            .collect::<DbTrustedPaths>();
+
+        db.save_trusted_worktrees(trusted_paths.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(db.fetch_trusted_worktrees().unwrap(), trusted_paths);
+    }
+
+    #[test]
+    fn test_restricted_worktree_lookup_waits_for_pending_saves() {
+        futures::executor::block_on(async {
+            let db = WorkspaceDb(
+                ThreadSafeConnection::builder::<WorkspaceDb>(
+                    "test_restricted_worktree_lookup",
+                    false,
+                )
+                .build()
+                .await
+                .unwrap(),
+            );
+            let path = Arc::<Path>::from(Path::new("/project"));
+            let (release_writer, writer_released) = std::sync::mpsc::channel::<()>();
+            drop(db.write(move |_| {
+                writer_released.recv().ok();
+            }));
+
+            db.keep_worktrees_restricted(Vec::from([path.clone()]), None);
+            let (has_undecided_worktrees, ()) = futures::join!(
+                db.has_undecided_restricted_worktrees(Vec::from([path]), None),
+                async {
+                    release_writer.send(()).unwrap();
+                }
+            );
+
+            assert_eq!(has_undecided_worktrees.unwrap(), false);
+        });
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_restricted_worktrees_keep_non_utf8_paths_distinct() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
+
+        let db = WorkspaceDb::open_test_db("test_restricted_worktrees_non_utf8").await;
+        let declined_path = Path::new(OsStr::from_bytes(b"/tmp/\xff/project"));
+        let other_path = Path::new(OsStr::from_bytes(b"/tmp/\xfe/project"));
+
+        db.keep_worktrees_restricted(Vec::from([Arc::from(declined_path)]), None);
+
+        for (path, expected_undecided) in [(declined_path, false), (other_path, true)] {
+            assert_eq!(
+                db.has_undecided_restricted_worktrees(Vec::from([Arc::from(path)]), None)
+                    .await
+                    .unwrap(),
+                expected_undecided,
+                "{path:?}"
+            );
+        }
     }
 
     #[gpui::test]

@@ -102,7 +102,7 @@ use project::{
     git_store::{GitStoreEvent, RepositoryEvent},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
-    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, TrustedWorktreesEvent},
+    trusted_worktrees::{TrustedWorktrees, TrustedWorktreesEvent},
 };
 use release_channel::ReleaseChannel;
 use remote::{
@@ -490,6 +490,7 @@ actions!(
         ToggleWorktreeSecurity,
         /// Clears all trusted worktrees, placing them in restricted mode on next open.
         /// Requires restart to take effect on already opened projects.
+        /// Also forgets which worktrees were chosen to stay in restricted mode.
         ClearTrustedWorktrees,
         /// Stops following a collaborator.
         Unfollow,
@@ -1619,6 +1620,7 @@ pub struct Workspace {
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize_workspace: Option<Task<()>>,
     _serialize_workspace_task: Option<Task<()>>,
+    worktree_trust_prompt_check: Option<Task<()>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
@@ -2124,6 +2126,7 @@ impl Workspace {
             _apply_leader_updates,
             _schedule_serialize_workspace: None,
             _serialize_workspace_task: None,
+            worktree_trust_prompt_check: None,
             _schedule_serialize_ssh_paths: None,
             leader_updates_tx,
             _subscriptions: subscriptions,
@@ -8462,6 +8465,7 @@ impl Workspace {
                         });
                         let db = WorkspaceDb::global(cx);
                         cx.spawn(async move |_, cx| {
+                            db.clear_restricted_worktrees().await.log_err();
                             if db.clear_trusted_worktrees().await.log_err().is_some() {
                                 cx.update(|cx| reload(cx));
                             }
@@ -9272,6 +9276,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if toggle {
+            self.worktree_trust_prompt_check = None;
+        }
         if let Some(security_modal) = self.active_modal::<SecurityModal>(cx) {
             if toggle {
                 security_modal.update(cx, |security_modal, cx| {
@@ -9282,33 +9289,76 @@ impl Workspace {
                     security_modal.refresh_restricted_paths(cx);
                 });
             }
+        } else if toggle {
+            self.open_worktree_trust_security_modal(window, cx);
         } else {
-            let has_restricted_worktrees = TrustedWorktrees::has_restricted_worktrees(
-                &self.project().read(cx).worktree_store(),
-                cx,
-            );
-            if has_restricted_worktrees {
-                let project = self.project().read(cx);
-                let remote_host = project
-                    .remote_connection_options(cx)
-                    .map(RemoteHostLocation::from);
-                let worktree_store = project.worktree_store().downgrade();
-                let home_dir_task = if project.is_local() {
-                    Task::ready(std::env::home_dir())
-                } else {
-                    let resolve_task = project.resolve_abs_path("~", cx);
-                    cx.spawn(async |_, _| {
-                        let resolved_path = resolve_task
-                            .await
-                            .and_then(|path| path.into_abs_path())
-                            .map(PathBuf::from);
-                        resolved_path
+            self.check_worktree_trust_prompt(window, cx);
+        }
+    }
+
+    fn check_worktree_trust_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) else {
+            return;
+        };
+        let project = self.project().read(cx);
+        let connection_identity = project
+            .remote_connection_identity(cx)
+            .map(RemoteConnectionIdentity::into_owned);
+        let restricted_paths = trusted_worktrees
+            .read(cx)
+            .restricted_worktrees(&project.worktree_store(), cx)
+            .into_iter()
+            .map(|(_, abs_path)| abs_path)
+            .collect::<Vec<_>>();
+        if restricted_paths.is_empty() {
+            return;
+        }
+
+        let db = WorkspaceDb::global(cx);
+        self.worktree_trust_prompt_check = Some(cx.spawn_in(window, async move |workspace, cx| {
+            let has_undecided_worktrees = db
+                .has_undecided_restricted_worktrees(restricted_paths, connection_identity)
+                .await
+                .log_err()
+                .unwrap_or(true);
+            if has_undecided_worktrees {
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        if workspace.active_modal::<SecurityModal>(cx).is_none() {
+                            workspace.open_worktree_trust_security_modal(window, cx);
+                        }
                     })
-                };
-                self.toggle_modal(window, cx, |window, cx| {
-                    SecurityModal::new(worktree_store, remote_host, home_dir_task, window, cx)
-                });
+                    .ok();
             }
+        }));
+    }
+
+    fn open_worktree_trust_security_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let has_restricted_worktrees = TrustedWorktrees::has_restricted_worktrees(
+            &self.project().read(cx).worktree_store(),
+            cx,
+        );
+        if has_restricted_worktrees {
+            let project = self.project().read(cx);
+            let remote_host = project
+                .remote_connection_identity(cx)
+                .map(RemoteConnectionIdentity::into_owned);
+            let worktree_store = project.worktree_store().downgrade();
+            let home_dir_task = if project.is_local() {
+                Task::ready(std::env::home_dir())
+            } else {
+                let resolve_task = project.resolve_abs_path("~", cx);
+                cx.spawn(async |_, _| {
+                    let resolved_path = resolve_task
+                        .await
+                        .and_then(|path| path.into_abs_path())
+                        .map(PathBuf::from);
+                    resolved_path
+                })
+            };
+            self.toggle_modal(window, cx, |window, cx| {
+                SecurityModal::new(worktree_store, remote_host, home_dir_task, window, cx)
+            });
         }
     }
 }
