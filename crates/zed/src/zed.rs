@@ -1714,6 +1714,8 @@ fn open_about_window(cx: &mut App) {
         width: px(440.),
         height: px(300.),
     };
+    let display_id = cx.active_display().map(|display| display.id());
+
     cx.open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
@@ -1721,7 +1723,8 @@ fn open_about_window(cx: &mut App) {
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(12.), px(12.))),
             }),
-            window_bounds: Some(WindowBounds::centered(window_size, cx)),
+            window_bounds: Some(WindowBounds::centered(display_id, window_size, cx)),
+            display_id,
             is_resizable: false,
             is_minimizable: false,
             kind: WindowKind::Floating,

@@ -1606,8 +1606,12 @@ impl Window {
             .and_then(|titlebar| titlebar.title.clone());
 
         let active_window_placement = cx.active_window_placement();
-        let target_display_id =
-            display_id.or(active_window_placement.and_then(|(display_id, _)| display_id));
+        // Explicit bounds only make sense on the display they were computed for.
+        let target_display_id = display_id.or_else(|| {
+            active_window_placement
+                .filter(|_| window_bounds.is_none())
+                .and_then(|(display_id, _)| display_id)
+        });
         let display = target_display_id
             .and_then(|display_id| cx.find_display(display_id))
             .or_else(|| cx.primary_display());

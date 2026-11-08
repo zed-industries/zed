@@ -2607,8 +2607,8 @@ pub struct WindowOptions {
     /// Whether the window should be minimized by the user
     pub is_minimizable: bool,
 
-    /// The display to create the window on. If this is `None`, the window will be created on the
-    /// active window's display, falling back to the primary display.
+    /// The display to create the window on. If neither this nor `window_bounds` is set, the window
+    /// is created on the active window's display. Otherwise, it falls back to the primary display.
     pub display_id: Option<DisplayId>,
 
     /// The appearance of the window background.
@@ -2731,9 +2731,9 @@ impl WindowBounds {
         }
     }
 
-    /// Creates window bounds centered on the active display, falling back to primary display.
-    pub fn centered(size: Size<Pixels>, cx: &App) -> Self {
-        let display_id = cx.active_display().map(|display| display.id());
+    /// Creates window bounds centered on the given display, or the primary display if none is
+    /// provided.
+    pub fn centered(display_id: Option<DisplayId>, size: Size<Pixels>, cx: &App) -> Self {
         WindowBounds::Windowed(Bounds::centered(display_id, size, cx))
     }
 }
