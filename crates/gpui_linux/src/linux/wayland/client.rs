@@ -847,6 +847,29 @@ impl WaylandClientStatePtr {
             .borrow_mut()
             .set_cursor_style_for_window(window, style);
     }
+
+    /// The position of the input GPUI's pointer follows in `window`, so that
+    /// reading it back (e.g. on resize) agrees with the events sent to it.
+    pub fn mouse_position(&self, window: &WaylandWindowStatePtr) -> Point<Pixels> {
+        let client = self.get_client();
+        let state = client.borrow();
+        let position = match state.pointer_owners.get(&window.surface().id()) {
+            Some(PointerInput::Pointer) => state
+                .mouse_focused_window
+                .as_ref()
+                .is_some_and(|focused_window| focused_window.ptr_eq(window))
+                .then_some(state.mouse_location)
+                .flatten(),
+            Some(PointerInput::TabletTool(tool_id)) => state
+                .tablet_tools
+                .get(tool_id)
+                .filter(|tool| tool.is_over(window))
+                .and_then(|tool| tool.move_event(state.modifiers))
+                .map(|event| event.position),
+            None => None,
+        };
+        position.unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

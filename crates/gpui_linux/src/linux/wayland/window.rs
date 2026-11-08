@@ -1830,12 +1830,8 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
-        self.borrow()
-            .client
-            .get_client()
-            .borrow()
-            .mouse_location
-            .unwrap_or_default()
+        let client = self.borrow().client.clone();
+        client.mouse_position(&self.0)
     }
 
     fn modifiers(&self) -> Modifiers {
