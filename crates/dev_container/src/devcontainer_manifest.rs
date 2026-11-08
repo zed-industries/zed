@@ -23,7 +23,7 @@ use crate::{
     },
     docker::{
         Docker, DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
-        DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
+        DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs, UserIds,
     },
     features::{DevContainerFeatureJson, FeatureManifest, parse_oci_feature_ref},
     get_oci_token,
@@ -1633,6 +1633,14 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             log::error!("Features build info expected, but not created");
             return Err(DevContainerError::DevContainerParseFailed);
         };
+        // For Dockerfile builds this treats the image as inheriting its target stage's `FROM`
+        // users, which is only an approximation since the Dockerfile may add or change users.
+        #[cfg(test)]
+        self.docker_client.notify_image_build(
+            &self.get_base_image_from_config().await?,
+            &features_build_info.image_tag,
+            &[],
+        );
         let image = self
             .docker_client
             .inspect(&features_build_info.image_tag)
@@ -1696,41 +1704,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             .unwrap_or("root")
             .to_string();
 
-        let host_uid = Command::new("id")
-            .arg("-u")
-            .output()
-            .await
-            .map_err(|e| {
-                log::error!("Failed to get host UID: {e}");
-                DevContainerError::CommandFailed("id -u".to_string())
-            })
-            .and_then(|output| {
-                String::from_utf8_lossy(&output.stdout)
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|e| {
-                        log::error!("Failed to parse host UID: {e}");
-                        DevContainerError::CommandFailed("id -u".to_string())
-                    })
-            })?;
-
-        let host_gid = Command::new("id")
-            .arg("-g")
-            .output()
-            .await
-            .map_err(|e| {
-                log::error!("Failed to get host GID: {e}");
-                DevContainerError::CommandFailed("id -g".to_string())
-            })
-            .and_then(|output| {
-                String::from_utf8_lossy(&output.stdout)
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|e| {
-                        log::error!("Failed to parse host GID: {e}");
-                        DevContainerError::CommandFailed("id -g".to_string())
-                    })
-            })?;
+        let host_user_ids = host_user_ids().await?;
 
         let dockerfile_content = self.generate_update_uid_dockerfile();
 
@@ -1761,8 +1735,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         command.args(["-t", &updated_image_tag]);
         command.args(["--build-arg", &format!("BASE_IMAGE={}", base_image)]);
         command.args(["--build-arg", &format!("REMOTE_USER={}", remote_user)]);
-        command.args(["--build-arg", &format!("NEW_UID={}", host_uid)]);
-        command.args(["--build-arg", &format!("NEW_GID={}", host_gid)]);
+        command.args(["--build-arg", &format!("NEW_UID={}", host_user_ids.uid)]);
+        command.args(["--build-arg", &format!("NEW_GID={}", host_user_ids.gid)]);
         command.args(["--build-arg", &format!("IMAGE_USER={}", image_user)]);
         command.arg(features_build_info.empty_context_dir.display().to_string());
 
@@ -1782,6 +1756,13 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 command.get_program().display().to_string(),
             ));
         }
+
+        #[cfg(test)]
+        self.docker_client.notify_image_build(
+            base_image,
+            &updated_image_tag,
+            &[(&remote_user, host_user_ids)],
+        );
 
         self.docker_client.inspect(&updated_image_tag).await
     }
@@ -2066,11 +2047,50 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
+    fn might_have_id_mismatch(&self, remote_user_ids: &UserIds, host_user_ids: &UserIds) -> bool {
+        if let Some(run_args) = &self.dev_container().run_args
+            && run_args
+                .iter()
+                .any(|arg| arg.strip_prefix("--userns").is_some())
+        {
+            // Assume the specified `runArgs` include the correct mapping
+            return false;
+        }
+        if self.docker_client.docker_cli() == "podman" {
+            // On Podman we pass `--userns=keep-id` which remaps user ids correctly
+            return false;
+        }
+        // Assume the container runtime does no remapping of user ids (i.e. rootful Docker behavior).
+        // TODO: detect rootless Docker, which remaps host user to root
+        remote_user_ids != host_user_ids
+    }
+
     async fn run_docker_image(
         &self,
         build_resources: DockerBuildResources,
     ) -> Result<DockerInspect, DevContainerError> {
-        let mut docker_run_command = self.create_docker_run_command(build_resources)?;
+        let remote_user = get_remote_user_from_config(&build_resources.image, self)?;
+        let remote_user_ids = self
+            .docker_client
+            .resolve_user_ids(&build_resources.image_tag, &remote_user)
+            .await?;
+        // For macOS/Windows, we assume the container runtime is a VM-based runtime that remaps
+        // user ids outside of the runtime
+        #[cfg(target_os = "linux")]
+        if let Some(host_user_ids) = host_user_ids().await.warn_on_err()
+            && self.might_have_id_mismatch(&remote_user_ids, &host_user_ids)
+        {
+            log::warn!(
+                "Remote user {remote_user} is {:?} in the container but the host user is {:?}; \
+                 files it creates in bind mounts will have mismatched ownership on the host",
+                remote_user_ids,
+                host_user_ids,
+            );
+        }
+
+        let mut docker_run_command =
+            self.create_docker_run_command(build_resources, remote_user_ids)?;
 
         let output = self
             .command_runner
@@ -2159,6 +2179,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
     fn create_docker_run_command(
         &self,
         build_resources: DockerBuildResources,
+        remote_user_ids: UserIds,
     ) -> Result<Command, DevContainerError> {
         let remote_workspace_mount = self.remote_workspace_mount()?;
 
@@ -2200,7 +2221,12 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 "--security-opt=label=disable",
                 &mut command,
             );
-            run_if_missing("--userns", "--userns=keep-id", &mut command);
+            let UserIds { uid, gid } = remote_user_ids;
+            run_if_missing(
+                "--userns",
+                &format!("--userns=keep-id:uid={uid},gid={gid}"),
+                &mut command,
+            );
         }
 
         run_if_missing("--sig-proxy", "--sig-proxy=false", &mut command);
@@ -3238,6 +3264,49 @@ fn image_from_dockerfile(dockerfile_contents: String, target: &Option<String>) -
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+async fn host_user_ids() -> Result<UserIds, DevContainerError> {
+    let host_uid = Command::new("id")
+        .arg("-u")
+        .output()
+        .await
+        .map_err(|e| {
+            log::error!("Failed to get host UID: {e}");
+            DevContainerError::CommandFailed("id -u".to_string())
+        })
+        .and_then(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .parse::<u32>()
+                .map_err(|e| {
+                    log::error!("Failed to parse host UID: {e}");
+                    DevContainerError::CommandFailed("id -u".to_string())
+                })
+        })?;
+
+    let host_gid = Command::new("id")
+        .arg("-g")
+        .output()
+        .await
+        .map_err(|e| {
+            log::error!("Failed to get host GID: {e}");
+            DevContainerError::CommandFailed("id -g".to_string())
+        })
+        .and_then(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .parse::<u32>()
+                .map_err(|e| {
+                    log::error!("Failed to parse host GID: {e}");
+                    DevContainerError::CommandFailed("id -g".to_string())
+                })
+        })?;
+    Ok(UserIds {
+        uid: host_uid,
+        gid: host_gid,
+    })
+}
+
 fn get_remote_user_from_config(
     docker_config: &DockerInspect,
     devcontainer: &DevContainerManifest,
@@ -3506,7 +3575,7 @@ mod test {
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
             DockerComposeVolume, DockerConfigLabels, DockerInspectConfig, DockerInspectMount,
-            DockerPs,
+            DockerPs, UserIds,
         },
         oci::TokenResponse,
     };
@@ -3775,7 +3844,8 @@ mod test {
             security_opt: vec!["seccomp=unconfined".to_string()],
             entrypoint_script: Some("echo Container started\n    trap \"exit 0\" 15\n    exec \"$@\"\n    while sleep 1 & wait $!; do :; done".to_string()),
         };
-        let docker_run_command = devcontainer_manifest.create_docker_run_command(build_resources);
+        let docker_run_command = devcontainer_manifest
+            .create_docker_run_command(build_resources, UserIds { uid: 0, gid: 0 });
 
         assert!(docker_run_command.is_ok());
         let docker_run_command = docker_run_command.expect("ok");
@@ -3865,7 +3935,7 @@ mod test {
         );
 
         let docker_run_command = devcontainer_manifest
-            .create_docker_run_command(resources)
+            .create_docker_run_command(resources, UserIds { uid: 0, gid: 0 })
             .unwrap();
         let args: Vec<&OsStr> = docker_run_command.get_args().collect();
         assert!(
@@ -6338,6 +6408,14 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
             .unwrap();
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
+        test_dependencies.docker.set_user_ids(
+            "mcr.microsoft.com/devcontainers/typescript-node:1-18-bookworm",
+            "node",
+            UserIds {
+                uid: 1000,
+                gid: 1000,
+            },
+        );
 
         let devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
 
@@ -6695,10 +6773,18 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             }
             "#;
 
-        let (_, mut devcontainer_manifest) =
+        let (test_dependencies, mut devcontainer_manifest) =
             init_default_devcontainer_manifest(cx, given_devcontainer_contents)
                 .await
                 .unwrap();
+        test_dependencies.docker.set_user_ids(
+            "test_image:latest",
+            "node",
+            UserIds {
+                uid: 1000,
+                gid: 1000,
+            },
+        );
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
@@ -6708,6 +6794,221 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             devcontainer_up.remote_workspace_folder,
             "/workspaces/project"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn test_docker_id_mismatch_detection(cx: &mut TestAppContext) {
+        let (_, mut devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+                "name": "test",
+                "image": "test_image:latest"
+            }"#,
+        )
+        .await
+        .unwrap();
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let host_user_ids = UserIds {
+            uid: 1000,
+            gid: 1000,
+        };
+        assert!(!devcontainer_manifest.might_have_id_mismatch(&host_user_ids, &host_user_ids));
+        assert!(devcontainer_manifest.might_have_id_mismatch(
+            &UserIds {
+                uid: 1001,
+                gid: 1002,
+            },
+            &host_user_ids,
+        ));
+    }
+
+    async fn run_args_for_plain_image(
+        cx: &mut TestAppContext,
+        fake_docker: FakeDocker,
+        devcontainer_contents: &str,
+    ) -> Vec<String> {
+        let fake_docker = Arc::new(fake_docker);
+        let command_runner = Arc::new(TestCommandRunner::new());
+        let (_, mut devcontainer_manifest) = init_devcontainer_manifest(
+            cx,
+            FakeFs::new(cx.executor()),
+            fake_http_client(),
+            fake_docker.clone(),
+            command_runner.clone(),
+            HashMap::new(),
+            devcontainer_contents,
+        )
+        .await
+        .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        devcontainer_manifest.build_and_run().await.unwrap();
+
+        command_runner
+            .commands_by_program(&fake_docker.docker_cli())
+            .into_iter()
+            .find(|command| command.args.first().is_some_and(|arg| arg == "run"))
+            .expect("run command should be recorded")
+            .args
+    }
+
+    fn userns_args(run_args: &[String]) -> Vec<&str> {
+        run_args
+            .iter()
+            .map(String::as_str)
+            .filter(|arg| arg.starts_with("--userns"))
+            .collect()
+    }
+
+    #[gpui::test]
+    async fn test_podman_maps_host_user_to_remote_user_ids(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let mut fake_docker = FakeDocker::new();
+        fake_docker.set_podman(true);
+        fake_docker.set_user_ids(
+            "test_image:latest",
+            "vscode",
+            UserIds {
+                uid: 1001,
+                gid: 1002,
+            },
+        );
+
+        let run_args = run_args_for_plain_image(
+            cx,
+            fake_docker,
+            r#"{
+                "name": "cli-${devcontainerId}",
+                "image": "test_image:latest",
+                "remoteUser": "vscode",
+                "updateRemoteUserUID": false
+            }"#,
+        )
+        .await;
+
+        assert_eq!(
+            userns_args(&run_args),
+            vec!["--userns=keep-id:uid=1001,gid=1002"]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_podman_maps_host_user_to_root_remote_user(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let mut fake_docker = FakeDocker::new();
+        fake_docker.set_podman(true);
+        fake_docker.set_user_ids("test_image:latest", "root", UserIds { uid: 0, gid: 0 });
+
+        let run_args = run_args_for_plain_image(
+            cx,
+            fake_docker,
+            r#"{
+                "name": "cli-${devcontainerId}",
+                "image": "test_image:latest",
+                "remoteUser": "root"
+            }"#,
+        )
+        .await;
+
+        assert_eq!(userns_args(&run_args), vec!["--userns=keep-id:uid=0,gid=0"]);
+    }
+
+    // updateRemoteUserUID is treated as false on Windows, so no UID-updated image is built there.
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn test_podman_resolves_remote_user_ids_in_uid_updated_image(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let mut fake_docker = FakeDocker::new();
+        fake_docker.set_podman(true);
+        let base_user_ids = UserIds {
+            uid: 65501,
+            gid: 65502,
+        };
+        fake_docker.set_user_ids("test_image:latest", "vscode", base_user_ids);
+        let host_user_ids = super::host_user_ids().await.unwrap();
+        assert_ne!(
+            host_user_ids, base_user_ids,
+            "host IDs must differ from the base image's for this test to be meaningful"
+        );
+
+        let run_args = run_args_for_plain_image(
+            cx,
+            fake_docker,
+            r#"{
+                "name": "cli-${devcontainerId}",
+                "image": "test_image:latest",
+                "remoteUser": "vscode"
+            }"#,
+        )
+        .await;
+
+        assert_eq!(
+            userns_args(&run_args),
+            vec![format!(
+                "--userns=keep-id:uid={},gid={}",
+                host_user_ids.uid, host_user_ids.gid
+            )]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_podman_respects_userns_from_run_args(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let mut fake_docker = FakeDocker::new();
+        fake_docker.set_podman(true);
+        fake_docker.set_user_ids(
+            "test_image:latest",
+            "vscode",
+            UserIds {
+                uid: 1001,
+                gid: 1002,
+            },
+        );
+
+        let run_args = run_args_for_plain_image(
+            cx,
+            fake_docker,
+            r#"{
+                "name": "cli-${devcontainerId}",
+                "image": "test_image:latest",
+                "remoteUser": "vscode",
+                "updateRemoteUserUID": false,
+                "runArgs": ["--userns=host"]
+            }"#,
+        )
+        .await;
+
+        assert_eq!(userns_args(&run_args), vec!["--userns=host"]);
+    }
+
+    #[gpui::test]
+    async fn test_docker_does_not_set_userns(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let fake_docker = FakeDocker::new();
+        fake_docker.set_user_ids(
+            "test_image:latest",
+            "vscode",
+            UserIds {
+                uid: 1001,
+                gid: 1002,
+            },
+        );
+
+        let run_args = run_args_for_plain_image(
+            cx,
+            fake_docker,
+            r#"{
+                "name": "cli-${devcontainerId}",
+                "image": "test_image:latest",
+                "remoteUser": "vscode",
+                "updateRemoteUserUID": false
+            }"#,
+        )
+        .await;
+
+        assert!(userns_args(&run_args).is_empty());
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -7303,6 +7604,9 @@ RUN echo $RUBY_VERSION2
         /// Records the `services` argument passed to each `docker_compose_build`
         /// call so tests can assert which services were built.
         compose_build_services: Mutex<Vec<Option<Vec<String>>>>,
+        /// `(uid, gid)` returned by `resolve_user_ids`, keyed by `(image, user)`.
+        /// Any other image or user fails to resolve.
+        user_ids: Mutex<HashMap<(String, String), UserIds>>,
     }
 
     impl FakeDocker {
@@ -7313,7 +7617,15 @@ RUN echo $RUBY_VERSION2
                 exec_commands_recorded: Mutex::new(Vec::new()),
                 duplicate_container_ids: Mutex::new(None),
                 compose_build_services: Mutex::new(Vec::new()),
+                user_ids: Mutex::new(HashMap::new()),
             }
+        }
+
+        fn set_user_ids(&self, image: &str, user: &str, user_ids: UserIds) {
+            self.user_ids
+                .lock()
+                .expect("should be available")
+                .insert((image.to_string(), user.to_string()), user_ids);
         }
 
         fn recorded_compose_build_services(&self) -> Vec<Option<Vec<String>>> {
@@ -7322,7 +7634,6 @@ RUN echo $RUBY_VERSION2
                 .expect("should be available")
                 .clone()
         }
-        #[cfg(not(target_os = "windows"))]
         fn set_podman(&mut self, podman: bool) {
             self.podman = podman;
         }
@@ -7682,6 +7993,46 @@ RUN echo $RUBY_VERSION2
             Ok(Some(DockerPs {
                 id: "found_docker_ps".to_string(),
             }))
+        }
+        async fn resolve_user_ids(
+            &self,
+            image: &str,
+            user: &str,
+        ) -> Result<UserIds, DevContainerError> {
+            self.user_ids
+                .lock()
+                .expect("should be available")
+                .get(&(image.to_string(), user.to_string()))
+                .copied()
+                .ok_or_else(|| {
+                    DevContainerError::CommandFailed(format!(
+                        "FakeDocker::resolve_user_ids({image:?}, {user:?})"
+                    ))
+                })
+        }
+        fn notify_image_build(
+            &self,
+            base_image: &str,
+            image: &str,
+            remapped_users: &[(&str, UserIds)],
+        ) {
+            let mut user_ids = self.user_ids.lock().expect("should be available");
+            let new_user_mapping: Vec<(String, UserIds)> = user_ids
+                .iter()
+                .filter(|((known_image, _), _)| known_image == base_image)
+                .map(|((_, user), ids)| (user.clone(), *ids))
+                .chain(
+                    remapped_users
+                        .iter()
+                        .map(|(user, ids)| (user.to_string(), *ids)),
+                )
+                .collect();
+            user_ids.retain(|(known_image, _), _| known_image != image);
+            user_ids.extend(
+                new_user_mapping
+                    .into_iter()
+                    .map(|(user, ids)| ((image.to_string(), user), ids)),
+            );
         }
         fn supports_compose_buildkit(&self) -> bool {
             !self.podman && self.has_buildx
