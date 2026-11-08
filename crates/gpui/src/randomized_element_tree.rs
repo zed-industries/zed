@@ -1731,7 +1731,8 @@ mod tests {
                     .rendered_frame
                     .element_states
                     .keys()
-                    .filter_map(|(global_id, _)| {
+                    .filter_map(|key| {
+                        let global_id = window.element_id_interner.key_path(key);
                         let ElementId::NamedInteger(name, element_id) = global_id.last()? else {
                             return None;
                         };
