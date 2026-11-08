@@ -25,11 +25,53 @@ type MeasureFn =
     dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>;
 type NodeMeasureFn = StackSafe<Box<MeasureFn>>;
 
-struct NodeContext {
-    measure: NodeMeasureFn,
+enum NodeContext {
+    Measure(NodeMeasureFn),
+    Text(Box<crate::elements::TextMeasure>),
 }
+
+/// Keeps Taffy nodes alive across frames so that Taffy's per-node layout cache
+/// is reused for subtrees whose styles, children, and measurements are unchanged.
+///
+/// Nodes are keyed by the element ID path that requested them plus the order of
+/// the request within that path during the frame.
+#[derive(Default)]
+struct LayoutCache {
+    scopes: FxHashMap<u64, LayoutScope>,
+    /// When each node was last requested, indexed by slot.
+    sequences: Vec<u64>,
+    next_sequence: u64,
+    frame_start: u64,
+    /// Evicted nodes, detached and without context, to reuse for new requests.
+    free: Vec<NodeId>,
+}
+
+#[derive(Default)]
+struct LayoutScope {
+    nodes: Vec<NodeId>,
+    cursor: usize,
+    frame_start: u64,
+}
+
+fn node_slot(id: NodeId) -> usize {
+    // Taffy's NodeId is a slotmap key whose low 32 bits are the slot index.
+    u64::from(id) as u32 as usize
+}
+
+fn set_context(contexts: &mut Vec<Option<NodeContext>>, id: NodeId, context: Option<NodeContext>) {
+    let slot = node_slot(id);
+    if slot >= contexts.len() {
+        contexts.resize_with(slot + 1, || None);
+    }
+    contexts[slot] = context;
+}
+
 pub struct TaffyLayoutEngine {
-    taffy: TaffyTree<NodeContext>,
+    taffy: TaffyTree,
+    /// Measured nodes' contexts, indexed by slot. Taffy's own context map hashes
+    /// on every access and marks nodes dirty whenever a context is replaced.
+    contexts: Vec<Option<NodeContext>>,
+    cache: Option<Box<LayoutCache>>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
     absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
@@ -43,8 +85,17 @@ impl TaffyLayoutEngine {
     pub fn new() -> Self {
         let mut taffy = TaffyTree::new();
         taffy.disable_rounding();
+        let cache_enabled = std::env::var("GPUI_LAYOUT_CACHE").as_deref() != Ok("0");
         TaffyLayoutEngine {
             taffy,
+            contexts: Vec::new(),
+            cache: cache_enabled.then(|| {
+                Box::new(LayoutCache {
+                    next_sequence: 1,
+                    frame_start: 1,
+                    ..LayoutCache::default()
+                })
+            }),
             absolute_layout_bounds: FxHashMap::default(),
             absolute_outer_origins: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
@@ -52,11 +103,127 @@ impl TaffyLayoutEngine {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn disable_cache(&mut self) {
+        self.cache = None;
+        self.clear();
+    }
+
     pub fn clear(&mut self) {
-        self.taffy.clear();
+        if let Some(cache) = self.cache.as_deref_mut() {
+            let LayoutCache {
+                scopes,
+                next_sequence,
+                frame_start,
+                free,
+                ..
+            } = cache;
+            let first_evicted = free.len();
+            scopes.retain(|_, scope| {
+                let live = if scope.frame_start == *frame_start {
+                    scope.cursor
+                } else {
+                    0
+                };
+                free.extend(scope.nodes.drain(live..));
+                !scope.nodes.is_empty()
+            });
+            // Recycling evicted nodes is cheaper than removing them, which
+            // compacts their parent's child list and re-dirties it per child.
+            for &id in &free[first_evicted..] {
+                self.contexts[node_slot(id)] = None;
+                if self.taffy.child_count(id) > 0 {
+                    self.taffy.set_children(id, &[]).expect(EXPECT_MESSAGE);
+                }
+            }
+            // Reusing slots in ascending order keeps nodes requested together close
+            // in memory, as a freshly built tree's are.
+            free.sort_unstable_by_key(|id| std::cmp::Reverse(node_slot(*id)));
+            *frame_start = *next_sequence;
+            *next_sequence += 1;
+        } else {
+            self.taffy.clear();
+            self.contexts.clear();
+        }
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
         self.computed_layouts.clear();
+    }
+
+    fn request_node(
+        &mut self,
+        scope: u64,
+        style: taffy::Style,
+        children: &[LayoutId],
+        context: Option<NodeContext>,
+    ) -> LayoutId {
+        let taffy = &mut self.taffy;
+        let children_ids = LayoutId::to_taffy_slice(children);
+        let Some(cache) = self.cache.as_deref_mut() else {
+            let id = taffy
+                .new_with_children(style, children_ids)
+                .expect(EXPECT_MESSAGE);
+            set_context(&mut self.contexts, id, context);
+            return LayoutId(id);
+        };
+
+        let scope = cache.scopes.entry(scope).or_default();
+        if scope.frame_start != cache.frame_start {
+            scope.frame_start = cache.frame_start;
+            scope.cursor = 0;
+        }
+        let existing = scope.nodes.get(scope.cursor).copied();
+        scope.cursor += 1;
+
+        let id = if let Some(id) = existing {
+            if taffy.style(id).expect(EXPECT_MESSAGE) != &style {
+                taffy.set_style(id, style).expect(EXPECT_MESSAGE);
+            }
+            if !taffy.child_ids(id).eq(children_ids.iter().copied()) {
+                taffy.set_children(id, children_ids).expect(EXPECT_MESSAGE);
+            }
+            let previous = self.contexts[node_slot(id)].as_mut();
+            match (context, previous) {
+                (Some(NodeContext::Text(text)), Some(NodeContext::Text(previous)))
+                    if text.carry_from(previous) =>
+                {
+                    // The measurement is unchanged, so Taffy's cached results for
+                    // this node remain valid.
+                    *previous = text;
+                }
+                (None, None) => {}
+                // Arbitrary measure functions may observe any state, so their
+                // cached results can't be trusted across frames.
+                (context, _) => {
+                    taffy.mark_dirty(id).expect(EXPECT_MESSAGE);
+                    self.contexts[node_slot(id)] = context;
+                }
+            }
+            id
+        } else {
+            let id = if let Some(id) = cache.free.pop() {
+                taffy.set_style(id, style).expect(EXPECT_MESSAGE);
+                id
+            } else {
+                taffy.new_leaf(style).expect(EXPECT_MESSAGE)
+            };
+            if !children.is_empty() {
+                // Unlike `new_with_children`, this detaches reused children from
+                // the parents they had in previous frames.
+                taffy.set_children(id, children_ids).expect(EXPECT_MESSAGE);
+            }
+            scope.nodes.push(id);
+            set_context(&mut self.contexts, id, context);
+            id
+        };
+
+        let slot = node_slot(id);
+        if slot >= cache.sequences.len() {
+            cache.sequences.resize(slot + 1, 0);
+        }
+        cache.sequences[slot] = cache.next_sequence;
+        cache.next_sequence += 1;
+        LayoutId(id)
     }
 
     pub fn request_layout(
@@ -65,21 +232,10 @@ impl TaffyLayoutEngine {
         rem_size: Pixels,
         scale_factor: f32,
         children: &[LayoutId],
+        scope: u64,
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
-
-        if children.is_empty() {
-            self.taffy
-                .new_leaf(taffy_style)
-                .expect(EXPECT_MESSAGE)
-                .into()
-        } else {
-            self.taffy
-                // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
-                .new_with_children(taffy_style, LayoutId::to_taffy_slice(children))
-                .expect(EXPECT_MESSAGE)
-                .into()
-        }
+        self.request_node(scope, taffy_style, children, None)
     }
 
     pub fn request_measured_layout(
@@ -87,6 +243,7 @@ impl TaffyLayoutEngine {
         style: Style,
         rem_size: Pixels,
         scale_factor: f32,
+        scope: u64,
         measure: impl FnMut(
             Size<Option<Pixels>>,
             Size<AvailableSpace>,
@@ -99,11 +256,23 @@ impl TaffyLayoutEngine {
         let measure = Box::new(measure) as Box<MeasureFn>;
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
+        self.request_node(scope, taffy_style, &[], Some(NodeContext::Measure(measure)))
+    }
 
-        self.taffy
-            .new_leaf_with_context(taffy_style, NodeContext { measure })
-            .expect(EXPECT_MESSAGE)
-            .into()
+    pub(crate) fn request_text_layout(
+        &mut self,
+        rem_size: Pixels,
+        scale_factor: f32,
+        scope: u64,
+        measure: crate::elements::TextMeasure,
+    ) -> LayoutId {
+        let taffy_style = Style::default().to_taffy(rem_size, scale_factor);
+        self.request_node(
+            scope,
+            taffy_style,
+            &[],
+            Some(NodeContext::Text(Box::new(measure))),
+        )
     }
 
     /// Treats any `auto` dimension of the given node's style as filling `size`.
@@ -218,6 +387,15 @@ impl TaffyLayoutEngine {
             }
         }
 
+        // A node laid out as a root may still be attached to a parent from a
+        // previous frame that hasn't been requested this frame.
+        if let Some(cache) = self.cache.as_deref()
+            && let Some(parent) = self.taffy.parent(id.0)
+            && cache.sequences[node_slot(parent)] < cache.frame_start
+        {
+            self.taffy.remove_child(parent, id.0).expect(EXPECT_MESSAGE);
+        }
+
         let scale_factor = window.scale_factor();
 
         let transform = |v: AvailableSpace| match v {
@@ -232,11 +410,14 @@ impl TaffyLayoutEngine {
             transform(available_space.height),
         );
 
+        let contexts = &mut self.contexts;
         self.taffy
             .compute_layout_with_measure(
                 id.into(),
                 available_space.into(),
-                |input, _id, node_context, style| {
+                |input, id, _, style| {
+                    let node_context = contexts.get_mut(node_slot(id)).and_then(Option::as_mut);
+                    let is_final = input.run_mode == taffy::RunMode::PerformLayout;
                     taffy::compute_leaf_layout(
                         input,
                         style,
@@ -264,12 +445,18 @@ impl TaffyLayoutEngine {
                                 untransform(available_space.height),
                             );
 
-                            let measured_size: Size<Pixels> = (node_context.measure)(
-                                known_dimensions,
-                                available_space,
-                                window,
-                                cx,
-                            );
+                            let measured_size = match node_context {
+                                NodeContext::Measure(measure) => {
+                                    measure(known_dimensions, available_space, window, cx)
+                                }
+                                NodeContext::Text(text) => text.measure(
+                                    known_dimensions,
+                                    available_space,
+                                    is_final,
+                                    window,
+                                    cx,
+                                ),
+                            };
                             snap_measured_size_to_device_pixels(measured_size, scale_factor).into()
                         },
                     )
@@ -756,6 +943,7 @@ impl From<Size<Pixels>> for Size<AvailableSpace> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::px;
 
     #[test]
     fn border_widths_to_taffy_use_stroke_snapping() {
@@ -782,6 +970,110 @@ mod tests {
         assert_eq!(
             taffy_border.left,
             taffy::style::LengthPercentage::length(2.0)
+        );
+    }
+
+    type Frame = fn(&mut TaffyLayoutEngine) -> (LayoutId, Vec<LayoutId>);
+
+    fn node(
+        engine: &mut TaffyLayoutEngine,
+        scope: u64,
+        children: &[LayoutId],
+        edit: impl FnOnce(&mut Style),
+    ) -> LayoutId {
+        let mut style = Style::default();
+        edit(&mut style);
+        engine.request_layout(style, px(16.), 1.5, children, scope)
+    }
+
+    /// Lays out the same frames with and without the cache and compares the bounds of
+    /// each frame's nodes.
+    fn assert_cache_matches_uncached(cx: &mut crate::TestAppContext, frames: &[Frame]) {
+        cx.add_empty_window().update(|window, cx| {
+            let mut engines = [TaffyLayoutEngine::new(), TaffyLayoutEngine::new()];
+            engines[1].disable_cache();
+            for (index, frame) in frames.iter().enumerate() {
+                let [cached, uncached] = engines.each_mut().map(|engine| {
+                    let (root, nodes) = frame(engine);
+                    engine.stretch_auto_size_to_fill(root, size(px(300.), px(200.)), 1.5);
+                    engine.compute_layout(root, size(px(300.), px(200.)).into(), window, cx);
+                    let bounds = nodes
+                        .into_iter()
+                        .map(|node| engine.layout_bounds(node, 1.5))
+                        .collect::<Vec<_>>();
+                    engine.clear();
+                    bounds
+                });
+                assert_eq!(cached, uncached, "frame {index}");
+            }
+        });
+    }
+
+    #[crate::test]
+    fn layout_cache_restores_root_style_when_reparented(cx: &mut crate::TestAppContext) {
+        assert_cache_matches_uncached(
+            cx,
+            &[
+                |engine| {
+                    let root = node(engine, 1, &[], |_| {});
+                    (root, vec![root])
+                },
+                |engine| {
+                    let child = node(engine, 1, &[], |style| style.padding.top = px(3.).into());
+                    let root = node(engine, 2, &[child], |style| {
+                        style.display = crate::Display::Flex
+                    });
+                    (root, vec![root, child])
+                },
+            ],
+        );
+    }
+
+    #[crate::test]
+    fn layout_cache_detaches_roots_from_stale_parents(cx: &mut crate::TestAppContext) {
+        assert_cache_matches_uncached(
+            cx,
+            &[
+                |engine| {
+                    let child = node(engine, 1, &[], |style| style.size.width = px(20.).into());
+                    let parent = node(engine, 2, &[child], |_| {});
+                    let root = node(engine, 3, &[parent], |style| {
+                        style.padding.left = px(7.).into()
+                    });
+                    (root, vec![root, parent, child])
+                },
+                |engine| {
+                    let child = node(engine, 1, &[], |style| style.size.width = px(20.).into());
+                    (child, vec![child])
+                },
+            ],
+        );
+    }
+
+    #[crate::test]
+    fn layout_cache_relayouts_parents_of_unhidden_nodes(cx: &mut crate::TestAppContext) {
+        fn frame(
+            engine: &mut TaffyLayoutEngine,
+            display: crate::Display,
+        ) -> (LayoutId, Vec<LayoutId>) {
+            let child = node(engine, 1, &[], |style| {
+                style.display = display;
+                style.size.height = px(20.).into();
+            });
+            let parent = node(engine, 2, &[child], |style| {
+                style.display = crate::Display::Flex
+            });
+            let root = node(engine, 3, &[parent], |style| {
+                style.display = crate::Display::Flex
+            });
+            (root, vec![root, parent, child])
+        }
+        assert_cache_matches_uncached(
+            cx,
+            &[
+                |engine| frame(engine, crate::Display::None),
+                |engine| frame(engine, crate::Display::Flex),
+            ],
         );
     }
 }

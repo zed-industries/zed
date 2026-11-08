@@ -551,16 +551,23 @@ impl LineLayoutCache {
             current_frame,
         } = &mut *state;
 
-        for key in &previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
+        // Ranges recorded before a truncation may extend past the used entries.
+        let used_lines = previous_frame
+            .used_lines
+            .get(range.start.lines_index..range.end.lines_index)
+            .unwrap_or_default();
+        for key in used_lines {
             if let Some((key, line)) = previous_frame.lines.remove_entry(key) {
                 current_frame.lines.insert(key, line);
             }
             current_frame.used_lines.push(key.clone());
         }
 
-        for key in &previous_frame.used_wrapped_lines
-            [range.start.wrapped_lines_index..range.end.wrapped_lines_index]
-        {
+        let used_wrapped_lines = previous_frame
+            .used_wrapped_lines
+            .get(range.start.wrapped_lines_index..range.end.wrapped_lines_index)
+            .unwrap_or_default();
+        for key in used_wrapped_lines {
             if let Some((key, line)) = previous_frame.wrapped_lines.remove_entry(key) {
                 current_frame.wrapped_lines.insert(key, line);
             }

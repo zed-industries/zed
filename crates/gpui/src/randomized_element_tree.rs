@@ -2028,6 +2028,234 @@ mod tests {
         })
         .expect("randomized element tree window should remain open while drawing")
     }
+
+    /// Opens a window whose layout engine never reuses nodes across frames.
+    fn disable_layout_cache(window: AnyWindowHandle, cx: &mut TestAppContext) {
+        cx.update_window(window, |_, window, _| {
+            window.layout_engine.as_mut().unwrap().disable_cache()
+        })
+        .expect("window should be open");
+    }
+
+    fn change_window_metrics(
+        windows: [AnyWindowHandle; 2],
+        rng: &mut StdRng,
+        cx: &mut TestAppContext,
+    ) {
+        let size = size(
+            px(rng.random_range(200.0..1400.0_f32).round()),
+            px(rng.random_range(200.0..1000.0_f32).round()),
+        );
+        let scale_factor = [1.0, 1.25, 1.5, 1.75, 2.0][rng.random_range(0..5)];
+        let rem_size = px([14.0, 15.5, 16.0][rng.random_range(0..3)]);
+        let kind = rng.random_range(0..3);
+        for window in windows {
+            match kind {
+                0 => cx.simulate_window_resize(window, size),
+                1 => cx.simulate_window_scale_factor_change(window, scale_factor),
+                _ => cx
+                    .update_window(window, |_, window, _| {
+                        window.set_rem_size(rem_size);
+                        window.refresh();
+                    })
+                    .expect("window should be open"),
+            }
+        }
+    }
+
+    #[gpui::test(iterations = 20)]
+    fn layout_cache_matches_uncached_randomized_tree(cx: &mut TestAppContext, mut rng: StdRng) {
+        let config = RandomizedElementTreeConfig::new(rng.random(), ELEMENT_COUNT)
+            .with_entity_density(0.3)
+            .with_handler_density(0.2)
+            .with_cached_views(false);
+        let handles = [(); 2].map(|_| {
+            cx.open_window(WINDOW_SIZE, move |_, cx| {
+                RandomizedElementTree::new_with_config(config, cx)
+            })
+        });
+        let roots = handles.map(|handle| handle.root(cx).expect("window should have a root"));
+        let windows = handles.map(AnyWindowHandle::from);
+        disable_layout_cache(windows[1], cx);
+
+        for frame in 0..MUTATION_COUNT {
+            if rng.random_bool(0.15) {
+                change_window_metrics(windows, &mut rng, cx);
+            }
+            let mutation = roots
+                .each_ref()
+                .map(|root| root.update(cx, |tree, cx| tree.apply_random_mutation(cx)));
+            cx.run_until_parked();
+            let [cached, uncached] = windows.map(|window| {
+                cx.update_window(window, |_, window, _| SceneSnapshot::from_window(window))
+                    .expect("window should be open")
+            });
+            assert_eq!(
+                cached, uncached,
+                "cached layout diverged for {config:?} at frame {frame} after {mutation:?}"
+            );
+        }
+        for window in windows {
+            cx.update_window(window, |_, window, _| window.remove_window())
+                .expect("window should be open");
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct FuzzNode {
+        id: Option<u64>,
+        text: Option<String>,
+        width: Option<f32>,
+        height: Option<f32>,
+        percent_width: bool,
+        padding: f32,
+        gap: f32,
+        vertical: bool,
+        wrap: bool,
+        hidden: bool,
+        absolute: bool,
+        grow: bool,
+        truncate: bool,
+        children: Vec<FuzzNode>,
+    }
+
+    impl FuzzNode {
+        fn random(rng: &mut StdRng, next_id: &mut u64, depth: usize) -> Self {
+            const WORDS: [&str; 6] = ["a", "layout", "cache", "Ω", "wrapping text", "x y z"];
+            *next_id += 1;
+            let text = rng.random_bool(0.3).then(|| {
+                (0..rng.random_range(1..6))
+                    .map(|_| WORDS[rng.random_range(0..WORDS.len())])
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            });
+            let child_count = if depth > 3 || text.is_some() {
+                0
+            } else {
+                rng.random_range(0..4)
+            };
+            Self {
+                id: rng.random_bool(0.5).then_some(*next_id),
+                width: rng.random_bool(0.5).then(|| rng.random_range(5.0..300.0)),
+                height: rng.random_bool(0.4).then(|| rng.random_range(5.0..200.0)),
+                percent_width: rng.random_bool(0.2),
+                padding: rng.random_range(0.0..6.0),
+                gap: rng.random_range(0.0..6.0),
+                vertical: rng.random_bool(0.5),
+                wrap: rng.random_bool(0.3),
+                hidden: rng.random_bool(0.1),
+                absolute: rng.random_bool(0.1),
+                grow: rng.random_bool(0.3),
+                truncate: rng.random_bool(0.2),
+                text,
+                children: (0..child_count)
+                    .map(|_| Self::random(rng, next_id, depth + 1))
+                    .collect(),
+            }
+        }
+
+        fn mutate(&mut self, rng: &mut StdRng, next_id: &mut u64) {
+            let child_count = self.children.len();
+            if child_count > 0 && rng.random_bool(0.7) {
+                let index = rng.random_range(0..child_count);
+                return self.children[index].mutate(rng, next_id);
+            }
+            match rng.random_range(0..10) {
+                0 => *self = Self::random(rng, next_id, 2),
+                1 if child_count > 1 => self.children.swap(0, child_count - 1),
+                2 if child_count > 0 => {
+                    self.children.remove(rng.random_range(0..child_count));
+                }
+                3 if self.text.is_none() => {
+                    let child = Self::random(rng, next_id, 3);
+                    self.children
+                        .insert(rng.random_range(0..=child_count), child);
+                }
+                4 => self.hidden = !self.hidden,
+                5 => self.width = rng.random_bool(0.7).then(|| rng.random_range(5.0..300.0)),
+                6 if self.text.is_some() => self.text = Self::random(rng, next_id, 4).text,
+                7 => {
+                    *next_id += 1;
+                    self.id = rng.random_bool(0.8).then_some(*next_id);
+                }
+                8 => self.absolute = !self.absolute,
+                _ => {
+                    self.padding = rng.random_range(0.0..6.0);
+                    self.vertical = !self.vertical;
+                }
+            }
+        }
+
+        fn render(&self, depth: usize) -> AnyElement {
+            let color = crate::hsla(depth as f32 / 8.0, 0.5, 0.5, 1.0);
+            let element = div()
+                .flex()
+                .bg(color)
+                .p(px(self.padding))
+                .gap(px(self.gap))
+                .when(self.vertical, |element| element.flex_col())
+                .when(self.wrap, |element| element.flex_wrap())
+                .when(self.grow, |element| element.flex_grow_1())
+                .when(self.hidden, |element| element.hidden())
+                .when(self.absolute, |element| element.absolute().top(px(3.0)))
+                .when(self.truncate, |element| element.truncate())
+                .when_some(self.width, |element, width| {
+                    if self.percent_width {
+                        element.w(crate::relative(width / 300.0))
+                    } else {
+                        element.w(px(width))
+                    }
+                })
+                .when_some(self.height, |element, height| element.h(px(height)))
+                .when_some(self.text.clone(), |element, text| {
+                    element.underline().child(text)
+                })
+                .children(self.children.iter().map(|child| child.render(depth + 1)));
+            match self.id {
+                Some(id) => element
+                    .id(ElementId::NamedInteger("fuzz".into(), id))
+                    .into_any_element(),
+                None => element.into_any_element(),
+            }
+        }
+    }
+
+    struct FuzzView(Rc<RefCell<FuzzNode>>);
+
+    impl Render for FuzzView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.0.borrow().render(0)
+        }
+    }
+
+    #[gpui::test(iterations = 50)]
+    fn layout_cache_matches_uncached_fuzzed_tree(cx: &mut TestAppContext, mut rng: StdRng) {
+        let mut next_id = 0;
+        let model = Rc::new(RefCell::new(FuzzNode::random(&mut rng, &mut next_id, 0)));
+        let windows = [(); 2].map(|_| {
+            let model = model.clone();
+            AnyWindowHandle::from(cx.open_window(WINDOW_SIZE, move |_, _| FuzzView(model)))
+        });
+        disable_layout_cache(windows[1], cx);
+
+        for frame in 0..MUTATION_COUNT * 2 {
+            if rng.random_bool(0.1) {
+                change_window_metrics(windows, &mut rng, cx);
+            }
+            for _ in 0..rng.random_range(0..4) {
+                model.borrow_mut().mutate(&mut rng, &mut next_id);
+            }
+            if std::env::var("FUZZ_DEBUG").is_ok() {
+                eprintln!("FRAME {frame}: {:#?}", model.borrow());
+            }
+            let [cached, uncached] = windows.map(|window| draw_window(window, cx));
+            assert_eq!(cached, uncached, "cached layout diverged at frame {frame}");
+        }
+        for window in windows {
+            cx.update_window(window, |_, window, _| window.remove_window())
+                .expect("window should be open");
+        }
+    }
 }
 
 /// Benchmarks can set `GPUI_BENCH_PATHS=0` to leave out the tessellated paths, whose cost

@@ -1236,7 +1236,7 @@ pub struct Window {
     /// a given rem size.
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
     pub(crate) viewport_size: Size<Pixels>,
-    layout_engine: Option<TaffyLayoutEngine>,
+    pub(crate) layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: ElementIdStack,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
@@ -5474,6 +5474,7 @@ impl Window {
             rem_size,
             scale_factor,
             &cx.layout_id_buffer,
+            self.element_id_stack.hash(),
         )
     }
 
@@ -5497,7 +5498,29 @@ impl Window {
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+            .request_measured_layout(
+                style,
+                rem_size,
+                scale_factor,
+                self.element_id_stack.hash(),
+                measure,
+            )
+    }
+
+    pub(crate) fn request_text_layout(
+        &mut self,
+        measure: crate::elements::TextMeasure,
+    ) -> LayoutId {
+        self.invalidator.debug_assert_prepaint();
+
+        let rem_size = self.rem_size();
+        let scale_factor = self.scale_factor();
+        self.layout_engine.as_mut().unwrap().request_text_layout(
+            rem_size,
+            scale_factor,
+            self.element_id_stack.hash(),
+            measure,
+        )
     }
 
     /// Compute the layout for the given id within the given available space.
