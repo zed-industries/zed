@@ -32,19 +32,19 @@ use crate::linux::{
 /// The protocol reports pressure and distance in `0..=65535`.
 const MAX_AXIS_VALUE: f32 = 65535.0;
 
-/// Per-tool state. Tablet tools are translated into mouse events so that pens
-/// work anywhere a mouse does, with pressure and tilt attached as [`PenInput`].
+/// Per-tool state for translating tablet input into mouse events with
+/// pressure, tilt, and distance attached as [`PenInput`].
 ///
 /// Like GTK, axis changes and button transitions are accumulated until the
-/// protocol's `frame` event, so that every event we emit sees the complete
-/// state of that hardware frame (e.g. the pressure that arrives after `down`).
+/// protocol's `frame` event so each emitted event carries the frame's final
+/// axis values, including pressure updates that arrive after `down`.
 pub(in crate::linux::wayland) struct TabletTool {
     proxy: zwp_tablet_tool_v2::ZwpTabletToolV2,
     axes: ToolAxes,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     /// Used instead of `cursor_shape_device` when the compositor lacks
-    /// cursor-shape-v1. Each tool owns its surface because a surface can only
-    /// ever hold one cursor role, so the pointer's cannot be shared.
+    /// cursor-shape-v1. Each tool needs its own surface because its cursor role
+    /// cannot be reused by another tool or by the mouse pointer.
     cursor_surface: Option<wl_surface::WlSurface>,
     /// The style last applied to this tool's cursor.
     cursor_style: Option<CursorStyle>,
@@ -69,8 +69,8 @@ struct TabletToolFocus {
     window: WaylandWindowStatePtr,
     proximity_serial: u32,
     position: Option<Point<Pixels>>,
-    /// Most recently pressed last, so the last entry is what we report as the
-    /// pressed button while moving.
+    /// Ordered by press time, with the most recent press last. Mouse move
+    /// events report only that last button because GPUI exposes a single button.
     pressed_buttons: Vec<MouseButton>,
 }
 
@@ -96,9 +96,8 @@ impl TabletTool {
         }
     }
 
-    /// Sets this tool's cursor while it hovers one of our windows. The cursor
-    /// theme, size and the window's scale are read at the time of the call,
-    /// like for the pointer.
+    /// Sets this tool's cursor while it hovers over one of our windows.
+    /// The surface fallback uses the current theme, size, and window scale.
     fn set_cursor(&mut self, style: CursorStyle, cursor: &mut Cursor, globals: &Globals) {
         let Some(focus) = &self.focus else {
             return;
@@ -137,8 +136,8 @@ impl TabletTool {
             .is_some_and(|focus| focus.window.ptr_eq(window))
     }
 
-    /// The move that puts GPUI's pointer at this tool, if it has reported a
-    /// position over the window it hovers.
+    /// Returns a move event at this tool's position, if known, for restoring
+    /// GPUI's pointer state when this tool takes ownership.
     pub(super) fn move_event(&self, modifiers: Modifiers) -> Option<MouseMoveEvent> {
         let focus = self.focus.as_ref()?;
         Some(MouseMoveEvent {
@@ -171,8 +170,7 @@ impl ToolAxes {
     }
 }
 
-/// Applies `style`, computed by `window` for this tool's position, to the
-/// tool's cursor.
+/// Applies `style` to the tool if it still hovers over `window`.
 pub(super) fn set_tool_cursor_style(
     state: &mut WaylandClientState,
     tool_id: &ObjectId,
@@ -194,8 +192,8 @@ pub(super) fn set_tool_cursor_style(
     tool.set_cursor(style, cursor, globals);
 }
 
-/// Records a press like the pointer does, naming the surface the tool hovers
-/// so that activation tokens (e.g. for opening links) can be requested.
+/// Records the press serial and the tool's focused surface so activation token
+/// requests, such as those for opening links, can identify the user interaction.
 fn record_press(state: &mut WaylandClientState, tool_id: &ObjectId, serial: u32) {
     let focused_surface = state
         .tablet_tools
@@ -221,14 +219,20 @@ fn pen_tool_from_type(tool_type: zwp_tablet_tool_v2::Type) -> Option<PenTool> {
 }
 
 fn tablet_tool_button_to_gpui(button: u32) -> Option<MouseButton> {
-    // These values are coming from <linux/input-event-codes.h>.
+    // Button codes are defined in <linux/input-event-codes.h>.
     const BTN_STYLUS3: u32 = 0x149;
     const BTN_STYLUS: u32 = 0x14b;
     const BTN_STYLUS2: u32 = 0x14c;
 
-    // Matches GTK. Mutter applies the user's stylus button mapping before
-    // sending these codes and encodes "middle click" as BTN_STYLUS and "right
-    // click" as BTN_STYLUS2, so this must stay in sync with that convention.
+    // Match GTK's stylus-button interpretation. Mutter's native backend applies
+    // the configured stylus action before delivery, encoding middle/right clicks
+    // as BTN_STYLUS/BTN_STYLUS2. Decode these as actions, rather than assigning
+    // fixed meanings to the physical barrel buttons, to preserve that mapping.
+    // GTK: tablet_tool_handle_button():
+    // https://github.com/GNOME/gtk/blob/4.18.6/gdk/wayland/gdkseat-wayland.c#L2811-L2816
+    // Mutter: meta_seat_impl_notify_button_in_impl(), meta_clutter_tool_button_to_evdev():
+    // https://github.com/GNOME/mutter/blob/49.0/src/backends/native/meta-seat-impl.c#L932-L950
+    // https://github.com/GNOME/mutter/blob/49.0/src/backends/meta-backend.c#L1975-L1987
     match button {
         BTN_STYLUS => Some(MouseButton::Middle),
         BTN_STYLUS2 => Some(MouseButton::Right),
@@ -237,9 +241,9 @@ fn tablet_tool_button_to_gpui(button: u32) -> Option<MouseButton> {
     }
 }
 
-/// Emits everything accumulated for `tool` since the previous frame: a single
-/// move carrying the latest axes first, then button transitions in the order
-/// they arrived.
+/// Dispatches pending tool events with the frame's final axis values. A move
+/// precedes button transitions when axes or pointer ownership change; button
+/// transitions retain their arrival order.
 fn flush_frame(this: &WaylandClientStatePtr, tool_id: &ObjectId) {
     let client = this.get_client();
     let mut state = client.borrow_mut();
@@ -308,8 +312,8 @@ fn flush_frame(this: &WaylandClientStatePtr, tool_id: &ObjectId) {
                 };
                 tool.axes.pressure = 0.0;
 
-                // The protocol sends `up` before `proximity_out`, but barrel
-                // buttons may still be held when the pen is lifted away.
+                // A surface change can leave barrel buttons logically pressed,
+                // so release any still tracked here before handing off the pointer.
                 if let Some(position) = focus.position
                     && !focus.pressed_buttons.is_empty()
                 {
@@ -411,8 +415,7 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for WaylandClientStatePtr
                     position: None,
                     pressed_buttons: Vec::new(),
                 });
-                // Without a cursor set here the compositor leaves the tool's cursor
-                // unset over our surfaces.
+                // Set a cursor immediately because a motion event may not follow.
                 tool.set_cursor(style, cursor, globals);
 
                 drop(state);
@@ -479,7 +482,7 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for WaylandClientStatePtr
                     zwp_tablet_tool_v2::ButtonState::Released => false,
                     _ => return,
                 };
-                // Release serials are declined by requests that reference a press.
+                // Requests that require a press serial reject release serials.
                 if pressed {
                     record_press(&mut state, &tool_id, serial);
                 }

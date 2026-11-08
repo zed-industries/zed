@@ -1,8 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-//! Draws strokes whose width follows stylus pressure and shows the raw pen state
-//! (tool, pressure, tilt, distance, buttons) so pen tablet support can be checked by hand.
-//! A mouse works too: it draws at full width and reports no pen state.
+//! Draws strokes whose width follows stylus pressure and displays the reported
+//! tool, pressure, tilt, distance, and mouse button events for manual testing.
+//! A mouse draws at the maximum stroke width and reports no pen state.
 
 #[path = "example_support/fonts.rs"]
 mod example_support;
@@ -53,7 +53,7 @@ fn stroke_width(pen: Option<PenInput>) -> Pixels {
 
 fn stroke_color(pen: Option<PenInput>) -> Hsla {
     match pen.map(|pen| pen.tool) {
-        // Erasing paints with the canvas color.
+        // Painting with the canvas color simulates an eraser.
         Some(PenTool::Eraser) => gpui::white(),
         Some(PenTool::Pen) | None => gpui::black(),
         Some(PenTool::Pencil) => rgb(0x555555).into(),
@@ -160,8 +160,7 @@ impl PenInputExample {
                         for stroke in &strokes {
                             paint_stroke(stroke, window);
                         }
-                        // Shows the brush size while hovering, so pressure can be
-                        // seen even before the tip touches.
+                        // Preview the stroke width without adding a stroke.
                         if let Some((position, width)) = cursor {
                             let radius = width / 2.0;
                             window.paint_quad(quad(
@@ -314,8 +313,8 @@ fn paint_line(
     }
 }
 
-/// A top-down view of the stylus: the line points the way the pen leans, and
-/// reaches the edge of the circle at 90°.
+/// A top-down view of the stylus. Each tilt component maps 90° to the circle's
+/// radius along its axis.
 fn tilt_indicator(tilt: Option<Point<f32>>) -> impl IntoElement {
     canvas(
         |_, _, _| {},

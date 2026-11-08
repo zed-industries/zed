@@ -9,8 +9,8 @@ use wayland_client::protocol::{wl_pointer::WlPointer, wl_shm::WlShm};
 use wayland_cursor::{CursorImageBuffer, CursorTheme};
 use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_tool_v2::ZwpTabletToolV2;
 
-/// The input device whose cursor image is being set. Each device needs its own
-/// cursor surface, since a surface can only ever be given one cursor role.
+/// The input device whose cursor image is being set. Each tablet tool needs
+/// its own surface because its cursor role cannot be reused by another tool.
 pub(crate) enum CursorTarget<'a> {
     Pointer(&'a WlPointer),
     TabletTool(&'a ZwpTabletToolV2),
@@ -129,8 +129,8 @@ impl Cursor {
         );
     }
 
-    /// Shows the themed icon on `surface` and makes it `target`'s cursor. The
-    /// theme, its size and the scaling are shared by every target.
+    /// Shows the themed icon on `surface` and makes it `target`'s cursor.
+    /// Uses the shared cursor theme and size with the supplied surface scale.
     pub fn set_icon_on_surface(
         &mut self,
         target: CursorTarget,

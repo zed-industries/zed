@@ -375,11 +375,10 @@ pub(crate) struct WaylandClientState {
     pinch_scale: f32,
     _tablet_seat: Option<zwp_tablet_seat_v2::ZwpTabletSeatV2>,
     tablet_tools: HashMap<ObjectId, TabletTool>,
-    /// Keyed by window surface. GPUI keeps a single pointer per window, so when
-    /// the mouse and tablet tools hover the same window, this is the input whose
-    /// position and cursor style GPUI is currently tracking.
+    /// GPUI tracks one pointer per window, even when several inputs hover it.
+    /// Maps each window surface to the input whose position and cursor style
+    /// GPUI currently tracks.
     pointer_owners: HashMap<ObjectId, PointerInput>,
-    /// Keyed by pad.
     tablet_pads: HashMap<ObjectId, Vec<TabletPadGroup>>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
@@ -848,8 +847,9 @@ impl WaylandClientStatePtr {
             .set_cursor_style_for_window(window, style);
     }
 
-    /// The position of the input GPUI's pointer follows in `window`, so that
-    /// reading it back (e.g. on resize) agrees with the events sent to it.
+    /// Returns the position of the input currently tracked by `window`, so a
+    /// resize does not replace its position with another input's coordinates.
+    /// Returns the origin if the input or its position is unknown.
     pub fn mouse_position(&self, window: &WaylandWindowStatePtr) -> Point<Pixels> {
         let client = self.get_client();
         let state = client.borrow();
@@ -878,24 +878,24 @@ enum PointerInput {
     TabletTool(ObjectId),
 }
 
-/// What GPUI has to be told after an input stops hovering a window.
+/// The update to GPUI's pointer state when an input stops hovering a window.
 #[derive(Debug)]
 enum PointerHandOff {
     /// Another input still owns the window's pointer state.
     Unchanged,
-    /// Moves GPUI's pointer to an input that remains over the window, so that
-    /// hit testing and hover follow it.
+    /// Moves GPUI's pointer to a remaining input's position to restore hover
+    /// and hit testing there.
     MoveTo(MouseMoveEvent),
-    /// The remaining inputs haven't reported a position yet, so GPUI's pointer
-    /// leaves even though the window stays hovered.
+    /// Clears element hover because no remaining input has reported a position.
+    /// The window itself stays hovered.
     Exit,
     /// No input hovers the window anymore.
     ExitWindow,
 }
 
-/// Applies a [`PointerHandOff`] for an input that left `window` at `exit.position`
-/// (`None` if it never reported a position there). The client state must not be
-/// borrowed.
+/// Applies a [`PointerHandOff`] after an input leaves `window`. `exit` is
+/// `None` if that input never reported a position. The client state must not
+/// be borrowed because input callbacks may access it.
 fn dispatch_pointer_hand_off(
     window: &WaylandWindowStatePtr,
     hand_off: PointerHandOff,
@@ -920,10 +920,10 @@ fn dispatch_pointer_hand_off(
     }
 }
 
-/// Decides which input takes over GPUI's pointer after `leaving` stops hovering
-/// a window. `remaining` lists the inputs still hovering it in order of
-/// preference, each with the move that puts GPUI's pointer at its position if it
-/// has reported one. Returns the window's new owner alongside the hand-off.
+/// Keeps the current pointer owner if it still hovers the window; otherwise,
+/// selects the first input in `remaining` with a known position. Each entry
+/// pairs an input with an optional move event at its position. Returns the
+/// new owner and the update needed to restore GPUI's pointer state.
 fn hand_off_pointer(
     owner: Option<&PointerInput>,
     leaving: &PointerInput,
@@ -1028,8 +1028,7 @@ impl WaylandClientState {
         }
     }
 
-    /// Applies a cursor style requested by `window` to the input GPUI computed
-    /// it for, leaving inputs over other windows alone.
+    /// Applies the cursor style requested by `window` to its current input.
     fn set_cursor_style_for_window(&mut self, window: &WaylandWindowStatePtr, style: CursorStyle) {
         if window.is_blocked() {
             return;
@@ -1051,9 +1050,8 @@ impl WaylandClientState {
         }
     }
 
-    /// Makes `input` the one GPUI's pointer follows in `window`. Returns whether
-    /// it wasn't already, in which case GPUI's pointer isn't at `input`'s
-    /// position until `input` sends a move.
+    /// Makes `input` the pointer owner for `window`. Returns `true` if the owner
+    /// changed; the caller must then send a move to update GPUI's position.
     fn claim_pointer(&mut self, window: &WaylandWindowStatePtr, input: PointerInput) -> bool {
         let previous = self
             .pointer_owners
@@ -1061,9 +1059,9 @@ impl WaylandClientState {
         previous.as_ref() != Some(&input)
     }
 
-    /// Makes the mouse the input GPUI's pointer follows in `window`, for mouse
-    /// events that aren't moves. Returns the move to send first if another input
-    /// owned the pointer, so that hover and the cursor style follow the mouse.
+    /// Claims the pointer for a mouse button, scroll, or gesture event. Returns
+    /// a move event to dispatch first if ownership changed, so hover and the
+    /// cursor style reflect the mouse's position before handling the event.
     fn claim_pointer_for_mouse(
         &mut self,
         window: &WaylandWindowStatePtr,
@@ -1078,8 +1076,8 @@ impl WaylandClientState {
             })
     }
 
-    /// Hands GPUI's pointer in `window` over to the inputs still hovering it after
-    /// `leaving` stopped doing so. `leaving` must already be unfocused.
+    /// Updates pointer ownership after `leaving` stops hovering `window`.
+    /// Its focus must be cleared first so it is excluded from the remaining inputs.
     fn release_pointer(
         &mut self,
         window: &WaylandWindowStatePtr,
@@ -1606,9 +1604,9 @@ impl WaylandConnection {
         Ok(Box::new(window))
     }
 
-    /// Wayland windows set their cursor through
+    /// Handles cursor requests without a window. Wayland windows use
     /// [`WaylandClientStatePtr::set_cursor_style`], which knows which window the
-    /// style was computed for. This only covers callers without a window.
+    /// style was computed for.
     pub(crate) fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
         if let Some(window) = state.mouse_focused_window.clone() {
@@ -2645,7 +2643,7 @@ fn dispatch_mouse_button(
     if let Some(keyboard_window) = state.keyboard_focused_window.clone() {
         if state.composing && state.text_input.is_some() {
             drop(state);
-            // text_input_v3 don't have something like a reset function
+            // text-input-v3 has no reset request, so toggle it to clear composition.
             this.disable_ime();
             this.enable_ime();
             keyboard_window.handle_ime(ImeInput::UnmarkText);
@@ -2759,8 +2757,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     state.mouse_location = None;
                     state.button_pressed = None;
                     state.cursor_hidden_window = None;
-                    // A tablet tool may still hover the window, in which case the
-                    // window stays hovered and GPUI's pointer follows the tool.
+                    // Keep the window hovered if a tablet tool remains, and
+                    // transfer pointer ownership if the mouse owned it.
                     let hand_off = state.release_pointer(&focused_window, &PointerInput::Pointer);
 
                     drop(state);
@@ -3814,7 +3812,7 @@ mod tests {
             PointerHandOff::MoveTo(event) if event.position == point(px(1.0), px(2.0))
         ));
 
-        // GPUI never followed the pen, so it mustn't be told that anything left.
+        // The mouse still owns the pointer, so the pen's exit needs no notification.
         let (owner, hand_off) = hand_off_pointer(
             Some(&PointerInput::Pointer),
             &pen(),

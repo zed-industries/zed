@@ -143,10 +143,10 @@ impl InputEvent for TouchEvent {
     }
 }
 
-/// The kind of physical tool driving a [`PenInput`].
+/// The physical tool that produced a [`PenInput`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum PenTool {
-    /// The tip of a stylus, or a tool the platform doesn't classify further.
+    /// The tip of a pen.
     #[default]
     Pen,
     /// The eraser end of a stylus.
@@ -159,29 +159,29 @@ pub enum PenTool {
     Airbrush,
 }
 
-/// Stylus state reported alongside a mouse event that was produced by a pen or
-/// other tablet tool. Pens are delivered as regular mouse events so they work
-/// anywhere a mouse does; elements that care about pressure or tilt can read
-/// them from here.
+/// Stylus state attached to a mouse event produced by a pen or similar tablet tool.
+/// Pens use the regular mouse event path so existing mouse handlers can process
+/// them. Handlers can read this state to respond to pressure, tilt, or distance.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PenInput {
     /// Which tool produced the event.
     pub tool: PenTool,
 
-    /// Normalized pressure in `0.0..=1.0`, or `None` if the tool can't sense
-    /// pressure. The pressure is `0.0` while the tool is hovering.
+    /// Normalized pressure in `0.0..=1.0`, or `None` if pressure is not reported.
+    /// Pressure can be nonzero even when the tool is not in logical contact
+    /// with the tablet surface.
     pub pressure: Option<f32>,
 
     /// Tilt of the tool away from the axis perpendicular to the surface, in
-    /// degrees in `-90.0..=90.0`, or `None` if the tool can't sense tilt.
-    /// Positive `x` tilts towards the right of the window and positive `y`
-    /// towards its bottom.
+    /// degrees in `-90.0..=90.0`, or `None` if tilt is not reported.
+    /// Positive values indicate that the top of the tool tilts along the
+    /// tablet's positive x or y axis.
     pub tilt: Option<Point<f32>>,
 
     /// Normalized distance between the tool and the tablet surface in
-    /// `0.0..=1.0`, or `None` if the tool can't sense distance. The value has
-    /// no physical unit, and how it behaves while the tip touches the surface
-    /// depends on the hardware.
+    /// `0.0..=1.0`, or `None` if distance is not reported. The value has no
+    /// physical unit; its behavior while the tip touches the surface depends
+    /// on the hardware.
     pub distance: Option<f32>,
 }
 
