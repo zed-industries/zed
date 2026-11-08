@@ -44,7 +44,7 @@ Jump to where a symbol is defined with {#kb editor::GoToDefinition} (or `Cmd+Cli
 
 ## Project Bookmarks {#project-bookmarks}
 
-Run {#action project_bookmarks::Toggle} from the [command palette](./command-palette.md) to browse bookmarks across your project. Type to search bookmark labels; bookmarks without a label use the bookmarked line's text. Each result shows the file path and line number. Toggle the code preview with {#kb picker::TogglePreview}, then confirm a result to jump to its location.
+Run {#action project_bookmarks::Toggle} from the [command palette](./command-palette.md) to browse bookmarks across your project. Type to search bookmark labels; bookmarks without a label use the bookmarked line's text. Each result shows the file path and line number. Click the Preview button to toggle the code preview, then confirm a result to jump to its location.
 
 This command has no default keybinding. You can assign one in your [keymap](./key-bindings.md).
 
