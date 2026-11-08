@@ -33,10 +33,7 @@ enum NodeContext {
 }
 
 pub struct TaffyLayoutEngine {
-    taffy: TaffyTree,
-    /// Kept outside of Taffy, whose context map hashes every access and marks a node dirty
-    /// whenever its context is replaced.
-    contexts: SecondaryMap<DefaultKey, NodeContext>,
+    taffy: TaffyTree<NodeContext>,
     /// Keeps layout nodes alive from one frame to the next, so Taffy's layout cache can
     /// skip subtrees whose styles and children didn't change. Without it, the tree is
     /// rebuilt every frame.
@@ -67,6 +64,9 @@ struct CachedNode {
     frame: u64,
     /// Whether `stretch_auto_size_to_fill` changed the Taffy style since it was converted.
     stretched: bool,
+    /// Whether the node has a context in Taffy, tracked here so that requests for nodes
+    /// without one don't have to look it up in Taffy's hashed context map.
+    has_context: bool,
 }
 
 #[derive(Default)]
@@ -100,7 +100,6 @@ impl TaffyLayoutEngine {
         taffy.disable_rounding();
         TaffyLayoutEngine {
             taffy,
-            contexts: SecondaryMap::new(),
             cache: LAYOUT_CACHE_ENABLED.then(LayoutCache::default),
             absolute_layout_bounds: FxHashMap::default(),
             absolute_outer_origins: FxHashMap::default(),
@@ -112,7 +111,6 @@ impl TaffyLayoutEngine {
     #[cfg(test)]
     pub(crate) fn set_cache_enabled(&mut self, enabled: bool) {
         self.taffy.clear();
-        self.contexts.clear();
         self.cache = enabled.then(LayoutCache::default);
     }
 
@@ -124,10 +122,9 @@ impl TaffyLayoutEngine {
     /// Ends the frame: nodes that weren't requested during it are evicted.
     pub fn clear(&mut self) {
         if let Some(cache) = self.cache.as_mut() {
-            cache.evict_unrequested(&mut self.taffy, &mut self.contexts);
+            cache.evict_unrequested(&mut self.taffy);
         } else {
             self.taffy.clear();
-            self.contexts.clear();
         }
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
@@ -196,18 +193,14 @@ impl TaffyLayoutEngine {
         // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
         let children = LayoutId::to_taffy_slice(children);
         let taffy = &mut self.taffy;
-        let contexts = &mut self.contexts;
         let Some(cache) = self.cache.as_mut() else {
             let style = LayoutStyle::new(style, rem_size, scale_factor).to_taffy();
-            let id = if children.is_empty() {
-                taffy.new_leaf(style)
-            } else {
-                taffy.new_with_children(style, children)
+            let id = match context {
+                Some(context) => taffy.new_leaf_with_context(style, context),
+                None if children.is_empty() => taffy.new_leaf(style),
+                None => taffy.new_with_children(style, children),
             }
             .expect(EXPECT_MESSAGE);
-            if let Some(context) = context {
-                contexts.insert(node_key(id), context);
-            }
             return id.into();
         };
 
@@ -252,6 +245,7 @@ impl TaffyLayoutEngine {
                     style,
                     frame,
                     stretched: false,
+                    has_context: false,
                 };
                 cache.nodes.insert(node_key(id), node);
                 id
@@ -264,28 +258,34 @@ impl TaffyLayoutEngine {
             id
         };
 
-        cache.nodes[node_key(id)].frame = frame;
-        // Text that hasn't changed keeps the sizes Taffy cached for it.
-        if let Some(NodeContext::Text(measure)) = &context
-            && let Some(NodeContext::Text(previous)) = contexts.get_mut(node_key(id))
-            && measure.reuse_measurement(previous)
-        {
-            if let Some(NodeContext::Text(measure)) = context {
-                *previous = measure;
+        let node = &mut cache.nodes[node_key(id)];
+        node.frame = frame;
+        let had_context = std::mem::replace(&mut node.has_context, context.is_some());
+        match context {
+            Some(context) if had_context => {
+                let previous = taffy
+                    .get_node_context_mut(id)
+                    .expect("a node marked as having a context should have one in Taffy");
+                // Text that hasn't changed keeps the sizes Taffy cached for it.
+                let reuse = matches!(
+                    (&context, &*previous),
+                    (NodeContext::Text(measure), NodeContext::Text(previous))
+                        if measure.reuse_measurement(previous)
+                );
+                // Replaced in place because `set_node_context` would always dirty the node.
+                *previous = context;
+                // A measure function can depend on anything, so replacing it must
+                // invalidate the sizes Taffy cached from the previous one.
+                if !reuse {
+                    taffy.mark_dirty(id).expect(EXPECT_MESSAGE);
+                }
             }
-            return id.into();
-        }
-        // A measure function can depend on anything, so replacing it must invalidate the
-        // sizes Taffy cached from the previous one.
-        let measure_changed = match context {
-            Some(context) => {
-                contexts.insert(node_key(id), context);
-                true
-            }
-            None => contexts.remove(node_key(id)).is_some(),
-        };
-        if measure_changed {
-            taffy.mark_dirty(id).expect(EXPECT_MESSAGE);
+            // Adding or removing a context dirties the node.
+            Some(context) => taffy
+                .set_node_context(id, Some(context))
+                .expect(EXPECT_MESSAGE),
+            None if had_context => taffy.set_node_context(id, None).expect(EXPECT_MESSAGE),
+            None => {}
         }
         id.into()
     }
@@ -438,13 +438,11 @@ impl TaffyLayoutEngine {
             transform(available_space.height),
         );
 
-        let contexts = &mut self.contexts;
         self.taffy
             .compute_layout_with_measure(
                 id.into(),
                 available_space.into(),
-                |input, id, _, style| {
-                    let node_context = contexts.get_mut(node_key(id));
+                |input, _, node_context, style| {
                     taffy::compute_leaf_layout(
                         input,
                         style,
@@ -611,11 +609,7 @@ impl TaffyLayoutEngine {
 }
 
 impl LayoutCache {
-    fn evict_unrequested(
-        &mut self,
-        taffy: &mut TaffyTree,
-        contexts: &mut SecondaryMap<DefaultKey, NodeContext>,
-    ) {
+    fn evict_unrequested(&mut self, taffy: &mut TaffyTree<NodeContext>) {
         for id in self.free_nodes.drain(..) {
             self.nodes.remove(node_key(id));
             taffy.remove(id).expect(EXPECT_MESSAGE);
@@ -639,7 +633,11 @@ impl LayoutCache {
         // touching the live tree. Measure functions can hold on to anything, so they're
         // dropped now rather than when the node is reused or removed.
         for &id in &self.free_nodes {
-            contexts.remove(node_key(id));
+            let node = &mut self.nodes[node_key(id)];
+            if node.has_context {
+                node.has_context = false;
+                taffy.set_node_context(id, None).expect(EXPECT_MESSAGE);
+            }
             if taffy.child_count(id) > 0 {
                 taffy.set_children(id, &[]).expect(EXPECT_MESSAGE);
             }
