@@ -497,6 +497,7 @@ impl PathCurve {
             a: point(p0.x - 2.0 * ctrl.x + p1.x, p0.y - 2.0 * ctrl.y + p1.y),
             b: point(2.0 * (ctrl.x - p0.x), 2.0 * (ctrl.y - p0.y)),
             sign,
+            pad: 0,
         }
     }
 
@@ -509,6 +510,7 @@ impl PathCurve {
             a: point(0.0, 0.0),
             b: point(p1.x - p0.x, p1.y - p0.y),
             sign,
+            pad: 0,
         }
     }
 

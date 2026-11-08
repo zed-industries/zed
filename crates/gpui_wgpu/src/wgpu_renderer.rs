@@ -3,8 +3,8 @@ use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
 use collections::FxHashMap;
 use gpui::{
-    AtlasTextureId, Bounds, DevicePixels, GpuSpecs, PathTile, PrimitiveBatch, ScaledPixels, Scene,
-    Size, get_gamma_correction_ratios,
+    AtlasTextureId, Bounds, DevicePixels, GpuSpecs, PaintedPath, PrimitiveBatch, ScaledPixels,
+    Scene, Size, get_gamma_correction_ratios,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
@@ -60,6 +60,8 @@ fn least_common_multiple(left: u64, right: u64) -> u64 {
 struct GlobalParams {
     viewport_size: [f32; 2],
     premultiplied_alpha: u32,
+    path_paint_base: u32,
+    path_curve_base: u32,
     pad: u32,
 }
 
@@ -131,6 +133,12 @@ struct InstanceBinding {
     first_instance: u32,
 }
 
+struct PathTileBinding {
+    tiles: InstanceBinding,
+    paint_base: u32,
+    curve_base: u32,
+}
+
 /// Where one array of instance data was written this frame.
 struct InstanceAllocation {
     offset: u64,
@@ -141,7 +149,7 @@ struct InstanceAllocation {
 struct InstanceBindings {
     quads: InstanceBinding,
     shadows: InstanceBinding,
-    path_tiles: InstanceBinding,
+    path_tiles: PathTileBinding,
     underlines: InstanceBinding,
     monochrome_sprites: InstanceBinding,
     subpixel_sprites: InstanceBinding,
@@ -1309,23 +1317,13 @@ impl WgpuRendererCore {
             is_bgr: self.is_bgr as u32,
             _pad: 0,
         };
-        let globals = GlobalParams {
-            viewport_size: [size.width.0 as f32, size.height.0 as f32],
-            premultiplied_alpha: premultiplied_alpha as u32,
-            pad: 0,
-        };
-        self.resources.queue.write_buffer(
-            &self.resources.globals_buffer,
-            0,
-            bytemuck::bytes_of(&globals),
-        );
         self.resources.queue.write_buffer(
             &self.resources.globals_buffer,
             self.gamma_offset,
             bytemuck::bytes_of(&gamma_params),
         );
 
-        self.record_frame(scene, target_view, clear_color)
+        self.record_frame(scene, target_view, size, premultiplied_alpha, clear_color)
             .inspect_err(|_| {
                 // Queue writes are staged before encoding; flush them even if the frame fails.
                 self.resources.queue.submit(std::iter::empty());
@@ -1336,6 +1334,8 @@ impl WgpuRendererCore {
         &mut self,
         scene: &Scene,
         frame_view: &wgpu::TextureView,
+        size: Size<DevicePixels>,
+        premultiplied_alpha: bool,
         clear_color: wgpu::Color,
     ) -> Result<wgpu::SubmissionIndex> {
         let mut instance_offset = 0;
@@ -1343,8 +1343,8 @@ impl WgpuRendererCore {
             .write_instances(scene, &mut instance_offset)
             .with_context(|| {
                 format!(
-                    "scene too large: {} path tiles, {} shadows, {} quads, {} underlines, {} monochrome sprites, {} subpixel sprites, {} polychrome sprites",
-                    scene.path_tiles.len(),
+                    "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} monochrome sprites, {} subpixel sprites, {} polychrome sprites",
+                    scene.paths.len(),
                     scene.shadows.len(),
                     scene.quads.len(),
                     scene.underlines.len(),
@@ -1353,6 +1353,18 @@ impl WgpuRendererCore {
                     scene.polychrome_sprites.len(),
                 )
             })?;
+        let globals = GlobalParams {
+            viewport_size: [size.width.0 as f32, size.height.0 as f32],
+            premultiplied_alpha: premultiplied_alpha as u32,
+            path_paint_base: instance_bindings.path_tiles.paint_base,
+            path_curve_base: instance_bindings.path_tiles.curve_base,
+            pad: 0,
+        };
+        self.resources().queue.write_buffer(
+            &self.resources().globals_buffer,
+            0,
+            bytemuck::bytes_of(&globals),
+        );
         self.prepare_texture_bind_groups(scene);
 
         let mut encoder =
@@ -1378,6 +1390,7 @@ impl WgpuRendererCore {
                 ..Default::default()
             });
 
+            let mut path_tile_cursor = 0;
             for batch in scene.batches() {
                 match batch {
                     PrimitiveBatch::Quads(range) => self.draw_instances(
@@ -1392,12 +1405,19 @@ impl WgpuRendererCore {
                         instance_range(range),
                         &mut pass,
                     ),
-                    PrimitiveBatch::PathTiles(range) => self.draw_instances(
-                        &instance_bindings.path_tiles,
-                        &self.resources().pipelines.path_tiles,
-                        instance_range(range),
-                        &mut pass,
-                    ),
+                    PrimitiveBatch::Paths(range) => {
+                        let tiles_start = path_tile_cursor;
+                        path_tile_cursor += scene.paths[range]
+                            .iter()
+                            .map(PaintedPath::tile_count)
+                            .sum::<usize>();
+                        self.draw_instances(
+                            &instance_bindings.path_tiles.tiles,
+                            &self.resources().pipelines.path_tiles,
+                            instance_range(tiles_start..path_tile_cursor),
+                            &mut pass,
+                        )
+                    }
                     PrimitiveBatch::Underlines(range) => self.draw_instances(
                         &instance_bindings.underlines,
                         &self.resources().pipelines.underlines,
@@ -1736,32 +1756,24 @@ impl WgpuRendererCore {
         &mut self,
         scene: &Scene,
         instance_offset: &mut u64,
-    ) -> Result<InstanceBinding> {
+    ) -> Result<PathTileBinding> {
+        let mut paint_data = Vec::with_capacity(scene.paths.len());
+        let mut curve_data = Vec::new();
+        let mut tile_data = Vec::new();
+        for path in &scene.paths {
+            path.append_to(&mut paint_data, &mut curve_data, &mut tile_data);
+        }
+
         // All three arrays are bound together, so they must not be split by a
         // grow partway through.
-        let reserved = self.instance_allocation_bound(&scene.path_paints)
-            + self.instance_allocation_bound(&scene.path_curves)
-            + self.instance_allocation_bound(&scene.path_tiles);
+        let reserved = self.instance_allocation_bound(&paint_data)
+            + self.instance_allocation_bound(&curve_data)
+            + self.instance_allocation_bound(&tile_data);
         self.reserve_instance_data(instance_offset, reserved)?;
 
-        let paints = self.write_instance_data(instance_offset, &scene.path_paints)?;
-        let curves = self.write_instance_data(instance_offset, &scene.path_curves)?;
-        let tiles = if self.uses_webgl_instance_data {
-            // The texture transport indexes the shared instance texture
-            // absolutely, so tiles need absolute paint and curve indices.
-            let tiles: Vec<PathTile> = scene
-                .path_tiles
-                .iter()
-                .map(|tile| PathTile {
-                    paint: tile.paint + paints.first_instance,
-                    curve_start: tile.curve_start + curves.first_instance,
-                    ..*tile
-                })
-                .collect();
-            self.write_instance_data(instance_offset, &tiles)?
-        } else {
-            self.write_instance_data(instance_offset, &scene.path_tiles)?
-        };
+        let paints = self.write_instance_data(instance_offset, &paint_data)?;
+        let curves = self.write_instance_data(instance_offset, &curve_data)?;
+        let tiles = self.write_instance_data(instance_offset, &tile_data)?;
 
         let resources = self.resources();
         let bind_group = if self.uses_webgl_instance_data {
@@ -1797,9 +1809,13 @@ impl WgpuRendererCore {
                     ],
                 })
         };
-        Ok(InstanceBinding {
-            bind_group,
-            first_instance: tiles.first_instance,
+        Ok(PathTileBinding {
+            tiles: InstanceBinding {
+                bind_group,
+                first_instance: tiles.first_instance,
+            },
+            paint_base: paints.first_instance,
+            curve_base: curves.first_instance,
         })
     }
 
@@ -2435,8 +2451,8 @@ mod tests {
     use super::*;
     use gpui::{
         BorderStyle, ColorSpace, ContentMask, Corners, Edges, Hsla, MonochromeSprite, PathCurve,
-        PathPaint, Point, PolychromeSprite, Quad, Shadow, Size, SubpixelSprite, Underline,
-        linear_color_stop, linear_gradient,
+        PathPaint, PathTile, Point, PolychromeSprite, Quad, Shadow, Size, SubpixelSprite,
+        Underline, linear_color_stop, linear_gradient,
     };
     #[cfg(target_os = "linux")]
     use gpui::{DevicePixels, PlatformHeadlessRenderer, Scene};
@@ -2621,9 +2637,9 @@ mod tests {
     fn webgl_record_sizes_match_shader_word_strides() {
         assert_eq!(std::mem::size_of::<Quad>(), 40 * 4);
         assert_eq!(std::mem::size_of::<Shadow>(), 28 * 4);
-        assert_eq!(std::mem::size_of::<PathTile>(), 11 * 4);
-        assert_eq!(std::mem::size_of::<PathCurve>(), 9 * 4);
-        assert_eq!(std::mem::size_of::<PathPaint>(), 27 * 4);
+        assert_eq!(std::mem::size_of::<PathTile>(), 10 * 4);
+        assert_eq!(std::mem::size_of::<PathCurve>(), 10 * 4);
+        assert_eq!(std::mem::size_of::<PathPaint>(), 28 * 4);
         assert_eq!(std::mem::size_of::<Underline>(), 16 * 4);
         assert_eq!(std::mem::size_of::<MonochromeSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<SubpixelSprite>(), 28 * 4);

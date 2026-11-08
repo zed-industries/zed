@@ -86,6 +86,16 @@ impl PathTiles {
     pub(crate) fn curves(&self) -> &[PathCurve] {
         &self.curves
     }
+
+    /// Drops the tiles that lie entirely outside `mask`.
+    pub(crate) fn retain_visible(&mut self, mask: Bounds<ScaledPixels>) {
+        self.tiles.retain(|tile| {
+            tile.top_left.x < mask.right().0
+                && tile.top_left.y < mask.bottom().0
+                && tile.bottom_right.x > mask.origin.x.0
+                && tile.bottom_right.y > mask.origin.y.0
+        });
+    }
 }
 
 pub(crate) fn bin(curves: &[PathCurve], even_odd: bool, scale: f32) -> PathTiles {
@@ -373,7 +383,6 @@ impl Binner {
                         let curve_start = curves.len();
                         curves.extend(listed(keys, input, run.list).copied());
                         tiles.push(PathTile {
-                            order: 0,
                             paint: 0,
                             curve_start: curve_start as u32,
                             curve_count: (curves.len() - curve_start) as u32,
@@ -601,6 +610,7 @@ impl PathCurve {
             a: scale_point(self.a),
             b: scale_point(self.b),
             sign: self.sign,
+            pad: 0,
         }
     }
 
@@ -706,7 +716,7 @@ mod tests {
             black().into(),
         ));
         scene.finish();
-        let painted = scene.path_tiles.len();
+        let painted: usize = scene.paths.iter().map(PaintedPath::tile_count).sum();
         assert!(painted > 0 && painted < 20, "{painted} tiles");
     }
 

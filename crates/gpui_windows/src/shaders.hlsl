@@ -948,17 +948,17 @@ struct PathCurve {
     float2 a;
     float2 b;
     float sign;
+    uint pad;
 };
 
 struct PathTile {
-    uint order;
     uint paint;
     uint curve_start;
     uint curve_count;
+    int backdrop;
     float2 top_left;
     float2 bottom_right;
     float2 reference;
-    int backdrop;
 };
 
 struct PathPaint {
@@ -966,6 +966,7 @@ struct PathPaint {
     Bounds content_mask;
     Background color;
     uint even_odd;
+    uint pad;
 };
 
 StructuredBuffer<PathTile> path_tiles: register(t1);

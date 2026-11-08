@@ -80,6 +80,8 @@ fn apply_contrast_and_gamma_correction3(sample: vec3<f32>, color: vec3<f32>, enh
 struct GlobalParams {
     viewport_size: vec2<f32>,
     premultiplied_alpha: u32,
+    path_paint_base: u32,
+    path_curve_base: u32,
     pad: u32,
 }
 
@@ -1057,14 +1059,13 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
 // --- path tiles --- //
 
 struct PathTile {
-    order: u32,
     paint: u32,
     curve_start: u32,
     curve_count: u32,
+    backdrop: i32,
     top_left: vec2<f32>,
     bottom_right: vec2<f32>,
     reference: vec2<f32>,
-    backdrop: i32,
 }
 
 struct PathCurve {
@@ -1073,6 +1074,7 @@ struct PathCurve {
     a: vec2<f32>,
     b: vec2<f32>,
     sign: f32,
+    pad: u32,
 }
 
 struct PathPaint {
@@ -1080,6 +1082,7 @@ struct PathPaint {
     content_mask: Bounds,
     color: Background,
     even_odd: u32,
+    pad: u32,
 }
 
 struct PathTileVarying {

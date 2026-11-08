@@ -356,6 +356,7 @@ impl DirectXRenderer {
             .as_ref()
             .and_then(|devices| devices.annotation.clone())
             .filter(|annotation| unsafe { annotation.GetStatus().as_bool() });
+        let mut path_tile_cursor = 0;
         for batch in scene.batches() {
             let _annotation = annotation
                 .as_ref()
@@ -363,7 +364,14 @@ impl DirectXRenderer {
             match batch {
                 PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
                 PrimitiveBatch::Quads(range) => self.draw_quads(range.start, range.len()),
-                PrimitiveBatch::PathTiles(range) => self.draw_paths(range),
+                PrimitiveBatch::Paths(range) => {
+                    let tiles_start = path_tile_cursor;
+                    path_tile_cursor += scene.paths[range]
+                        .iter()
+                        .map(PaintedPath::tile_count)
+                        .sum::<usize>();
+                    self.draw_paths(tiles_start..path_tile_cursor)
+                }
                 PrimitiveBatch::Underlines(range) => self.draw_underlines(range.start, range.len()),
                 PrimitiveBatch::MonochromeSprites { texture_id, range } => {
                     self.draw_monochrome_sprites(texture_id, range.start, range.len())
@@ -379,8 +387,8 @@ impl DirectXRenderer {
             .with_context(|| {
                 format!(
                     "scene too large:\
-                    {} path tiles, {} shadows, {} quads, {} underlines, {} mono, {} subpixel, {} poly, {} surfaces",
-                    scene.path_tiles.len(),
+                    {} paths, {} shadows, {} quads, {} underlines, {} mono, {} subpixel, {} poly, {} surfaces",
+                    scene.paths.len(),
                     scene.shadows.len(),
                     scene.quads.len(),
                     scene.underlines.len(),
@@ -535,22 +543,25 @@ impl DirectXRenderer {
             )?;
         }
 
-        if !scene.path_tiles.is_empty() {
+        if !scene.paths.is_empty() {
+            let mut paints = Vec::with_capacity(scene.paths.len());
+            let mut curves = Vec::new();
+            let mut tiles = Vec::new();
+            for path in &scene.paths {
+                path.append_to(&mut paints, &mut curves, &mut tiles);
+            }
+
             self.pipelines.path_tile_pipeline.update_buffer(
                 &devices.device,
                 &devices.device_context,
-                &scene.path_tiles,
+                &tiles,
             )?;
-            self.pipelines.path_curves.write(
-                &devices.device,
-                &devices.device_context,
-                &scene.path_curves,
-            )?;
-            self.pipelines.path_paints.write(
-                &devices.device,
-                &devices.device_context,
-                &scene.path_paints,
-            )?;
+            self.pipelines
+                .path_curves
+                .write(&devices.device, &devices.device_context, &curves)?;
+            self.pipelines
+                .path_paints
+                .write(&devices.device, &devices.device_context, &paints)?;
             let buffers = [
                 self.pipelines.path_curves.view.clone(),
                 self.pipelines.path_paints.view.clone(),

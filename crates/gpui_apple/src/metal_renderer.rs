@@ -2,8 +2,8 @@ use crate::metal_atlas::MetalAtlas;
 use anyhow::{Context as _, Result};
 use block2::RcBlock;
 use gpui::{
-    AtlasTextureId, Bounds, ContentMask, DevicePixels, PaintSurface, PrimitiveBatch, ScaledPixels,
-    Scene, Size, point, size,
+    AtlasTextureId, Bounds, ContentMask, DevicePixels, PaintSurface, PaintedPath, PrimitiveBatch,
+    ScaledPixels, Scene, Size, point, size,
 };
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 use image::RgbaImage;
@@ -572,8 +572,8 @@ impl MetalRenderer {
         )?;
         let instance_bindings = write_instances(scene, &mut writer).with_context(|| {
             format!(
-                "writing instance data: {} path tiles, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
-                scene.path_tiles.len(),
+                "writing instance data: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                scene.paths.len(),
                 scene.shadows.len(),
                 scene.quads.len(),
                 scene.underlines.len(),
@@ -771,6 +771,7 @@ impl MetalRenderer {
             },
         )?;
 
+        let mut path_tile_cursor = 0;
         for batch in scene.batches() {
             match batch {
                 PrimitiveBatch::Shadows(range) => {
@@ -779,8 +780,18 @@ impl MetalRenderer {
                 PrimitiveBatch::Quads(range) => {
                     self.draw_quads(range, instance_bindings, viewport_size, &command_encoder)
                 }
-                PrimitiveBatch::PathTiles(range) => {
-                    self.draw_path_tiles(range, instance_bindings, viewport_size, &command_encoder)
+                PrimitiveBatch::Paths(range) => {
+                    let tiles_start = path_tile_cursor;
+                    path_tile_cursor += scene.paths[range]
+                        .iter()
+                        .map(PaintedPath::tile_count)
+                        .sum::<usize>();
+                    self.draw_path_tiles(
+                        tiles_start..path_tile_cursor,
+                        instance_bindings,
+                        viewport_size,
+                        &command_encoder,
+                    )
                 }
                 PrimitiveBatch::Underlines(range) => {
                     self.draw_underlines(range, instance_bindings, viewport_size, &command_encoder)
@@ -1370,11 +1381,17 @@ struct InstanceBindings {
 }
 
 fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<InstanceBindings> {
+    let mut path_paints = Vec::with_capacity(scene.paths.len());
+    let mut path_curves = Vec::new();
+    let mut path_tiles = Vec::new();
+    for path in &scene.paths {
+        path.append_to(&mut path_paints, &mut path_curves, &mut path_tiles);
+    }
     Ok(InstanceBindings {
         quads: writer.write(&scene.quads)?,
-        path_tiles: writer.write(&scene.path_tiles)?,
-        path_curves: writer.write(&scene.path_curves)?,
-        path_paints: writer.write(&scene.path_paints)?,
+        path_tiles: writer.write(&path_tiles)?,
+        path_curves: writer.write(&path_curves)?,
+        path_paints: writer.write(&path_paints)?,
         shadows: writer.write(&scene.shadows)?,
         underlines: writer.write(&scene.underlines)?,
         monochrome_sprites: writer.write(&scene.monochrome_sprites)?,

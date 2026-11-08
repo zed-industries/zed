@@ -1718,9 +1718,7 @@ mod tests {
                         .iter()
                         .map(|underline| format!("{underline:?}")),
                 )
-                .chain(scene.path_paints.iter().map(|paint| format!("{paint:?}")))
-                .chain(scene.path_tiles.iter().map(|tile| format!("{tile:?}")))
-                .chain(scene.path_curves.iter().map(|curve| format!("{curve:?}")))
+                .chain(scene.paths.iter().map(|path| format!("{path:?}")))
                 .chain(scene.monochrome_sprites.iter().map(|sprite| {
                     format!(
                         "monochrome {} {:?} {:?} {:?} {:?}",

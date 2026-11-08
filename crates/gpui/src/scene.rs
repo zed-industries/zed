@@ -8,7 +8,7 @@ use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Path,
     PathTiles, Pixels, Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree,
 };
-use std::{fmt::Debug, iter::Peekable, ops::Range, slice, sync::Arc};
+use std::{fmt::Debug, iter::Peekable, ops::Range, rc::Rc, slice};
 
 #[expect(missing_docs)]
 pub type DrawOrder = u32;
@@ -40,12 +40,9 @@ pub struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
-    paths: Vec<PaintedPath>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
-    pub path_paints: Vec<PathPaint>,
-    pub path_tiles: Vec<PathTile>,
-    pub path_curves: Vec<PathCurve>,
+    pub paths: Vec<PaintedPath>,
     pub underlines: Vec<Underline>,
     pub monochrome_sprites: Vec<MonochromeSprite>,
     pub subpixel_sprites: Vec<SubpixelSprite>,
@@ -60,9 +57,6 @@ impl Scene {
         self.primitive_bounds.clear();
         self.layer_stack.clear();
         self.paths.clear();
-        self.path_paints.clear();
-        self.path_tiles.clear();
-        self.path_curves.clear();
         self.shadows.clear();
         self.quads.clear();
         self.underlines.clear();
@@ -155,16 +149,6 @@ impl Scene {
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
         self.paths.sort_by_key(|path| path.order);
-        self.path_paints.clear();
-        self.path_tiles.clear();
-        self.path_curves.clear();
-        for path in &self.paths {
-            path.append_to(
-                &mut self.path_paints,
-                &mut self.path_tiles,
-                &mut self.path_curves,
-            );
-        }
         self.underlines.sort_by_key(|underline| underline.order);
         self.monochrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
@@ -188,8 +172,8 @@ impl Scene {
             shadows_iter: self.shadows.iter().peekable(),
             quads_start: 0,
             quads_iter: self.quads.iter().peekable(),
-            path_tiles_start: 0,
-            path_tiles_iter: self.path_tiles.iter().peekable(),
+            paths_start: 0,
+            paths_iter: self.paths.iter().peekable(),
             underlines_start: 0,
             underlines_iter: self.underlines.iter().peekable(),
             monochrome_sprites_start: 0,
@@ -284,8 +268,8 @@ struct BatchIterator<'a> {
     shadows_iter: Peekable<slice::Iter<'a, Shadow>>,
     quads_start: usize,
     quads_iter: Peekable<slice::Iter<'a, Quad>>,
-    path_tiles_start: usize,
-    path_tiles_iter: Peekable<slice::Iter<'a, PathTile>>,
+    paths_start: usize,
+    paths_iter: Peekable<slice::Iter<'a, PaintedPath>>,
     underlines_start: usize,
     underlines_iter: Peekable<slice::Iter<'a, Underline>>,
     monochrome_sprites_start: usize,
@@ -309,7 +293,7 @@ impl<'a> Iterator for BatchIterator<'a> {
             ),
             (self.quads_iter.peek().map(|q| q.order), PrimitiveKind::Quad),
             (
-                self.path_tiles_iter.peek().map(|tile| tile.order),
+                self.paths_iter.peek().map(|path| path.order),
                 PrimitiveKind::Path,
             ),
             (
@@ -373,18 +357,18 @@ impl<'a> Iterator for BatchIterator<'a> {
                 Some(PrimitiveBatch::Quads(quads_start..quads_end))
             }
             PrimitiveKind::Path => {
-                let tiles_start = self.path_tiles_start;
-                let mut tiles_end = tiles_start + 1;
-                self.path_tiles_iter.next();
+                let paths_start = self.paths_start;
+                let mut paths_end = paths_start + 1;
+                self.paths_iter.next();
                 while self
-                    .path_tiles_iter
-                    .next_if(|tile| (tile.order, batch_kind) < max_order_and_kind)
+                    .paths_iter
+                    .next_if(|path| (path.order, batch_kind) < max_order_and_kind)
                     .is_some()
                 {
-                    tiles_end += 1;
+                    paths_end += 1;
                 }
-                self.path_tiles_start = tiles_end;
-                Some(PrimitiveBatch::PathTiles(tiles_start..tiles_end))
+                self.paths_start = paths_end;
+                Some(PrimitiveBatch::Paths(paths_start..paths_end))
             }
             PrimitiveKind::Underline => {
                 let underlines_start = self.underlines_start;
@@ -493,7 +477,7 @@ impl<'a> Iterator for BatchIterator<'a> {
 pub enum PrimitiveBatch {
     Shadows(Range<usize>),
     Quads(Range<usize>),
-    PathTiles(Range<usize>),
+    Paths(Range<usize>),
     Underlines(Range<usize>),
     MonochromeSprites {
         texture_id: AtlasTextureId,
@@ -517,7 +501,7 @@ impl PrimitiveBatch {
         match self {
             Self::Shadows(range) => format!("shadows ({})", range.len()),
             Self::Quads(range) => format!("quads ({})", range.len()),
-            Self::PathTiles(range) => format!("path tiles ({})", range.len()),
+            Self::Paths(range) => format!("paths ({})", range.len()),
             Self::Underlines(range) => format!("underlines ({})", range.len()),
             Self::MonochromeSprites { texture_id, range } => {
                 format!(
@@ -804,6 +788,7 @@ pub struct PathCurve {
     pub a: Point<f32>,
     pub b: Point<f32>,
     pub sign: f32,
+    pub pad: u32, // align to 8 bytes
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -815,20 +800,20 @@ pub struct PathPaint {
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Background,
     pub even_odd: PaddedBool32,
+    pub pad: u32, // align to 8 bytes
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct PathTile {
-    pub order: DrawOrder,
     pub paint: u32,
     pub curve_start: u32,
     pub curve_count: u32,
+    pub backdrop: i32,
     pub top_left: Point<f32>,
     pub bottom_right: Point<f32>,
     pub reference: Point<f32>,
-    pub backdrop: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -836,10 +821,11 @@ pub struct PathTile {
 pub struct PaintedPath {
     order: DrawOrder,
     bounds: Bounds<ScaledPixels>,
-    tiles: Arc<PathTiles>,
+    tiles: Rc<PathTiles>,
     paint: PathPaint,
 }
 
+#[expect(missing_docs)]
 impl PaintedPath {
     /// Bins `path` into tiles, to be filled with `color` within `content_mask`.
     pub fn new(
@@ -848,49 +834,43 @@ impl PaintedPath {
         content_mask: ContentMask<Pixels>,
         color: Background,
     ) -> Self {
-        let tiles = path.bin(scale_factor);
+        let content_mask = content_mask.scale(scale_factor);
+        let mut tiles = path.bin(scale_factor);
+        tiles.retain_visible(content_mask.bounds);
         let paint = PathPaint {
             bounds: tiles.bounds(),
-            content_mask: content_mask.scale(scale_factor),
+            content_mask,
             color,
             even_odd: path.even_odd().into(),
+            pad: 0,
         };
         Self {
             order: 0,
             bounds: tiles.painted_bounds(),
-            tiles: Arc::new(tiles),
+            tiles: Rc::new(tiles),
             paint,
         }
     }
 
-    fn append_to(
+    pub fn tile_count(&self) -> usize {
+        self.tiles.tiles().len()
+    }
+
+    pub fn append_to(
         &self,
         paints: &mut Vec<PathPaint>,
-        tiles: &mut Vec<PathTile>,
         curves: &mut Vec<PathCurve>,
+        tiles: &mut Vec<PathTile>,
     ) {
         let paint_index = paints.len() as u32;
         let curve_start = curves.len() as u32;
-        let mask = self.paint.content_mask.bounds;
         paints.push(self.paint);
         curves.extend_from_slice(self.tiles.curves());
-        tiles.extend(
-            self.tiles
-                .tiles()
-                .iter()
-                .filter(|tile| {
-                    tile.top_left.x < mask.right().0
-                        && tile.top_left.y < mask.bottom().0
-                        && tile.bottom_right.x > mask.origin.x.0
-                        && tile.bottom_right.y > mask.origin.y.0
-                })
-                .map(|tile| PathTile {
-                    order: self.order,
-                    paint: paint_index,
-                    curve_start: tile.curve_start + curve_start,
-                    ..*tile
-                }),
-        );
+        tiles.extend(self.tiles.tiles().iter().map(|tile| PathTile {
+            paint: paint_index,
+            curve_start: curve_start + tile.curve_start,
+            ..*tile
+        }));
     }
 }
 
