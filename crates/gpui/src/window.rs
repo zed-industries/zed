@@ -5469,8 +5469,10 @@ impl Window {
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
 
+        let scope = self.element_id_stack.hash();
         self.layout_engine.as_mut().unwrap().request_layout(
-            style,
+            scope,
+            &style,
             rem_size,
             scale_factor,
             &cx.layout_id_buffer,
@@ -5494,10 +5496,24 @@ impl Window {
 
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
+        let scope = self.element_id_stack.hash();
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+            .request_measured_layout(scope, &style, rem_size, scale_factor, measure)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_layout_cache_enabled(&mut self, enabled: bool) {
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .set_cache_enabled(enabled);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn layout_node_count(&self) -> usize {
+        self.layout_engine.as_ref().unwrap().node_count()
     }
 
     /// Compute the layout for the given id within the given available space.
