@@ -612,6 +612,7 @@ impl RandomizedElementTree {
                 cached_views: config.cached_views,
                 hover_styles: config.hover_styles,
                 paths: config.paths,
+                id_generation: 0,
             },
             paths_by_element_id: HashMap::default(),
         };
@@ -733,6 +734,14 @@ impl RandomizedElementTree {
         };
         self.notify_owner(owner, cx);
         true
+    }
+
+    /// Gives every element a new ID, as when a list's items are keyed by data that
+    /// changes every frame, and re-renders the whole tree. Nothing else changes, so each
+    /// element's state is lost but its layout and paint are as before.
+    pub fn churn_element_ids(&mut self, cx: &mut Context<Self>) {
+        self.snapshot.borrow_mut().render_options.id_generation += 1;
+        cx.notify();
     }
 
     /// Generates and inserts an element below a seeded random parent.
@@ -1173,11 +1182,16 @@ impl Render for RandomizedElementTree {
 
 type RandomizedElementEntities = HashMap<u64, Entity<RandomizedElementEntity>>;
 
+/// Element IDs carry the tree's ID generation above this bit, so churning IDs never
+/// changes the element number the low bits identify.
+const ID_GENERATION_SHIFT: u32 = 32;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct RenderOptions {
     cached_views: bool,
     hover_styles: bool,
     paths: bool,
+    id_generation: u64,
 }
 
 struct RandomizedElementEntity {
@@ -1411,7 +1425,7 @@ fn render_node_body(
     div()
         .id(ElementId::NamedInteger(
             "randomized-element".into(),
-            node.id,
+            node.id | options.id_generation << ID_GENERATION_SHIFT,
         ))
         .flex()
         .flex_shrink_0()
@@ -1766,7 +1780,8 @@ mod tests {
                         let ElementId::NamedInteger(name, element_id) = global_id.last()? else {
                             return None;
                         };
-                        (name.as_ref() == "randomized-element").then_some(*element_id)
+                        (name.as_ref() == "randomized-element")
+                            .then_some(element_id & ((1 << ID_GENERATION_SHIFT) - 1))
                     })
                     .collect(),
             }
