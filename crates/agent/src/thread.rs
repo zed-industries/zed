@@ -7808,11 +7808,17 @@ mod tests {
                 }),
             );
         }
+        send_echo(fake, model, "echo", text);
+        fake.end_last(model);
+        cx.run_until_parked();
+    }
+
+    fn send_echo(fake: &FakeLanguageModelProvider, model: &LanguageModel, id: &str, text: &str) {
         let raw_input = serde_json::json!({"text": text}).to_string();
         fake.send_last_event(
             model,
             LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
-                id: "echo".into(),
+                id: id.into(),
                 name: EchoTool::NAME.into(),
                 raw_input,
                 input: language_model::LanguageModelToolUseInput::Json(json!({"text": text})),
@@ -7820,8 +7826,62 @@ mod tests {
                 thought_signature: None,
             }),
         );
-        fake.end_last(model);
+    }
+
+    async fn start_echo_turn(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<Thread>,
+        Arc<FakeLanguageModelProvider>,
+        LanguageModel,
+    ) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        enable_echo_tool(&thread, cx);
+        thread
+            .update(cx, |thread, cx| {
+                thread.send(ClientUserMessageId::new(), vec!["prompt"], cx)
+            })
+            .unwrap();
         cx.run_until_parked();
+        (thread, fake, model)
+    }
+
+    fn echo_results(thread: &Thread) -> Vec<(bool, String)> {
+        thread
+            .messages
+            .iter()
+            .filter_map(|message| message.as_agent_message())
+            .flat_map(|agent| agent.tool_results.values())
+            .filter(|result| result.tool_name.as_ref() == EchoTool::NAME)
+            .map(|result| {
+                let text = result
+                    .content
+                    .iter()
+                    .map(|content| match content {
+                        LanguageModelToolResultContent::Text(text) => text.as_ref(),
+                        LanguageModelToolResultContent::Image(_) => "",
+                    })
+                    .collect::<String>();
+                (result.is_error, text)
+            })
+            .collect()
+    }
+
+    fn agent_text(thread: &Thread) -> String {
+        let mut text = String::new();
+        for message in &thread.messages {
+            let Some(agent) = message.as_agent_message() else {
+                continue;
+            };
+            for content in &agent.content {
+                if let AgentMessageContent::Text(chunk) = content {
+                    text.push_str(chunk);
+                }
+            }
+        }
+        text
     }
 
     fn finish_compaction(
@@ -7915,19 +7975,23 @@ mod tests {
         finish_tool_round(&fake, &model, None, cx);
         assert_eq!(fake.pending_completions().len(), 0);
 
-        let notice = thread.read_with(cx, |thread, _| {
-            thread.messages.iter().any(|message| {
-                message.as_agent_message().is_some_and(|agent| {
-                    agent.content.iter().any(|content| match content {
-                        AgentMessageContent::Text(text) => {
-                            text.contains(crate::loop_guard::TOOL_LOOP_NOTICE)
-                        }
-                        _ => false,
-                    })
-                })
-            })
+        let (results, notices) = thread.read_with(cx, |thread, _| {
+            (
+                echo_results(thread),
+                agent_text(thread)
+                    .matches(crate::loop_guard::TOOL_LOOP_NOTICE)
+                    .count(),
+            )
         });
-        assert!(notice);
+        assert_eq!(
+            results,
+            vec![
+                (false, "tool output".to_string()),
+                (false, "tool output".to_string()),
+                (true, crate::loop_guard::TOOL_LOOP_NOTICE.to_string()),
+            ]
+        );
+        assert_eq!(notices, 1);
     }
 
     #[gpui::test]
@@ -7956,19 +8020,270 @@ mod tests {
         cx.run_until_parked();
 
         assert_eq!(fake.pending_completions().len(), 0);
-        let notice = thread.read_with(cx, |thread, _| {
-            thread.messages.iter().any(|message| {
-                message.as_agent_message().is_some_and(|agent| {
-                    agent.content.iter().any(|content| match content {
-                        AgentMessageContent::Text(text) => {
-                            text.contains(crate::loop_guard::THINKING_LOOP_NOTICE)
-                        }
-                        _ => false,
-                    })
-                })
-            })
+        let notices = thread.read_with(cx, |thread, _| {
+            agent_text(thread)
+                .matches(crate::loop_guard::THINKING_LOOP_NOTICE)
+                .count()
         });
-        assert!(notice);
+        assert_eq!(notices, 1);
+    }
+
+    #[gpui::test]
+    async fn test_same_tool_with_different_arguments_keeps_going(cx: &mut gpui::TestAppContext) {
+        let (thread, fake, model) = start_echo_turn(cx).await;
+
+        for text in ["one", "two", "three"] {
+            finish_echo_round(&fake, &model, None, text, cx);
+            assert_eq!(fake.pending_completions().len(), 1);
+        }
+
+        let results = thread.read_with(cx, |thread, _| echo_results(thread));
+        assert_eq!(
+            results,
+            vec![
+                (false, "one".to_string()),
+                (false, "two".to_string()),
+                (false, "three".to_string()),
+            ]
+        );
+        assert!(!thread.read_with(cx, |thread, _| {
+            agent_text(thread).contains(crate::loop_guard::TOOL_LOOP_NOTICE)
+        }));
+    }
+
+    #[gpui::test]
+    async fn test_a_different_call_lets_the_old_one_run_twice_more(cx: &mut gpui::TestAppContext) {
+        let (thread, fake, model) = start_echo_turn(cx).await;
+
+        for text in ["same", "other", "same", "same"] {
+            finish_echo_round(&fake, &model, None, text, cx);
+            assert_eq!(fake.pending_completions().len(), 1);
+        }
+        finish_echo_round(&fake, &model, None, "same", cx);
+        assert_eq!(fake.pending_completions().len(), 0);
+
+        let results = thread.read_with(cx, |thread, _| echo_results(thread));
+        assert_eq!(
+            results,
+            vec![
+                (false, "same".to_string()),
+                (false, "other".to_string()),
+                (false, "same".to_string()),
+                (false, "same".to_string()),
+                (true, crate::loop_guard::TOOL_LOOP_NOTICE.to_string()),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_parallel_copies_count_as_one_round(cx: &mut gpui::TestAppContext) {
+        let (thread, fake, model) = start_echo_turn(cx).await;
+
+        for id in ["echo-1", "echo-2", "echo-3"] {
+            send_echo(&fake, &model, id, "same");
+        }
+        fake.end_last(&model);
+        cx.run_until_parked();
+        assert_eq!(fake.pending_completions().len(), 1);
+
+        finish_echo_round(&fake, &model, None, "same", cx);
+        assert_eq!(fake.pending_completions().len(), 1);
+        finish_echo_round(&fake, &model, None, "same", cx);
+        assert_eq!(fake.pending_completions().len(), 0);
+
+        let results = thread.read_with(cx, |thread, _| echo_results(thread));
+        assert_eq!(
+            results,
+            vec![
+                (false, "same".to_string()),
+                (false, "same".to_string()),
+                (false, "same".to_string()),
+                (false, "same".to_string()),
+                (true, crate::loop_guard::TOOL_LOOP_NOTICE.to_string()),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_a_round_with_another_call_still_counts_toward_the_streak(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (thread, fake, model) = start_echo_turn(cx).await;
+
+        finish_echo_round(&fake, &model, None, "same", cx);
+        send_echo(&fake, &model, "echo-other", "other");
+        send_echo(&fake, &model, "echo-same", "same");
+        fake.end_last(&model);
+        cx.run_until_parked();
+        assert_eq!(fake.pending_completions().len(), 1);
+
+        finish_echo_round(&fake, &model, None, "same", cx);
+        assert_eq!(fake.pending_completions().len(), 0);
+
+        let results = thread.read_with(cx, |thread, _| echo_results(thread));
+        assert_eq!(
+            results,
+            vec![
+                (false, "same".to_string()),
+                (false, "other".to_string()),
+                (false, "same".to_string()),
+                (true, crate::loop_guard::TOOL_LOOP_NOTICE.to_string()),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_a_new_user_message_resets_the_tool_streak(cx: &mut gpui::TestAppContext) {
+        let (thread, fake, model) = start_echo_turn(cx).await;
+
+        finish_echo_round(&fake, &model, None, "same", cx);
+        finish_echo_round(&fake, &model, None, "same", cx);
+        fake.send_last_text(&model, "done");
+        fake.end_last(&model);
+        cx.run_until_parked();
+        assert_eq!(fake.pending_completions().len(), 0);
+        assert!(!thread.read_with(cx, |thread, _| {
+            agent_text(thread).contains(crate::loop_guard::TOOL_LOOP_NOTICE)
+        }));
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send(ClientUserMessageId::new(), vec!["again"], cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        finish_echo_round(&fake, &model, None, "same", cx);
+        assert_eq!(fake.pending_completions().len(), 1);
+        finish_echo_round(&fake, &model, None, "same", cx);
+        assert_eq!(fake.pending_completions().len(), 1);
+        finish_echo_round(&fake, &model, None, "same", cx);
+        assert_eq!(fake.pending_completions().len(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_thinking_under_the_limit_still_runs_a_tool(cx: &mut gpui::TestAppContext) {
+        let (thread, fake, model) = start_echo_turn(cx).await;
+        let passage = "x".repeat(crate::loop_guard::THINKING_REPEAT_CHARS);
+
+        fake.send_last_event(
+            &model,
+            LanguageModelCompletionEvent::Thinking {
+                text: passage.repeat(2),
+                signature: None,
+            },
+        );
+        send_echo(&fake, &model, "echo", "tool output");
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        assert_eq!(fake.pending_completions().len(), 1);
+        let (results, notices) = thread.read_with(cx, |thread, _| {
+            (
+                echo_results(thread),
+                agent_text(thread)
+                    .matches(crate::loop_guard::THINKING_LOOP_NOTICE)
+                    .count(),
+            )
+        });
+        assert_eq!(results, vec![(false, "tool output".to_string())]);
+        assert_eq!(notices, 0);
+    }
+
+    #[gpui::test]
+    async fn test_repeated_thinking_skips_a_tool_later_in_the_same_completion(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (thread, fake, model) = start_echo_turn(cx).await;
+        let passage = "x".repeat(crate::loop_guard::THINKING_REPEAT_CHARS);
+
+        for _ in 0..3 {
+            fake.send_last_event(
+                &model,
+                LanguageModelCompletionEvent::Thinking {
+                    text: passage.clone(),
+                    signature: None,
+                },
+            );
+        }
+        send_echo(&fake, &model, "echo", "tool output");
+        fake.send_last_event(
+            &model,
+            LanguageModelCompletionEvent::Thinking {
+                text: passage,
+                signature: None,
+            },
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        assert_eq!(fake.pending_completions().len(), 0);
+        let (results, notices) = thread.read_with(cx, |thread, _| {
+            (
+                echo_results(thread),
+                agent_text(thread)
+                    .matches(crate::loop_guard::THINKING_LOOP_NOTICE)
+                    .count(),
+            )
+        });
+        assert!(results.is_empty());
+        assert_eq!(notices, 1);
+    }
+
+    #[gpui::test]
+    async fn test_a_new_ending_after_repeated_thinking_still_runs_a_tool(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (thread, fake, model) = start_echo_turn(cx).await;
+        let passage = "x".repeat(crate::loop_guard::THINKING_REPEAT_CHARS);
+        let moved_on = format!(
+            "{}{}",
+            passage.repeat(3),
+            "y".repeat(crate::loop_guard::THINKING_REPEAT_CHARS)
+        );
+
+        fake.send_last_event(
+            &model,
+            LanguageModelCompletionEvent::Thinking {
+                text: moved_on,
+                signature: None,
+            },
+        );
+        send_echo(&fake, &model, "echo", "tool output");
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        assert_eq!(fake.pending_completions().len(), 1);
+        let (results, notices) = thread.read_with(cx, |thread, _| {
+            (
+                echo_results(thread),
+                agent_text(thread)
+                    .matches(crate::loop_guard::THINKING_LOOP_NOTICE)
+                    .count(),
+            )
+        });
+        assert_eq!(results, vec![(false, "tool output".to_string())]);
+        assert_eq!(notices, 0);
+    }
+
+    #[gpui::test]
+    async fn test_a_short_repeated_phrase_does_not_stop_the_turn(cx: &mut gpui::TestAppContext) {
+        let (thread, fake, model) = start_echo_turn(cx).await;
+
+        fake.send_last_event(
+            &model,
+            LanguageModelCompletionEvent::Thinking {
+                text: "Let me check.\n".repeat(8),
+                signature: None,
+            },
+        );
+        send_echo(&fake, &model, "echo", "tool output");
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        assert_eq!(fake.pending_completions().len(), 1);
+        assert!(!thread.read_with(cx, |thread, _| {
+            agent_text(thread).contains(crate::loop_guard::THINKING_LOOP_NOTICE)
+        }));
     }
 
     fn set_registry_compaction_model(cx: &mut App, model: Option<LanguageModel>) {

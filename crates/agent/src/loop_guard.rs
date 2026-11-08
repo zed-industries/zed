@@ -112,6 +112,52 @@ mod tests {
     }
 
     #[test]
+    fn the_same_tool_with_different_arguments_is_not_a_repeat() {
+        let first = tool_fingerprint("terminal", r#"{"command":"ls"}"#);
+        let second = tool_fingerprint("terminal", r#"{"command":"pwd"}"#);
+        let rounds = vec![
+            vec![first.clone()],
+            vec![first.clone()],
+            vec![second.clone()],
+        ];
+        assert!(!repeated_tool_rounds(&rounds, &second));
+    }
+
+    #[test]
+    fn another_tool_name_with_the_same_arguments_is_not_a_repeat() {
+        let read = tool_fingerprint("read_file", r#"{"path":"a.rs"}"#);
+        let grep = tool_fingerprint("grep", r#"{"path":"a.rs"}"#);
+        assert_ne!(read, grep);
+        let rounds = vec![vec![read.clone()], vec![read.clone()], vec![grep.clone()]];
+        assert!(!repeated_tool_rounds(&rounds, &grep));
+    }
+
+    #[test]
+    fn a_round_that_also_contains_other_calls_still_counts() {
+        let read = tool_fingerprint("read_file", r#"{"path":"a.rs"}"#);
+        let grep = tool_fingerprint("grep", r#"{"regex":"fn"}"#);
+        let rounds = vec![
+            vec![grep.clone(), read.clone()],
+            vec![read.clone()],
+            vec![read.clone()],
+        ];
+        assert!(repeated_tool_rounds(&rounds, &read));
+        assert!(!repeated_tool_rounds(&rounds, &grep));
+    }
+
+    #[test]
+    fn an_empty_round_does_not_break_or_count() {
+        let read = tool_fingerprint("read_file", r#"{"path":"a.rs"}"#);
+        let rounds = vec![
+            vec![read.clone()],
+            vec![],
+            vec![read.clone()],
+            vec![read.clone()],
+        ];
+        assert!(repeated_tool_rounds(&rounds, &read));
+    }
+
+    #[test]
     fn thinking_repeat_needs_three_long_copies() {
         let passage = "x".repeat(THINKING_REPEAT_CHARS);
         assert!(!thinking_repeats(&passage));
@@ -123,6 +169,23 @@ mod tests {
     fn short_repeated_phrases_do_not_count() {
         let phrase = "Let me check.\n".repeat(8);
         assert!(!thinking_repeats(&phrase));
+    }
+
+    #[test]
+    fn seventy_nine_varied_characters_never_count() {
+        let passage: String = ('a'..='z')
+            .cycle()
+            .take(THINKING_REPEAT_CHARS - 1)
+            .collect();
+        assert_eq!(passage.chars().count(), THINKING_REPEAT_CHARS - 1);
+        assert!(!thinking_repeats(&passage.repeat(5)));
+    }
+
+    #[test]
+    fn a_new_ending_does_not_count_as_repeating() {
+        let passage = "x".repeat(THINKING_REPEAT_CHARS);
+        let moved_on = format!("{}{}", passage.repeat(3), "y".repeat(THINKING_REPEAT_CHARS));
+        assert!(!thinking_repeats(&moved_on));
     }
 
     #[test]
