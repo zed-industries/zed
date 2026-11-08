@@ -13377,8 +13377,11 @@ dependencies = [
  "project",
  "rope",
  "settings",
+ "theme",
+ "theme_settings",
  "ui",
  "util",
+ "workspace",
 ]
 
 [[package]]

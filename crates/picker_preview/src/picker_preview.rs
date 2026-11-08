@@ -421,3 +421,164 @@ impl EditorPreview {
             )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::display_map::DisplayRow;
+    use gpui::{TestAppContext, VisualTestContext};
+    use std::ops::Range;
+    use workspace::AppState;
+
+    async fn init_preview(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<EditorPreview>,
+        Entity<Buffer>,
+        &mut VisualTestContext,
+    ) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            app_state
+        });
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let buffer = cx.new(|cx| Buffer::local("header\n", cx));
+        let cx = cx.add_empty_window();
+        let preview = cx.update(|window, cx| cx.new(|cx| EditorPreview::new(project, window, cx)));
+        (preview, buffer, cx)
+    }
+
+    fn show_match(
+        preview: &Entity<EditorPreview>,
+        buffer: &Entity<Buffer>,
+        range: Range<Point>,
+        cx: &mut VisualTestContext,
+    ) {
+        let location = buffer.read_with(cx, |buffer, _| {
+            let snapshot = buffer.text_snapshot();
+            // The bookmark picker uses left-biased endpoints, including at EOF.
+            let start = snapshot.anchor_before(range.start);
+            let end = snapshot.anchor_before(range.end);
+            MatchLocation {
+                anchor_range: start..end,
+                range: snapshot.offset_for_anchor(&start)..snapshot.offset_for_anchor(&end),
+            }
+        });
+        preview.update_in(cx, |preview, window, cx| {
+            preview.update(
+                PreviewUpdate::from_buffer(buffer.clone(), location),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+    }
+
+    fn append_text(buffer: &Entity<Buffer>, text: &str, cx: &mut VisualTestContext) {
+        buffer.update(cx, |buffer, cx| {
+            let end = buffer.len();
+            buffer.edit([(end..end, text)], None, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    fn highlighted_rows(
+        preview: &Entity<EditorPreview>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<DisplayRow> {
+        let editor = preview.read_with(cx, |preview, _| preview.preview_editor.clone());
+        editor.update_in(cx, |editor, window, cx| {
+            editor
+                .highlighted_display_rows(window, cx)
+                .into_keys()
+                .collect()
+        })
+    }
+
+    #[gpui::test]
+    async fn test_preview_highlights_empty_eof_row(cx: &mut TestAppContext) {
+        let (preview, buffer, cx) = init_preview(cx).await;
+        show_match(&preview, &buffer, Point::new(1, 0)..Point::new(1, 0), cx);
+
+        assert_eq!(
+            highlighted_rows(&preview, cx),
+            vec![DisplayRow(1)],
+            "a match on the empty EOF row should highlight that row",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_preview_empty_eof_highlight_stays_on_one_row_after_edits(
+        cx: &mut TestAppContext,
+    ) {
+        let (preview, buffer, cx) = init_preview(cx).await;
+        show_match(&preview, &buffer, Point::new(1, 0)..Point::new(1, 0), cx);
+
+        append_text(&buffer, "one\ntwo\n", cx);
+        assert_eq!(
+            highlighted_rows(&preview, cx),
+            vec![DisplayRow(1)],
+            "appending text without updating the preview must not extend the row highlight",
+        );
+
+        append_text(&buffer, "three\n", cx);
+        assert_eq!(highlighted_rows(&preview, cx), vec![DisplayRow(1)]);
+
+        buffer.update(cx, |buffer, cx| {
+            let end = buffer.len();
+            buffer.edit([("header\n".len()..end, "")], None, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(highlighted_rows(&preview, cx), vec![DisplayRow(1)]);
+
+        append_text(&buffer, "last", cx);
+        assert_eq!(highlighted_rows(&preview, cx), vec![DisplayRow(1)]);
+    }
+
+    #[gpui::test]
+    async fn test_preview_ordinary_match_replaces_single_row_highlight(cx: &mut TestAppContext) {
+        let (preview, buffer, cx) = init_preview(cx).await;
+        show_match(&preview, &buffer, Point::new(1, 0)..Point::new(1, 0), cx);
+        show_match(&preview, &buffer, Point::new(0, 0)..Point::new(0, 6), cx);
+        assert_eq!(highlighted_rows(&preview, cx), vec![DisplayRow(0)]);
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(3..3, "\n")], None, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            highlighted_rows(&preview, cx),
+            vec![DisplayRow(0), DisplayRow(1)],
+            "an ordinary match should retain its range semantics after switching from an EOF match",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_preview_clear_stops_single_row_highlight_updates(cx: &mut TestAppContext) {
+        let (preview, buffer, cx) = init_preview(cx).await;
+        show_match(&preview, &buffer, Point::new(1, 0)..Point::new(1, 0), cx);
+        let editor = preview.read_with(cx, |preview, _| preview.preview_editor.clone());
+        let ranges_before_clear = editor.read_with(cx, |editor, cx| {
+            editor
+                .highlighted_rows::<SearchMatchLineHighlight>(cx)
+                .map(|(range, _)| range)
+                .collect::<Vec<_>>()
+        });
+
+        preview.update(cx, |preview, _| preview.clear());
+        append_text(&buffer, "one\ntwo\n", cx);
+        assert!(preview.read_with(cx, |preview, _| preview.message.is_some()));
+
+        // Clearing hides the editor rather than removing its highlights. Subsequent edits
+        // must not recompute the hidden editor's single-row highlight.
+        let ranges_after_edit = editor.read_with(cx, |editor, cx| {
+            editor
+                .highlighted_rows::<SearchMatchLineHighlight>(cx)
+                .map(|(range, _)| range)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(ranges_after_edit, ranges_before_clear);
+    }
+}
