@@ -139,8 +139,7 @@ impl Render for HelloWorld {
                                     .child(format!("opacity: {:.1}", self.opacity)),
                             )
                             .child(
-                                svg()
-                                    .path("image/arrow_circle.svg")
+                                svg("image/arrow_circle.svg")
                                     .text_color(gpui::black())
                                     .text_2xl()
                                     .size_8(),
