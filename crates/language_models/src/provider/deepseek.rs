@@ -14,8 +14,8 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
     LanguageModelToolChoiceSupport, LanguageModelToolResultContent, LanguageModelToolUse,
-    MessageContent, ModelRateLimiters, ProviderSettingsView, RateLimiter, Role, StopReason,
-    TokenUsage, env_var, unavailable_error,
+    MessageContent, ModelRateLimiters, PromptCompactionStrategy, ProviderSettingsView, RateLimiter,
+    Role, StopReason, TokenUsage, env_var, unavailable_error,
 };
 pub use settings::DeepseekAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
@@ -311,22 +311,26 @@ fn language_model(model: &deepseek::Model) -> LanguageModel {
                     name: "Low".into(),
                     value: "low".into(),
                     is_default: false,
+                    supports_disabling_thinking: None,
                 },
                 LanguageModelEffortLevel {
                     name: "High".into(),
                     value: "high".into(),
                     is_default: true,
+                    supports_disabling_thinking: None,
                 },
                 LanguageModelEffortLevel {
                     name: "Max".into(),
                     value: "max".into(),
                     is_default: false,
+                    supports_disabling_thinking: None,
                 },
             ])
         } else {
             Arc::default()
         },
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+        prompt_compaction_strategy: PromptCompactionStrategy::PreserveRequestPrefix,
         supports_images: model.supports_images(),
         max_output_tokens: model.max_output_tokens(),
         ..LanguageModel::new(

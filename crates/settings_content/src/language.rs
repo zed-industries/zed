@@ -131,6 +131,10 @@ impl EditPredictionProvider {
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct EditPredictionSettingsContent {
+    /// Whether to show the edit prediction button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
     /// Determines which edit prediction provider to use.
     pub provider: Option<EditPredictionProvider>,
     /// Disable edit predictions for files matching these glob patterns.
@@ -582,7 +586,8 @@ pub struct LanguageSettingsContent {
     /// Default: same
     pub soft_wrap_indent: Option<SoftWrapIndent>,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
-    /// is enabled.
+    /// is enabled. The `editor::Rewrap` action also wraps to this column by
+    /// default, whether or not soft-wrap is enabled.
     ///
     /// Default: 80
     pub preferred_line_length: Option<u32>,
@@ -601,7 +606,7 @@ pub struct LanguageSettingsContent {
     pub indent_guides: Option<IndentGuideSettingsContent>,
     /// Whether or not to perform a buffer format before saving.
     ///
-    /// Default: on
+    /// Default: off
     pub format_on_save: Option<FormatOnSave>,
     /// Whether or not to remove any trailing whitespace from lines of a buffer
     /// before saving it.

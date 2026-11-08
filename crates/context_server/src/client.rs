@@ -160,6 +160,17 @@ pub struct ModelContextServerBinary {
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
     pub timeout: Option<u64>,
+    #[serde(skip)]
+    pub stdin_prefix: Option<StdinPrefix>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct StdinPrefix(pub Vec<u8>);
+
+impl std::fmt::Debug for StdinPrefix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StdinPrefix([REDACTED {} bytes])", self.0.len())
+    }
 }
 
 impl Client {

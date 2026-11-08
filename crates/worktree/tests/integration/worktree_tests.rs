@@ -870,6 +870,69 @@ async fn test_scan_symlinks_always(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_deleted_external_symlink_before_read_dir_cleans_up_watch(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.scan_symlinks =
+                    Some(settings::ScanSymlinksSetting::Always);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({})).await;
+    fs.insert_tree("/outside", json!({"data": {}})).await;
+    fs.create_symlink("/root/link".as_ref(), "/outside/data".into())
+        .await
+        .unwrap();
+
+    fs.before_read_dir(
+        "/root/link",
+        Box::pin({
+            let fs = fs.clone();
+            async move {
+                let mut watched_paths = fs.registered_watch_paths();
+                watched_paths.sort();
+                assert_eq!(
+                    watched_paths,
+                    vec![PathBuf::from("/outside/data"), PathBuf::from("/root")]
+                );
+                fs.remove_file("/root/link".as_ref(), RemoveOptions::default())
+                    .await
+                    .unwrap();
+            }
+        }),
+    );
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![rel_path("")]
+        );
+    });
+    assert_eq!(fs.registered_watch_paths(), vec![PathBuf::from("/root")]);
+}
+
+#[gpui::test]
 async fn test_relative_path_for_external_abs_path(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -6548,6 +6611,193 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
         fired.contains(&"UpdatedRootRepoCommonDir"),
         "UpdatedRootRepoCommonDir should fire after first remote update even when \
          root_repo_common_dir is None, to signal that repo state is now known"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_single_file_worktree_abs_path(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+    });
+
+    let worktree = cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 1,
+                root_name: "config".to_string(),
+                visible: true,
+                abs_path: "/home/user/.ssh/config".to_string(),
+                root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
+            },
+            AnyProtoClient::new(NoopProtoClient::new()),
+            PathStyle::Unix,
+            cx,
+        )
+    });
+
+    let file = worktree::File {
+        worktree,
+        path: Arc::from(rel_path("")),
+        disk_state: language::DiskState::New,
+        entry_id: None,
+        is_local: false,
+        is_private: false,
+    };
+
+    cx.read(|cx| {
+        assert_eq!(
+            language::File::full_path(&file, cx),
+            PathBuf::from("config")
+        );
+        assert_eq!(
+            language::File::file_system_abs_path(&file, cx),
+            Some(PathBuf::from("/home/user/.ssh/config"))
+        );
+    });
+}
+
+#[gpui::test]
+fn test_remote_worktree_language_matching(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings
+                .project
+                .all_languages
+                .file_types
+                .get_or_insert_default()
+                .0
+                .extend([
+                    (
+                        "Plain Text".into(),
+                        vec![
+                            "repo/templates/*.html".into(),
+                            #[cfg(unix)]
+                            r"repo\\raw\\*.html".into(),
+                        ]
+                        .into(),
+                    ),
+                    ("SSH Config".into(), vec!["**/.ssh/config".into()].into()),
+                ]);
+        });
+    });
+    let registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+    for (name, suffixes) in [
+        ("Plain Text", vec![]),
+        ("SSH Config", vec![]),
+        ("HTML", vec!["html".into()]),
+        ("Git Commit", vec!["COMMIT_EDITMSG".into()]),
+        ("INI", vec!["config".into()]),
+    ] {
+        registry.register_test_language(language::LanguageConfig {
+            name: name.into(),
+            matcher: language::LanguageMatcher {
+                path_suffixes: suffixes,
+                ..Default::default()
+            }
+            .into(),
+            ..Default::default()
+        });
+    }
+
+    let mut actual = Vec::new();
+    for (root_name, abs_path, path, path_style) in [
+        ("repo", "/tmp/repo", "templates/index.html", PathStyle::Unix),
+        ("config", "/home/user/.ssh/config", "", PathStyle::Unix),
+        (
+            "COMMIT_EDITMSG",
+            r"C:\review60307\COMMIT_EDITMSG",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "COMMIT_EDITMSG",
+            r"\\server\share\COMMIT_EDITMSG",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "config",
+            r"C:\Users\user\.ssh\config",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "config",
+            r"\\server\share\.ssh\config",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "config",
+            "C:/Users/user/.ssh/config",
+            "",
+            PathStyle::Windows,
+        ),
+        (".ssh", r"C:\Users\用户\.ssh", "config", PathStyle::Windows),
+        (
+            "repo",
+            r"C:\repo",
+            "templates/index.html",
+            PathStyle::Windows,
+        ),
+        #[cfg(unix)]
+        ("config", r"/home/user\.ssh/config", "", PathStyle::Unix),
+        #[cfg(unix)]
+        ("repo", r"C:\repo", "raw/index.html", PathStyle::Windows),
+    ] {
+        cx.update(|cx| {
+            let worktree = Worktree::remote(
+                1,
+                clock::ReplicaId::new(1),
+                proto::WorktreeMetadata {
+                    id: 1,
+                    root_name: root_name.into(),
+                    visible: true,
+                    abs_path: abs_path.into(),
+                    root_repo_common_dir: None,
+                    root_repo_is_linked_worktree: false,
+                },
+                AnyProtoClient::new(NoopProtoClient::new()),
+                path_style,
+                cx,
+            );
+            let file: Arc<dyn language::File> = Arc::new(worktree::File {
+                worktree,
+                path: Arc::from(rel_path(path)),
+                disk_state: language::DiskState::New,
+                entry_id: None,
+                is_local: false,
+                is_private: false,
+            });
+            actual.push(
+                registry
+                    .language_for_file(&file, None, cx)
+                    .and_then(|id| registry.language_name_for_id(id)),
+            );
+        });
+    }
+    assert_eq!(
+        actual,
+        vec![
+            Some("Plain Text".into()),
+            Some("SSH Config".into()),
+            Some("Git Commit".into()),
+            Some("Git Commit".into()),
+            Some("SSH Config".into()),
+            Some("SSH Config".into()),
+            Some("SSH Config".into()),
+            Some("SSH Config".into()),
+            Some("Plain Text".into()),
+            #[cfg(unix)]
+            Some("INI".into()),
+            #[cfg(unix)]
+            Some("Plain Text".into()),
+        ]
     );
 }
 

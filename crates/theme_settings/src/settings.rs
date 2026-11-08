@@ -75,6 +75,9 @@ pub struct ThemeSettings {
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
     pub markdown_preview_theme: Option<ThemeSelection>,
+    /// The font family used for Mermaid diagrams.
+    /// Falls back to the UI font family if unset.
+    mermaid_font_family: Option<SharedString>,
     /// The font weight for headings in the markdown preview.
     markdown_preview_heading_font_weight: FontWeight,
     /// The line height for buffers, and the terminal.
@@ -444,6 +447,14 @@ impl ThemeSettings {
             .unwrap_or(&self.buffer_font.family)
     }
 
+    /// Returns the font family to use for Mermaid diagrams,
+    /// falling back to the UI font family when unset.
+    pub fn mermaid_font_family(&self) -> &SharedString {
+        self.mermaid_font_family
+            .as_ref()
+            .unwrap_or(&self.ui_font.family)
+    }
+
     /// Returns the font weight to use for headings in the markdown preview.
     pub fn markdown_preview_heading_font_weight(&self) -> FontWeight {
         self.markdown_preview_heading_font_weight
@@ -763,6 +774,10 @@ impl settings::Settings for ThemeSettings {
             markdown_preview_theme: markdown_preview
                 .and_then(|preview| preview.theme.clone())
                 .map(ThemeSelection::from),
+            mermaid_font_family: content
+                .mermaid_font_family
+                .as_ref()
+                .map(|font| font.0.clone().into()),
             markdown_preview_heading_font_weight: markdown_preview
                 .and_then(|preview| preview.heading_font_weight)
                 .map(|weight| weight.into_gpui())

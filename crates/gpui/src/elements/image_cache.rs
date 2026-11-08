@@ -320,7 +320,7 @@ impl ImageCacheProvider for RetainAllImageCacheProvider {
                 window.with_element_state::<Entity<RetainAllImageCache>, _>(
                     global_id,
                     |cache, _window| {
-                        let mut cache = cache.unwrap_or_else(|| RetainAllImageCache::new(cx));
+                        let cache = cache.unwrap_or_else(|| RetainAllImageCache::new(cx));
                         (cache.clone(), cache)
                     },
                 )
