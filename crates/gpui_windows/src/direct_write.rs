@@ -1188,66 +1188,10 @@ impl TextRenderer {
 struct RendererContext<'t, 'a, 'b> {
     text_system: &'t mut DirectWriteState,
     components: &'a DirectWriteComponents,
-    index_converter: StringIndexConverter<'a>,
+    index_converter: StringIndexConverter,
     runs: &'b mut Vec<ShapedRun>,
     layout: &'b IDWriteTextLayout,
     width: f32,
-}
-
-#[derive(Debug)]
-struct ClusterAnalyzer<'t> {
-    utf16_idx: usize,
-    glyph_idx: usize,
-    glyph_count: usize,
-    cluster_map: &'t [u16],
-}
-
-impl<'t> ClusterAnalyzer<'t> {
-    fn new(cluster_map: &'t [u16], glyph_count: usize) -> Self {
-        ClusterAnalyzer {
-            utf16_idx: 0,
-            glyph_idx: 0,
-            glyph_count,
-            cluster_map,
-        }
-    }
-}
-
-impl Iterator for ClusterAnalyzer<'_> {
-    type Item = (usize, usize);
-
-    fn next(&mut self) -> Option<(usize, usize)> {
-        if self.utf16_idx >= self.cluster_map.len() {
-            return None; // No more clusters
-        }
-        let start_utf16_idx = self.utf16_idx;
-        let current_glyph = self.cluster_map[start_utf16_idx] as usize;
-
-        // Find the end of current cluster (where glyph index changes)
-        let mut end_utf16_idx = start_utf16_idx + 1;
-        while end_utf16_idx < self.cluster_map.len()
-            && self.cluster_map[end_utf16_idx] as usize == current_glyph
-        {
-            end_utf16_idx += 1;
-        }
-
-        let utf16_len = end_utf16_idx - start_utf16_idx;
-
-        // Calculate glyph count for this cluster
-        let next_glyph = if end_utf16_idx < self.cluster_map.len() {
-            self.cluster_map[end_utf16_idx] as usize
-        } else {
-            self.glyph_count
-        };
-
-        let glyph_count = next_glyph - current_glyph;
-
-        // Update state for next call
-        self.utf16_idx = end_utf16_idx;
-        self.glyph_idx = next_glyph;
-
-        Some((utf16_len, glyph_count))
-    }
 }
 
 #[allow(non_snake_case)]
@@ -1290,7 +1234,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
     fn DrawGlyphRun(
         &self,
         clientdrawingcontext: *const ::core::ffi::c_void,
-        _baselineoriginx: f32,
+        baselineoriginx: f32,
         _baselineoriginy: f32,
         _measuringmode: DWRITE_MEASURING_MODE,
         glyphrun: *const DWRITE_GLYPH_RUN,
@@ -1374,16 +1318,15 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                     )?;
                     font_face.GetGlyphIndices(&u32::from(b' '), 1, &mut space)?;
                 }
-                context
-                    .index_converter
-                    .advance_to_utf16_ix(position as usize);
                 glyphs.push(ShapedGlyph {
                     id: GlyphId(u32::from(space)),
-                    position: point(px(context.width), px(0.0)),
-                    index: context.index_converter.utf8_ix,
+                    position: point(px(metrics.left), px(0.0)),
+                    index: context
+                        .index_converter
+                        .utf8_ix_for_utf16_ix(position as usize),
                     is_emoji: false,
                 });
-                context.width += metrics.width;
+                context.width = context.width.max(metrics.left + metrics.width);
             }
             if !glyphs.is_empty() {
                 context.runs.push(ShapedRun { font_id, glyphs });
@@ -1420,35 +1363,47 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 )?
             };
 
-            let cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
-            let mut utf16_idx = desc.textPosition as usize;
-            let mut glyph_idx = 0;
+            let glyph_utf16_starts = glyph_utf16_start_indices(cluster_map, glyph_count);
+            // DirectWrite reports runs in visual order. An odd bidi level means the
+            // run is right-to-left: its glyphs are in logical order and extend
+            // leftwards from the baseline origin.
+            let is_rtl = glyphrun.bidiLevel % 2 == 1;
+            let run_advance = glyph_advances.iter().sum::<f32>();
+            let mut run_right = if is_rtl {
+                baselineoriginx
+            } else {
+                baselineoriginx + run_advance
+            };
+            let mut advance = 0.0;
             let mut glyphs = Vec::with_capacity(glyph_count);
-            for (cluster_utf16_len, cluster_glyph_count) in cluster_analyzer {
-                context.index_converter.advance_to_utf16_ix(utf16_idx);
-                utf16_idx += cluster_utf16_len;
-                for (cluster_glyph_idx, glyph_id) in glyph_ids
-                    [glyph_idx..(glyph_idx + cluster_glyph_count)]
-                    .iter()
-                    .enumerate()
-                {
-                    let id = GlyphId(*glyph_id as u32);
-                    let is_emoji =
-                        color_font && is_color_glyph(font_face, id, &context.components.factory);
-                    let this_glyph_idx = glyph_idx + cluster_glyph_idx;
-                    glyphs.push(ShapedGlyph {
-                        id,
-                        position: point(
-                            px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
-                            px(-glyph_offsets[this_glyph_idx].ascenderOffset),
-                        ),
-                        index: context.index_converter.utf8_ix,
-                        is_emoji,
-                    });
-                    context.width += glyph_advances[this_glyph_idx];
-                }
-                glyph_idx += cluster_glyph_count;
+            for (glyph_idx, glyph_id) in glyph_ids.iter().enumerate() {
+                let id = GlyphId(*glyph_id as u32);
+                let is_emoji =
+                    color_font && is_color_glyph(font_face, id, &context.components.factory);
+                let glyph_advance = glyph_advances[glyph_idx];
+                let offset = glyph_offsets[glyph_idx];
+                let x = if is_rtl {
+                    baselineoriginx - advance - glyph_advance - offset.advanceOffset
+                } else {
+                    baselineoriginx + advance + offset.advanceOffset
+                };
+                run_right = run_right.max(x + glyph_advance);
+                let utf16_idx = desc.textPosition as usize + glyph_utf16_starts[glyph_idx];
+                glyphs.push(ShapedGlyph {
+                    id,
+                    position: point(px(x), px(-offset.ascenderOffset)),
+                    index: context.index_converter.utf8_ix_for_utf16_ix(utf16_idx),
+                    is_emoji,
+                });
+                advance += glyph_advance;
             }
+            glyphs.sort_by(|a, b| {
+                a.position
+                    .x
+                    .partial_cmp(&b.position.x)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            context.width = context.width.max(run_right);
             context.runs.push(ShapedRun { font_id, glyphs });
         }
         Ok(())
@@ -1522,43 +1477,71 @@ unsafe fn slice_from_nullable<'a, T>(
     }
 }
 
-struct StringIndexConverter<'a> {
-    text: &'a str,
-    utf8_ix: usize,
-    utf16_ix: usize,
+/// Maps UTF-16 offsets to UTF-8 byte offsets in any order, since right-to-left
+/// glyph runs visit their clusters in descending text order.
+struct StringIndexConverter {
+    /// Empty for ASCII text, where UTF-16 and UTF-8 offsets are equal.
+    utf16_to_utf8: Vec<usize>,
+    len: usize,
 }
 
-impl<'a> StringIndexConverter<'a> {
-    fn new(text: &'a str) -> Self {
+impl StringIndexConverter {
+    fn new(text: &str) -> Self {
+        if text.is_ascii() {
+            return Self {
+                utf16_to_utf8: Vec::new(),
+                len: text.len(),
+            };
+        }
+        let mut utf16_to_utf8 = vec![text.len(); text.encode_utf16().count() + 1];
+        let mut utf16_ix = 0;
+        for (utf8_ix, c) in text.char_indices() {
+            let next_utf16_ix = utf16_ix + c.len_utf16();
+            let next_utf8_ix = utf8_ix + c.len_utf8();
+            utf16_to_utf8[utf16_ix] = utf8_ix;
+            for target_utf16_ix in utf16_ix + 1..=next_utf16_ix {
+                utf16_to_utf8[target_utf16_ix] = next_utf8_ix;
+            }
+            utf16_ix = next_utf16_ix;
+        }
         Self {
-            text,
-            utf8_ix: 0,
-            utf16_ix: 0,
+            utf16_to_utf8,
+            len: text.len(),
         }
     }
 
-    #[allow(dead_code)]
-    fn advance_to_utf8_ix(&mut self, utf8_target: usize) {
-        for (ix, c) in self.text[self.utf8_ix..].char_indices() {
-            if self.utf8_ix + ix >= utf8_target {
-                self.utf8_ix += ix;
-                return;
-            }
-            self.utf16_ix += c.len_utf16();
+    fn utf8_ix_for_utf16_ix(&self, utf16_ix: usize) -> usize {
+        if self.utf16_to_utf8.is_empty() {
+            return utf16_ix.min(self.len);
         }
-        self.utf8_ix = self.text.len();
+        self.utf16_to_utf8
+            .get(utf16_ix)
+            .copied()
+            .unwrap_or(self.len)
+    }
+}
+
+/// Returns the UTF-16 offset, relative to the run, of the cluster each glyph
+/// belongs to. Unlike walking the cluster map forwards, this also handles
+/// right-to-left runs, where cluster glyph indices descend.
+fn glyph_utf16_start_indices(cluster_map: &[u16], glyph_count: usize) -> Vec<usize> {
+    let mut glyph_utf16_starts = vec![usize::MAX; glyph_count];
+    for (utf16_ix, &glyph_ix) in cluster_map.iter().enumerate() {
+        if let Some(start) = glyph_utf16_starts.get_mut(glyph_ix as usize) {
+            *start = (*start).min(utf16_ix);
+        }
     }
 
-    fn advance_to_utf16_ix(&mut self, utf16_target: usize) {
-        for (ix, c) in self.text[self.utf8_ix..].char_indices() {
-            if self.utf16_ix >= utf16_target {
-                self.utf8_ix += ix;
-                return;
-            }
-            self.utf16_ix += c.len_utf16();
+    // Glyphs that don't start a cluster belong to the preceding glyph's cluster.
+    let mut previous = 0;
+    for start in &mut glyph_utf16_starts {
+        if *start == usize::MAX {
+            *start = previous;
+        } else {
+            previous = *start;
         }
-        self.utf8_ix = self.text.len();
     }
+    glyph_utf16_starts
 }
 
 fn font_style_to_dwrite(style: FontStyle) -> DWRITE_FONT_STYLE {
@@ -1798,9 +1781,11 @@ fn is_line_separator(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::DirectWriteTextSystem;
-    use crate::direct_write::ClusterAnalyzer;
+    use crate::direct_write::{StringIndexConverter, glyph_utf16_start_indices};
     use anyhow::Result;
-    use gpui::{Font, FontWeight, PlatformTextSystem, TextRun, TextSystem, WindowTextSystem, px};
+    use gpui::{
+        Font, FontRun, FontWeight, PlatformTextSystem, TextRun, TextSystem, WindowTextSystem, px,
+    };
     use std::sync::Arc;
     use windows::Win32::Graphics::DirectWrite::{DWRITE_FONT_STRETCH_NORMAL, DWRITE_TEXT_METRICS};
 
@@ -1844,9 +1829,6 @@ mod tests {
                     "a\tb\tc",
                     "é\t𐐀\tz",
                     "a \tb  ",
-                    "אב",
-                    "aאבb",
-                    "a\tאב\tb",
                 ] {
                     let mut native_metrics = DWRITE_TEXT_METRICS::default();
                     unsafe {
@@ -2039,38 +2021,113 @@ mod tests {
 
     #[test]
     fn test_cluster_map() {
-        let cluster_map = [0];
-        let mut analyzer = ClusterAnalyzer::new(&cluster_map, 1);
-        let next = analyzer.next();
-        assert_eq!(next, Some((1, 1)));
-        let next = analyzer.next();
-        assert_eq!(next, None);
-
-        let cluster_map = [0, 1, 2];
-        let mut analyzer = ClusterAnalyzer::new(&cluster_map, 3);
-        let next = analyzer.next();
-        assert_eq!(next, Some((1, 1)));
-        let next = analyzer.next();
-        assert_eq!(next, Some((1, 1)));
-        let next = analyzer.next();
-        assert_eq!(next, Some((1, 1)));
-        let next = analyzer.next();
-        assert_eq!(next, None);
+        assert_eq!(glyph_utf16_start_indices(&[0], 1), [0]);
+        assert_eq!(glyph_utf16_start_indices(&[0, 1, 2], 3), [0, 1, 2]);
         // 👨‍👩‍👧‍👦👩‍💻
         let cluster_map = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 4, 4, 4, 4];
-        let mut analyzer = ClusterAnalyzer::new(&cluster_map, 5);
-        let next = analyzer.next();
-        assert_eq!(next, Some((11, 4)));
-        let next = analyzer.next();
-        assert_eq!(next, Some((5, 1)));
-        let next = analyzer.next();
-        assert_eq!(next, None);
+        assert_eq!(glyph_utf16_start_indices(&cluster_map, 5), [0, 0, 0, 0, 11]);
         // 👩‍💻
-        let cluster_map = [0, 0, 0, 0, 0];
-        let mut analyzer = ClusterAnalyzer::new(&cluster_map, 1);
-        let next = analyzer.next();
-        assert_eq!(next, Some((5, 1)));
-        let next = analyzer.next();
-        assert_eq!(next, None);
+        assert_eq!(glyph_utf16_start_indices(&[0, 0, 0, 0, 0], 1), [0]);
+    }
+
+    #[test]
+    fn rtl_runs_are_laid_out_in_visual_order() -> Result<()> {
+        let platform_text_system = DirectWriteTextSystem::new()?;
+        let font_id = platform_text_system.font_id(&Font {
+            family: "Segoe UI".into(),
+            ..Default::default()
+        })?;
+        let font_size = px(16.0);
+        // Each case lists the logical character positions in left-to-right visual
+        // order. Lines have a left-to-right base direction.
+        for (text, visual_char_order) in [
+            ("abc", vec![0, 1, 2]),
+            ("שלום", vec![3, 2, 1, 0]),
+            ("ab שלום cd", vec![0, 1, 2, 6, 5, 4, 3, 7, 8, 9]),
+            ("שלום abc", vec![3, 2, 1, 0, 4, 5, 6, 7]),
+            ("aאבb", vec![0, 2, 1, 3]),
+            ("a\tאב\tb", vec![0, 1, 3, 2, 4, 5]),
+        ] {
+            let layout = platform_text_system.layout_line(
+                text,
+                font_size,
+                &[FontRun {
+                    len: text.len(),
+                    font_id,
+                }],
+            );
+            let glyphs = layout.runs.iter().flat_map(|run| &run.glyphs);
+            let positions = glyphs.clone().map(|glyph| glyph.position.x);
+            assert!(
+                positions.clone().is_sorted(),
+                "{text:?}: glyph x positions are not ascending: {:?}",
+                positions.collect::<Vec<_>>()
+            );
+
+            let char_starts = text.char_indices().map(|(ix, _)| ix).collect::<Vec<_>>();
+            let mut visual_indices = glyphs
+                .map(|glyph| char_starts.binary_search(&glyph.index).unwrap())
+                .collect::<Vec<_>>();
+            visual_indices.dedup();
+            assert_eq!(visual_indices, visual_char_order, "{text:?}");
+
+            let mut native_metrics = DWRITE_TEXT_METRICS::default();
+            unsafe {
+                let state = platform_text_system.state.read();
+                let font = &state.fonts[font_id.0];
+                let format = platform_text_system.components.factory.CreateTextFormat(
+                    &font.font_family_h,
+                    &font.font_collection,
+                    font.font_face.GetWeight(),
+                    font.font_face.GetStyle(),
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    font_size.as_f32(),
+                    &platform_text_system.components.locale,
+                )?;
+                platform_text_system
+                    .components
+                    .factory
+                    .CreateTextLayout(
+                        &text.encode_utf16().collect::<Vec<_>>(),
+                        &format,
+                        f32::INFINITY,
+                        f32::INFINITY,
+                    )?
+                    .GetMetrics(&mut native_metrics)?;
+            }
+            assert!(
+                (layout.width - px(native_metrics.widthIncludingTrailingWhitespace)).abs()
+                    < px(0.001),
+                "{text:?}: width {:?} != native {}",
+                layout.width,
+                native_metrics.widthIncludingTrailingWhitespace
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_cluster_map_handles_rtl_clusters() {
+        assert_eq!(
+            glyph_utf16_start_indices(&[4, 3, 2, 1, 0], 5),
+            [4, 3, 2, 1, 0]
+        );
+        assert_eq!(glyph_utf16_start_indices(&[2, 2, 0], 3), [2, 2, 0]);
+    }
+
+    #[test]
+    fn test_string_index_converter_handles_descending_utf16_indices() {
+        let text = "a😀ب";
+        let converter = StringIndexConverter::new(text);
+        assert_eq!(converter.utf8_ix_for_utf16_ix(4), text.len());
+        assert_eq!(converter.utf8_ix_for_utf16_ix(3), "a😀".len());
+        assert_eq!(converter.utf8_ix_for_utf16_ix(2), "a😀".len());
+        assert_eq!(converter.utf8_ix_for_utf16_ix(1), "a".len());
+        assert_eq!(converter.utf8_ix_for_utf16_ix(99), text.len());
+
+        let converter = StringIndexConverter::new("abc");
+        assert_eq!(converter.utf8_ix_for_utf16_ix(2), 2);
+        assert_eq!(converter.utf8_ix_for_utf16_ix(1), 1);
+        assert_eq!(converter.utf8_ix_for_utf16_ix(99), 3);
     }
 }
