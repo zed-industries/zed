@@ -317,11 +317,7 @@ pub(crate) fn set_tool_permission(
                 .get_or_insert_default();
             match tool {
                 Some(tool) => {
-                    permissions
-                        .tools
-                        .entry(tool.into())
-                        .or_default()
-                        .default = Some(mode);
+                    permissions.tools.entry(tool.into()).or_default().default = Some(mode);
                 }
                 None => permissions.default = Some(mode),
             }

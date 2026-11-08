@@ -776,7 +776,7 @@ pub fn authorize_file_edit(
             None => {}
         }
 
-        // Deny and esnsitive returned already above
+        // Deny and sensitive returned already above
         let needs_confirmation = matches!(decision, ToolPermissionDecision::Confirm);
 
         if !needs_confirmation {

@@ -1516,9 +1516,8 @@ mod tests {
 
         // Test 3: Normal in-project path should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx.update(|cx| {
-            edit_tool.authorize(&PathBuf::from("root/src/main.rs"), &stream_tx, cx)
-        });
+        let _auth =
+            cx.update(|cx| edit_tool.authorize(&PathBuf::from("root/src/main.rs"), &stream_tx, cx));
         let event = stream_rx.expect_authorization().await;
         assert_eq!(
             event.tool_call.title,
