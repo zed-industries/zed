@@ -72,6 +72,73 @@ pub(crate) struct MountDefinition {
     pub(crate) target: String,
     #[serde(rename = "type")]
     pub(crate) mount_type: Option<String>,
+    /// Additional `--mount` options such as `readonly`, `bind-propagation=rslave`
+    /// or `consistency=delegated`, preserved verbatim and in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) options: Vec<String>,
+}
+
+impl MountDefinition {
+    /// Parses the string form of a mount (`docker run --mount` syntax):
+    /// comma-separated `key=value` pairs or bare flags such as `readonly`.
+    /// Returns `None` when no target is present.
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        let mut source = None;
+        let mut target = None;
+        let mut mount_type = None;
+        let mut options = Vec::new();
+
+        for part in value.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            match part.split_once('=') {
+                Some((key, value)) => match key.trim() {
+                    "source" | "src" => source = Some(value.trim().to_string()),
+                    "target" | "dst" | "destination" => target = Some(value.trim().to_string()),
+                    "type" => mount_type = Some(value.trim().to_string()),
+                    _ => options.push(part.to_string()),
+                },
+                None => options.push(part.to_string()),
+            }
+        }
+
+        Some(Self {
+            source,
+            target: target?,
+            mount_type,
+            options,
+        })
+    }
+
+    fn option_key(option: &str) -> &str {
+        option.split_once('=').map_or(option, |(key, _)| key).trim()
+    }
+
+    fn has_option(&self, key: &str) -> bool {
+        self.options
+            .iter()
+            .any(|option| Self::option_key(option) == key)
+    }
+
+    /// Whether the mount was declared read-only (`readonly`, `ro`, `readonly=true`).
+    pub(crate) fn is_read_only(&self) -> bool {
+        self.options.iter().any(|option| {
+            let (key, value) = option
+                .split_once('=')
+                .map_or((option.as_str(), "true"), |(key, value)| (key, value));
+            matches!(key.trim(), "readonly" | "ro") && value.trim().eq_ignore_ascii_case("true")
+        })
+    }
+
+    /// The value of a `key=value` option, if present.
+    pub(crate) fn option_value(&self, key: &str) -> Option<&str> {
+        self.options.iter().find_map(|option| {
+            let (option_key, value) = option.split_once('=')?;
+            (option_key.trim() == key).then(|| value.trim())
+        })
+    }
 }
 
 impl Display for MountDefinition {
@@ -92,7 +159,14 @@ impl Display for MountDefinition {
         if let Some(source) = &self.source {
             write!(f, ",source={}", source)?;
         }
-        write!(f, ",target={},consistency=cached", self.target)
+        write!(f, ",target={}", self.target)?;
+        for option in &self.options {
+            write!(f, ",{option}")?;
+        }
+        if !self.has_option("consistency") {
+            write!(f, ",consistency=cached")?;
+        }
+        Ok(())
     }
 }
 
@@ -484,6 +558,23 @@ impl<'de> Deserialize<'de> for LifecycleScript {
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum MountItem {
+    Object(MountDefinition),
+    String(String),
+}
+
+impl MountItem {
+    fn into_mount<E: serde::de::Error>(self) -> Result<MountDefinition, E> {
+        match self {
+            MountItem::Object(mount) => Ok(mount),
+            MountItem::String(s) => MountDefinition::parse(&s)
+                .ok_or_else(|| E::custom(format!("mount string missing 'target': {}", s))),
+        }
+    }
+}
+
 fn deserialize_mount_definition<'de, D>(
     deserializer: D,
 ) -> Result<Option<MountDefinition>, D::Error>
@@ -491,48 +582,8 @@ where
     D: serde::Deserializer<'de>,
 {
     use serde::Deserialize;
-    use serde::de::Error;
 
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum MountItem {
-        Object(MountDefinition),
-        String(String),
-    }
-
-    let item = MountItem::deserialize(deserializer)?;
-
-    let mount = match item {
-        MountItem::Object(mount) => mount,
-        MountItem::String(s) => {
-            let mut source = None;
-            let mut target = None;
-            let mut mount_type = None;
-
-            for part in s.split(',') {
-                let part = part.trim();
-                if let Some((key, value)) = part.split_once('=') {
-                    match key.trim() {
-                        "source" => source = Some(value.trim().to_string()),
-                        "target" => target = Some(value.trim().to_string()),
-                        "type" => mount_type = Some(value.trim().to_string()),
-                        _ => {} // Ignore unknown keys
-                    }
-                }
-            }
-
-            let target = target
-                .ok_or_else(|| D::Error::custom(format!("mount string missing 'target': {}", s)))?;
-
-            MountDefinition {
-                source,
-                target,
-                mount_type,
-            }
-        }
-    };
-
-    Ok(Some(mount))
+    MountItem::deserialize(deserializer)?.into_mount().map(Some)
 }
 
 fn deserialize_mount_definitions<'de, D>(
@@ -542,52 +593,12 @@ where
     D: serde::Deserializer<'de>,
 {
     use serde::Deserialize;
-    use serde::de::Error;
 
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum MountItem {
-        Object(MountDefinition),
-        String(String),
-    }
-
-    let items = Vec::<MountItem>::deserialize(deserializer)?;
-    let mut mounts = Vec::new();
-
-    for item in items {
-        match item {
-            MountItem::Object(mount) => mounts.push(mount),
-            MountItem::String(s) => {
-                let mut source = None;
-                let mut target = None;
-                let mut mount_type = None;
-
-                for part in s.split(',') {
-                    let part = part.trim();
-                    if let Some((key, value)) = part.split_once('=') {
-                        match key.trim() {
-                            "source" => source = Some(value.trim().to_string()),
-                            "target" => target = Some(value.trim().to_string()),
-                            "type" => mount_type = Some(value.trim().to_string()),
-                            _ => {} // Ignore unknown keys
-                        }
-                    }
-                }
-
-                let target = target.ok_or_else(|| {
-                    D::Error::custom(format!("mount string missing 'target': {}", s))
-                })?;
-
-                mounts.push(MountDefinition {
-                    source,
-                    target,
-                    mount_type,
-                });
-            }
-        }
-    }
-
-    Ok(Some(mounts))
+    Vec::<MountItem>::deserialize(deserializer)?
+        .into_iter()
+        .map(MountItem::into_mount)
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
 }
 
 fn deserialize_app_port<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -1007,6 +1018,7 @@ mod test {
                     source: Some("/localfolder/app".to_string()),
                     target: "/workspaces/app".to_string(),
                     mount_type: Some("volume".to_string()),
+                    options: vec![],
                 }]),
                 run_args: Some(vec!["-c".to_string(), "some_command".to_string()]),
                 shutdown_action: Some(ShutdownAction::StopContainer),
@@ -1015,7 +1027,8 @@ mod test {
                 workspace_mount: Some(MountDefinition {
                     source: Some("/app".to_string()),
                     target: "/workspaces/app".to_string(),
-                    mount_type: Some("bind".to_string())
+                    mount_type: Some("bind".to_string()),
+                    options: vec!["consistency=cached".to_string()],
                 }),
                 customizations: Some(ZedCustomizationsWrapper {
                     zed: ZedCustomization {
@@ -1473,11 +1486,13 @@ mod test {
                         source: Some("/localfolder/app".to_string()),
                         target: "/workspaces/app".to_string(),
                         mount_type: Some("volume".to_string()),
+                        options: vec![],
                     },
                     MountDefinition {
                         source: Some("dev-containers-cli-bashhistory".to_string()),
                         target: "/home/node/commandhistory".to_string(),
                         mount_type: None,
+                        options: vec![],
                     }
                 ]),
                 run_args: Some(vec!["-c".to_string(), "some_command".to_string()]),
@@ -1487,7 +1502,8 @@ mod test {
                 workspace_mount: Some(MountDefinition {
                     source: Some("/folder".to_string()),
                     target: "/workspace".to_string(),
-                    mount_type: Some("bind".to_string())
+                    mount_type: Some("bind".to_string()),
+                    options: vec!["consistency=cached".to_string()],
                 }),
                 build: Some(ContainerBuild {
                     dockerfile: "DockerFile".to_string(),
@@ -1555,6 +1571,7 @@ mod test {
             source: Some("/home/user/project".to_string()),
             target: "/workspaces/project".to_string(),
             mount_type: None,
+            options: vec![],
         };
 
         let rendered = mount.to_string();
@@ -1571,6 +1588,7 @@ mod test {
             source: Some("\\\\server\\share\\project".to_string()),
             target: "/workspaces/project".to_string(),
             mount_type: None,
+            options: vec![],
         };
 
         let rendered = mount.to_string();
@@ -1587,6 +1605,7 @@ mod test {
             source: Some("C:\\Users\\mrg\\cli".to_string()),
             target: "/workspaces/cli".to_string(),
             mount_type: None,
+            options: vec![],
         };
 
         let rendered = mount.to_string();
@@ -1603,11 +1622,101 @@ mod test {
             source: None,
             target: "/tmp".to_string(),
             mount_type: Some("tmpfs".to_string()),
+            options: vec![],
         };
 
         let rendered = mount.to_string();
 
         assert_eq!(rendered, "type=tmpfs,target=/tmp,consistency=cached");
+    }
+
+    #[test]
+    fn mount_definition_should_preserve_options_from_string_form() {
+        let mount = MountDefinition::parse(
+            "source=/host/.git/hooks,target=/workspaces/app/.git/hooks,type=bind,readonly",
+        )
+        .unwrap();
+
+        assert_eq!(
+            mount,
+            MountDefinition {
+                source: Some("/host/.git/hooks".to_string()),
+                target: "/workspaces/app/.git/hooks".to_string(),
+                mount_type: Some("bind".to_string()),
+                options: vec!["readonly".to_string()],
+            }
+        );
+        assert!(mount.is_read_only());
+        assert_eq!(
+            mount.to_string(),
+            "type=bind,source=/host/.git/hooks,target=/workspaces/app/.git/hooks,readonly,consistency=cached"
+        );
+
+        // `src`/`dst` aliases, `key=value` options and an explicit consistency
+        // are kept in order, and no second `consistency` is appended.
+        let mount = MountDefinition::parse(
+            "type=bind, src=/a, dst=/b, ro, bind-propagation=rslave, consistency=delegated",
+        )
+        .unwrap();
+        assert_eq!(
+            mount.options,
+            vec!["ro", "bind-propagation=rslave", "consistency=delegated"]
+        );
+        assert!(mount.is_read_only());
+        assert_eq!(mount.option_value("bind-propagation"), Some("rslave"));
+        assert_eq!(
+            mount.to_string(),
+            "type=bind,source=/a,target=/b,ro,bind-propagation=rslave,consistency=delegated"
+        );
+
+        assert!(MountDefinition::parse("source=/a,type=bind").is_none());
+        assert!(
+            !MountDefinition::parse("target=/b,readonly=false")
+                .unwrap()
+                .is_read_only()
+        );
+        assert!(
+            MountDefinition::parse("target=/b,readonly=true")
+                .unwrap()
+                .is_read_only()
+        );
+    }
+
+    #[test]
+    fn should_deserialize_mounts_with_options() {
+        let json = r#"
+        {
+            "image": "nginx",
+            "workspaceMount": "source=/app,target=/workspaces/app,type=bind,readonly",
+            "mounts": [
+                "source=/host/.devcontainer,target=/workspaces/app/.devcontainer,type=bind,readonly",
+                { "source": "history", "target": "/commandhistory", "type": "volume" }
+            ]
+        }
+        "#;
+
+        let dev_container = deserialize_devcontainer_json(json).unwrap();
+
+        assert_eq!(
+            dev_container.workspace_mount.unwrap().options,
+            vec!["readonly".to_string()]
+        );
+        let mounts = dev_container.mounts.unwrap();
+        assert_eq!(mounts[0].options, vec!["readonly".to_string()]);
+        assert!(mounts[0].is_read_only());
+        assert!(mounts[1].options.is_empty());
+        // The object form round-trips through JSON (feature metadata) unchanged.
+        assert_eq!(
+            serde_json_lenient::to_value(&mounts[1]).unwrap(),
+            serde_json_lenient::json!({"source": "history", "target": "/commandhistory", "type": "volume"})
+        );
+        assert_eq!(
+            serde_json_lenient::from_value::<MountDefinition>(
+                serde_json_lenient::to_value(&mounts[0]).unwrap()
+            )
+            .unwrap(),
+            mounts[0]
+        );
     }
 
     #[test]

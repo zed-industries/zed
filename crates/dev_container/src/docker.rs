@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use async_trait::async_trait;
-use serde::{Deserialize, Deserializer, Serialize, de};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use util::command::Command;
 
 use crate::{
@@ -152,6 +152,7 @@ pub(crate) struct DockerComposeService {
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_compose_volumes",
         deserialize_with = "deserialize_compose_volumes"
     )]
     pub(crate) volumes: Vec<MountDefinition>,
@@ -607,6 +608,79 @@ where
     deserializer.deserialize_any(LabelsVisitor)
 }
 
+/// Docker Compose long volume syntax. Mount options that compose expresses as
+/// dedicated fields (`read_only`, `consistency`, `bind.propagation`) are mapped
+/// to and from `MountDefinition::options` so that e.g. `readonly` declared in
+/// `devcontainer.json` `mounts` survives the trip through the compose override.
+#[derive(Serialize, Deserialize)]
+struct ComposeLongVolume {
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    mount_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    target: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    read_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    consistency: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bind: Option<ComposeBindOptions>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ComposeBindOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    propagation: Option<String>,
+}
+
+impl From<&MountDefinition> for ComposeLongVolume {
+    fn from(mount: &MountDefinition) -> Self {
+        Self {
+            mount_type: mount.mount_type.clone(),
+            source: mount.source.clone(),
+            target: mount.target.clone(),
+            read_only: mount.is_read_only(),
+            consistency: mount.option_value("consistency").map(str::to_string),
+            bind: mount
+                .option_value("bind-propagation")
+                .map(|propagation| ComposeBindOptions {
+                    propagation: Some(propagation.to_string()),
+                }),
+        }
+    }
+}
+
+impl From<ComposeLongVolume> for MountDefinition {
+    fn from(volume: ComposeLongVolume) -> Self {
+        let mut options = Vec::new();
+        if volume.read_only {
+            options.push("readonly".to_string());
+        }
+        if let Some(consistency) = volume.consistency {
+            options.push(format!("consistency={consistency}"));
+        }
+        if let Some(propagation) = volume.bind.and_then(|bind| bind.propagation) {
+            options.push(format!("bind-propagation={propagation}"));
+        }
+        Self {
+            source: volume.source,
+            target: volume.target,
+            mount_type: volume.mount_type,
+            options,
+        }
+    }
+}
+
+fn serialize_compose_volumes<S>(
+    volumes: &[MountDefinition],
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.collect_seq(volumes.iter().map(ComposeLongVolume::from))
+}
+
 fn deserialize_compose_volumes<'de, D>(deserializer: D) -> Result<Vec<MountDefinition>, D::Error>
 where
     D: Deserializer<'de>,
@@ -614,7 +688,7 @@ where
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum VolumeItem {
-        Object(MountDefinition),
+        Object(ComposeLongVolume),
         String(String),
     }
 
@@ -622,7 +696,7 @@ where
     items
         .into_iter()
         .map(|item| match item {
-            VolumeItem::Object(mount) => Ok(mount),
+            VolumeItem::Object(volume) => Ok(volume.into()),
             VolumeItem::String(s) => parse_compose_volume_string(&s)
                 .ok_or_else(|| de::Error::custom(format!("invalid volume string: {s}"))),
         })
@@ -665,7 +739,7 @@ fn parse_compose_volume_string(s: &str) -> Option<MountDefinition> {
             0
         };
 
-        let (target, _mode) = if let Some(pos) = rest[mode_search_start..].find(':') {
+        let (target, mode) = if let Some(pos) = rest[mode_search_start..].find(':') {
             let pos = pos + mode_search_start;
             (&rest[..pos], Some(&rest[pos + 1..]))
         } else {
@@ -676,10 +750,19 @@ fn parse_compose_volume_string(s: &str) -> Option<MountDefinition> {
             return None;
         }
 
+        // MODE is a comma-separated list such as `ro`, `rw`, `z`, `cached`.
+        let options = mode
+            .into_iter()
+            .flat_map(|mode| mode.split(','))
+            .filter(|flag| *flag == "ro")
+            .map(|_| "readonly".to_string())
+            .collect();
+
         Some(MountDefinition {
             source: Some(source.to_string()),
             target: target.to_string(),
             mount_type: None,
+            options,
         })
     } else {
         // No colon at all — anonymous volume with only a target path
@@ -690,6 +773,7 @@ fn parse_compose_volume_string(s: &str) -> Option<MountDefinition> {
             source: None,
             target: s.to_string(),
             mount_type: None,
+            options: Vec::new(),
         })
     }
 }
@@ -1155,6 +1239,7 @@ mod test {
                             mount_type: Some("bind".to_string()),
                             source: Some("/path/to".to_string()),
                             target: "/workspaces".to_string(),
+                            options: vec![],
                         }],
                         network_mode: Some("service:db".to_string()),
 
@@ -1192,6 +1277,7 @@ mod test {
                             mount_type: Some("volume".to_string()),
                             source: Some("postgres-data".to_string()),
                             target: "/var/lib/postgresql/data".to_string(),
+                            options: vec![],
                         }],
                         environment: Some(HashMap::from([
                             ("POSTGRES_DB".to_string(), "postgres".to_string()),
@@ -1408,6 +1494,54 @@ mod test {
         assert_eq!(service.volumes[3].source, Some("/explicit".to_string()));
         assert_eq!(service.volumes[3].target, "/mnt/explicit");
         assert_eq!(service.volumes[3].mount_type, Some("bind".to_string()));
+    }
+
+    #[test]
+    fn should_round_trip_read_only_compose_volumes() {
+        let given_yaml = indoc::indoc! {r#"
+            name: devcontainer
+            services:
+              app:
+                image: node:18
+                volumes:
+                  - /host/hooks:/container/hooks:ro
+                  - /host/rw:/container/rw:rw,z
+                  - type: bind
+                    source: /explicit
+                    target: /mnt/explicit
+                    read_only: true
+                    consistency: cached
+                    bind:
+                      propagation: rslave
+        "#};
+
+        let config: DockerComposeConfig = serde_yaml::from_str(given_yaml).unwrap();
+        let service = config.services.get("app").unwrap();
+        assert_eq!(service.volumes[0].options, vec!["readonly"]);
+        assert!(service.volumes[1].options.is_empty());
+        assert_eq!(
+            service.volumes[2].options,
+            vec!["readonly", "consistency=cached", "bind-propagation=rslave"]
+        );
+
+        // Serializing (as done for the compose override file) emits compose's
+        // long syntax with `read_only`, not Zed's internal option list.
+        let serialized = serde_json_lenient::to_value(service).unwrap();
+        assert_eq!(
+            serialized["volumes"],
+            serde_json_lenient::json!([
+                {"source": "/host/hooks", "target": "/container/hooks", "read_only": true},
+                {"source": "/host/rw", "target": "/container/rw"},
+                {
+                    "type": "bind",
+                    "source": "/explicit",
+                    "target": "/mnt/explicit",
+                    "read_only": true,
+                    "consistency": "cached",
+                    "bind": {"propagation": "rslave"}
+                },
+            ])
+        );
     }
 
     #[test]

@@ -1421,15 +1421,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             })
             .collect();
 
-        let volumes: Vec<MountDefinition> = resources
-            .additional_mounts
-            .iter()
-            .map(|v| MountDefinition {
-                source: v.source.clone(),
-                target: v.target.clone(),
-                mount_type: v.mount_type.clone(),
-            })
-            .collect();
+        let volumes: Vec<MountDefinition> = resources.additional_mounts.clone();
 
         let entrypoint = resources.entrypoint_script.map(|script| {
             vec![
@@ -2153,6 +2145,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 project_directory_name.display()
             ),
             mount_type: None,
+            options: Vec::new(),
         })
     }
 
@@ -3303,7 +3296,7 @@ fn append_mount_with_target_override(mounts: &mut Vec<MountDefinition>, mount: M
 
 fn mount_definition_from_metadata(value: &serde_json_lenient::Value) -> Option<MountDefinition> {
     match value {
-        serde_json_lenient::Value::String(value) => parse_mount_definition_string(value),
+        serde_json_lenient::Value::String(value) => MountDefinition::parse(value),
         serde_json_lenient::Value::Object(object) => {
             let source = object
                 .get("source")
@@ -3320,38 +3313,25 @@ fn mount_definition_from_metadata(value: &serde_json_lenient::Value) -> Option<M
                 .get("type")
                 .and_then(|value| value.as_str())
                 .map(str::to_string);
+            let options = object
+                .get("options")
+                .and_then(|value| value.as_array())
+                .map(|options| {
+                    options
+                        .iter()
+                        .filter_map(|option| option.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
             Some(MountDefinition {
                 source,
                 target,
                 mount_type,
+                options,
             })
         }
         _ => None,
     }
-}
-
-fn parse_mount_definition_string(value: &str) -> Option<MountDefinition> {
-    let mut source = None;
-    let mut target = None;
-    let mut mount_type = None;
-
-    for part in value.split(',') {
-        let Some((key, value)) = part.trim().split_once('=') else {
-            continue;
-        };
-        match key.trim() {
-            "source" | "src" => source = Some(value.trim().to_string()),
-            "target" | "dst" | "destination" => target = Some(value.trim().to_string()),
-            "type" => mount_type = Some(value.trim().to_string()),
-            _ => {}
-        }
-    }
-
-    target.map(|target| MountDefinition {
-        source,
-        target,
-        mount_type,
-    })
 }
 
 fn escape_compose_interpolation(value: &str) -> String {
@@ -3936,6 +3916,7 @@ mod test {
                 )),
                 target: "/var/lib/docker".to_string(),
                 mount_type: Some("volume".to_string()),
+                options: vec![],
             }]
         );
         assert_eq!(
@@ -3957,6 +3938,92 @@ mod test {
         assert_eq!(
             persisted_mount_source,
             Some("dind-var-lib-docker-${devcontainerId}")
+        );
+    }
+
+    #[gpui::test]
+    async fn should_pass_mount_options_through_to_docker_run(cx: &mut TestAppContext) {
+        let (_, mut devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+                "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+                "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/app,type=bind,consistency=delegated",
+                "workspaceFolder": "/workspaces/app",
+                "mounts": [
+                    "source=${localWorkspaceFolder}/.devcontainer,target=/workspaces/app/.devcontainer,type=bind,readonly",
+                    "source=${localWorkspaceFolder}/.git/hooks,target=/workspaces/app/.git/hooks,type=bind,ro,bind-propagation=rprivate"
+                ]
+            }"#,
+        )
+        .await
+        .unwrap();
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let metadata = serde_json_lenient::from_str(
+            r#"[{
+                "mounts": [
+                    "source=cache-${devcontainerId},target=/cache,type=volume,readonly",
+                    { "source": "state", "target": "/state", "type": "volume", "options": ["readonly"] }
+                ]
+            }]"#,
+        )
+        .unwrap();
+        let base_image = DockerInspect {
+            id: "base-image-id".to_string(),
+            config: DockerInspectConfig {
+                labels: DockerConfigLabels {
+                    metadata: Some(metadata),
+                },
+                image_user: None,
+                env: Vec::new(),
+            },
+            mounts: None,
+            state: None,
+        };
+
+        let resources = devcontainer_manifest
+            .build_merged_resources(base_image, "mcr.microsoft.com/devcontainers/base:ubuntu")
+            .unwrap();
+        assert!(
+            resources
+                .additional_mounts
+                .iter()
+                .all(MountDefinition::is_read_only),
+            "{:?}",
+            resources.additional_mounts
+        );
+
+        let docker_run_command = devcontainer_manifest
+            .create_docker_run_command(resources)
+            .unwrap();
+        let args = docker_run_command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let mounts = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--mount")
+            .map(|pair| pair[1].as_str())
+            .collect::<Vec<_>>();
+        let devcontainer_id = devcontainer_manifest.devcontainer_id();
+
+        assert_eq!(
+            mounts,
+            vec![
+                format!(
+                    "type=bind,source={TEST_PROJECT_PATH},target=/workspaces/app,consistency=delegated"
+                ),
+                format!(
+                    "type=volume,source=cache-{devcontainer_id},target=/cache,readonly,consistency=cached"
+                ),
+                "type=volume,source=state,target=/state,readonly,consistency=cached".to_string(),
+                format!(
+                    "type=bind,source={TEST_PROJECT_PATH}/.devcontainer,target=/workspaces/app/.devcontainer,readonly,consistency=cached"
+                ),
+                format!(
+                    "type=bind,source={TEST_PROJECT_PATH}/.git/hooks,target=/workspaces/app/.git/hooks,ro,bind-propagation=rprivate,consistency=cached"
+                ),
+            ]
         );
     }
 
@@ -7504,6 +7571,7 @@ RUN echo $RUBY_VERSION2
                                     source: Some("../..".to_string()),
                                     target: "/workspaces".to_string(),
                                     mount_type: Some("bind".to_string()),
+                                    options: vec![],
                                 }],
                                 command: vec!["sleep".to_string(), "infinity".to_string()],
                                 ..Default::default()
@@ -7523,6 +7591,7 @@ RUN echo $RUBY_VERSION2
                                     source: Some("../..".to_string()),
                                     target: "/workspaces".to_string(),
                                     mount_type: Some("bind".to_string()),
+                                    options: vec![],
                                 }],
                                 network_mode: Some("service:db".to_string()),
                                 ..Default::default()
@@ -7536,6 +7605,7 @@ RUN echo $RUBY_VERSION2
                                     source: Some("postgres-data".to_string()),
                                     target: "/var/lib/postgresql/data".to_string(),
                                     mount_type: Some("volume".to_string()),
+                                    options: vec![],
                                 }],
                                 env_file: Some(vec![".env".to_string()]),
                                 ..Default::default()
