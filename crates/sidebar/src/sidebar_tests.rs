@@ -16336,11 +16336,7 @@ fn window_corners(cx: &mut VisualTestContext) -> WindowCorners {
         let quads = window.painted_quads();
         let outline = quads
             .iter()
-            .find(|quad| {
-                quad.bounds == frame
-                    && quad.border_widths.top.0 > 0.
-                    && !quad.border_color.is_transparent()
-            })
+            .find(|quad| quad.bounds == frame && !quad.border_color.is_transparent())
             .expect("window frame border");
         let probe_offset = 1.5 * scale_factor;
         let corner = |x: ScaledPixels, y: ScaledPixels, direction_x: f32, direction_y: f32| {

@@ -226,6 +226,17 @@ impl Scene {
     }
 }
 
+/// The depth step between consecutive quads in a frame with `quad_count` quads.
+pub fn quad_depth_scale(quad_count: usize) -> f32 {
+    let denominator = (quad_count.min((1 << 24) - 1) + 1).next_power_of_two();
+    1.0 / denominator as f32
+}
+
+/// Maps a quad's index in [`Scene::quads`] to depth, with greater values closer.
+pub fn quad_depth(quad_id: u32, scale: f32) -> f32 {
+    ((quad_id + 1) as f32 * scale).min(1.0)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
 #[cfg_attr(
     all(
