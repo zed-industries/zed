@@ -8,10 +8,10 @@
 //! If all of your elements are the same height, see [`crate::UniformList`] for a simpler API
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
-    FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    Overflow, Pixels, Point, ScrollDelta, ScrollEvent, Size, Style, StyleRefinement, Styled,
-    Window, point, px, size,
+    Along as _, AnyElement, App, AvailableSpace, Axis, Bounds, ContentMask, DispatchPhase, Edges,
+    Element, EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
+    IntoElement, Overflow, Pixels, Point, ScrollDelta, ScrollEvent, Size, Style, StyleRefinement,
+    Styled, Window, point, px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -714,6 +714,7 @@ impl ListState {
         let state = &*self.0.borrow();
 
         let bounds = state.last_layout_bounds.unwrap_or_default();
+        let padding = state.last_padding.unwrap_or_default();
         let scroll_top = state.logical_scroll_top();
         if ix < scroll_top.item_ix {
             return None;
@@ -730,8 +731,8 @@ impl ListState {
             if count == ix {
                 let top = bounds.top() + top - scroll_top;
                 return Some(Bounds::from_corners(
-                    point(bounds.left(), top),
-                    point(bounds.right(), top + size.height),
+                    point(bounds.left() + padding.left, top),
+                    point(bounds.right() - padding.right, top + size.height),
                 ));
             }
         }
@@ -1276,16 +1277,17 @@ impl StateInner {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<LayoutItemsResponse, ListOffset> {
+        let item_width = bounds.size.width - padding.along(Axis::Horizontal);
         window.transact(|window| {
             match self.measuring_behavior {
                 ListMeasuringBehavior::Measure(has_measured) if !has_measured => {
-                    self.layout_all_items(bounds.size.width, render_item, window, cx);
+                    self.layout_all_items(item_width, render_item, window, cx);
                 }
                 _ => {}
             }
 
             let mut layout_response = self.layout_items(
-                Some(bounds.size.width),
+                Some(item_width),
                 bounds.size.height,
                 &padding,
                 render_item,
@@ -1298,7 +1300,7 @@ impl StateInner {
 
             // Only paint the visible items, if there is actually any space for them (taking padding into account)
             if bounds.size.height > padding.top + padding.bottom {
-                let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
+                let mut item_origin = bounds.origin + Point::new(padding.left, padding.top);
                 item_origin.y -= layout_response.scroll_top.offset_in_item;
                 for item in &mut layout_response.item_layouts {
                     window.with_content_mask(Some(ContentMask { bounds }), |window| {
@@ -1327,10 +1329,8 @@ impl StateInner {
                                     };
                                     let size = prev_item.size().unwrap_or_else(|| {
                                         let mut element = render_item(cursor.start().0, window, cx);
-                                        let item_available_size = size(
-                                            bounds.size.width.into(),
-                                            AvailableSpace::MinContent,
-                                        );
+                                        let item_available_size =
+                                            size(item_width.into(), AvailableSpace::MinContent);
                                         element.layout_as_root(item_available_size, window, cx)
                                     });
                                     item_ix = cursor.start().0;
@@ -1358,7 +1358,7 @@ impl StateInner {
                                 let size = item.size().unwrap_or_else(|| {
                                     let mut item = render_item(cursor.start().0, window, cx);
                                     let item_available_size =
-                                        size(bounds.size.width.into(), AvailableSpace::MinContent);
+                                        size(item_width.into(), AvailableSpace::MinContent);
                                     item.layout_as_root(item_available_size, window, cx)
                                 });
                                 height -= size.height;
@@ -1487,8 +1487,9 @@ impl Element for List {
                         // we might just use the overdraw value as the available height to layout enough items.
                         state.overdraw
                     };
-                    let padding = style.padding.to_pixels(
-                        state.last_layout_bounds.unwrap_or_default().size.into(),
+                    let padding = content_insets(
+                        &style,
+                        state.last_layout_bounds.unwrap_or_default().size,
                         window.rem_size(),
                     );
 
@@ -1556,10 +1557,19 @@ impl Element for List {
 
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
 
-        // If the width of the list has changed, invalidate all cached item heights
-        if state
-            .last_layout_bounds
-            .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
+        let padding = content_insets(&style, bounds.size, window.rem_size());
+
+        // If the width of the list or the list content insets have changed,
+        // invalidate all cached item heights
+        let last_item_width =
+            state
+                .last_layout_bounds
+                .zip(state.last_padding)
+                .map(|(last_bounds, last_padding)| {
+                    last_bounds.size.width - last_padding.along(Axis::Horizontal)
+                });
+        if last_item_width
+            .is_none_or(|width| width != bounds.size.width - padding.along(Axis::Horizontal))
         {
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
@@ -1573,9 +1583,6 @@ impl Element for List {
             state.measuring_behavior.reset();
         }
 
-        let padding = style
-            .padding
-            .to_pixels(bounds.size.into(), window.rem_size());
         let mut autoscroll = true;
         let layout = loop {
             match state.prepaint_items(
@@ -1642,6 +1649,13 @@ impl Element for List {
             }
         });
     }
+}
+
+fn content_insets(style: &Style, size: Size<Pixels>, rem_size: Pixels) -> Edges<Pixels> {
+    let padding = style.padding.to_pixels(size.into(), rem_size);
+    let border = style.border_widths.to_pixels(rem_size);
+
+    padding + border
 }
 
 impl IntoElement for List {
@@ -1748,8 +1762,9 @@ mod test {
 
     use crate::{
         self as gpui, AnyElement, AppContext, Bounds, Context, Element, FollowMode,
-        InteractiveElement, IntoElement, ListOffset, ListState, Pixels, Render, Styled,
-        TestAppContext, VisualTestContext, Window, canvas, div, list, point, px, size,
+        InteractiveElement, IntoElement, ListOffset, ListSizingBehavior, ListState, ParentElement,
+        Pixels, Render, Styled, TestAppContext, VisualTestContext, Window, canvas, div, list,
+        point, px, size,
     };
 
     #[gpui::test]
@@ -3555,6 +3570,245 @@ mod test {
              the bottom of its track, even when content has grown during the drag \
              (so frozen_bottom < live_bottom)"
         );
+    }
+
+    #[gpui::test]
+    fn test_horizontal_padding_insets_items(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
+        let item_bounds = Rc::new(RefCell::new(Vec::new()));
+
+        struct TestView {
+            state: ListState,
+            item_bounds: Rc<RefCell<Vec<Bounds<Pixels>>>>,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let item_bounds = self.item_bounds.clone();
+                list(self.state.clone(), move |_, _, _| {
+                    let item_bounds = item_bounds.clone();
+                    canvas(
+                        move |bounds, _, _| item_bounds.borrow_mut().push(bounds),
+                        |_, _, _, _| {},
+                    )
+                    .w_full()
+                    .aspect_ratio(2.)
+                    .into_any()
+                })
+                .pl(px(10.))
+                .pr(px(30.))
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+                item_bounds: item_bounds.clone(),
+            })
+            .into_any_element()
+        });
+
+        for bounds in item_bounds.borrow().iter() {
+            assert_eq!(bounds.origin.x, px(10.));
+            assert_eq!(bounds.size.width, px(60.));
+        }
+        // Each item is 60px wide, so 30px tall: 300px in total.
+        assert_eq!(state.max_offset_for_scrollbar().y, px(200.));
+    }
+
+    #[gpui::test]
+    fn test_inferred_width_includes_horizontal_padding(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(2, crate::ListAlignment::Top, px(10.));
+        let full_width_item_bounds = Rc::new(RefCell::new(None));
+
+        struct TestView {
+            state: ListState,
+            full_width_item_bounds: Rc<RefCell<Option<Bounds<Pixels>>>>,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let full_width_item_bounds = self.full_width_item_bounds.clone();
+                div().flex().size_full().child(
+                    list(self.state.clone(), move |ix, _, _| {
+                        if ix == 0 {
+                            div().w(px(50.)).h(px(20.)).into_any()
+                        } else {
+                            let full_width_item_bounds = full_width_item_bounds.clone();
+                            canvas(
+                                move |bounds, _, _| {
+                                    *full_width_item_bounds.borrow_mut() = Some(bounds)
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .h(px(20.))
+                            .w_full()
+                            .into_any()
+                        }
+                    })
+                    .with_sizing_behavior(ListSizingBehavior::Infer)
+                    .pl(px(10.))
+                    .pr(px(30.))
+                    .h_full(),
+                )
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(200.), px(100.)), |_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+                full_width_item_bounds: full_width_item_bounds.clone(),
+            })
+            .into_any_element()
+        });
+
+        let bounds = full_width_item_bounds
+            .borrow()
+            .expect("item 1 was not painted");
+        assert_eq!(bounds.origin.x, px(10.));
+        assert_eq!(bounds.size.width, px(50.));
+    }
+
+    #[gpui::test]
+    fn test_autoscroll_above_item_top_with_horizontal_padding(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(0.));
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |ix, _, _| {
+                    if ix == 2 {
+                        canvas(
+                            |bounds, window, _| {
+                                window.request_autoscroll(Bounds::from_corners(
+                                    point(bounds.left(), bounds.top() - px(30.)),
+                                    point(bounds.right(), bounds.top() + px(5.)),
+                                ));
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .w_full()
+                        .aspect_ratio(2.)
+                        .into_any()
+                    } else {
+                        div().w_full().aspect_ratio(2.).into_any()
+                    }
+                })
+                .pl(px(10.))
+                .pr(px(30.))
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(60.)), |_, cx| {
+            cx.new(|_| TestView(state.clone())).into_any_element()
+        });
+
+        // Items are 60px wide, so 30px tall: 30px above item 2 is the top of item 1.
+        let scroll_top = state.logical_scroll_top();
+        assert_eq!(scroll_top.item_ix, 1);
+        assert_eq!(scroll_top.offset_in_item, px(0.));
+    }
+
+    #[gpui::test]
+    fn test_horizontal_padding_change_remeasures_items(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
+
+        struct TestView {
+            state: ListState,
+            padding_right: Pixels,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.state.clone(), |_, _, _| {
+                    div().w_full().aspect_ratio(2.).into_any()
+                })
+                .pl(px(10.))
+                .pr(self.padding_right)
+                .w_full()
+                .h_full()
+            }
+        }
+
+        // The list width stays at 100px while the padding shrinks, so items go
+        // from 60px wide (30px tall) to 80px wide (40px tall).
+        for (padding_right, expected_max_offset) in [(px(30.), px(200.)), (px(10.), px(300.))] {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+                cx.new(|_| TestView {
+                    state: state.clone(),
+                    padding_right,
+                })
+                .into_any_element()
+            });
+            assert_eq!(state.max_offset_for_scrollbar().y, expected_max_offset);
+        }
+    }
+
+    #[gpui::test]
+    fn test_border_and_padding_inset_items(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
+        let item_bounds = Rc::new(RefCell::new(Vec::new()));
+
+        struct TestView {
+            state: ListState,
+            item_bounds: Rc<RefCell<Vec<Bounds<Pixels>>>>,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let item_bounds = self.item_bounds.clone();
+                list(self.state.clone(), move |_, _, _| {
+                    let item_bounds = item_bounds.clone();
+                    canvas(
+                        move |bounds, _, _| item_bounds.borrow_mut().push(bounds),
+                        |_, _, _, _| {},
+                    )
+                    .w_full()
+                    .aspect_ratio(2.)
+                    .into_any()
+                })
+                .border_l_4()
+                .pl(px(6.))
+                .border_r_8()
+                .pr(px(22.))
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+                item_bounds: item_bounds.clone(),
+            })
+            .into_any_element()
+        });
+
+        let painted_bounds = item_bounds.borrow();
+        assert!(!painted_bounds.is_empty());
+        for bounds in painted_bounds.iter() {
+            assert_eq!(bounds.origin.x, px(10.));
+            assert_eq!(bounds.size.width, px(60.));
+        }
+        assert_eq!(state.max_offset_for_scrollbar().y, px(200.));
+
+        let reported_bounds = state.bounds_for_item(0).expect("item 0 should be measured");
+        assert_eq!(reported_bounds.origin.x, px(10.));
+        assert_eq!(reported_bounds.size.width, px(60.));
     }
 
     fn draw_list(

@@ -2446,7 +2446,7 @@ pub fn open_new_ssh_project_from_project(
     let Some(ssh_client) = workspace.project().read(cx).remote_client() else {
         return Task::ready(Err(anyhow::anyhow!("Not an ssh project")));
     };
-    let connection_options = ssh_client.read(cx).connection_options();
+    let connection_options = ssh_client.read(cx).connection_options().clone();
     let requesting_window = if create_new_window {
         None
     } else {
@@ -6262,6 +6262,7 @@ mod tests {
                 "outline_panel",
                 "pane",
                 "picker",
+                "project_bookmarks",
                 "project_panel",
                 "project_search",
                 "project_symbols",

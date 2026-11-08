@@ -4171,7 +4171,7 @@ fn search_and_files_page() -> SettingsPage {
 }
 
 fn window_and_layout_page() -> SettingsPage {
-    fn status_bar_section() -> [SettingsPageItem; 12] {
+    fn status_bar_section() -> [SettingsPageItem; 13] {
         [
             SettingsPageItem::SectionHeader("Status Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4331,6 +4331,33 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| settings_content.diagnostics.as_ref()?.button.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.diagnostics.get_or_insert_default().button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Edit Prediction Button",
+                description: "Show the edit prediction button in the status bar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("edit_predictions.button"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .edit_predictions
+                            .as_ref()?
+                            .button
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .edit_predictions
+                            .get_or_insert_default()
+                            .button = value;
                     },
                 }),
                 metadata: None,
@@ -6527,9 +6554,23 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 19] {
+    fn git_panel_section() -> [SettingsPageItem; 20] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Style",
+                description: "Show relative or absolute dates in commit history.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.date_style"),
+                    pick: |content| content.git_panel.as_ref()?.date_style.as_ref(),
+                    write: |content, value, _| {
+                        content.git_panel.get_or_insert_default().date_style = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Git Panel Button",
                 description: "Show the Git panel button in the status bar.",
@@ -6886,7 +6927,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn debugger_panel_section() -> [SettingsPageItem; 2] {
+    fn debugger_panel_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Debugger Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6898,6 +6939,44 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| settings_content.debugger.as_ref()?.dock.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.debugger.get_or_insert_default().dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Debugger Panel Default Width",
+                description: "Default width in pixels when the debug panel is docked to the left or right.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("debugger.default_width"),
+                    pick: |settings_content| {
+                        settings_content.debugger.as_ref()?.default_width.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .debugger
+                            .get_or_insert_default()
+                            .default_width = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Debugger Panel Default Height",
+                description: "Default height in pixels when the debug panel is docked to the bottom.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("debugger.default_height"),
+                    pick: |settings_content| {
+                        settings_content.debugger.as_ref()?.default_height.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .debugger
+                            .get_or_insert_default()
+                            .default_height = value;
                     },
                 }),
                 metadata: None,
@@ -8128,9 +8207,23 @@ fn terminal_page() -> SettingsPage {
 }
 
 fn version_control_page() -> SettingsPage {
-    fn git_integration_section() -> [SettingsPageItem; 2] {
+    fn git_integration_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Git Integration"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Format",
+                description: "Format absolute dates using locale, iso (YYYY-MM-DD HH:MM), or a strftime format such as %Y-%m-%d %H:%M.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.date_format"),
+                    pick: |content| content.git.as_ref()?.date_format.as_ref(),
+                    write: |content, value, _| {
+                        content.git.get_or_insert_default().date_format = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::DynamicItem(DynamicItem {
                 discriminant: SettingItem {
                     files: USER,
@@ -8229,6 +8322,76 @@ fn version_control_page() -> SettingsPage {
                     ],
                 ],
             }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Auto Fetch",
+                    description: "Automatically fetch the default branch's remote and the current branch's upstream remote.",
+                    field: Box::new(SettingField::<bool> {
+                        organization_override: None,
+                        json_path: Some("git.auto_fetch.enabled"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .auto_fetch
+                                .as_ref()?
+                                .enabled
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .auto_fetch
+                                .get_or_insert_default()
+                                .enabled = value;
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(
+                        *settings_content
+                            .git
+                            .as_ref()?
+                            .auto_fetch
+                            .as_ref()?
+                            .enabled
+                            .as_ref()? as usize,
+                    )
+                },
+                fields: vec![
+                    vec![],
+                    vec![SettingItem {
+                        files: USER,
+                        title: "Auto Fetch Interval",
+                        description: "How long to wait between automatic fetches, in seconds. (min: 15)",
+                        field: Box::new(SettingField::<u64> {
+                            organization_override: None,
+                            json_path: Some("git.auto_fetch.interval_secs"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .git
+                                    .as_ref()?
+                                    .auto_fetch
+                                    .as_ref()?
+                                    .interval_secs
+                                    .as_ref()
+                            },
+                            write: |settings_content, value, _| {
+                                settings_content
+                                    .git
+                                    .get_or_insert_default()
+                                    .auto_fetch
+                                    .get_or_insert_default()
+                                    .interval_secs = value;
+                            },
+                        }),
+                        metadata: None,
+                    }],
+                ],
+            }),
         ]
     }
 
@@ -8269,9 +8432,36 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn inline_git_blame_section() -> [SettingsPageItem; 6] {
+    fn inline_git_blame_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Inline Git Blame"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Style",
+                description: "Show relative or absolute dates inline and in the status bar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.inline_blame.date_style"),
+                    pick: |content| {
+                        content
+                            .git
+                            .as_ref()?
+                            .inline_blame
+                            .as_ref()?
+                            .date_style
+                            .as_ref()
+                    },
+                    write: |content, value, _| {
+                        content
+                            .git
+                            .get_or_insert_default()
+                            .inline_blame
+                            .get_or_insert_default()
+                            .date_style = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::DynamicItem(DynamicItem {
                 discriminant: SettingItem {
                     title: "Enabled",
@@ -8453,9 +8643,28 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn git_blame_view_section() -> [SettingsPageItem; 2] {
+    fn git_blame_view_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Git Blame View"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Style",
+                description: "Show relative or absolute dates in the blame gutter.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.blame.date_style"),
+                    pick: |content| content.git.as_ref()?.blame.as_ref()?.date_style.as_ref(),
+                    write: |content, value, _| {
+                        content
+                            .git
+                            .get_or_insert_default()
+                            .blame
+                            .get_or_insert_default()
+                            .date_style = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Avatar",
                 description: "Show the avatar of the author of the commit.",
@@ -8486,9 +8695,36 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn branch_picker_section() -> [SettingsPageItem; 2] {
+    fn branch_picker_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Branch Picker"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Style",
+                description: "Show relative or absolute dates in the branch picker.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.branch_picker.date_style"),
+                    pick: |content| {
+                        content
+                            .git
+                            .as_ref()?
+                            .branch_picker
+                            .as_ref()?
+                            .date_style
+                            .as_ref()
+                    },
+                    write: |content, value, _| {
+                        content
+                            .git
+                            .get_or_insert_default()
+                            .branch_picker
+                            .get_or_insert_default()
+                            .date_style = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Author Name",
                 description: "Show author name as part of the commit information in branch picker.",
@@ -8511,6 +8747,59 @@ fn version_control_page() -> SettingsPage {
                             .branch_picker
                             .get_or_insert_default()
                             .show_author_name = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn stash_picker_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Stash Picker"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Style",
+                description: "Show relative or absolute dates in the stash picker.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.stash_picker.date_style"),
+                    pick: |content| {
+                        content
+                            .git
+                            .as_ref()?
+                            .stash_picker
+                            .as_ref()?
+                            .date_style
+                            .as_ref()
+                    },
+                    write: |content, value, _| {
+                        content
+                            .git
+                            .get_or_insert_default()
+                            .stash_picker
+                            .get_or_insert_default()
+                            .date_style = value
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn git_graph_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Git Graph"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Date Style",
+                description: "Show relative or absolute dates in graph rows.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_graph.date_style"),
+                    pick: |content| content.git_graph.as_ref()?.date_style.as_ref(),
+                    write: |content, value, _| {
+                        content.git_graph.get_or_insert_default().date_style = value
                     },
                 }),
                 metadata: None,
@@ -8631,6 +8920,8 @@ fn version_control_page() -> SettingsPage {
             inline_git_blame_section(),
             git_blame_view_section(),
             branch_picker_section(),
+            stash_picker_section(),
+            git_graph_section(),
             file_diff_section(),
             git_hunks_section(),
         ],
@@ -9288,6 +9579,29 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .agent
                             .get_or_insert_default()
                             .show_merge_conflict_indicator = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto-Generate Thread Titles",
+                description: "Whether to automatically generate a title for Zed Agent threads using the summary model. When disabled, titles are only created when manually requested.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.auto_generate_thread_titles"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .auto_generate_thread_titles
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .auto_generate_thread_titles = value;
                     },
                 }),
                 metadata: None,
