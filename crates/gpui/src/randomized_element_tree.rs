@@ -65,6 +65,7 @@ pub struct RandomizedElementTreeConfig {
     animation_density: f64,
     cached_views: bool,
     hover_styles: bool,
+    paths: bool,
 }
 
 impl RandomizedElementTreeConfig {
@@ -79,6 +80,7 @@ impl RandomizedElementTreeConfig {
             animation_density: 0.0,
             cached_views: false,
             hover_styles: false,
+            paths: true,
         }
     }
 
@@ -99,6 +101,14 @@ impl RandomizedElementTreeConfig {
     /// Off by default, so workloads that never move the pointer don't pay for them.
     pub fn with_hover_styles(mut self, hover_styles: bool) -> Self {
         self.hover_styles = hover_styles;
+        self
+    }
+
+    /// Whether elements paint vector paths. Path tessellation dominates the cost of
+    /// frames that draw them, so turning them off isolates layout and the rest of the
+    /// frame; elements keep the canvas that would have painted them, so layout is the same.
+    pub fn with_paths(mut self, paths: bool) -> Self {
+        self.paths = paths;
         self
     }
 
@@ -302,8 +312,7 @@ pub struct RandomizedElementTreeSnapshot {
     root: RandomizedElementStyle,
     children: Vec<RandomizedElementNode>,
     next_element_id: u64,
-    cached_views: bool,
-    hover_styles: bool,
+    render_options: RenderOptions,
     paths_by_element_id: HashMap<u64, Vec<usize>>,
 }
 
@@ -590,8 +599,11 @@ impl RandomizedElementTree {
             root: RandomizedElementStyle::random_root(&mut rng),
             children,
             next_element_id: config.element_count as u64,
-            cached_views: config.cached_views,
-            hover_styles: config.hover_styles,
+            render_options: RenderOptions {
+                cached_views: config.cached_views,
+                hover_styles: config.hover_styles,
+                paths: config.paths,
+            },
             paths_by_element_id: HashMap::default(),
         };
         snapshot.rebuild_element_paths();
@@ -1111,7 +1123,7 @@ impl Render for RandomizedElementTree {
 
         div()
             .flex()
-            .when(snapshot.hover_styles, |element| {
+            .when(snapshot.render_options.hover_styles, |element| {
                 element.group("randomized-tree-root")
             })
             .when(root.vertical, |element| element.flex_col())
@@ -1136,14 +1148,20 @@ impl Render for RandomizedElementTree {
                     &entities,
                     &self.scroll_handles,
                     &mut work_counters,
-                    snapshot.cached_views,
-                    snapshot.hover_styles,
+                    snapshot.render_options,
                 )
             }))
     }
 }
 
 type RandomizedElementEntities = HashMap<u64, Entity<RandomizedElementEntity>>;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RenderOptions {
+    cached_views: bool,
+    hover_styles: bool,
+    paths: bool,
+}
 
 struct RandomizedElementEntity {
     element_id: u64,
@@ -1169,8 +1187,7 @@ impl Render for RandomizedElementEntity {
                     entities.as_deref(),
                     &self.scroll_handles,
                     &mut work_counters,
-                    snapshot.cached_views,
-                    snapshot.hover_styles,
+                    snapshot.render_options,
                 )
             })
             .unwrap_or_else(|| div().into_any_element())
@@ -1331,13 +1348,12 @@ fn render_node(
     entities: &RandomizedElementEntities,
     scroll_handles: &RefCell<HashMap<u64, crate::ScrollHandle>>,
     work_counters: &mut RandomizedElementTreeWorkCounters,
-    cached_views: bool,
-    hover_styles: bool,
+    options: RenderOptions,
 ) -> AnyElement {
     if node.is_entity
         && let Some(entity) = entities.get(&node.id)
     {
-        if cached_views {
+        if options.cached_views {
             let mut style = crate::StyleRefinement::default();
             style.size.width = Some(px(node.style.width).into());
             style.size.height = Some(px(node.style.height).into());
@@ -1347,14 +1363,7 @@ fn render_node(
         return entity.clone().into_any_element();
     }
 
-    render_node_body(
-        node,
-        Some(entities),
-        scroll_handles,
-        work_counters,
-        cached_views,
-        hover_styles,
-    )
+    render_node_body(node, Some(entities), scroll_handles, work_counters, options)
 }
 
 #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
@@ -1363,8 +1372,7 @@ fn render_node_body(
     entities: Option<&RandomizedElementEntities>,
     scroll_handles: &RefCell<HashMap<u64, crate::ScrollHandle>>,
     work_counters: &mut RandomizedElementTreeWorkCounters,
-    cached_views: bool,
-    hover_styles: bool,
+    options: RenderOptions,
 ) -> AnyElement {
     work_counters.record_element_render(node.features.handler_count());
     let style = &node.style;
@@ -1382,7 +1390,7 @@ fn render_node_body(
         .w(px(style.width))
         .h(px(style.height))
         .bg(style.background)
-        .when(hover_styles, |element| {
+        .when(options.hover_styles, |element| {
             element
                 .hover(|element| {
                     element
@@ -1447,6 +1455,9 @@ fn render_node_body(
             crate::canvas(
                 |_, _, _| (),
                 move |bounds, (), window, _| {
+                    if !options.paths {
+                        return;
+                    }
                     for index in 0..6 {
                         let mut path = if index % 2 == 0 {
                             crate::PathBuilder::fill()
@@ -1474,23 +1485,9 @@ fn render_node_body(
         })
         .children(node.children.iter().map(|child| {
             if let Some(entities) = entities {
-                render_node(
-                    child,
-                    entities,
-                    scroll_handles,
-                    work_counters,
-                    cached_views,
-                    hover_styles,
-                )
+                render_node(child, entities, scroll_handles, work_counters, options)
             } else {
-                render_node_body(
-                    child,
-                    None,
-                    scroll_handles,
-                    work_counters,
-                    cached_views,
-                    hover_styles,
-                )
+                render_node_body(child, None, scroll_handles, work_counters, options)
             }
         }))
         .into_any_element()
