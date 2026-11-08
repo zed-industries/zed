@@ -268,6 +268,7 @@ impl VisualTestAppContext {
                 position,
                 modifiers,
                 pressed_button: button.into(),
+                pen: None,
             },
         );
     }
@@ -288,6 +289,7 @@ impl VisualTestAppContext {
                 button,
                 click_count: 1,
                 first_mouse: false,
+                pen: None,
             },
         );
     }
@@ -307,6 +309,7 @@ impl VisualTestAppContext {
                 modifiers,
                 button,
                 click_count: 1,
+                pen: None,
             },
         );
     }

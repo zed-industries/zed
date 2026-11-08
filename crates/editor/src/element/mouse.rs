@@ -1315,6 +1315,7 @@ mod tests {
                     position: mouse_drag_position,
                     modifiers: Modifiers::none(),
                     pressed_button: Some(MouseButton::Left),
+                    pen: None,
                 },
                 &position_map,
                 window,

@@ -143,6 +143,48 @@ impl InputEvent for TouchEvent {
     }
 }
 
+/// The kind of physical tool driving a [`PenInput`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum PenTool {
+    /// The tip of a stylus, or a tool the platform doesn't classify further.
+    #[default]
+    Pen,
+    /// The eraser end of a stylus.
+    Eraser,
+    /// A brush-like stylus.
+    Brush,
+    /// A pencil-like stylus.
+    Pencil,
+    /// An airbrush-like stylus.
+    Airbrush,
+}
+
+/// Stylus state reported alongside a mouse event that was produced by a pen or
+/// other tablet tool. Pens are delivered as regular mouse events so they work
+/// anywhere a mouse does; elements that care about pressure or tilt can read
+/// them from here.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PenInput {
+    /// Which tool produced the event.
+    pub tool: PenTool,
+
+    /// Normalized pressure in `0.0..=1.0`, or `None` if the tool can't sense
+    /// pressure. The pressure is `0.0` while the tool is hovering.
+    pub pressure: Option<f32>,
+
+    /// Tilt of the tool away from the axis perpendicular to the surface, in
+    /// degrees in `-90.0..=90.0`, or `None` if the tool can't sense tilt.
+    /// Positive `x` tilts towards the right of the window and positive `y`
+    /// towards its bottom.
+    pub tilt: Option<Point<f32>>,
+
+    /// Normalized distance between the tool and the tablet surface in
+    /// `0.0..=1.0`, or `None` if the tool can't sense distance. The value has
+    /// no physical unit, and how it behaves while the tip touches the surface
+    /// depends on the hardware.
+    pub distance: Option<f32>,
+}
+
 /// A mouse down event from the platform
 #[derive(Clone, Debug, Default)]
 pub struct MouseDownEvent {
@@ -160,6 +202,9 @@ pub struct MouseDownEvent {
 
     /// Whether this is the first, focusing click.
     pub first_mouse: bool,
+
+    /// Stylus state, if the event was produced by a pen.
+    pub pen: Option<PenInput>,
 }
 
 impl Sealed for MouseDownEvent {}
@@ -194,6 +239,9 @@ pub struct MouseUpEvent {
 
     /// The number of times the button has been clicked.
     pub click_count: usize,
+
+    /// Stylus state, if the event was produced by a pen.
+    pub pen: Option<PenInput>,
 }
 
 impl Sealed for MouseUpEvent {}
@@ -500,6 +548,9 @@ pub struct MouseMoveEvent {
 
     /// The modifiers that were held down when the mouse was moved.
     pub modifiers: Modifiers,
+
+    /// Stylus state, if the event was produced by a pen.
+    pub pen: Option<PenInput>,
 }
 
 impl Sealed for MouseMoveEvent {}

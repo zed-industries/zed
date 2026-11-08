@@ -11028,6 +11028,7 @@ impl Editor {
                         position: window.mouse_position(),
                         pressed_button: None,
                         modifiers: window.modifiers(),
+                        pen: None,
                     },
                     &position_map,
                     None,

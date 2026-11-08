@@ -1279,6 +1279,7 @@ impl X11Client {
                             modifiers,
                             click_count: current_count,
                             first_mouse: false,
+                            pen: None,
                         }));
                     }
                     Some(ButtonOrScroll::Scroll(direction)) => {
@@ -1326,6 +1327,7 @@ impl X11Client {
                             position,
                             modifiers,
                             click_count,
+                            pen: None,
                         }));
                     }
                     Some(ButtonOrScroll::Scroll(_)) => {}
@@ -1377,6 +1379,7 @@ impl X11Client {
                         position,
                         pressed_button,
                         modifiers,
+                        pen: None,
                     }));
                 }
 

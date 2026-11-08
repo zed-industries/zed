@@ -12460,6 +12460,7 @@ pub(crate) mod tests {
                     modifiers: gpui::Modifiers::default(),
                     click_count: 2,
                     first_mouse: false,
+                    pen: None,
                 });
                 cx.simulate_mouse_up(
                     position,
@@ -12523,6 +12524,7 @@ pub(crate) mod tests {
                     modifiers: gpui::Modifiers::default(),
                     click_count: 2,
                     first_mouse: false,
+                    pen: None,
                 });
                 cx.simulate_mouse_up(
                     position,

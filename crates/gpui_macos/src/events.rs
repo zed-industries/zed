@@ -174,6 +174,7 @@ pub(crate) unsafe fn platform_input_from_native(
                         modifiers: read_modifiers(native_event),
                         click_count: native_event.clickCount() as usize,
                         first_mouse: false,
+                        pen: None,
                     })
                 })
             }
@@ -197,6 +198,7 @@ pub(crate) unsafe fn platform_input_from_native(
                         ),
                         modifiers: read_modifiers(native_event),
                         click_count: native_event.clickCount() as usize,
+                        pen: None,
                     })
                 })
             }
@@ -242,6 +244,7 @@ pub(crate) unsafe fn platform_input_from_native(
                             modifiers: read_modifiers(native_event),
                             click_count: 1,
                             first_mouse: false,
+                            pen: None,
                         })
                     }),
                     _ => None,
@@ -316,6 +319,7 @@ pub(crate) unsafe fn platform_input_from_native(
                             window_height - px(native_event.locationInWindow().y as f32),
                         ),
                         modifiers: read_modifiers(native_event),
+                        pen: None,
                     })
                 })
             }
@@ -327,6 +331,7 @@ pub(crate) unsafe fn platform_input_from_native(
                     ),
                     pressed_button: None,
                     modifiers: read_modifiers(native_event),
+                    pen: None,
                 })
             }),
             NSEventType::MouseExited => window_height.map(|window_height| {

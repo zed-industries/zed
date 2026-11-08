@@ -5003,12 +5003,14 @@ mod tests {
             modifiers: Modifiers::default(),
             click_count,
             first_mouse: false,
+            pen: None,
         });
         cx.simulate_event(MouseUpEvent {
             position,
             button,
             modifiers: Modifiers::default(),
             click_count,
+            pen: None,
         });
     }
 

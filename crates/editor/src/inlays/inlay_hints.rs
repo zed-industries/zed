@@ -5976,12 +5976,14 @@ let c = 3;"#
             button: MouseButton::Left,
             click_count: 2,
             first_mouse: false,
+            pen: None,
         });
         cx.simulate_event(MouseUpEvent {
             position: hint_point,
             modifiers: Modifiers::none(),
             button: MouseButton::Left,
             click_count: 2,
+            pen: None,
         });
         assert_eq!(
             (

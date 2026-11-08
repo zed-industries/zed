@@ -811,12 +811,14 @@ impl TouchGestureRecognizer {
                             modifiers: Modifiers::default(),
                             click_count: tap_count,
                             first_mouse: false,
+                            pen: None,
                         },
                         up: MouseUpEvent {
                             button: MouseButton::Left,
                             position: event.position,
                             modifiers: Modifiers::default(),
                             click_count: tap_count,
+                            pen: None,
                         },
                     });
                 }

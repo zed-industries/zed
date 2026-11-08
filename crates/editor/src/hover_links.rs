@@ -2579,18 +2579,21 @@ mod tests {
             button: MouseButton::Left,
             click_count: 2,
             first_mouse: false,
+            pen: None,
         });
         let drag_end = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 30));
         cx.simulate_event(MouseMoveEvent {
             position: drag_end,
             pressed_button: Some(MouseButton::Left),
             modifiers: Modifiers::none(),
+            pen: None,
         });
         cx.simulate_event(MouseUpEvent {
             position: drag_end,
             modifiers: Modifiers::none(),
             button: MouseButton::Left,
             click_count: 2,
+            pen: None,
         });
         cx.assert_editor_state("fn main() { let «value = 1ˇ»; }\n");
         drop(release_resolve);
@@ -3304,12 +3307,14 @@ mod tests {
                 button: MouseButton::Left,
                 click_count: 1,
                 first_mouse: false,
+                pen: None,
             };
             let up = MouseUpEvent {
                 position: down.position,
                 modifiers: down.modifiers,
                 button: down.button,
                 click_count: down.click_count,
+                pen: None,
             };
             window.dispatch_event(PlatformInput::MouseDown(down), cx);
             window.dispatch_event(PlatformInput::MouseUp(up), cx);
@@ -4990,12 +4995,14 @@ Sentence ending file2.rs.
             button: MouseButton::Left,
             click_count: 2,
             first_mouse: false,
+            pen: None,
         });
         cx.simulate_event(MouseUpEvent {
             position,
             modifiers: Modifiers::none(),
             button: MouseButton::Left,
             click_count: 2,
+            pen: None,
         });
     }
 }

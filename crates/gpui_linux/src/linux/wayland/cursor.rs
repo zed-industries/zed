@@ -7,6 +7,27 @@ use wayland_client::Connection;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::protocol::{wl_pointer::WlPointer, wl_shm::WlShm};
 use wayland_cursor::{CursorImageBuffer, CursorTheme};
+use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_tool_v2::ZwpTabletToolV2;
+
+/// The input device whose cursor image is being set. Each device needs its own
+/// cursor surface, since a surface can only ever be given one cursor role.
+pub(crate) enum CursorTarget<'a> {
+    Pointer(&'a WlPointer),
+    TabletTool(&'a ZwpTabletToolV2),
+}
+
+impl CursorTarget<'_> {
+    fn set_cursor(&self, serial: u32, surface: &WlSurface, hotspot_x: i32, hotspot_y: i32) {
+        match self {
+            CursorTarget::Pointer(pointer) => {
+                pointer.set_cursor(serial, Some(surface), hotspot_x, hotspot_y)
+            }
+            CursorTarget::TabletTool(tool) => {
+                tool.set_cursor(serial, Some(surface), hotspot_x, hotspot_y)
+            }
+        }
+    }
+}
 
 pub(crate) struct Cursor {
     loaded_theme: Option<LoadedTheme>,
@@ -98,6 +119,26 @@ impl Cursor {
         cursor_icon_names: &[&str],
         scale: i32,
     ) {
+        let surface = self.surface.clone();
+        self.set_icon_on_surface(
+            CursorTarget::Pointer(wl_pointer),
+            &surface,
+            serial_id,
+            cursor_icon_names,
+            scale,
+        );
+    }
+
+    /// Shows the themed icon on `surface` and makes it `target`'s cursor. The
+    /// theme, its size and the scaling are shared by every target.
+    pub fn set_icon_on_surface(
+        &mut self,
+        target: CursorTarget,
+        surface: &WlSurface,
+        serial_id: u32,
+        cursor_icon_names: &[&str],
+        scale: i32,
+    ) {
         self.set_scaled_size(self.size * scale as u32);
 
         let Some(loaded_theme) = &mut self.loaded_theme else {
@@ -136,17 +177,17 @@ impl Cursor {
         let (width, height) = buffer.dimensions();
         let (hot_x, hot_y) = buffer.hotspot();
 
-        self.surface.set_buffer_scale(scale);
+        surface.set_buffer_scale(scale);
 
-        wl_pointer.set_cursor(
+        target.set_cursor(
             serial_id,
-            Some(&self.surface),
+            surface,
             hot_x as i32 / scale,
             hot_y as i32 / scale,
         );
 
-        self.surface.attach(Some(buffer), 0, 0);
-        self.surface.damage(0, 0, width as i32, height as i32);
-        self.surface.commit();
+        surface.attach(Some(buffer), 0, 0);
+        surface.damage(0, 0, width as i32, height as i32);
+        surface.commit();
     }
 }

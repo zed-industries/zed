@@ -519,6 +519,7 @@ fn measure_hover(group: &str, input: &TreeInput, cx: &mut BenchAppContext) {
                         position: *position,
                         modifiers: gpui::Modifiers::default(),
                         pressed_button: None,
+                        pen: None,
                     }),
                     cx,
                 );
@@ -643,6 +644,7 @@ impl MixedWorkload {
                         position,
                         modifiers: gpui::Modifiers::default(),
                         pressed_button: None,
+                        pen: None,
                     }),
                     cx,
                 );

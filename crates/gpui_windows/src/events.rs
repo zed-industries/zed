@@ -386,6 +386,7 @@ impl WindowsWindowInner {
             position: new_position,
             pressed_button,
             modifiers: current_modifiers(),
+            pen: None,
         });
         let handled = !func(input).propagate;
         self.state.callbacks.input.set(Some(func));
@@ -499,6 +500,7 @@ impl WindowsWindowInner {
             modifiers: current_modifiers(),
             click_count,
             first_mouse: false,
+            pen: None,
         });
         let handled = !func(input).propagate;
         self.state.callbacks.input.set(Some(func));
@@ -527,6 +529,7 @@ impl WindowsWindowInner {
             position: logical_point(x, y, scale_factor),
             modifiers: current_modifiers(),
             click_count,
+            pen: None,
         });
         let handled = !func(input).propagate;
         self.state.callbacks.input.set(Some(func));
@@ -1047,6 +1050,7 @@ impl WindowsWindowInner {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             pressed_button: None,
             modifiers: current_modifiers(),
+            pen: None,
         });
         let handled = !func(input).propagate;
         self.state.callbacks.input.set(Some(func));
@@ -1077,6 +1081,7 @@ impl WindowsWindowInner {
                 modifiers: current_modifiers(),
                 click_count,
                 first_mouse: false,
+                pen: None,
             });
             let handled = !func(input).propagate;
             self.state.callbacks.input.set(Some(func));
@@ -1121,6 +1126,7 @@ impl WindowsWindowInner {
                 position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
                 modifiers: current_modifiers(),
                 click_count: 1,
+                pen: None,
             });
             let handled = !func(input).propagate;
             self.state.callbacks.input.set(Some(func));

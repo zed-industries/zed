@@ -4021,6 +4021,7 @@ mod tests {
             modifiers: Modifiers::none(),
             click_count: 1,
             first_mouse: true,
+            pen: None,
         };
         terminal.mouse_down(&mouse_down, MouseInputMode::ReportToTerminal, cx);
     }
@@ -4035,6 +4036,7 @@ mod tests {
             position,
             modifiers: Modifiers::none(),
             click_count: 1,
+            pen: None,
         };
         terminal.mouse_up(&mouse_up, MouseInputMode::ReportToTerminal, cx);
     }
@@ -4049,6 +4051,7 @@ mod tests {
             position,
             pressed_button: Some(MouseButton::Left),
             modifiers: Modifiers::none(),
+            pen: None,
         };
         terminal.mouse_drag(&drag_event, region, MouseInputMode::ReportToTerminal, cx);
     }
@@ -4113,6 +4116,7 @@ mod tests {
                 modifiers: Modifiers::none(),
                 click_count: 1,
                 first_mouse: true,
+                pen: None,
             };
             terminal.mouse_down(&event, MouseInputMode::LocalSelection, cx);
             assert!(terminal.take_input_log().is_empty());
@@ -4212,6 +4216,7 @@ mod tests {
                     modifiers: shift,
                     click_count: 1,
                     first_mouse: true,
+                    pen: None,
                 },
                 MouseInputMode::ReportToTerminal,
                 cx,
@@ -4234,6 +4239,7 @@ mod tests {
                     position: point(px(90.0), px(10.0)),
                     pressed_button: Some(MouseButton::Left),
                     modifiers: shift,
+                    pen: None,
                 },
                 region,
                 MouseInputMode::ReportToTerminal,
@@ -4276,6 +4282,7 @@ mod tests {
                     },
                     click_count: 1,
                     first_mouse: true,
+                    pen: None,
                 },
                 MouseInputMode::ReportToTerminal,
                 cx,
@@ -5257,6 +5264,7 @@ mod tests {
                 modifiers: Modifiers::secondary_key(cx),
                 click_count: 1,
                 first_mouse: true,
+                pen: None,
             };
             terminal.mouse_down(&mouse_down, MouseInputMode::ReportToTerminal, cx);
         }
@@ -5271,6 +5279,7 @@ mod tests {
                 position,
                 pressed_button: Some(MouseButton::Left),
                 modifiers: Modifiers::secondary_key(cx),
+                pen: None,
             };
             terminal.mouse_drag(
                 &drag_event,
@@ -5290,6 +5299,7 @@ mod tests {
                 position,
                 modifiers: Modifiers::secondary_key(cx),
                 click_count: 1,
+                pen: None,
             };
             terminal.mouse_up(&mouse_up, MouseInputMode::ReportToTerminal, cx);
         }
@@ -5351,12 +5361,14 @@ mod tests {
                     modifiers: Modifiers::secondary_key(cx),
                     click_count: 1,
                     first_mouse: true,
+                    pen: None,
                 };
                 let mouse_up = MouseUpEvent {
                     button: MouseButton::Left,
                     position,
                     modifiers: Modifiers::secondary_key(cx),
                     click_count: 1,
+                    pen: None,
                 };
 
                 terminal.mouse_down(&mouse_down, MouseInputMode::LocalSelection, cx);
@@ -5392,6 +5404,7 @@ mod tests {
                     position: up_position,
                     pressed_button: Some(MouseButton::Left),
                     modifiers: Modifiers::secondary_key(cx),
+                    pen: None,
                 },
                 MouseInputMode::ReportToTerminal,
                 cx,

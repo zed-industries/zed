@@ -7743,6 +7743,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
         modifiers: Modifiers::default(),
         click_count: 1,
         first_mouse: false,
+        pen: None,
     });
 
     // regression test that the right click menu for tabs does not open.
@@ -7755,6 +7756,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
         modifiers: Modifiers::default(),
         click_count: 1,
         first_mouse: false,
+        pen: None,
     });
     assert!(cx.debug_bounds("MENU_ITEM-Close").is_some());
 }

@@ -866,12 +866,14 @@ impl RenderOnce for ButtonLike {
                                     modifiers: event.modifiers,
                                     click_count: 1,
                                     first_mouse: false,
+                                    pen: None,
                                 },
                                 up: MouseUpEvent {
                                     button: MouseButton::Right,
                                     position: event.position,
                                     modifiers: event.modifiers,
                                     click_count: 1,
+                                    pen: None,
                                 },
                             });
                             (on_right_click)(&click_event, window, cx)

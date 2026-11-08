@@ -302,6 +302,7 @@ impl WebWindowInner {
                 modifiers,
                 click_count,
                 first_mouse: false,
+                pen: None,
             }));
 
             this.ime_mirror.focus();
@@ -386,6 +387,7 @@ impl WebWindowInner {
                 position,
                 modifiers,
                 click_count,
+                pen: None,
             }));
 
             this.schedule_ime_mirror_sync();
@@ -605,6 +607,7 @@ impl WebWindowInner {
                 position,
                 pressed_button: current_pressed,
                 modifiers,
+                pen: None,
             }));
         })
     }
