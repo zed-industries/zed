@@ -27,8 +27,9 @@ type MeasureFn =
     dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>;
 type NodeMeasureFn = StackSafe<Box<MeasureFn>>;
 
-struct NodeContext {
-    measure: NodeMeasureFn,
+enum NodeContext {
+    Measure(NodeMeasureFn),
+    Text(Box<crate::elements::TextMeasure>),
 }
 
 pub struct TaffyLayoutEngine {
@@ -85,6 +86,11 @@ fn node_key(id: NodeId) -> DefaultKey {
 
 static LAYOUT_CACHE_ENABLED: LazyLock<bool> =
     LazyLock::new(|| std::env::var("GPUI_LAYOUT_CACHE").map_or(true, |value| value != "0"));
+
+#[cfg(test)]
+thread_local! {
+    static TEXT_MEASUREMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
 
@@ -156,8 +162,26 @@ impl TaffyLayoutEngine {
         let measure = Box::new(measure) as Box<MeasureFn>;
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
-        let context = NodeContext { measure };
+        let context = NodeContext::Measure(measure);
         self.request_node(scope, style, rem_size, scale_factor, &[], Some(context))
+    }
+
+    pub(crate) fn request_text_layout(
+        &mut self,
+        scope: u64,
+        rem_size: Pixels,
+        scale_factor: f32,
+        measure: crate::elements::TextMeasure,
+    ) -> LayoutId {
+        let context = NodeContext::Text(Box::new(measure));
+        self.request_node(
+            scope,
+            &Style::default(),
+            rem_size,
+            scale_factor,
+            &[],
+            Some(context),
+        )
     }
 
     fn request_node(
@@ -241,6 +265,16 @@ impl TaffyLayoutEngine {
         };
 
         cache.nodes[node_key(id)].frame = frame;
+        // Text that hasn't changed keeps the sizes Taffy cached for it.
+        if let Some(NodeContext::Text(measure)) = &context
+            && let Some(NodeContext::Text(previous)) = contexts.get_mut(node_key(id))
+            && measure.reuse_measurement(previous)
+        {
+            if let Some(NodeContext::Text(measure)) = context {
+                *previous = measure;
+            }
+            return id.into();
+        }
         // A measure function can depend on anything, so replacing it must invalidate the
         // sizes Taffy cached from the previous one.
         let measure_changed = match context {
@@ -438,12 +472,24 @@ impl TaffyLayoutEngine {
                                 untransform(available_space.height),
                             );
 
-                            let measured_size: Size<Pixels> = (node_context.measure)(
-                                known_dimensions,
-                                available_space,
-                                window,
-                                cx,
-                            );
+                            let measured_size = match node_context {
+                                NodeContext::Measure(measure) => {
+                                    measure(known_dimensions, available_space, window, cx)
+                                }
+                                NodeContext::Text(measure) => {
+                                    #[cfg(test)]
+                                    TEXT_MEASUREMENTS.set(TEXT_MEASUREMENTS.get() + 1);
+                                    let final_layout =
+                                        input.run_mode == taffy::RunMode::PerformLayout;
+                                    measure.measure(
+                                        known_dimensions,
+                                        available_space,
+                                        final_layout,
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            };
                             snap_measured_size_to_device_pixels(measured_size, scale_factor).into()
                         },
                     )
@@ -1055,8 +1101,8 @@ mod tests {
 
     /// Draws each frame in a window that keeps its layout nodes and in one that rebuilds
     /// them, checking that every element with a debug selector has the same bounds in
-    /// both.
-    fn assert_frames_match_uncached(cx: &mut TestAppContext, frames: Vec<Frame>) {
+    /// both. Returns how many times the cached window measured text in each frame.
+    fn assert_frames_match_uncached(cx: &mut TestAppContext, frames: Vec<Frame>) -> Vec<usize> {
         let frames = Rc::new(frames);
         let frame = Rc::new(Cell::new(0));
         let windows = [true, false].map(|layout_cache| {
@@ -1067,10 +1113,12 @@ mod tests {
                 FrameView { frame, frames }
             }))
         });
+        let mut text_measurements = Vec::new();
         for index in 0..frames.len() {
             frame.set(index);
             let [cached, uncached] = windows.map(|window| {
                 cx.update_window(window, |_, window, cx| {
+                    let measured_before = TEXT_MEASUREMENTS.get();
                     window.refresh();
                     window.draw(cx).clear(cx);
                     let mut bounds = window
@@ -1080,13 +1128,18 @@ mod tests {
                         .map(|(selector, bounds)| (selector.clone(), *bounds))
                         .collect::<Vec<_>>();
                     bounds.sort_by(|a, b| a.0.cmp(&b.0));
-                    bounds
+                    (bounds, TEXT_MEASUREMENTS.get() - measured_before)
                 })
                 .expect("window should remain open")
             });
-            assert!(!uncached.is_empty(), "frame {index} has no debug selectors");
-            assert_eq!(cached, uncached, "frame {index}");
+            assert!(
+                !uncached.0.is_empty(),
+                "frame {index} has no debug selectors"
+            );
+            assert_eq!(cached.0, uncached.0, "frame {index}");
+            text_measurements.push(cached.1);
         }
+        text_measurements
     }
 
     fn frame(render: impl Fn(&mut Window) -> AnyElement + 'static) -> Frame {
@@ -1288,6 +1341,54 @@ mod tests {
                 }),
                 leaf(),
             ],
+        );
+    }
+
+    #[crate::test]
+    fn text_is_measured_again_only_when_it_changes(cx: &mut TestAppContext) {
+        let text = |width: f32, text: &'static str, font_size: f32| {
+            frame(move |_| {
+                div()
+                    .flex()
+                    .child(
+                        div()
+                            .w(px(width))
+                            .text_size(px(font_size))
+                            .debug_selector(|| "wrapper".into())
+                            .child(text),
+                    )
+                    .child(div().size(px(10.)).debug_selector(|| "sibling".into()))
+                    .into_any_element()
+            })
+        };
+        let short = "Some text";
+        let same_length = "Same text";
+        let long = "Some longer text that wraps in narrow parents";
+        // Opening the window draws the first frame, so drawing it again measures nothing.
+        let frames = [
+            (text(200., short, 14.), false),
+            (text(200., short, 14.), false),
+            (text(200., same_length, 14.), true),
+            (text(200., long, 14.), true),
+            (text(200., long, 14.), false),
+            (text(60., long, 14.), true),
+            (text(60., long, 18.), true),
+            (text(60., long, 18.), false),
+            (text(200., long, 14.), true),
+        ];
+        let expected = frames
+            .iter()
+            .map(|(_, measured)| *measured)
+            .collect::<Vec<_>>();
+        let measurements =
+            assert_frames_match_uncached(cx, frames.into_iter().map(|(frame, _)| frame).collect());
+        let measured = measurements
+            .iter()
+            .map(|count| *count > 0)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            measured, expected,
+            "text measurements per frame: {measurements:?}"
         );
     }
 

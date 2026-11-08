@@ -5519,6 +5519,23 @@ impl Window {
         self.layout_engine.as_ref().unwrap().node_count()
     }
 
+    pub(crate) fn request_text_layout(
+        &mut self,
+        measure: crate::elements::TextMeasure,
+    ) -> LayoutId {
+        self.invalidator.debug_assert_prepaint();
+
+        let rem_size = self.rem_size();
+        let scale_factor = self.scale_factor();
+        let scope = self.element_id_stack.hash();
+        self.layout_engine.as_mut().unwrap().request_text_layout(
+            scope,
+            rem_size,
+            scale_factor,
+            measure,
+        )
+    }
+
     /// Compute the layout for the given id within the given available space.
     /// This method is called for its side effect, typically by the framework prior to painting.
     /// After calling it, you can request the bounds of the given layout node id or any descendant.

@@ -651,6 +651,11 @@ impl WindowTextSystem {
         }
     }
 
+    /// Changes whenever fonts are added, which can change how any text is shaped.
+    pub(crate) fn font_generation(&self) -> usize {
+        self.text_system.font_generation.load(Ordering::Acquire)
+    }
+
     pub(crate) fn layout_index(&self) -> LineLayoutIndex {
         self.line_layout_cache.layout_index()
     }

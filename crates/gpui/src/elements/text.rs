@@ -1,9 +1,9 @@
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
-    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
-    WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
+    LineLayoutIndex, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString,
+    Size, TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window,
+    WrappedLine, WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
 use gpui_util::ResultExt;
@@ -628,6 +628,272 @@ struct TextLayoutInner {
     truncate_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
+    /// The line layouts measuring this text used, in the frame it was measured in.
+    line_layouts: LineLayoutRanges,
+    /// Whether these lines were measured in an earlier frame.
+    carried: bool,
+}
+
+/// What a text element's size depends on, and where its measurement is stored for
+/// painting.
+pub(crate) struct TextMeasure {
+    text: SharedString,
+    runs: Vec<TextRun>,
+    text_style: TextStyle,
+    font_size: Pixels,
+    line_height: Pixels,
+    scale_factor: f32,
+    font_generation: usize,
+    element_state: TextLayout,
+    /// The line layouts each shaping of the text used in this frame.
+    shaped_line_layouts: RefCell<LineLayoutRanges>,
+}
+
+type LineLayoutRanges = SmallVec<[Range<LineLayoutIndex>; 2]>;
+
+impl TextMeasure {
+    /// Takes over the lines `previous` measured, so a text element that hasn't changed
+    /// since the last frame can paint without being measured again. Returns whether it
+    /// did; if not, this text must be measured.
+    pub(crate) fn reuse_measurement(&self, previous: &TextMeasure) -> bool {
+        if self.text != previous.text
+            || self.font_size != previous.font_size
+            || self.line_height != previous.line_height
+            || self.scale_factor != previous.scale_factor
+            || self.font_generation != previous.font_generation
+            || self.runs != previous.runs
+            || self.text_style != previous.text_style
+        {
+            return false;
+        }
+        // Whoever holds the previous frame's layout, such as an element reading it in an
+        // event handler, keeps it; otherwise it is moved rather than copied.
+        let measured = if Rc::strong_count(&previous.element_state.0) == 1 {
+            previous.element_state.0.borrow_mut().take()
+        } else {
+            previous
+                .element_state
+                .0
+                .borrow()
+                .as_ref()
+                .map(TextLayoutInner::clone_measurement)
+        };
+        let Some(mut measured) = measured else {
+            return false;
+        };
+        measured.bounds = None;
+        measured.carried = true;
+        *self.element_state.0.borrow_mut() = Some(measured);
+        true
+    }
+
+    fn is_carried(element_state: &TextLayout) -> bool {
+        element_state
+            .0
+            .borrow()
+            .as_ref()
+            .is_some_and(|measured| measured.carried)
+    }
+
+    /// Measures the text, keeping the lines for painting. Lines taken over from an earlier
+    /// frame are only replaced by the final measurement (`final_layout`, which Taffy makes
+    /// after any sizing probes): Taffy may serve that measurement from its cache while
+    /// measuring a probe again, and the probe's lines would be painted in bounds that
+    /// weren't computed from them.
+    pub(crate) fn measure(
+        &self,
+        known_dimensions: Size<Option<Pixels>>,
+        available_space: Size<crate::AvailableSpace>,
+        final_layout: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Size<Pixels> {
+        let Self {
+            text,
+            runs,
+            text_style,
+            font_size,
+            line_height,
+            element_state,
+            ..
+        } = self;
+        let font_size = *font_size;
+        let line_height = *line_height;
+        let wrap_width = if text_style.white_space == WhiteSpace::Normal {
+            known_dimensions.width.or(match available_space.width {
+                crate::AvailableSpace::Definite(x) => Some(x),
+                _ => None,
+            })
+        } else {
+            None
+        };
+
+        let (truncate_width, truncation_affix, truncate_from) =
+            if let Some(text_overflow) = text_style.text_overflow.clone() {
+                let width = known_dimensions.width.or(match available_space.width {
+                    crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
+                        Some(max_lines) => Some(x * max_lines),
+                        None => Some(x),
+                    },
+                    _ => None,
+                });
+
+                match text_overflow {
+                    TextOverflow::Truncate(s) => (width, s, TruncateFrom::End),
+                    TextOverflow::TruncateStart(s) => (width, s, TruncateFrom::Start),
+                    TextOverflow::TruncateMiddle(s) => (width, s, TruncateFrom::Middle),
+                }
+            } else {
+                (None, "".into(), TruncateFrom::End)
+            };
+
+        // Only use cached layout if:
+        // 1. We have a cached size
+        // 2. wrap_width matches (or both are None)
+        // 3. truncate_width is None (if truncate_width is Some, we need to re-layout
+        //    because the previous layout may have been computed without truncation)
+        // 4. the cached layout was not truncated (a truncated layout answers an
+        //    unconstrained probe with the truncated size, which poisons intrinsic
+        //    sizing with whatever width some earlier measure pass happened to use)
+        // 5. a layout taken over from an earlier frame matches exactly, since in this
+        //    frame an unconstrained probe would find no cached layout, not that one
+        if let Some(text_layout) = element_state.0.borrow().as_ref()
+            && let Some(size) = text_layout.size
+            && (wrap_width == text_layout.wrap_width
+                || (wrap_width.is_none() && !text_layout.carried))
+            && truncate_width.is_none()
+            && text_layout.truncate_width.is_none()
+        {
+            return size;
+        }
+
+        let line_layouts_start = window.text_system().layout_index();
+        let (text, runs) = if let Some(truncate_width) = truncate_width {
+            // Taking a wrapper from the pool locks it twice and moves its
+            // character width cache around, so only do it when truncating.
+            let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
+            if let Some(max_lines) = text_style.line_clamp
+                && let Some(wrap_width) = wrap_width
+            {
+                line_wrapper.truncate_wrapped_line(
+                    text.clone(),
+                    wrap_width,
+                    max_lines,
+                    &truncation_affix,
+                    &runs,
+                    truncate_from,
+                )
+            } else if let Some(unclipped) = window
+                .text_system()
+                .shape_text(text.clone(), font_size, &runs, None, None)
+                .log_err()
+                && unclipped
+                    .iter()
+                    .all(|line| line.size(line_height).width <= truncate_width)
+            {
+                // The truncation decision below sums per-character advances,
+                // which overestimates the shaped width (no kerning), truncating
+                // text that fits exactly in its measured width. Skip truncation
+                // whenever the honestly-shaped text fits; the shaping result
+                // comes from the line layout cache when the same text was
+                // already measured untruncated this frame.
+                (text.clone(), Cow::Borrowed(runs.as_slice()))
+            } else {
+                line_wrapper.truncate_line(
+                    text.clone(),
+                    truncate_width,
+                    &truncation_affix,
+                    &runs,
+                    truncate_from,
+                )
+            }
+        } else {
+            (text.clone(), Cow::Borrowed(runs.as_slice()))
+        };
+        let len = text.len();
+
+        let Some(lines) = window
+            .text_system()
+            .shape_text(
+                text,
+                font_size,
+                &runs,
+                wrap_width,            // Wrap if we know the width.
+                text_style.line_clamp, // Limit the number of lines if line_clamp is set.
+            )
+            .log_err()
+        else {
+            self.shaped_line_layouts
+                .borrow_mut()
+                .push(line_layouts_start..window.text_system().layout_index());
+            if !final_layout && Self::is_carried(element_state) {
+                return Size::default();
+            }
+            element_state.0.borrow_mut().replace(TextLayoutInner {
+                lines: Default::default(),
+                len: 0,
+                line_height,
+                wrap_width,
+                truncate_width,
+                size: Some(Size::default()),
+                bounds: None,
+                line_layouts: self.shaped_line_layouts.borrow().clone(),
+                carried: false,
+            });
+            return Size::default();
+        };
+
+        let mut size: Size<Pixels> = Size::default();
+        for line in &lines {
+            let line_size = line.size(line_height);
+            size.height += line_size.height;
+            size.width = size.width.max(line_size.width).ceil();
+        }
+        self.shaped_line_layouts
+            .borrow_mut()
+            .push(line_layouts_start..window.text_system().layout_index());
+        if !final_layout && Self::is_carried(element_state) {
+            return size;
+        }
+
+        element_state.0.borrow_mut().replace(TextLayoutInner {
+            lines,
+            len,
+            line_height,
+            wrap_width,
+            truncate_width,
+            size: Some(size),
+            bounds: None,
+            line_layouts: self.shaped_line_layouts.borrow().clone(),
+            carried: false,
+        });
+
+        size
+    }
+}
+
+impl TextLayoutInner {
+    fn clone_measurement(&self) -> Self {
+        Self {
+            len: self.len,
+            lines: self
+                .lines
+                .iter()
+                .map(|line| WrappedLine {
+                    layout: line.layout.clone(),
+                    text: line.text.clone(),
+                    decoration_runs: line.decoration_runs.clone(),
+                })
+                .collect(),
+            line_height: self.line_height,
+            wrap_width: self.wrap_width,
+            truncate_width: self.truncate_width,
+            size: self.size,
+            bounds: None,
+            line_layouts: self.line_layouts.clone(),
+            carried: self.carried,
+        }
+    }
 }
 
 impl TextLayout {
@@ -638,6 +904,30 @@ impl TextLayout {
         window: &mut Window,
         _: &mut App,
     ) -> LayoutId {
+        let measured_before = self.0.borrow().is_some();
+        let layout_id = window.request_text_layout(self.measurement(text, runs, window));
+        // Text whose measurement was taken over from the last frame isn't shaped in this
+        // one, so its line layouts would leave the cache, and shaping the same text again
+        // (as when list rows move between elements) would miss it.
+        if !measured_before && let Some(measured) = self.0.borrow_mut().as_mut() {
+            let text_system = window.text_system();
+            let start = text_system.layout_index();
+            for range in measured.line_layouts.drain(..) {
+                text_system.reuse_layouts(range);
+            }
+            measured
+                .line_layouts
+                .push(start..text_system.layout_index());
+        }
+        layout_id
+    }
+
+    fn measurement(
+        &self,
+        text: SharedString,
+        runs: Option<Vec<TextRun>>,
+        window: &Window,
+    ) -> TextMeasure {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
         let line_height = window.pixel_snap(
@@ -651,143 +941,17 @@ impl TextLayout {
         } else {
             vec![text_style.to_run(text.len())]
         };
-        window.request_measured_layout(Default::default(), {
-            let element_state = self.clone();
-
-            move |known_dimensions, available_space, window, cx| {
-                let wrap_width = if text_style.white_space == WhiteSpace::Normal {
-                    known_dimensions.width.or(match available_space.width {
-                        crate::AvailableSpace::Definite(x) => Some(x),
-                        _ => None,
-                    })
-                } else {
-                    None
-                };
-
-                let (truncate_width, truncation_affix, truncate_from) =
-                    if let Some(text_overflow) = text_style.text_overflow.clone() {
-                        let width = known_dimensions.width.or(match available_space.width {
-                            crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
-                                Some(max_lines) => Some(x * max_lines),
-                                None => Some(x),
-                            },
-                            _ => None,
-                        });
-
-                        match text_overflow {
-                            TextOverflow::Truncate(s) => (width, s, TruncateFrom::End),
-                            TextOverflow::TruncateStart(s) => (width, s, TruncateFrom::Start),
-                            TextOverflow::TruncateMiddle(s) => (width, s, TruncateFrom::Middle),
-                        }
-                    } else {
-                        (None, "".into(), TruncateFrom::End)
-                    };
-
-                // Only use cached layout if:
-                // 1. We have a cached size
-                // 2. wrap_width matches (or both are None)
-                // 3. truncate_width is None (if truncate_width is Some, we need to re-layout
-                //    because the previous layout may have been computed without truncation)
-                // 4. the cached layout was not truncated (a truncated layout answers an
-                //    unconstrained probe with the truncated size, which poisons intrinsic
-                //    sizing with whatever width some earlier measure pass happened to use)
-                if let Some(text_layout) = element_state.0.borrow().as_ref()
-                    && let Some(size) = text_layout.size
-                    && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
-                    && truncate_width.is_none()
-                    && text_layout.truncate_width.is_none()
-                {
-                    return size;
-                }
-
-                let (text, runs) = if let Some(truncate_width) = truncate_width {
-                    // Taking a wrapper from the pool locks it twice and moves its
-                    // character width cache around, so only do it when truncating.
-                    let mut line_wrapper =
-                        cx.text_system().line_wrapper(text_style.font(), font_size);
-                    if let Some(max_lines) = text_style.line_clamp
-                        && let Some(wrap_width) = wrap_width
-                    {
-                        line_wrapper.truncate_wrapped_line(
-                            text.clone(),
-                            wrap_width,
-                            max_lines,
-                            &truncation_affix,
-                            &runs,
-                            truncate_from,
-                        )
-                    } else if let Some(unclipped) = window
-                        .text_system()
-                        .shape_text(text.clone(), font_size, &runs, None, None)
-                        .log_err()
-                        && unclipped
-                            .iter()
-                            .all(|line| line.size(line_height).width <= truncate_width)
-                    {
-                        // The truncation decision below sums per-character advances,
-                        // which overestimates the shaped width (no kerning), truncating
-                        // text that fits exactly in its measured width. Skip truncation
-                        // whenever the honestly-shaped text fits; the shaping result
-                        // comes from the line layout cache when the same text was
-                        // already measured untruncated this frame.
-                        (text.clone(), Cow::Borrowed(&*runs))
-                    } else {
-                        line_wrapper.truncate_line(
-                            text.clone(),
-                            truncate_width,
-                            &truncation_affix,
-                            &runs,
-                            truncate_from,
-                        )
-                    }
-                } else {
-                    (text.clone(), Cow::Borrowed(&*runs))
-                };
-                let len = text.len();
-
-                let Some(lines) = window
-                    .text_system()
-                    .shape_text(
-                        text,
-                        font_size,
-                        &runs,
-                        wrap_width,            // Wrap if we know the width.
-                        text_style.line_clamp, // Limit the number of lines if line_clamp is set.
-                    )
-                    .log_err()
-                else {
-                    element_state.0.borrow_mut().replace(TextLayoutInner {
-                        lines: Default::default(),
-                        len: 0,
-                        line_height,
-                        wrap_width,
-                        truncate_width,
-                        size: Some(Size::default()),
-                        bounds: None,
-                    });
-                    return Size::default();
-                };
-
-                let mut size: Size<Pixels> = Size::default();
-                for line in &lines {
-                    let line_size = line.size(line_height);
-                    size.height += line_size.height;
-                    size.width = size.width.max(line_size.width).ceil();
-                }
-
-                element_state.0.borrow_mut().replace(TextLayoutInner {
-                    lines,
-                    len,
-                    line_height,
-                    wrap_width,
-                    truncate_width,
-                    size: Some(size),
-                    bounds: None,
-                });
-
-                size
-            }
-        })
+        TextMeasure {
+            text,
+            runs,
+            text_style,
+            font_size,
+            line_height,
+            scale_factor: window.scale_factor(),
+            font_generation: window.text_system().font_generation(),
+            element_state: self.clone(),
+            shaped_line_layouts: RefCell::default(),
+        }
     }
 
     fn prepaint(&self, bounds: Bounds<Pixels>, text: &str) {
@@ -1319,6 +1483,68 @@ impl IntoElement for InteractiveText {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[crate::test]
+    fn carried_lines_are_only_replaced_by_the_final_measurement(cx: &mut crate::TestAppContext) {
+        let cx = cx.add_empty_window();
+        cx.update(|window, cx| {
+            let text = SharedString::from("Several words that wrap in a narrow parent");
+            let narrow = Size {
+                width: crate::AvailableSpace::Definite(crate::px(60.)),
+                height: crate::AvailableSpace::MaxContent,
+            };
+            let wide = Size {
+                width: crate::AvailableSpace::Definite(crate::px(2000.)),
+                ..narrow
+            };
+            // The height of the lines a layout would paint.
+            let painted_height = |layout: &TextLayout| {
+                layout.0.borrow().as_ref().map(|measured| {
+                    measured
+                        .lines
+                        .iter()
+                        .map(|line| line.size(measured.line_height).height)
+                        .sum::<Pixels>()
+                })
+            };
+
+            // Without lines from an earlier frame, any measurement is kept, as before.
+            let previous_layout = TextLayout::default();
+            let previous = previous_layout.measurement(text.clone(), None, window);
+            let narrow_height = previous
+                .measure(Size::default(), narrow, false, window, cx)
+                .height;
+            assert_eq!(painted_height(&previous_layout), Some(narrow_height));
+
+            let layout = TextLayout::default();
+            let measure = layout.measurement(text.clone(), None, window);
+            assert!(measure.reuse_measurement(&previous));
+            assert_eq!(painted_height(&layout), Some(narrow_height));
+            // Taken-over lines don't answer an unconstrained probe, which this frame
+            // would otherwise have measured from scratch.
+            let unconstrained = Size {
+                width: crate::AvailableSpace::MaxContent,
+                ..narrow
+            };
+            let fresh = TextLayout::default().measurement(text, None, window);
+            assert_eq!(
+                measure.measure(Size::default(), unconstrained, false, window, cx),
+                fresh.measure(Size::default(), unconstrained, false, window, cx)
+            );
+            // A probe can't replace lines taken over from the last frame, since Taffy may
+            // not measure the text for its final size again.
+            let wide_height = measure
+                .measure(Size::default(), wide, false, window, cx)
+                .height;
+            assert!(wide_height < narrow_height);
+            assert_eq!(painted_height(&layout), Some(narrow_height));
+            measure.measure(Size::default(), wide, true, window, cx);
+            assert_eq!(painted_height(&layout), Some(wide_height));
+
+            let changed = TextLayout::default().measurement("Other text".into(), None, window);
+            assert!(!changed.reuse_measurement(&measure));
+        });
+    }
 
     #[test]
     fn test_into_element_for() {
