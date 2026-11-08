@@ -631,6 +631,12 @@ impl std::fmt::Debug for ContextServerCommand {
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
+    /// Format for absolute Git dates: "locale", "iso", or a strftime format
+    /// such as "%Y-%m-%d %H:%M" or "%b %d, %Y". Invalid formats fall back to "locale".
+    ///
+    /// Default: locale
+    #[schemars(extend("examples" = ["locale", "iso", "%Y-%m-%d %H:%M", "%b %d, %Y"]))]
+    pub date_format: Option<String>,
     /// Whether or not to enable git integration.
     ///
     /// Default: true
@@ -655,6 +661,8 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: Option<BranchPickerSettingsContent>,
+    /// Stash picker settings.
+    pub stash_picker: Option<StashPickerSettings>,
     /// File diff settings.
     pub file_diff: Option<FileDiffSettingsContent>,
     /// How hunks are displayed visually in the editor.
@@ -694,6 +702,23 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: Option<String>,
+    /// Settings for automatically fetching the default branch's remote and the current branch's upstream remote.
+    pub auto_fetch: Option<AutoFetchSettingsContent>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct AutoFetchSettingsContent {
+    /// Whether to automatically fetch in the background.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// How long to wait between automatic fetches, in seconds.
+    /// Only used when `enabled` is true. (min: 15)
+    ///
+    /// Default: 60
+    pub interval_secs: Option<u64>,
 }
 
 #[with_fallible_options]
@@ -763,6 +788,10 @@ pub enum InlineBlameLocation {
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct InlineBlameSettings {
+    /// Whether to show relative or absolute dates.
+    ///
+    /// Default: relative
+    pub date_style: Option<GitDateStyle>,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
@@ -796,6 +825,10 @@ pub struct InlineBlameSettings {
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct BlameSettings {
+    /// Whether to show relative or absolute dates in the blame gutter.
+    ///
+    /// Default: relative
+    pub date_style: Option<GitDateStyle>,
     /// Whether to show the avatar of the author of the commit.
     ///
     /// Default: true
@@ -806,10 +839,44 @@ pub struct BlameSettings {
 #[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct BranchPickerSettingsContent {
+    /// Whether to show relative or absolute dates.
+    ///
+    /// Default: relative
+    pub date_style: Option<GitDateStyle>,
     /// Whether to show author name as part of the commit information.
     ///
     /// Default: false
     pub show_author_name: Option<bool>,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitDateStyle {
+    #[default]
+    Relative,
+    Absolute,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct StashPickerSettings {
+    /// Whether to show relative or absolute dates.
+    ///
+    /// Default: relative
+    pub date_style: Option<GitDateStyle>,
 }
 
 #[with_fallible_options]

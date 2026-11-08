@@ -44,7 +44,6 @@ enum MainThreadItem {
         runnable: RunnableVariant,
         timeout: Option<Duration>,
     },
-    Function(Box<dyn FnOnce() + Send>),
     // TODO-Wasm: Shouldn't these run on their own dedicated thread?
     RealtimeFunction(Box<dyn FnOnce() + Send>),
 }
@@ -226,19 +225,6 @@ impl WebDispatcher {
     fn on_main_thread(&self) -> bool {
         std::thread::current().id() == self.main_thread_id
     }
-
-    pub(crate) fn dispatch_function_on_main_thread(
-        &self,
-        function: impl FnOnce() + Send + 'static,
-    ) {
-        if self.on_main_thread() {
-            let callback = Closure::once_into_js(function);
-            browser_window().queue_microtask(callback.unchecked_ref());
-        } else {
-            self.main_thread_mailbox
-                .post(Priority::High, MainThreadItem::Function(Box::new(function)));
-        }
-    }
 }
 
 impl PlatformDispatcher for WebDispatcher {
@@ -355,7 +341,7 @@ fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
                 )
                 .ok();
         }
-        MainThreadItem::Function(function) | MainThreadItem::RealtimeFunction(function) => {
+        MainThreadItem::RealtimeFunction(function) => {
             function();
         }
     }

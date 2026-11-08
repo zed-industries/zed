@@ -2,10 +2,11 @@
 #
 # When an area/platform label is added to or already present when reopening a
 # community PR (not staff, not bot), the PR is added to the project board with a
-# Track field set to the matching review area group. Status transitions for
-# assignment, re-request, and comment events are handled here. Review-based
-# status changes (approved → "In Progress (us)", changes requested → "In
-# Progress (author)") are handled by built-in board automations.
+# Track field set to the matching review area group, and its signal fields are
+# recomputed. Status transitions for assignment, re-request, and comment events
+# are handled here. Review-based status changes (approved → "In Progress (us)",
+# changes requested → "In Progress (author)") are handled by built-in board
+# automations.
 #
 # See script/community-pr-track-mapping.json for the label→track mapping.
 
@@ -22,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: "PR number to process (re-resolves track from current labels)"
+        description: "PR number to process (re-resolves Track and recomputes signals)"
         required: true
         type: number
 

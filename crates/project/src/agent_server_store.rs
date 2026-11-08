@@ -9,11 +9,12 @@ use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
 use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
+use github_releases::AssetKind;
 use gpui::{
     AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     TaskExt,
 };
-use http_client::{HttpClient, github::AssetKind};
+use http_client::HttpClient;
 use node_runtime::NodeRuntime;
 use percent_encoding::percent_decode_str;
 use remote::RemoteClient;
@@ -1228,7 +1229,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
                     Some(provided_sha.clone())
                 } else if let Some(github_archive) = github_release_archive_from_url(archive_url) {
-                    if let Ok(release) = ::http_client::github::get_release_by_tag_name(
+                    if let Ok(release) = github_releases::get_release_by_tag_name(
                         &github_archive.repo_name_with_owner,
                         &github_archive.tag,
                         http_client.clone(),
@@ -1255,10 +1256,12 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     None
                 };
 
+                let executor = cx.background_executor();
                 match registry_archive_kind_for_url(archive_url)? {
                     RegistryArchiveKind::Archive(asset_kind) => {
-                        ::http_client::github_download::download_server_binary(
-                            &*http_client,
+                        github_releases::download_server_binary(
+                            executor,
+                            http_client.clone(),
                             archive_url,
                             sha256.as_deref(),
                             &version_dir,
@@ -1267,8 +1270,9 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                         .await?;
                     }
                     RegistryArchiveKind::RawBinary { file_name } => {
-                        ::http_client::github_download::download_server_raw_binary(
-                            &*http_client,
+                        github_releases::download_server_raw_binary(
+                            executor,
+                            http_client.clone(),
                             archive_url,
                             sha256.as_deref(),
                             &version_dir,
@@ -1388,21 +1392,36 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .join("registry")
                 .join("npx")
                 .join(sanitize_path_component(&registry_id));
+
+            // Every project and connection calls this, and concurrent `npm install`s in the same
+            // directory can leave packages half-extracted (e.g. without a package.json).
+            let install_lock = npx_install_lock(&install_dir);
+            let _install_guard = install_lock.lock().await;
+
             fs.create_dir(&install_dir).await?;
 
             let (package_name, package_spec) = bounded_npm_package_spec(&package);
-            node_runtime
-                .run_npm_subcommand(
-                    Some(&install_dir),
-                    "install",
-                    &[package_spec.as_str(), "--save-exact"],
+            let node_modules_dir = install_dir.join("node_modules");
+            install_npx_package(&node_runtime, &install_dir, &package_spec).await?;
+            if let Some(incomplete_package_dir) =
+                find_incomplete_npm_package(fs.as_ref(), &node_modules_dir).await?
+            {
+                log::warn!(
+                    "npm package at {incomplete_package_dir:?} is missing its package.json, reinstalling {package_name}"
+                );
+                fs.remove_dir(
+                    &node_modules_dir,
+                    RemoveOptions {
+                        recursive: true,
+                        ignore_if_not_exists: true,
+                    },
                 )
-                .await?;
-            let executable = node_runtime::read_package_executable(
-                install_dir.join("node_modules"),
-                package_name,
-            )
-            .await?;
+                .await
+                .with_context(|| format!("removing {node_modules_dir:?}"))?;
+                install_npx_package(&node_runtime, &install_dir, &package_spec).await?;
+            }
+            let executable =
+                node_runtime::read_package_executable(node_modules_dir, package_name).await?;
 
             let node_binary = node_runtime.binary_path().await?;
             env.extend(node_runtime::npm_command_env(&node_binary));
@@ -1431,6 +1450,81 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+static NPX_INSTALL_LOCKS: LazyLock<
+    parking_lot::Mutex<HashMap<PathBuf, Arc<async_lock::Mutex<()>>>>,
+> = LazyLock::new(Default::default);
+
+fn npx_install_lock(install_dir: &Path) -> Arc<async_lock::Mutex<()>> {
+    NPX_INSTALL_LOCKS
+        .lock()
+        .entry(install_dir.to_path_buf())
+        .or_default()
+        .clone()
+}
+
+async fn install_npx_package(
+    node_runtime: &NodeRuntime,
+    install_dir: &Path,
+    package_spec: &str,
+) -> Result<()> {
+    node_runtime
+        .run_npm_subcommand(
+            Some(install_dir),
+            "install",
+            &[package_spec, "--save-exact"],
+        )
+        .await?;
+    Ok(())
+}
+
+/// Returns the first top-level package directory in `node_modules` that has no package.json.
+///
+/// Node resolves such a package to `index.js`, so the agent fails to start with
+/// `ERR_MODULE_NOT_FOUND`. `npm install` doesn't repair this on its own when it trusts its
+/// hidden lockfile (`node_modules/.package-lock.json`) over the package folders.
+async fn find_incomplete_npm_package(
+    fs: &dyn Fs,
+    node_modules_dir: &Path,
+) -> Result<Option<PathBuf>> {
+    let mut package_dirs = Vec::new();
+    for entry in npm_package_dir_entries(fs, node_modules_dir).await? {
+        let is_scope = entry
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with('@'));
+        if is_scope {
+            package_dirs.extend(npm_package_dir_entries(fs, &entry).await?);
+        } else {
+            package_dirs.push(entry);
+        }
+    }
+
+    for package_dir in package_dirs {
+        if !fs.is_file(&package_dir.join("package.json")).await {
+            return Ok(Some(package_dir));
+        }
+    }
+    Ok(None)
+}
+
+async fn npm_package_dir_entries(fs: &dyn Fs, dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut entries = fs
+        .read_dir(dir)
+        .await
+        .with_context(|| format!("reading {dir:?}"))?;
+    let mut package_dirs = Vec::new();
+    while let Some(entry) = entries.next().await {
+        let entry = entry.with_context(|| format!("reading entry in {dir:?}"))?;
+        // npm keeps metadata and in-progress extractions in dot-prefixed entries.
+        let is_hidden = entry
+            .file_name()
+            .is_none_or(|name| name.to_string_lossy().starts_with('.'));
+        if !is_hidden && fs.is_dir(&entry).await {
+            package_dirs.push(entry);
+        }
+    }
+    Ok(package_dirs)
 }
 
 /// People are using min-release-age more frequently. Which means a fresh registry will likely have
@@ -2126,6 +2220,49 @@ mod tests {
                 .join("agent")
         );
         assert_eq!(std::fs::read(command.path).unwrap(), contents);
+    }
+
+    #[gpui::test]
+    async fn test_find_incomplete_npm_package(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let node_modules_dir = Path::new("/agent/node_modules");
+        fs.insert_tree(
+            node_modules_dir,
+            serde_json::json!({
+                ".bin": {},
+                ".package-lock.json": "{}",
+                "zod": { "package.json": "{}" },
+                "@agentclientprotocol": {
+                    "claude-agent-acp": { "package.json": "{}" },
+                    ".claude-agent-acp-abc123": {},
+                },
+                "@anthropic-ai": {
+                    "claude-agent-sdk": { "package.json": "{}", "sdk.mjs": "" },
+                },
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            find_incomplete_npm_package(fs.as_ref(), node_modules_dir)
+                .await
+                .unwrap(),
+            None
+        );
+
+        fs.remove_file(
+            &node_modules_dir.join("@anthropic-ai/claude-agent-sdk/package.json"),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            find_incomplete_npm_package(fs.as_ref(), node_modules_dir)
+                .await
+                .unwrap(),
+            Some(node_modules_dir.join("@anthropic-ai/claude-agent-sdk"))
+        );
     }
 
     #[gpui::test]
