@@ -1628,6 +1628,18 @@ impl App {
         Some((window.display_id(), window.last_window_bounds()))
     }
 
+    pub(crate) fn sync_window_update_entry(&mut self, window: &Window) {
+        if let Some(state) = self
+            .window_update_stack
+            .iter_mut()
+            .rev()
+            .find(|state| state.window_id == window.handle.id)
+        {
+            state.bounds = window.last_window_bounds();
+            state.display_id = window.display_id();
+        }
+    }
+
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `Window`, which can be used to interact with window-specific
     /// functionality.
