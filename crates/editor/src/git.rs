@@ -11,7 +11,7 @@ use project::git_store::Repository;
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum GitDiffBaseOverride {
     Branch(Entity<project::git_store::diff_buffer_list::DiffBufferList>),
-    Uncommitted,
+    Uncommitted(Entity<project::git_store::diff_buffer_list::DiffBufferList>),
 }
 
 #[derive(Clone)]
@@ -3241,9 +3241,18 @@ pub fn render_diff_hunk_controls(
 
 impl Editor {
     pub fn git_diff_base_name(&self, cx: &App) -> Option<gpui::SharedString> {
-        let GitDiffBaseOverride::Branch(branch_diff) = self.git_diff_base_override.as_ref()? else {
+        if !matches!(
+            self.git_diff_base_override,
+            Some(GitDiffBaseOverride::Branch(_))
+        ) {
             return None;
-        };
+        }
+        self.git_diff_comparison_branch_name(cx)
+    }
+
+    pub fn git_diff_comparison_branch_name(&self, cx: &App) -> Option<gpui::SharedString> {
+        let (GitDiffBaseOverride::Branch(branch_diff)
+        | GitDiffBaseOverride::Uncommitted(branch_diff)) = self.git_diff_base_override.as_ref()?;
         match branch_diff.read(cx).diff_base() {
             project::git_store::diff_buffer_list::DiffBase::Merge { base_ref } => {
                 Some(base_ref.clone())
@@ -3260,8 +3269,20 @@ impl Editor {
         self.set_git_diff_base_override(Some(GitDiffBaseOverride::Branch(branch_diff)), cx);
     }
 
-    pub fn show_uncommitted_changes(&mut self, cx: &mut Context<Self>) {
-        self.set_git_diff_base_override(Some(GitDiffBaseOverride::Uncommitted), cx);
+    pub fn set_branch_comparison_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        let Some(
+            GitDiffBaseOverride::Branch(branch_diff)
+            | GitDiffBaseOverride::Uncommitted(branch_diff),
+        ) = self.git_diff_base_override.as_ref()
+        else {
+            return;
+        };
+        let diff_base = if enabled {
+            GitDiffBaseOverride::Branch(branch_diff.clone())
+        } else {
+            GitDiffBaseOverride::Uncommitted(branch_diff.clone())
+        };
+        self.set_git_diff_base_override(Some(diff_base), cx);
     }
 
     pub(super) fn set_git_diff_base_override(
@@ -3273,14 +3294,21 @@ impl Editor {
             return;
         }
         self.git_diff_base_override = diff_base.clone();
-        self.git_diff_base_subscription = diff_base.and_then(|diff_base| match diff_base {
-            GitDiffBaseOverride::Branch(branch_diff) => Some(cx.subscribe(
+        self.git_diff_base_subscription = diff_base.map(|diff_base| match diff_base {
+            GitDiffBaseOverride::Branch(branch_diff)
+            | GitDiffBaseOverride::Uncommitted(branch_diff) => cx.subscribe(
                 &branch_diff,
                 |this, _, _: &project::git_store::diff_buffer_list::BranchDiffEvent, cx| {
-                    this.reload_git_diff(cx);
+                    if matches!(
+                        this.git_diff_base_override,
+                        Some(GitDiffBaseOverride::Branch(_))
+                    ) {
+                        this.reload_git_diff(cx);
+                    } else {
+                        cx.notify();
+                    }
                 },
-            )),
-            GitDiffBaseOverride::Uncommitted => None,
+            ),
         });
         self.reload_git_diff(cx);
     }
@@ -3322,7 +3350,7 @@ impl Editor {
                             Some(GitDiffBaseOverride::Branch(branch_diff)) => {
                                 git_store.open_diff_against_branch(buffer, branch_diff, cx)
                             }
-                            Some(GitDiffBaseOverride::Uncommitted) => {
+                            Some(GitDiffBaseOverride::Uncommitted(_)) => {
                                 git_store.open_uncommitted_diff(buffer, cx)
                             }
                             None => git_store.open_display_diff(buffer, cx),

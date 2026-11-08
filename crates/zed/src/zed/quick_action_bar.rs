@@ -119,6 +119,8 @@ impl Render for QuickActionBar {
         let supports_code_lens = editor.update(cx, |editor, cx| editor.supports_code_lens(cx));
         let editor_value = editor.read(cx);
         let git_diff_base = editor_value.git_diff_base_name(cx);
+        let comparison_branch = editor_value.git_diff_comparison_branch_name(cx);
+        let branch_comparison_enabled = git_diff_base.is_some();
         let git_diff_base_label = git_diff_base.as_ref().map(|base_ref| {
             div()
                 .id("file-git-diff-base")
@@ -654,46 +656,42 @@ impl Render for QuickActionBar {
                                 },
                             );
 
-                            if let Some(base_ref) = git_diff_base.clone() {
-                                menu = menu
-                                    .separator()
-                                    .header(format!("Changes against {base_ref}"))
-                                    .item(
-                                        ContextMenuEntry::new("All Changes")
-                                            .toggle(IconPosition::Start, true),
-                                    )
-                                    .toggleable_entry(
-                                        "Uncommitted Changes",
-                                        false,
-                                        IconPosition::Start,
-                                        None,
-                                        {
-                                            let editor = editor.clone();
-                                            move |window, cx| {
-                                                let loading = editor
-                                                    .update(cx, |editor, cx| {
-                                                        editor.show_uncommitted_changes(cx);
-                                                        editor.wait_for_diff_to_load()
+                            if let Some(base_ref) = comparison_branch.clone() {
+                                menu = menu.toggleable_entry(
+                                    format!("Diff Against {base_ref}"),
+                                    branch_comparison_enabled,
+                                    IconPosition::Start,
+                                    None,
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            let loading = editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.set_branch_comparison_enabled(
+                                                        !branch_comparison_enabled,
+                                                        cx,
+                                                    );
+                                                    editor.wait_for_diff_to_load()
+                                                })
+                                                .log_err()
+                                                .flatten();
+                                            if let Some(loading) = loading {
+                                                let editor = editor.clone();
+                                                window
+                                                    .spawn(cx, async move |cx| {
+                                                        loading.await;
+                                                        editor
+                                                            .update_in(cx, |editor, window, cx| {
+                                                                editor.focus_handle(cx).focus(window, cx);
+                                                                window.refresh();
+                                                            })
+                                                            .log_err();
                                                     })
-                                                    .log_err()
-                                                    .flatten();
-                                                if let Some(loading) = loading {
-                                                    let editor = editor.clone();
-                                                    window
-                                                        .spawn(cx, async move |cx| {
-                                                            loading.await;
-                                                            editor
-                                                                .update_in(cx, |editor, window, cx| {
-                                                                    editor.focus_handle(cx).focus(window, cx);
-                                                                    window.refresh();
-                                                                })
-                                                                .log_err();
-                                                        })
-                                                        .detach();
-                                                }
+                                                    .detach();
                                             }
-                                        },
-                                    );
+                                        }
+                                    },
+                                );
                             } else if let Some(fs) = fs.clone() {
                                 menu = menu.toggleable_entry(
                                     "Diff Against Default Branch",
@@ -844,7 +842,10 @@ impl ToolbarItemView for QuickActionBar {
                         editor.inlay_hints_enabled(),
                         editor.supports_inlay_hints(cx),
                         editor.supports_semantic_tokens(cx),
-                        editor.git_diff_base_name(cx),
+                        (
+                            editor.git_diff_base_name(cx),
+                            editor.git_diff_comparison_branch_name(cx),
+                        ),
                     )
                 });
                 self._inlay_hints_enabled_subscription =
@@ -859,7 +860,10 @@ impl ToolbarItemView for QuickActionBar {
                                 editor.inlay_hints_enabled(),
                                 editor.supports_inlay_hints(cx),
                                 editor.supports_semantic_tokens(cx),
-                                editor.git_diff_base_name(cx),
+                                (
+                                    editor.git_diff_base_name(cx),
+                                    editor.git_diff_comparison_branch_name(cx),
+                                ),
                             )
                         });
                         let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
