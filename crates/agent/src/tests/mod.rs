@@ -303,12 +303,34 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
     }
 }
 
-fn always_allow_tools(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
-        agent_settings::AgentSettings::override_global(settings, cx);
+pub(crate) fn set_tool_permission(
+    cx: &mut App,
+    tool: Option<&str>,
+    mode: settings::ToolPermissionMode,
+) {
+    SettingsStore::update_global(cx, |store, cx| {
+        store.update_user_settings(cx, |settings| {
+            let permissions = settings
+                .agent
+                .get_or_insert_default()
+                .tool_permissions
+                .get_or_insert_default();
+            match tool {
+                Some(tool) => {
+                    permissions
+                        .tools
+                        .entry(tool.into())
+                        .or_default()
+                        .default = Some(mode);
+                }
+                None => permissions.default = Some(mode),
+            }
+        });
     });
+}
+
+fn always_allow_tools(cx: &mut TestAppContext) {
+    cx.update(|cx| set_tool_permission(cx, None, settings::ToolPermissionMode::Allow));
 }
 
 /// Turns terminal sandboxing off so the non-sandboxed `TerminalTool` is the
