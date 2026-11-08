@@ -1297,6 +1297,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// afterwards changes arrive through [`Self::on_visibility_change`].
     fn visibility(&self) -> WindowVisibility;
     fn is_hovered(&self) -> bool;
+    /// Sets the cursor of the input this window computed `style` for. Returns
+    /// `false` if the platform only has a global cursor, in which case
+    /// [`Platform::set_cursor_style`] is used instead.
+    fn set_cursor_style(&self, _style: CursorStyle) -> bool {
+        false
+    }
     fn background_appearance(&self) -> WindowBackgroundAppearance;
     fn set_title(&mut self, title: &str);
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);

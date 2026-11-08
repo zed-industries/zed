@@ -85,7 +85,7 @@ use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 mod tablet;
 
-use tablet::TabletTool;
+use tablet::{TabletPadGroup, TabletTool};
 
 use super::{
     display::{WaylandDisplay, refresh_interval_from_millihertz},
@@ -375,6 +375,12 @@ pub(crate) struct WaylandClientState {
     pinch_scale: f32,
     _tablet_seat: Option<zwp_tablet_seat_v2::ZwpTabletSeatV2>,
     tablet_tools: HashMap<ObjectId, TabletTool>,
+    /// Keyed by window surface. GPUI keeps a single pointer per window, so when
+    /// the mouse and tablet tools hover the same window, this is the input whose
+    /// position and cursor style GPUI is currently tracking.
+    pointer_owners: HashMap<ObjectId, PointerInput>,
+    /// Keyed by pad.
+    tablet_pads: HashMap<ObjectId, Vec<TabletPadGroup>>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
@@ -833,6 +839,88 @@ impl WaylandClientStatePtr {
         for tool in state.tablet_tools.values_mut() {
             tool.clear_focus_if_window(&closed_window);
         }
+        state.pointer_owners.remove(surface_id);
+    }
+
+    pub fn set_cursor_style(&self, window: &WaylandWindowStatePtr, style: CursorStyle) {
+        self.get_client()
+            .borrow_mut()
+            .set_cursor_style_for_window(window, style);
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PointerInput {
+    Pointer,
+    TabletTool(ObjectId),
+}
+
+/// What GPUI has to be told after an input stops hovering a window.
+#[derive(Debug)]
+enum PointerHandOff {
+    /// Another input still owns the window's pointer state.
+    Unchanged,
+    /// Moves GPUI's pointer to an input that remains over the window, so that
+    /// hit testing and hover follow it.
+    MoveTo(MouseMoveEvent),
+    /// The remaining inputs haven't reported a position yet, so GPUI's pointer
+    /// leaves even though the window stays hovered.
+    Exit,
+    /// No input hovers the window anymore.
+    ExitWindow,
+}
+
+/// Applies a [`PointerHandOff`] for an input that left `window` at `exit.position`
+/// (`None` if it never reported a position there). The client state must not be
+/// borrowed.
+fn dispatch_pointer_hand_off(
+    window: &WaylandWindowStatePtr,
+    hand_off: PointerHandOff,
+    exit: Option<MouseExitEvent>,
+) {
+    match hand_off {
+        PointerHandOff::Unchanged => {}
+        PointerHandOff::MoveTo(event) => {
+            window.handle_input(PlatformInput::MouseMove(event));
+        }
+        PointerHandOff::Exit => {
+            if let Some(exit) = exit {
+                window.handle_input(PlatformInput::MouseExited(exit));
+            }
+        }
+        PointerHandOff::ExitWindow => {
+            if let Some(exit) = exit {
+                window.handle_input(PlatformInput::MouseExited(exit));
+            }
+            window.set_hovered(false);
+        }
+    }
+}
+
+/// Decides which input takes over GPUI's pointer after `leaving` stops hovering
+/// a window. `remaining` lists the inputs still hovering it in order of
+/// preference, each with the move that puts GPUI's pointer at its position if it
+/// has reported one. Returns the window's new owner alongside the hand-off.
+fn hand_off_pointer(
+    owner: Option<&PointerInput>,
+    leaving: &PointerInput,
+    remaining: Vec<(PointerInput, Option<MouseMoveEvent>)>,
+) -> (Option<PointerInput>, PointerHandOff) {
+    if remaining.is_empty() {
+        return (None, PointerHandOff::ExitWindow);
+    }
+    if let Some(owner) = owner
+        && owner != leaving
+        && remaining.iter().any(|(input, _)| input == owner)
+    {
+        return (Some(owner.clone()), PointerHandOff::Unchanged);
+    }
+    match remaining
+        .into_iter()
+        .find_map(|(input, event)| Some((input, event?)))
+    {
+        Some((input, event)) => (Some(input), PointerHandOff::MoveTo(event)),
+        None => (None, PointerHandOff::Exit),
     }
 }
 
@@ -887,6 +975,128 @@ impl WaylandClientState {
             cursor_style_to_icon_names(style),
             scale,
         );
+    }
+
+    fn set_pointer_cursor_style(&mut self, style: CursorStyle) {
+        if self.cursor_style == Some(style) {
+            return;
+        }
+        self.cursor_style = Some(style);
+
+        // Don't clobber the invisible cursor; restore reads back from `cursor_style`.
+        if self.cursor_hidden_window.is_some() {
+            return;
+        }
+
+        let serial = self.serial_tracker.get(SerialKind::MouseEnter);
+        if let Some(cursor_shape_device) = &self.cursor_shape_device {
+            cursor_shape_device.set_shape(serial.as_raw(), to_shape(style));
+        } else if let Some(focused_window) = &self.mouse_focused_window
+            && let Some(wl_pointer) = &self.wl_pointer
+        {
+            // cursor-shape-v1 isn't supported, set the cursor using a surface.
+            let scale = focused_window.primary_output_scale();
+            self.cursor.set_icon(
+                wl_pointer,
+                serial.as_raw(),
+                cursor_style_to_icon_names(style),
+                scale,
+            );
+        }
+    }
+
+    /// Applies a cursor style requested by `window` to the input GPUI computed
+    /// it for, leaving inputs over other windows alone.
+    fn set_cursor_style_for_window(&mut self, window: &WaylandWindowStatePtr, style: CursorStyle) {
+        if window.is_blocked() {
+            return;
+        }
+        match self.pointer_owners.get(&window.surface().id()).cloned() {
+            Some(PointerInput::Pointer) => {
+                if self
+                    .mouse_focused_window
+                    .as_ref()
+                    .is_some_and(|focused_window| focused_window.ptr_eq(window))
+                {
+                    self.set_pointer_cursor_style(style);
+                }
+            }
+            Some(PointerInput::TabletTool(tool_id)) => {
+                tablet::set_tool_cursor_style(self, &tool_id, window, style);
+            }
+            None => {}
+        }
+    }
+
+    /// Makes `input` the one GPUI's pointer follows in `window`. Returns whether
+    /// it wasn't already, in which case GPUI's pointer isn't at `input`'s
+    /// position until `input` sends a move.
+    fn claim_pointer(&mut self, window: &WaylandWindowStatePtr, input: PointerInput) -> bool {
+        let previous = self
+            .pointer_owners
+            .insert(window.surface().id(), input.clone());
+        previous.as_ref() != Some(&input)
+    }
+
+    /// Makes the mouse the input GPUI's pointer follows in `window`, for mouse
+    /// events that aren't moves. Returns the move to send first if another input
+    /// owned the pointer, so that hover and the cursor style follow the mouse.
+    fn claim_pointer_for_mouse(
+        &mut self,
+        window: &WaylandWindowStatePtr,
+    ) -> Option<MouseMoveEvent> {
+        let position = self.mouse_location?;
+        self.claim_pointer(window, PointerInput::Pointer)
+            .then(|| MouseMoveEvent {
+                position,
+                pressed_button: self.button_pressed,
+                modifiers: self.modifiers,
+                pen: None,
+            })
+    }
+
+    /// Hands GPUI's pointer in `window` over to the inputs still hovering it after
+    /// `leaving` stopped doing so. `leaving` must already be unfocused.
+    fn release_pointer(
+        &mut self,
+        window: &WaylandWindowStatePtr,
+        leaving: &PointerInput,
+    ) -> PointerHandOff {
+        let mut remaining = Vec::new();
+        if self
+            .mouse_focused_window
+            .as_ref()
+            .is_some_and(|focused_window| focused_window.ptr_eq(window))
+        {
+            let event = self.mouse_location.map(|position| MouseMoveEvent {
+                position,
+                pressed_button: self.button_pressed,
+                modifiers: self.modifiers,
+                pen: None,
+            });
+            remaining.push((PointerInput::Pointer, event));
+        }
+        for (tool_id, tool) in &self.tablet_tools {
+            if tool.is_over(window) {
+                remaining.push((
+                    PointerInput::TabletTool(tool_id.clone()),
+                    tool.move_event(self.modifiers),
+                ));
+            }
+        }
+
+        let surface_id = window.surface().id();
+        let (owner, hand_off) =
+            hand_off_pointer(self.pointer_owners.get(&surface_id), leaving, remaining);
+        match owner {
+            Some(owner) => {
+                self.pointer_owners.insert(surface_id, owner);
+            }
+            None => {
+                self.pointer_owners.remove(&surface_id);
+            }
+        }
+        hand_off
     }
 }
 
@@ -1092,6 +1302,8 @@ impl WaylandConnection {
             pinch_scale: 1.0,
             _tablet_seat: tablet_seat,
             tablet_tools: HashMap::default(),
+            pointer_owners: HashMap::default(),
+            tablet_pads: HashMap::default(),
             cursor_shape_device: None,
             data_device,
             primary_selection,
@@ -1371,45 +1583,13 @@ impl WaylandConnection {
         Ok(Box::new(window))
     }
 
+    /// Wayland windows set their cursor through
+    /// [`WaylandClientStatePtr::set_cursor_style`], which knows which window the
+    /// style was computed for. This only covers callers without a window.
     pub(crate) fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
-
-        let need_update = state.cursor_style != Some(style)
-            && (state.mouse_focused_window.is_none()
-                || state
-                    .mouse_focused_window
-                    .as_ref()
-                    .is_some_and(|w| !w.is_blocked()));
-
-        if !need_update {
-            return;
-        }
-
-        state.cursor_style = Some(style);
-
-        tablet::set_tablet_tool_cursors(&mut state, style);
-
-        // Don't clobber the invisible cursor; restore reads back from `cursor_style`.
-        if state.cursor_hidden_window.is_some() {
-            return;
-        }
-
-        let serial = state.serial_tracker.get(SerialKind::MouseEnter);
-        if let Some(cursor_shape_device) = &state.cursor_shape_device {
-            cursor_shape_device.set_shape(serial.as_raw(), to_shape(style));
-        } else if let Some(focused_window) = &state.mouse_focused_window {
-            // cursor-shape-v1 isn't supported, set the cursor using a surface.
-            let wl_pointer = state
-                .wl_pointer
-                .clone()
-                .expect("window is focused by pointer");
-            let scale = focused_window.primary_output_scale();
-            state.cursor.set_icon(
-                &wl_pointer,
-                serial.as_raw(),
-                cursor_style_to_icon_names(style),
-                scale,
-            );
+        if let Some(window) = state.mouse_focused_window.clone() {
+            state.set_cursor_style_for_window(&window, style);
         }
     }
 
@@ -2513,6 +2693,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
                     state.mouse_focused_window = Some(window.clone());
+                    state.claim_pointer(&window, PointerInput::Pointer);
 
                     if state.enter_token.is_some() {
                         state.enter_token = None;
@@ -2546,19 +2727,21 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
             }
             wl_pointer::Event::Leave { .. } => {
                 if let Some(focused_window) = state.mouse_focused_window.clone() {
-                    let input = PlatformInput::MouseExited(MouseExitEvent {
+                    let exit = MouseExitEvent {
                         position: state.mouse_location.unwrap(),
                         pressed_button: state.button_pressed,
                         modifiers: state.modifiers,
-                    });
+                    };
                     state.mouse_focused_window = None;
                     state.mouse_location = None;
                     state.button_pressed = None;
                     state.cursor_hidden_window = None;
+                    // A tablet tool may still hover the window, in which case the
+                    // window stays hovered and GPUI's pointer follows the tool.
+                    let hand_off = state.release_pointer(&focused_window, &PointerInput::Pointer);
 
                     drop(state);
-                    focused_window.handle_input(input);
-                    focused_window.set_hovered(false);
+                    dispatch_pointer_hand_off(&focused_window, hand_off, Some(exit));
                 }
             }
             wl_pointer::Event::Motion {
@@ -2573,6 +2756,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 state.restore_cursor_after_hide();
 
                 if let Some(window) = state.mouse_focused_window.clone() {
+                    state.claim_pointer(&window, PointerInput::Pointer);
                     if window.is_blocked() {
                         let default_style = CursorStyle::Arrow;
                         if state.cursor_style != Some(default_style) {
@@ -2647,8 +2831,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     wl_pointer::ButtonState::Released => false,
                     _ => return,
                 };
+                let take_over = state.claim_pointer_for_mouse(&window);
                 state.button_pressed = pressed.then_some(button);
                 drop(state);
+                if let Some(take_over) = take_over {
+                    window.handle_input(PlatformInput::MouseMove(take_over));
+                }
                 dispatch_mouse_button(this, window, button, position, pressed, None);
             }
 
@@ -2747,6 +2935,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
             }
             wl_pointer::Event::Frame => {
+                if state.scroll_event_received
+                    && let Some(window) = state.mouse_focused_window.clone()
+                    && let Some(take_over) = state.claim_pointer_for_mouse(&window)
+                {
+                    drop(state);
+                    window.handle_input(PlatformInput::MouseMove(take_over));
+                    state = client.borrow_mut();
+                }
                 if state.scroll_event_received {
                     state.scroll_event_received = false;
                     let continuous = state.continuous_scroll_delta.take();
@@ -2815,6 +3011,11 @@ impl Dispatch<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1, ()>
         let Some(window) = state.mouse_focused_window.clone() else {
             return;
         };
+        if let Some(take_over) = state.claim_pointer_for_mouse(&window) {
+            drop(state);
+            window.handle_input(PlatformInput::MouseMove(take_over));
+            state = client.borrow_mut();
+        }
 
         match event {
             zwp_pointer_gesture_pinch_v1::Event::Begin {
@@ -3540,5 +3741,80 @@ mod tests {
             text_input.cursor_rectangles.borrow().as_slice(),
             &[(10, 20, 1, 18)]
         );
+    }
+
+    fn move_to(x: f32, y: f32) -> Option<MouseMoveEvent> {
+        Some(MouseMoveEvent {
+            position: point(px(x), px(y)),
+            ..MouseMoveEvent::default()
+        })
+    }
+
+    fn pen() -> PointerInput {
+        PointerInput::TabletTool(ObjectId::null())
+    }
+
+    #[test]
+    fn test_pointer_leaving_keeps_window_hovered_by_pen() {
+        // The pen moved last, so GPUI already follows it.
+        let (owner, hand_off) = hand_off_pointer(
+            Some(&pen()),
+            &PointerInput::Pointer,
+            vec![(pen(), move_to(5.0, 6.0))],
+        );
+        assert_eq!(owner, Some(pen()));
+        assert!(matches!(hand_off, PointerHandOff::Unchanged));
+
+        // The mouse moved last, so GPUI's pointer has to move to the pen.
+        let (owner, hand_off) = hand_off_pointer(
+            Some(&PointerInput::Pointer),
+            &PointerInput::Pointer,
+            vec![(pen(), move_to(5.0, 6.0))],
+        );
+        assert_eq!(owner, Some(pen()));
+        assert!(matches!(
+            hand_off,
+            PointerHandOff::MoveTo(event) if event.position == point(px(5.0), px(6.0))
+        ));
+    }
+
+    #[test]
+    fn test_pen_leaving_restores_pointer() {
+        let (owner, hand_off) = hand_off_pointer(
+            Some(&pen()),
+            &pen(),
+            vec![(PointerInput::Pointer, move_to(1.0, 2.0))],
+        );
+        assert_eq!(owner, Some(PointerInput::Pointer));
+        assert!(matches!(
+            hand_off,
+            PointerHandOff::MoveTo(event) if event.position == point(px(1.0), px(2.0))
+        ));
+
+        // GPUI never followed the pen, so it mustn't be told that anything left.
+        let (owner, hand_off) = hand_off_pointer(
+            Some(&PointerInput::Pointer),
+            &pen(),
+            vec![(PointerInput::Pointer, move_to(1.0, 2.0))],
+        );
+        assert_eq!(owner, Some(PointerInput::Pointer));
+        assert!(matches!(hand_off, PointerHandOff::Unchanged));
+    }
+
+    #[test]
+    fn test_last_input_leaving_exits_window() {
+        let (owner, hand_off) = hand_off_pointer(Some(&pen()), &pen(), Vec::new());
+        assert_eq!(owner, None);
+        assert!(matches!(hand_off, PointerHandOff::ExitWindow));
+
+        // A tool in proximity that hasn't moved yet keeps the window hovered,
+        // but GPUI's pointer has nowhere to go.
+        let (owner, hand_off) = hand_off_pointer(
+            Some(&PointerInput::Pointer),
+            &PointerInput::Pointer,
+            vec![(pen(), None)],
+        );
+        assert_eq!(owner, None);
+        assert!(matches!(hand_off, PointerHandOff::Exit));
     }
 }

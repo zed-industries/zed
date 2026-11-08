@@ -35,12 +35,12 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{Globals, Output, PendingActivation, WaylandClientStatePtr, get_window};
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, Corners, Decorations, DevicePixels, ExternalDragPayload,
-    FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformFrameSignal, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
-    WindowKind, WindowParams, WindowVisibility,
+    AnyWindowHandle, Bounds, Capslock, Corners, CursorStyle, Decorations, DevicePixels,
+    ExternalDragPayload, FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
+    WindowDecorations, WindowKind, WindowParams, WindowVisibility,
     layer_shell::{Anchor, LayerShellNotSupportedError},
     popup::PopupOptions,
     px, size,
@@ -1898,6 +1898,14 @@ impl PlatformWindow for WaylandWindow {
 
     fn is_hovered(&self) -> bool {
         self.borrow().hovered
+    }
+
+    fn set_cursor_style(&self, style: CursorStyle) -> bool {
+        // A window may be hovered by the mouse and tablet tools at once, and
+        // only the client knows which of them GPUI computed this style for.
+        let client = self.borrow().client.clone();
+        client.set_cursor_style(&self.0, style);
+        true
     }
 
     fn set_title(&mut self, title: &str) {

@@ -10,14 +10,14 @@ use wayland_protocols::wp::tablet::zv2::client::{
 use wayland_client::protocol::wl_surface;
 
 use gpui::{
-    CursorStyle, MouseButton, MouseExitEvent, MouseMoveEvent, NavigationDirection, PenInput,
-    PenTool, Pixels, PlatformInput, Point, point, px,
+    CursorStyle, Modifiers, MouseButton, MouseExitEvent, MouseMoveEvent, NavigationDirection,
+    PenInput, PenTool, Pixels, PlatformInput, Point, point, px,
 };
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1;
 
 use super::{
-    Globals, WaylandClientState, WaylandClientStatePtr, dispatch_mouse_button, get_window,
-    linux_button_to_gpui,
+    Globals, PointerInput, WaylandClientState, WaylandClientStatePtr, dispatch_mouse_button,
+    dispatch_pointer_hand_off, get_window, linux_button_to_gpui,
 };
 use crate::linux::{
     cursor_style_to_icon_names,
@@ -46,6 +46,8 @@ pub(in crate::linux::wayland) struct TabletTool {
     /// cursor-shape-v1. Each tool owns its surface because a surface can only
     /// ever hold one cursor role, so the pointer's cannot be shared.
     cursor_surface: Option<wl_surface::WlSurface>,
+    /// The style last applied to this tool's cursor.
+    cursor_style: Option<CursorStyle>,
     focus: Option<TabletToolFocus>,
     axes_changed: bool,
     pending: Vec<PendingToolEvent>,
@@ -87,6 +89,7 @@ impl TabletTool {
             axes: ToolAxes::default(),
             cursor_shape_device,
             cursor_surface: None,
+            cursor_style: None,
             focus: None,
             axes_changed: false,
             pending: Vec::new(),
@@ -100,6 +103,7 @@ impl TabletTool {
         let Some(focus) = &self.focus else {
             return;
         };
+        self.cursor_style = Some(style);
         if let Some(cursor_shape_device) = &self.cursor_shape_device {
             cursor_shape_device.set_shape(focus.proximity_serial, to_shape(style));
             return;
@@ -127,15 +131,29 @@ impl TabletTool {
         self.proxy.destroy();
     }
 
+    pub(super) fn is_over(&self, window: &WaylandWindowStatePtr) -> bool {
+        self.focus
+            .as_ref()
+            .is_some_and(|focus| focus.window.ptr_eq(window))
+    }
+
+    /// The move that puts GPUI's pointer at this tool, if it has reported a
+    /// position over the window it hovers.
+    pub(super) fn move_event(&self, modifiers: Modifiers) -> Option<MouseMoveEvent> {
+        let focus = self.focus.as_ref()?;
+        Some(MouseMoveEvent {
+            position: focus.position?,
+            pressed_button: focus.pressed_buttons.last().copied(),
+            modifiers,
+            pen: self.axes.pen_input(),
+        })
+    }
+
     pub(in crate::linux::wayland) fn clear_focus_if_window(
         &mut self,
         window: &WaylandWindowStatePtr,
     ) {
-        if self
-            .focus
-            .as_ref()
-            .is_some_and(|focus| focus.window.ptr_eq(window))
-        {
+        if self.is_over(window) {
             self.focus = None;
             self.pending.clear();
         }
@@ -153,9 +171,12 @@ impl ToolAxes {
     }
 }
 
-/// Applies `style` to the cursor of every tool hovering one of our windows.
-pub(in crate::linux::wayland) fn set_tablet_tool_cursors(
+/// Applies `style`, computed by `window` for this tool's position, to the
+/// tool's cursor.
+pub(super) fn set_tool_cursor_style(
     state: &mut WaylandClientState,
+    tool_id: &ObjectId,
+    window: &WaylandWindowStatePtr,
     style: CursorStyle,
 ) {
     let WaylandClientState {
@@ -164,9 +185,13 @@ pub(in crate::linux::wayland) fn set_tablet_tool_cursors(
         globals,
         ..
     } = state;
-    for tool in tablet_tools.values_mut() {
-        tool.set_cursor(style, cursor, globals);
+    let Some(tool) = tablet_tools.get_mut(tool_id) else {
+        return;
+    };
+    if !tool.is_over(window) || tool.cursor_style == Some(style) {
+        return;
     }
+    tool.set_cursor(style, cursor, globals);
 }
 
 /// Records a press like the pointer does, naming the surface the tool hovers
@@ -224,20 +249,27 @@ fn flush_frame(this: &WaylandClientStatePtr, tool_id: &ObjectId) {
     let axes_changed = std::mem::take(&mut tool.axes_changed);
     let pending = std::mem::take(&mut tool.pending);
     let pen = tool.axes.pen_input();
+    let this_tool = PointerInput::TabletTool(tool_id.clone());
+    // Button transitions, including the release of buttons still held when the
+    // tool leaves, happen at the tool's position, so GPUI's pointer has to be
+    // there first even if the tool didn't move.
+    let holds_buttons = tool
+        .focus
+        .as_ref()
+        .is_some_and(|focus| !focus.pressed_buttons.is_empty());
+    let reports_buttons = pending.iter().any(|event| match event {
+        PendingToolEvent::Button { .. } => true,
+        PendingToolEvent::ProximityOut => holds_buttons,
+    });
 
-    if axes_changed
-        && let Some(focus) = &tool.focus
-        && let Some(position) = focus.position
+    if (axes_changed || reports_buttons)
+        && let Some(tool) = state.tablet_tools.get(tool_id)
+        && let Some(window) = tool.focus.as_ref().map(|focus| focus.window.clone())
+        && let Some(event) = tool.move_event(state.modifiers)
+        && (state.claim_pointer(&window, this_tool.clone()) || axes_changed)
     {
-        let window = focus.window.clone();
-        let input = PlatformInput::MouseMove(MouseMoveEvent {
-            position,
-            pressed_button: focus.pressed_buttons.last().copied(),
-            modifiers: state.modifiers,
-            pen,
-        });
         drop(state);
-        window.handle_input(input);
+        window.handle_input(PlatformInput::MouseMove(event));
         state = client.borrow_mut();
     }
 
@@ -275,15 +307,13 @@ fn flush_frame(this: &WaylandClientStatePtr, tool_id: &ObjectId) {
                     continue;
                 };
                 tool.axes.pressure = 0.0;
-                let pointer_still_hovering = state
-                    .mouse_focused_window
-                    .as_ref()
-                    .is_some_and(|window| window.ptr_eq(&focus.window));
-                drop(state);
 
-                if let Some(position) = focus.position {
-                    // The protocol sends `up` before `proximity_out`, but barrel
-                    // buttons may still be held when the pen is lifted away.
+                // The protocol sends `up` before `proximity_out`, but barrel
+                // buttons may still be held when the pen is lifted away.
+                if let Some(position) = focus.position
+                    && !focus.pressed_buttons.is_empty()
+                {
+                    drop(state);
                     for button in focus.pressed_buttons.iter().rev() {
                         dispatch_mouse_button(
                             this,
@@ -294,18 +324,17 @@ fn flush_frame(this: &WaylandClientStatePtr, tool_id: &ObjectId) {
                             pen,
                         );
                     }
-                    let modifiers = client.borrow().modifiers;
-                    focus
-                        .window
-                        .handle_input(PlatformInput::MouseExited(MouseExitEvent {
-                            position,
-                            pressed_button: None,
-                            modifiers,
-                        }));
+                    state = client.borrow_mut();
                 }
-                if !pointer_still_hovering {
-                    focus.window.set_hovered(false);
-                }
+
+                let exit = focus.position.map(|position| MouseExitEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers: state.modifiers,
+                });
+                let hand_off = state.release_pointer(&focus.window, &this_tool);
+                drop(state);
+                dispatch_pointer_hand_off(&focus.window, hand_off, exit);
                 state = client.borrow_mut();
             }
         }
@@ -364,7 +393,6 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for WaylandClientStatePtr
                 let Some(window) = get_window(&mut state, &surface.id()) else {
                     return;
                 };
-                let style = state.cursor_style.unwrap_or(CursorStyle::Arrow);
                 let WaylandClientState {
                     tablet_tools,
                     cursor,
@@ -374,6 +402,9 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for WaylandClientStatePtr
                 let Some(tool) = tablet_tools.get_mut(&tool_id) else {
                     return;
                 };
+                // GPUI updates the style once the tool moves and its position
+                // is hit tested.
+                let style = tool.cursor_style.unwrap_or(CursorStyle::Arrow);
                 tool.focus = Some(TabletToolFocus {
                     window: window.clone(),
                     proximity_serial: serial,
@@ -518,19 +549,60 @@ impl Dispatch<zwp_tablet_v2::ZwpTabletV2, ()> for WaylandClientStatePtr {
     }
 }
 
+/// A pad group and the objects created from it. Destroying a pad or a group
+/// leaves the objects created from it alive, so they are destroyed explicitly
+/// along with their pad.
+pub(in crate::linux::wayland) struct TabletPadGroup {
+    proxy: zwp_tablet_pad_group_v2::ZwpTabletPadGroupV2,
+    rings: Vec<zwp_tablet_pad_ring_v2::ZwpTabletPadRingV2>,
+    strips: Vec<zwp_tablet_pad_strip_v2::ZwpTabletPadStripV2>,
+}
+
+impl TabletPadGroup {
+    fn destroy(self) {
+        for ring in self.rings {
+            ring.destroy();
+        }
+        for strip in self.strips {
+            strip.destroy();
+        }
+        self.proxy.destroy();
+    }
+}
+
 // Pads (the express keys on the tablet itself) aren't mapped to any input yet, but
-// the compositor creates their objects regardless, so they still need dispatchers.
+// the compositor creates their objects regardless, so they still need dispatchers
+// and have to be released when the pad goes away.
 impl Dispatch<zwp_tablet_pad_v2::ZwpTabletPadV2, ()> for WaylandClientStatePtr {
     fn event(
-        _: &mut Self,
+        this: &mut Self,
         pad: &zwp_tablet_pad_v2::ZwpTabletPadV2,
         event: zwp_tablet_pad_v2::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let zwp_tablet_pad_v2::Event::Removed = event {
-            pad.destroy();
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        match event {
+            zwp_tablet_pad_v2::Event::Group { pad_group } => {
+                state
+                    .tablet_pads
+                    .entry(pad.id())
+                    .or_default()
+                    .push(TabletPadGroup {
+                        proxy: pad_group,
+                        rings: Vec::new(),
+                        strips: Vec::new(),
+                    });
+            }
+            zwp_tablet_pad_v2::Event::Removed => {
+                for group in state.tablet_pads.remove(&pad.id()).unwrap_or_default() {
+                    group.destroy();
+                }
+                pad.destroy();
+            }
+            _ => {}
         }
     }
 
@@ -541,13 +613,28 @@ impl Dispatch<zwp_tablet_pad_v2::ZwpTabletPadV2, ()> for WaylandClientStatePtr {
 
 impl Dispatch<zwp_tablet_pad_group_v2::ZwpTabletPadGroupV2, ()> for WaylandClientStatePtr {
     fn event(
-        _: &mut Self,
-        _: &zwp_tablet_pad_group_v2::ZwpTabletPadGroupV2,
-        _: zwp_tablet_pad_group_v2::Event,
+        this: &mut Self,
+        group_proxy: &zwp_tablet_pad_group_v2::ZwpTabletPadGroupV2,
+        event: zwp_tablet_pad_group_v2::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(group) = state
+            .tablet_pads
+            .values_mut()
+            .flatten()
+            .find(|group| group.proxy == *group_proxy)
+        else {
+            return;
+        };
+        match event {
+            zwp_tablet_pad_group_v2::Event::Ring { ring } => group.rings.push(ring),
+            zwp_tablet_pad_group_v2::Event::Strip { strip } => group.strips.push(strip),
+            _ => {}
+        }
     }
 
     event_created_child!(WaylandClientStatePtr, zwp_tablet_pad_group_v2::ZwpTabletPadGroupV2, [
