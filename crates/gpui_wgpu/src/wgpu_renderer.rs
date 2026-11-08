@@ -1386,6 +1386,7 @@ impl WgpuRendererCore {
                 depth_stencil_attachment: None,
                 ..Default::default()
             });
+            pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
 
             let mut path_tile_cursor = 0;
             for batch in scene.batches() {
@@ -1588,7 +1589,6 @@ impl WgpuRendererCore {
             return;
         }
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
         pass.set_bind_group(1, &instances.bind_group, &[]);
         pass.draw(
             0..4,
@@ -1614,7 +1614,6 @@ impl WgpuRendererCore {
             return Ok(());
         };
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &resources.globals_bind_group, &[]);
         pass.set_bind_group(1, &sprite_instances.bind_group, &[]);
         pass.set_bind_group(2, &texture.bind_group, &[]);
         pass.draw(

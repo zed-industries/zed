@@ -67,15 +67,12 @@ struct QuadFragmentInput {
   PreparedBackground background;
 };
 
-vertex QuadFragmentInput quad_vertex(uint unit_vertex_id [[vertex_id]],
-                                    uint quad_id [[instance_id]],
-                                    constant float2 *unit_vertices
-                                    [[buffer(QuadInputIndex_Vertices)]],
-                                    constant Quad *quads
-                                    [[buffer(QuadInputIndex_Quads)]],
-                                    constant Size_DevicePixels *viewport_size
-                                    [[buffer(QuadInputIndex_ViewportSize)]]) {
-  float2 unit_vertex = unit_vertices[unit_vertex_id];
+vertex QuadFragmentInput quad_vertex(
+    uint vertex_id [[vertex_id]], uint quad_id [[instance_id]],
+    constant Quad *quads [[buffer(QuadInputIndex_Quads)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(GlobalInputIndex_ViewportSize)]]) {
+  float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
   Quad quad = quads[quad_id];
   ClippedVertex clipped =
       clip_to_mask(unit_vertex, quad.bounds, quad.content_mask.bounds);
@@ -439,12 +436,11 @@ struct ShadowFragmentInput {
 };
 
 vertex ShadowFragmentInput shadow_vertex(
-    uint unit_vertex_id [[vertex_id]], uint shadow_id [[instance_id]],
-    constant float2 *unit_vertices [[buffer(ShadowInputIndex_Vertices)]],
+    uint vertex_id [[vertex_id]], uint shadow_id [[instance_id]],
     constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]],
     constant Size_DevicePixels *viewport_size
-    [[buffer(ShadowInputIndex_ViewportSize)]]) {
-  float2 unit_vertex = unit_vertices[unit_vertex_id];
+    [[buffer(GlobalInputIndex_ViewportSize)]]) {
+  float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
   Shadow shadow = shadows[shadow_id];
 
   Bounds_ScaledPixels bounds;
@@ -539,12 +535,11 @@ struct UnderlineFragmentInput {
 };
 
 vertex UnderlineFragmentInput underline_vertex(
-    uint unit_vertex_id [[vertex_id]], uint underline_id [[instance_id]],
-    constant float2 *unit_vertices [[buffer(UnderlineInputIndex_Vertices)]],
+    uint vertex_id [[vertex_id]], uint underline_id [[instance_id]],
     constant Underline *underlines [[buffer(UnderlineInputIndex_Underlines)]],
     constant Size_DevicePixels *viewport_size
-    [[buffer(ShadowInputIndex_ViewportSize)]]) {
-  float2 unit_vertex = unit_vertices[unit_vertex_id];
+    [[buffer(GlobalInputIndex_ViewportSize)]]) {
+  float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
   Underline underline = underlines[underline_id];
   ClippedVertex clipped = clip_to_mask(unit_vertex, underline.bounds,
                                        underline.content_mask.bounds);
@@ -596,14 +591,13 @@ struct MonochromeSpriteFragmentInput {
 };
 
 vertex MonochromeSpriteFragmentInput monochrome_sprite_vertex(
-    uint unit_vertex_id [[vertex_id]], uint sprite_id [[instance_id]],
-    constant float2 *unit_vertices [[buffer(SpriteInputIndex_Vertices)]],
+    uint vertex_id [[vertex_id]], uint sprite_id [[instance_id]],
     constant MonochromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
     constant Size_DevicePixels *viewport_size
-    [[buffer(SpriteInputIndex_ViewportSize)]],
+    [[buffer(GlobalInputIndex_ViewportSize)]],
     constant Size_DevicePixels *atlas_size
     [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
-  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
   MonochromeSprite sprite = sprites[sprite_id];
   float4 device_position =
       to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
@@ -643,15 +637,13 @@ struct PolychromeSpriteFragmentInput {
 };
 
 vertex PolychromeSpriteFragmentInput polychrome_sprite_vertex(
-    uint unit_vertex_id [[vertex_id]], uint sprite_id [[instance_id]],
-    constant float2 *unit_vertices [[buffer(SpriteInputIndex_Vertices)]],
+    uint vertex_id [[vertex_id]], uint sprite_id [[instance_id]],
     constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
     constant Size_DevicePixels *viewport_size
-    [[buffer(SpriteInputIndex_ViewportSize)]],
+    [[buffer(GlobalInputIndex_ViewportSize)]],
     constant Size_DevicePixels *atlas_size
     [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
-
-  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
   PolychromeSprite sprite = sprites[sprite_id];
   ClippedVertex clipped =
       clip_to_mask(unit_vertex, sprite.bounds, sprite.content_mask.bounds);
@@ -704,7 +696,7 @@ vertex PathTileFragmentInput path_tile_vertex(
     constant PathTile *tiles [[buffer(PathTileInputIndex_Tiles)]],
     constant PathPaint *paints [[buffer(PathTileInputIndex_Paints)]],
     constant Size_DevicePixels *viewport_size
-    [[buffer(PathTileInputIndex_ViewportSize)]]) {
+    [[buffer(GlobalInputIndex_ViewportSize)]]) {
   PathTile tile = tiles[tile_id];
   PathPaint paint = paints[tile.paint];
 
@@ -850,14 +842,13 @@ struct SurfaceFragmentInput {
 };
 
 vertex SurfaceVertexOutput surface_vertex(
-    uint unit_vertex_id [[vertex_id]], uint surface_id [[instance_id]],
-    constant float2 *unit_vertices [[buffer(SurfaceInputIndex_Vertices)]],
+    uint vertex_id [[vertex_id]], uint surface_id [[instance_id]],
     constant SurfaceBounds *surfaces [[buffer(SurfaceInputIndex_Surfaces)]],
     constant Size_DevicePixels *viewport_size
-    [[buffer(SurfaceInputIndex_ViewportSize)]],
+    [[buffer(GlobalInputIndex_ViewportSize)]],
     constant Size_DevicePixels *texture_size
     [[buffer(SurfaceInputIndex_TextureSize)]]) {
-  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
   SurfaceBounds surface = surfaces[surface_id];
   ClippedVertex clipped =
       clip_to_mask(unit_vertex, surface.bounds, surface.content_mask.bounds);
