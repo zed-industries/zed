@@ -4973,42 +4973,45 @@ impl Window {
     }
 
     fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {
-        let radii = &quad.corner_radii;
-        let widths = &quad.border_widths;
-        let edge_radii = Edges {
-            top: radii.top_left.max(radii.top_right),
-            right: radii.top_right.max(radii.bottom_right),
-            bottom: radii.bottom_left.max(radii.bottom_right),
-            left: radii.top_left.max(radii.bottom_left),
-        };
+        let size = quad.bounds.size;
+        let diagonal = (size.width.0 * size.width.0 + size.height.0 * size.height.0).sqrt();
+        if diagonal == 0. {
+            return Bounds::default();
+        }
+        // The interior's corners sit on the corner arcs. Taking the angle along
+        // the arc whose tangent is the quad's aspect ratio stays within 1% of
+        // the largest interior.
+        let cos = size.height.0 / diagonal;
+        let sin = size.width.0 / diagonal;
 
-        let antialias_inset = point(ScaledPixels(1.0), ScaledPixels(1.0));
-        let inset_bounds = |top_left_inset, bottom_right_inset| {
-            Bounds::from_corners(
-                quad.bounds.origin + top_left_inset + antialias_inset,
-                quad.bounds.bottom_right() - bottom_right_inset - antialias_inset,
+        // A corner's inner border edge is a quarter ellipse around the
+        // corner's center, with the border widths taken off its radius.
+        let corner_inset = |radius: ScaledPixels, width_x: ScaledPixels, width_y: ScaledPixels| {
+            point(
+                width_x.max(radius - (radius - width_x) * cos),
+                width_y.max(radius - (radius - width_y) * sin),
             )
         };
 
-        // Rounded corners need only be excluded on one axis. Either candidate
-        // is empty of border pixels, so use the larger interior.
-        let horizontal_band = inset_bounds(
-            point(widths.left, widths.top.max(edge_radii.top)),
-            point(widths.right, widths.bottom.max(edge_radii.bottom)),
-        );
-        let vertical_band = inset_bounds(
-            point(widths.left.max(edge_radii.left), widths.top),
-            point(widths.right.max(edge_radii.right), widths.bottom),
-        );
+        let radii = &quad.corner_radii;
+        let widths = &quad.border_widths;
+        let top_left = corner_inset(radii.top_left, widths.left, widths.top);
+        let top_right = corner_inset(radii.top_right, widths.right, widths.top);
+        let bottom_right = corner_inset(radii.bottom_right, widths.right, widths.bottom);
+        let bottom_left = corner_inset(radii.bottom_left, widths.left, widths.bottom);
 
-        let area = |bounds: &Bounds<ScaledPixels>| {
-            bounds.size.width.0.max(0.) * bounds.size.height.0.max(0.)
-        };
-        if area(&horizontal_band) >= area(&vertical_band) {
-            horizontal_band
-        } else {
-            vertical_band
-        }
+        let antialias_inset = point(ScaledPixels(1.0), ScaledPixels(1.0));
+        Bounds::from_corners(
+            quad.bounds.origin
+                + point(top_left.x.max(bottom_left.x), top_left.y.max(top_right.y))
+                + antialias_inset,
+            quad.bounds.bottom_right()
+                - point(
+                    top_right.x.max(bottom_right.x),
+                    bottom_left.y.max(bottom_right.y),
+                )
+                - antialias_inset,
+        )
     }
 
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
