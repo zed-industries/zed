@@ -3264,19 +3264,6 @@ impl Editor {
         self.set_git_diff_base_override(Some(GitDiffBaseOverride::Uncommitted), cx);
     }
 
-    pub fn switch_to_uncommitted_changes_on_edit(&self) -> bool {
-        self.switch_to_uncommitted_changes_on_edit
-    }
-
-    pub fn set_switch_to_uncommitted_changes_on_edit(
-        &mut self,
-        enabled: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.switch_to_uncommitted_changes_on_edit = enabled;
-        cx.notify();
-    }
-
     pub(super) fn set_git_diff_base_override(
         &mut self,
         diff_base: Option<GitDiffBaseOverride>,

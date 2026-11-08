@@ -118,67 +118,15 @@ impl Render for QuickActionBar {
             editor.update(cx, |editor, cx| editor.supports_semantic_tokens(cx));
         let supports_code_lens = editor.update(cx, |editor, cx| editor.supports_code_lens(cx));
         let editor_value = editor.read(cx);
-        let git_diff_base_button = editor_value.git_diff_base_name(cx).map(|base_ref| {
-            let switch_on_edit = editor_value.switch_to_uncommitted_changes_on_edit();
-            let editor = editor.downgrade();
-            PopoverMenu::new("file-git-diff-base")
-                .trigger_with_tooltip(
-                    Button::new("file-git-diff-base-trigger", format!("Base: {base_ref}"))
-                        .label_size(LabelSize::Small)
-                        .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
-                    Tooltip::text(format!(
-                        "Compare this file against {base_ref}. Local edits are included."
-                    )),
-                )
-                .anchor(Anchor::TopRight)
-                .menu(move |window, cx| {
-                    let editor = editor.clone();
-                    Some(ContextMenu::build(window, cx, move |menu, _, _| {
-                        menu.entry("Show Uncommitted Changes", None, {
-                            let editor = editor.clone();
-                            move |window, cx| {
-                                let loading = editor
-                                    .update(cx, |editor, cx| {
-                                        editor.show_uncommitted_changes(cx);
-                                        editor.wait_for_diff_to_load()
-                                    })
-                                    .log_err()
-                                    .flatten();
-                                if let Some(loading) = loading {
-                                    let editor = editor.clone();
-                                    window
-                                        .spawn(cx, async move |cx| {
-                                            loading.await;
-                                            editor
-                                                .update_in(cx, |editor, window, cx| {
-                                                    editor.focus_handle(cx).focus(window, cx);
-                                                    window.refresh();
-                                                })
-                                                .log_err();
-                                        })
-                                        .detach();
-                                }
-                            }
-                        })
-                        .separator()
-                        .toggleable_entry(
-                            "Switch to Uncommitted Changes on Edit",
-                            switch_on_edit,
-                            IconPosition::Start,
-                            None,
-                            move |_, cx| {
-                                editor
-                                    .update(cx, |editor, cx| {
-                                        editor.set_switch_to_uncommitted_changes_on_edit(
-                                            !switch_on_edit,
-                                            cx,
-                                        )
-                                    })
-                                    .log_err();
-                            },
-                        )
-                    }))
-                })
+        let git_diff_base = editor_value.git_diff_base_name(cx);
+        let git_diff_base_label = git_diff_base.as_ref().map(|base_ref| {
+            div()
+                .id("file-git-diff-base")
+                .px_1()
+                .child(Label::new(format!("Base: {base_ref}")).size(LabelSize::Small))
+                .tooltip(Tooltip::text(format!(
+                    "Changes against {base_ref}, including uncommitted changes. Change the comparison in Editor Controls."
+                )))
         });
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
@@ -706,7 +654,47 @@ impl Render for QuickActionBar {
                                 },
                             );
 
-                            if let Some(fs) = fs.clone() {
+                            if let Some(base_ref) = git_diff_base.clone() {
+                                menu = menu
+                                    .separator()
+                                    .header(format!("Changes against {base_ref}"))
+                                    .item(
+                                        ContextMenuEntry::new("All Changes")
+                                            .toggle(IconPosition::Start, true),
+                                    )
+                                    .toggleable_entry(
+                                        "Uncommitted Changes",
+                                        false,
+                                        IconPosition::Start,
+                                        None,
+                                        {
+                                            let editor = editor.clone();
+                                            move |window, cx| {
+                                                let loading = editor
+                                                    .update(cx, |editor, cx| {
+                                                        editor.show_uncommitted_changes(cx);
+                                                        editor.wait_for_diff_to_load()
+                                                    })
+                                                    .log_err()
+                                                    .flatten();
+                                                if let Some(loading) = loading {
+                                                    let editor = editor.clone();
+                                                    window
+                                                        .spawn(cx, async move |cx| {
+                                                            loading.await;
+                                                            editor
+                                                                .update_in(cx, |editor, window, cx| {
+                                                                    editor.focus_handle(cx).focus(window, cx);
+                                                                    window.refresh();
+                                                                })
+                                                                .log_err();
+                                                        })
+                                                        .detach();
+                                                }
+                                            }
+                                        },
+                                    );
+                            } else if let Some(fs) = fs.clone() {
                                 menu = menu.toggleable_entry(
                                     "Diff Against Default Branch",
                                     diff_against_default_branch,
@@ -778,7 +766,7 @@ impl Render for QuickActionBar {
             )
             .children(code_actions_dropdown)
             .children(editor_selections_dropdown)
-            .children(git_diff_base_button)
+            .children(git_diff_base_label)
             .child(editor_settings_dropdown)
     }
 }
@@ -856,10 +844,7 @@ impl ToolbarItemView for QuickActionBar {
                         editor.inlay_hints_enabled(),
                         editor.supports_inlay_hints(cx),
                         editor.supports_semantic_tokens(cx),
-                        (
-                            editor.git_diff_base_name(cx),
-                            editor.switch_to_uncommitted_changes_on_edit(),
-                        ),
+                        editor.git_diff_base_name(cx),
                     )
                 });
                 self._inlay_hints_enabled_subscription =
@@ -874,10 +859,7 @@ impl ToolbarItemView for QuickActionBar {
                                 editor.inlay_hints_enabled(),
                                 editor.supports_inlay_hints(cx),
                                 editor.supports_semantic_tokens(cx),
-                                (
-                                    editor.git_diff_base_name(cx),
-                                    editor.switch_to_uncommitted_changes_on_edit(),
-                                ),
+                                editor.git_diff_base_name(cx),
                             )
                         });
                         let should_notify = inlay_hints_enabled != new_inlay_hints_enabled

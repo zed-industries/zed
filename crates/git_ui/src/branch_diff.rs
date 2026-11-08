@@ -1212,7 +1212,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_open_branch_excerpt_switches_to_uncommitted_on_edit(cx: &mut TestAppContext) {
+    async fn test_open_branch_excerpt_discards_comparison_after_edit(cx: &mut TestAppContext) {
         open_branch_excerpt_keeps_comparison(cx, DiffViewStyle::Unified, false, true).await;
     }
 
@@ -1227,7 +1227,7 @@ mod tests {
         cx: &mut TestAppContext,
         style: DiffViewStyle,
         historical: bool,
-        switch_on_edit: bool,
+        switch_after_edit: bool,
     ) {
         init_test(cx);
         cx.update(|cx| {
@@ -1382,7 +1382,6 @@ mod tests {
         }
         opened.read_with(cx, |editor, cx| {
             assert!(!editor.read_only(cx));
-            assert!(!editor.switch_to_uncommitted_changes_on_edit());
             assert_eq!(
                 editor.git_diff_base_name(cx).as_deref(),
                 Some("review-base")
@@ -1459,20 +1458,8 @@ mod tests {
             });
             cx.run_until_parked();
         }
-        opened.update(cx, |editor, cx| {
-            editor.set_switch_to_uncommitted_changes_on_edit(switch_on_edit, cx);
-        });
         let cloned_view = cx.update(|window, cx| {
             opened.update(cx, |editor, cx| cx.new(|cx| editor.clone(window, cx)))
-        });
-        cloned_view.read_with(cx, |editor, _| {
-            assert_eq!(
-                editor.switch_to_uncommitted_changes_on_edit(),
-                switch_on_edit
-            );
-        });
-        cloned_view.update(cx, |editor, cx| {
-            editor.set_switch_to_uncommitted_changes_on_edit(false, cx);
         });
         cx.update(|window, cx| {
             opened.update(cx, |editor, cx| {
@@ -1518,17 +1505,20 @@ mod tests {
             let buffer = editor.buffer().read(cx).as_singleton().unwrap();
             assert!(buffer.read(cx).text().contains("typed from branch "));
             assert!(buffer.read(cx).is_dirty());
-            if switch_on_edit {
+            assert_eq!(
+                editor.git_diff_base_name(cx).as_deref(),
+                Some("review-base")
+            );
+        });
+        if switch_after_edit {
+            opened.update(cx, |editor, cx| editor.show_uncommitted_changes(cx));
+            cx.run_until_parked();
+            opened.read_with(cx, |editor, cx| {
                 assert!(editor.git_diff_base_name(cx).is_none());
                 assert_eq!(editor_diff_base_text(editor, cx).as_deref(), Some(head));
-            } else {
-                assert_eq!(
-                    editor.git_diff_base_name(cx).as_deref(),
-                    Some("review-base")
-                );
-            }
-        });
-        if switch_on_edit {
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+                assert!(buffer.read(cx).text().contains("typed from branch "));
+            });
             cloned_view.read_with(cx, |editor, cx| {
                 assert_eq!(
                     editor.git_diff_base_name(cx).as_deref(),
@@ -1576,7 +1566,6 @@ mod tests {
                     editor.git_diff_base_name(cx).as_deref(),
                     Some("review-base")
                 );
-                assert!(editor.switch_to_uncommitted_changes_on_edit());
             });
         }
         other_view.read_with(cx, |editor, cx| {

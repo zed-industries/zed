@@ -1199,7 +1199,6 @@ pub struct Editor {
     language_detection_task: Task<()>,
     load_diff_task: Option<Shared<Task<()>>>,
     git_diff_base_override: Option<git::GitDiffBaseOverride>,
-    switch_to_uncommitted_changes_on_edit: bool,
     git_diff_base_revision: usize,
     git_diff_base_subscription: Option<Subscription>,
     diff_hunk_renderer: Option<Arc<dyn DiffHunkRenderer>>,
@@ -1940,7 +1939,6 @@ impl Editor {
         if let Some(bookmarks_tab_state) = self.bookmarks_tab_state.clone() {
             clone.set_bookmarks_tab_state(bookmarks_tab_state, cx);
         }
-        clone.switch_to_uncommitted_changes_on_edit = self.switch_to_uncommitted_changes_on_edit;
         clone.set_git_diff_base_override(self.git_diff_base_override.clone(), cx);
         clone
     }
@@ -2604,7 +2602,6 @@ impl Editor {
             text_style_refinement: None,
             load_diff_task: None,
             git_diff_base_override: None,
-            switch_to_uncommitted_changes_on_edit: false,
             git_diff_base_revision: 0,
             git_diff_base_subscription: None,
             diff_hunk_renderer: None,
@@ -10125,16 +10122,6 @@ impl Editor {
                 edited_buffer,
                 source,
             } => {
-                if edited_buffer.is_some()
-                    && source.is_local()
-                    && self.switch_to_uncommitted_changes_on_edit
-                    && matches!(
-                        self.git_diff_base_override,
-                        Some(git::GitDiffBaseOverride::Branch(_))
-                    )
-                {
-                    self.show_uncommitted_changes(cx);
-                }
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
                 self.fit_gutter_line_number_width(false, cx);

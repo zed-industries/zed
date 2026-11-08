@@ -71,9 +71,9 @@ You can stage or unstage each hunk as well as a whole file by hitting the button
 
 Use **Open File** or {#action editor::OpenExcerpts} in a branch comparison to open the working file with the same comparison base. Its gutter indicators show changes against the selected branch's merge base, including local edits, and can be expanded like uncommitted changes.
 
-The file remains editable. The **Base: branch** control identifies its comparison base; choose **Show Uncommitted Changes** to show only changes since HEAD in that editor, regardless of your configured Git diff base. This changes the gutter comparison without modifying the file's contents. Other open editors retain their own comparison bases. The comparison context lasts for the current editor session.
+The file remains editable. The **Base: branch** label identifies its comparison base. In **Editor Controls**, the comparison section shows **All Changes** as the current mode. Choose **Uncommitted Changes** to discard the branch comparison and show only changes since HEAD in that editor, regardless of your configured Git diff base. This changes the gutter comparison without modifying the file's contents. The comparison section and base label disappear when you leave the branch comparison. Open the file from the branch diff again to compare against that branch.
 
-The same menu offers **Switch to Uncommitted Changes on Edit**, disabled by default. When enabled, the first local edit switches the editor from the branch comparison to uncommitted changes. Undo restores the text without restoring the branch comparison. Open the file from the branch diff again to compare against that branch.
+Editing the file preserves the branch comparison. Other open editors retain their own comparison bases. The comparison context lasts for the current editor session.
 
 Branch hunks cannot be staged or restored from the gutter. Use the uncommitted changes view for those operations.
 
