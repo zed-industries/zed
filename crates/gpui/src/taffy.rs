@@ -66,7 +66,7 @@ impl TaffyLayoutEngine {
         scale_factor: f32,
         children: &[LayoutId],
     ) -> LayoutId {
-        let taffy_style = style.to_taffy(rem_size, scale_factor);
+        let taffy_style = LayoutStyle::new(&style, rem_size, scale_factor).to_taffy();
 
         if children.is_empty() {
             self.taffy
@@ -95,7 +95,7 @@ impl TaffyLayoutEngine {
         ) -> Size<Pixels>
         + 'static,
     ) -> LayoutId {
-        let taffy_style = style.to_taffy(rem_size, scale_factor);
+        let taffy_style = LayoutStyle::new(&style, rem_size, scale_factor).to_taffy();
         let measure = Box::new(measure) as Box<MeasureFn>;
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
@@ -447,9 +447,65 @@ trait ToTaffy<Output> {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> Output;
 }
 
-impl ToTaffy<taffy::style::Style> for Style {
-    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::Style {
+// Conversion reads the copied fields, not `Style`, so every field that affects layout
+// is listed here.
+macro_rules! layout_style {
+    ($($field:ident: $field_type:ty),* $(,)?) => {
+        /// The fields of a [`Style`] that affect layout, and what their lengths are
+        /// resolved against.
+        #[derive(Clone, Debug)]
+        struct LayoutStyle {
+            rem_size: Pixels,
+            scale_factor: f32,
+            $($field: $field_type,)*
+        }
+
+        impl LayoutStyle {
+            fn new(style: &Style, rem_size: Pixels, scale_factor: f32) -> Self {
+                Self {
+                    rem_size,
+                    scale_factor,
+                    $($field: Clone::clone(&style.$field),)*
+                }
+            }
+        }
+    };
+}
+
+layout_style! {
+    display: crate::Display,
+    overflow: Point<crate::Overflow>,
+    scrollbar_width: AbsoluteLength,
+    position: crate::Position,
+    inset: Edges<Length>,
+    size: Size<Length>,
+    min_size: Size<Length>,
+    max_size: Size<Length>,
+    aspect_ratio: Option<f32>,
+    margin: Edges<Length>,
+    padding: Edges<DefiniteLength>,
+    border_widths: Edges<AbsoluteLength>,
+    align_items: Option<crate::AlignItems>,
+    align_self: Option<crate::AlignSelf>,
+    align_content: Option<crate::AlignContent>,
+    justify_content: Option<crate::JustifyContent>,
+    gap: Size<DefiniteLength>,
+    flex_direction: crate::FlexDirection,
+    flex_wrap: crate::FlexWrap,
+    flex_basis: Length,
+    flex_grow: f32,
+    flex_shrink: f32,
+    grid_rows: Option<GridTemplate>,
+    grid_cols: Option<GridTemplate>,
+    grid_location: Option<crate::GridLocation>,
+}
+
+impl LayoutStyle {
+    fn to_taffy(&self) -> taffy::style::Style {
         use taffy::style_helpers::{fr, length, minmax, repeat};
+
+        let rem_size = self.rem_size;
+        let scale_factor = self.scale_factor;
 
         fn to_grid_line(
             placement: &Range<crate::GridPlacement>,
