@@ -79,11 +79,11 @@ fn apply_contrast_and_gamma_correction3(sample: vec3<f32>, color: vec3<f32>, enh
 
 struct GlobalParams {
     viewport_size: vec2<f32>,
-    premultiplied_alpha: u32,
     path_paint_base: u32,
     path_curve_base: u32,
-    pad: u32,
 }
+
+override PREMULTIPLIED_ALPHA: bool = false;
 
 struct GammaParams {
     gamma_ratios: vec4<f32>,
@@ -406,7 +406,7 @@ fn quad_sdf_impl(corner_center_to_point: vec2<f32>, corner_radius: f32) -> f32 {
 // target alpha compositing mode.
 fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
     let alpha = color.a * alpha_factor;
-    let multiplier = select(1.0, alpha, globals.premultiplied_alpha != 0u);
+    let multiplier = select(1.0, alpha, PREMULTIPLIED_ALPHA);
     return vec4<f32>(color.rgb * multiplier, alpha);
 }
 

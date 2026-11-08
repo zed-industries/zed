@@ -59,10 +59,8 @@ fn least_common_multiple(left: u64, right: u64) -> u64 {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GlobalParams {
     viewport_size: [f32; 2],
-    premultiplied_alpha: u32,
     path_paint_base: u32,
     path_curve_base: u32,
-    pad: u32,
 }
 
 #[repr(C)]
@@ -757,11 +755,15 @@ impl WgpuRendererCore {
             None
         };
 
-        let blend_mode = match alpha_mode {
-            wgpu::CompositeAlphaMode::PreMultiplied => {
-                wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING
-            }
-            _ => wgpu::BlendState::ALPHA_BLENDING,
+        let premultiplied_alpha = alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
+        let blend_mode = if premultiplied_alpha {
+            wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING
+        } else {
+            wgpu::BlendState::ALPHA_BLENDING
+        };
+        let compilation_options = wgpu::PipelineCompilationOptions {
+            constants: &[("PREMULTIPLIED_ALPHA", f64::from(premultiplied_alpha as u8))],
+            ..Default::default()
         };
 
         let color_target = wgpu::ColorTargetState {
@@ -795,13 +797,13 @@ impl WgpuRendererCore {
                     module,
                     entry_point: Some(vs_entry),
                     buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: compilation_options.clone(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module,
                     entry_point: Some(fs_entry),
                     targets: color_targets,
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: compilation_options.clone(),
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology,
@@ -1011,15 +1013,7 @@ impl WgpuRenderer {
         let Some(core) = self.core_mut() else {
             return;
         };
-        let resources = &mut core.resources;
-        resources.pipelines = WgpuRendererCore::create_pipelines(
-            &resources.device,
-            &resources.bind_group_layouts,
-            format,
-            new_alpha_mode,
-            core.dual_source_blending,
-            core.uses_webgl_instance_data,
-        );
+        core.rebuild_pipelines(format, new_alpha_mode);
 
         if let RendererState::Ready { surface, core } = &self.state {
             surface.configure(&core.resources.device, &self.surface_config);
@@ -1131,15 +1125,7 @@ impl WgpuRenderer {
         let frame_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let premultiplied_alpha =
-            self.surface_config.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
-        if let Err(error) = core.render_frame(
-            scene,
-            &frame_view,
-            size,
-            premultiplied_alpha,
-            wgpu::Color::TRANSPARENT,
-        ) {
+        if let Err(error) = core.render_frame(scene, &frame_view, size, wgpu::Color::TRANSPARENT) {
             log::error!("{error:#}");
             return false;
         }
@@ -1285,6 +1271,21 @@ impl WgpuRendererCore {
         &self.resources
     }
 
+    fn rebuild_pipelines(
+        &mut self,
+        surface_format: wgpu::TextureFormat,
+        alpha_mode: wgpu::CompositeAlphaMode,
+    ) {
+        self.resources.pipelines = Self::create_pipelines(
+            &self.resources.device,
+            &self.resources.bind_group_layouts,
+            surface_format,
+            alpha_mode,
+            self.dual_source_blending,
+            self.uses_webgl_instance_data,
+        );
+    }
+
     fn resources_mut(&mut self) -> &mut WgpuResources {
         &mut self.resources
     }
@@ -1294,7 +1295,6 @@ impl WgpuRendererCore {
         scene: &Scene,
         target_view: &wgpu::TextureView,
         size: Size<DevicePixels>,
-        premultiplied_alpha: bool,
         clear_color: wgpu::Color,
     ) -> Result<wgpu::SubmissionIndex> {
         anyhow::ensure!(
@@ -1323,7 +1323,7 @@ impl WgpuRendererCore {
             bytemuck::bytes_of(&gamma_params),
         );
 
-        self.record_frame(scene, target_view, size, premultiplied_alpha, clear_color)
+        self.record_frame(scene, target_view, size, clear_color)
             .inspect_err(|_| {
                 // Queue writes are staged before encoding; flush them even if the frame fails.
                 self.resources.queue.submit(std::iter::empty());
@@ -1335,7 +1335,6 @@ impl WgpuRendererCore {
         scene: &Scene,
         frame_view: &wgpu::TextureView,
         size: Size<DevicePixels>,
-        premultiplied_alpha: bool,
         clear_color: wgpu::Color,
     ) -> Result<wgpu::SubmissionIndex> {
         let mut instance_offset = 0;
@@ -1355,10 +1354,8 @@ impl WgpuRendererCore {
             })?;
         let globals = GlobalParams {
             viewport_size: [size.width.0 as f32, size.height.0 as f32],
-            premultiplied_alpha: premultiplied_alpha as u32,
             path_paint_base: instance_bindings.path_tiles.paint_base,
             path_curve_base: instance_bindings.path_tiles.curve_base,
-            pad: 0,
         };
         self.resources().queue.write_buffer(
             &self.resources().globals_buffer,
@@ -1994,6 +1991,7 @@ impl WgpuRenderer {
         } else {
             self.opaque_alpha_mode
         };
+        let alpha_mode_changed = alpha_mode != self.surface_config.alpha_mode;
 
         self.surface_config.width = width;
         self.surface_config.height = height;
@@ -2002,7 +2000,7 @@ impl WgpuRenderer {
             self.surface_config.present_mode = mode;
         }
 
-        let core = match std::mem::replace(&mut self.state, RendererState::Released) {
+        let mut core = match std::mem::replace(&mut self.state, RendererState::Released) {
             RendererState::Ready {
                 core,
                 surface: old_surface,
@@ -2015,6 +2013,9 @@ impl WgpuRenderer {
                 anyhow::bail!("Cannot replace the surface: GPU resources have been released")
             }
         };
+        if alpha_mode_changed {
+            core.rebuild_pipelines(self.surface_config.format, alpha_mode);
+        }
         surface.configure(&core.resources.device, &self.surface_config);
         self.state = RendererState::Ready { surface, core };
 
@@ -2250,7 +2251,7 @@ impl WgpuHeadlessRenderer {
             .view
             .clone();
         self.core
-            .render_frame(scene, &view, size, false, wgpu::Color::BLACK)?;
+            .render_frame(scene, &view, size, wgpu::Color::BLACK)?;
         Ok(())
     }
 
