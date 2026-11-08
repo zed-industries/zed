@@ -2067,6 +2067,100 @@ mod tests {
         scene
     }
 
+    /// Applies the same random changes to two windows, one keeping its layout nodes
+    /// between frames and one rebuilding them every frame, and checks they draw the same
+    /// scene and hitboxes after every change.
+    #[gpui::test(iterations = 16)]
+    fn layout_cache_matches_rebuilding_every_frame(mut rng: StdRng, cx: &mut TestAppContext) {
+        let seed = rng.random();
+        let element_count = rng.random_range(0..96);
+        let config = RandomizedElementTreeConfig::new(seed, element_count)
+            .with_entity_density(rng.random_range(0.0..0.5))
+            .with_handler_density(0.2)
+            .with_cached_views(rng.random_bool(0.3));
+        let [cached, uncached] = [true, false].map(|layout_cache| {
+            let window = cx.open_window(WINDOW_SIZE, move |window, cx| {
+                window.set_layout_cache_enabled(layout_cache);
+                RandomizedElementTree::new_with_config(config, cx)
+            });
+            let root = window
+                .root(cx)
+                .expect("randomized tree window should have a root");
+            (AnyWindowHandle::from(window), root)
+        });
+
+        // Hiding an ancestor of `.cached()` views can panic on `main` today, with or
+        // without the layout cache, so cached-view trees leave it out.
+        let mutations = RandomizedElementTreeMutationKind::ALL
+            .into_iter()
+            .filter(|kind| {
+                !config.cached_views
+                    || !matches!(
+                        kind,
+                        RandomizedElementTreeMutationKind::RootVisibility
+                            | RandomizedElementTreeMutationKind::ChildVisibility
+                    )
+            })
+            .collect::<Vec<_>>();
+        for step in 0..48 {
+            let change = rng.random_range(0..100);
+            let mutation = mutations[rng.random_range(0..mutations.len())];
+            let window_size = size(
+                px(rng.random_range(200.0..1400.0)),
+                px(rng.random_range(150.0..1000.0)),
+            );
+            let rem_size = px(rng.random_range(8.0..24.0));
+            let scale_factor = [1.0, 1.25, 1.5, 2.0, 2.5][rng.random_range(0..5)];
+            for (window, root) in [&cached, &uncached] {
+                match change {
+                    0..60 => {
+                        root.update(cx, |tree, cx| tree.apply_mutation(mutation, cx));
+                    }
+                    60..68 => root.update(cx, |tree, cx| tree.churn_element_ids(cx)),
+                    68..76 => cx.simulate_window_resize(*window, window_size),
+                    76..82 => cx
+                        .update_window(*window, |_, window, _| window.set_rem_size(rem_size))
+                        .expect("window should remain open"),
+                    82..88 => cx
+                        .update_window(*window, |_, window, _| {
+                            window.set_scale_factor(scale_factor)
+                        })
+                        .expect("window should remain open"),
+                    _ => root.update(cx, |_, cx| cx.notify()),
+                }
+            }
+            let [cached_frame, uncached_frame] =
+                [&cached, &uncached].map(|(window, _)| draw_window_with_hitboxes(*window, cx));
+            assert_eq!(
+                cached_frame, uncached_frame,
+                "cached layout diverged at step {step} (change {change}) for {config:?}"
+            );
+        }
+
+        for (window, _) in [cached, uncached] {
+            cx.update_window(window, |_, window, _| window.remove_window())
+                .expect("window should remain open until the case completes");
+        }
+    }
+
+    fn draw_window_with_hitboxes(
+        window: AnyWindowHandle,
+        cx: &mut TestAppContext,
+    ) -> (SceneSnapshot, Vec<Bounds<Pixels>>) {
+        let scene = draw_window(window, cx);
+        let hitboxes = cx
+            .update_window(window, |_, window, _| {
+                window
+                    .rendered_frame
+                    .hitboxes
+                    .iter()
+                    .map(|hitbox| hitbox.bounds)
+                    .collect()
+            })
+            .expect("window should remain open");
+        (scene, hitboxes)
+    }
+
     fn draw_window(window: AnyWindowHandle, cx: &mut TestAppContext) -> SceneSnapshot {
         cx.update_window(window, |_, window, cx| {
             let arena_clear_needed = window.draw(cx);
