@@ -722,6 +722,7 @@ impl LocalBufferStore {
                             Buffer::build(text_buffer, Some(loaded.file), capability, cx);
                         buffer.set_encoding(loaded.encoding);
                         buffer.set_has_bom(loaded.has_bom);
+                        apply_initial_line_ending(&mut buffer, cx);
                         buffer
                     })
                 }
