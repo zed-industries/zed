@@ -1440,7 +1440,7 @@ fn render_node_body(
         .when(node.id % 4 == 1, |element| {
             element.underline().child("Retained glyphs: abc Ω")
         })
-        .child({
+        .children(randomized_tree_paints_paths().then(|| {
             let color = style.border_color;
             let width = style.border_width;
             let bend = style.corner_radius;
@@ -1471,7 +1471,7 @@ fn render_node_body(
             )
             .absolute()
             .size_full()
-        })
+        }))
         .children(node.children.iter().map(|child| {
             if let Some(entities) = entities {
                 render_node(
@@ -2028,4 +2028,11 @@ mod tests {
         })
         .expect("randomized element tree window should remain open while drawing")
     }
+}
+
+/// Benchmarks can set `GPUI_BENCH_PATHS=0` to leave out the tessellated paths, whose cost
+/// otherwise dominates the element tree's CPU profile.
+fn randomized_tree_paints_paths() -> bool {
+    static PAINTS_PATHS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PAINTS_PATHS.get_or_init(|| std::env::var("GPUI_BENCH_PATHS").as_deref() != Ok("0"))
 }
