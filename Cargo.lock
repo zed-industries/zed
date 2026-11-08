@@ -7672,6 +7672,7 @@ dependencies = [
  "gpui_util",
  "image",
  "itertools 0.14.0",
+ "js-sys",
  "log",
  "naga",
  "parking_lot",

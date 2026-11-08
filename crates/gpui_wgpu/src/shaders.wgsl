@@ -81,6 +81,9 @@ struct GlobalParams {
     viewport_size: vec2<f32>,
     path_paint_base: u32,
     path_curve_base: u32,
+    depth_scale: f32,
+    quad_count: u32,
+    pad: vec2<u32>,
 }
 
 override PREMULTIPLIED_ALPHA: bool = false;
@@ -564,6 +567,20 @@ fn is_shaped(quad: Quad) -> bool {
     return has_rounded_corners(quad.corner_radii) || has_border(quad.border_widths);
 }
 
+const CULLED_POSITION: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+
+fn quad_depth(quad_id: u32) -> f32 {
+    return saturate(f32(quad_id + 1u) * globals.depth_scale);
+}
+
+// Opaque rectangles are drawn by the opaque pass instead of the quad pass.
+fn is_opaque_rectangle(quad: Quad) -> bool {
+    return quad.background.tag == 0u
+        && quad.background.solid.a >= 1.0
+        && !has_rounded_corners(quad.corner_radii)
+        && !has_border(quad.border_widths);
+}
+
 struct QuadVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) border_color: vec4<f32>,
@@ -576,12 +593,18 @@ struct QuadVarying {
 
 @vertex
 fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> QuadVarying {
-    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let quad = load_quad(instance_id);
 
     var out = QuadVarying();
+    if (is_opaque_rectangle(quad)) {
+        out.position = CULLED_POSITION;
+        return out;
+    }
+
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let clipped = clip_to_mask(unit_vertex, quad.bounds, quad.content_mask);
     out.position = to_device_position_impl(clipped.position);
+    out.position.z = quad_depth(instance_id);
 
     out.border_color = hsla_to_rgba(quad.border_color);
     let simple = !is_shaped(quad) && quad.background.tag == 0u;
@@ -961,6 +984,37 @@ fn quarter_ellipse_sdf(point: vec2<f32>, radii: vec2<f32>) -> f32 {
 // Modulus that has the same sign as `a`.
 fn fmod(a: f32, b: f32) -> f32 {
     return a - b * trunc(a / b);
+}
+
+// --- opaque quads --- //
+
+struct OpaqueQuadVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) @interpolate(flat) color: vec4<f32>,
+}
+
+@vertex
+fn vs_opaque_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> OpaqueQuadVarying {
+    let quad_id = globals.quad_count - 1u - instance_id;
+    let quad = load_quad(quad_id);
+
+    var out = OpaqueQuadVarying();
+    if (!is_opaque_rectangle(quad)) {
+        out.position = CULLED_POSITION;
+        return out;
+    }
+
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let clipped = clip_to_mask(unit_vertex, quad.bounds, quad.content_mask);
+    out.position = to_device_position_impl(clipped.position);
+    out.position.z = quad_depth(quad_id);
+    out.color = blend_color(hsla_to_rgba(quad.background.solid), 1.0);
+    return out;
+}
+
+@fragment
+fn fs_opaque_quad(input: OpaqueQuadVarying) -> @location(0) vec4<f32> {
+    return input.color;
 }
 
 // --- shadows --- //
