@@ -145,9 +145,12 @@ best starting point for new applications:
 - `active_state_bug` is a focused active-state reproduction.
 - `layer_shell` demonstrates Linux layer-shell windows.
 - `list_example` demonstrates bottom-aligned list state and scrollbar behavior.
-- `native_webview` demonstrates the macOS native-surface overlay API with a
-  directly hosted `WKWebView`, without depending on wry. It also demonstrates
-  click-anywhere overlay dismissal and native-focus handoff back to GPUI.
+- `native_webview` demonstrates window composition with native content between
+  GPUI's base and overlay surfaces. On macOS it hosts `WKWebView`; on Windows it
+  hosts WebView2. On Linux it uses an independently rendered wgpu surface on
+  Wayland or X11, not a WebView. The example exercises resizing, GPUI overlays,
+  outside-click dismissal, and input handoff. Run it from the repository root
+  with `cargo run -p gpui --example native_webview`.
 - `ownership_post` supports the ownership and data-flow documentation.
 - `paths_bench` is a path rendering benchmark.
 - `tree` renders a deep tree of nested elements.
