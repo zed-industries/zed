@@ -3294,4 +3294,25 @@ mod tests {
             "the removed folder should no longer appear in any This Window group, got {groups_after:?}"
         );
     }
+
+    #[test]
+    fn test_highlights_for_path() {
+        // path should have name fallback
+        let path = Path::new(r"C:\");
+        let (name_highlight, path_highlight) =
+            highlights_for_path(path, PathStyle::Windows, &vec![], 0);
+        assert_eq!(name_highlight.text, path_highlight.text);
+
+        let path = Path::new(r"C:\éx\");
+        let (name_highlight, path_highlight) = highlights_for_path(
+            path,
+            PathStyle::Windows,
+            &vec![3], // with é as the input character to match
+            0,
+        );
+        assert_eq!(name_highlight.text, String::from("éx"));
+        assert_eq!(name_highlight.highlight_positions, vec![0]);
+        assert_eq!(path_highlight.text, String::from(r"C:\éx\"));
+        assert_eq!(path_highlight.highlight_positions, vec![3]);
+    }
 }
