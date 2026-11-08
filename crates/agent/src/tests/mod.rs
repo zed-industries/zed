@@ -1102,14 +1102,15 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         )]
     );
 
-    // Simulate a final tool call, ensuring we don't trigger authorization.
+    // A final call of the same tool. The argument differs so this stays a
+    // permission check: a third identical call in a row ends the turn.
     fake.send_last_event(
         &model,
         LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
             id: "tool_id_4".into(),
             name: ToolRequiringPermission::NAME.into(),
-            raw_input: "{}".into(),
-            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            raw_input: r#"{"again":true}"#.into(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({"again": true})),
             is_input_complete: true,
             thought_signature: None,
         }),

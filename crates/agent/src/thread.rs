@@ -1320,6 +1320,10 @@ pub struct Thread {
     /// running to completion. The UI sets this to deliver a "steering" queued
     /// message mid-task; by default queued messages wait for the turn to finish.
     end_turn_at_next_boundary: bool,
+    /// Set when this completion repeats a tool call or a passage of reasoning.
+    /// The turn ends after tools already in flight finish, instead of asking
+    /// the model to continue.
+    stop_for_loop: bool,
     pending_message: Option<AgentMessage>,
     pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<ClientUserMessageId, language_model::TokenUsage>,
@@ -1476,6 +1480,7 @@ impl Thread {
             user_store: project.read(cx).user_store(),
             running_turn: None,
             end_turn_at_next_boundary: false,
+            stop_for_loop: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: HashMap::default(),
@@ -1855,6 +1860,7 @@ impl Thread {
             user_store: project.read(cx).user_store(),
             running_turn: None,
             end_turn_at_next_boundary: false,
+            stop_for_loop: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: db_thread.request_token_usage.clone(),
@@ -3076,6 +3082,12 @@ impl Thread {
 
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
 
+            this.update(cx, |this, _cx| {
+                if &this.prompt_id == prompt_id {
+                    this.stop_for_loop = false;
+                }
+            })?;
+
             let events = match provider {
                 Ok(provider) => provider.stream_completion(&model, request, cx).await,
                 Err(error) => Err(error),
@@ -3089,6 +3101,7 @@ impl Thread {
             let mut early_tool_results: Vec<(usize, LanguageModelToolResult)> = Vec::new();
             let mut cancelled = false;
             let mut had_refusal = false;
+            let mut stop_for_loop = false;
             loop {
                 // Race between getting the first event, tool completion, and cancellation.
                 let first_event = futures::select_biased! {
@@ -3141,6 +3154,9 @@ impl Thread {
                     let mut batch_error = None;
 
                     for event in batch {
+                        if this.stop_for_loop {
+                            break;
+                        }
                         log::trace!("Received completion event: {:?}", event);
                         match event {
                             Ok(event) => {
@@ -3166,10 +3182,14 @@ impl Thread {
                     }
 
                     cx.notify();
-                    (batch_tool_results, batch_error)
+                    (batch_tool_results, batch_error, this.stop_for_loop)
                 })?;
 
                 tool_results.extend(batch_result.0);
+                if batch_result.2 {
+                    stop_for_loop = true;
+                    break;
+                }
                 if let Some(err) = batch_result.1 {
                     let is_refusal = err
                         .downcast_ref::<CompletionError>()
@@ -3300,6 +3320,11 @@ impl Thread {
 
             if cancelled || *cancellation_rx.borrow() {
                 log::debug!("Turn cancelled by user, exiting");
+                return Ok(());
+            }
+
+            if stop_for_loop {
+                log::debug!("Turn stopped: repeated tool call or reasoning");
                 return Ok(());
             }
 
@@ -3761,6 +3786,10 @@ impl Thread {
         new_signature: Option<String>,
         event_stream: &ThreadEventStream,
     ) {
+        if self.stop_for_loop {
+            return;
+        }
+
         event_stream.send_thinking(&new_text);
 
         let last_message = self.pending_message();
@@ -3774,6 +3803,18 @@ impl Thread {
                 text: new_text,
                 signature: new_signature,
             });
+        }
+
+        let thinking = self
+            .pending_message
+            .as_ref()
+            .and_then(|message| message.content.last())
+            .and_then(|content| match content {
+                AgentMessageContent::Thinking { text, .. } => Some(text.clone()),
+                _ => None,
+            });
+        if thinking.is_some_and(|text| crate::loop_guard::thinking_repeats(&text)) {
+            self.note_loop_stop(crate::loop_guard::THINKING_LOOP_NOTICE, event_stream);
         }
     }
 
@@ -3871,6 +3912,18 @@ impl Thread {
             }
         }
 
+        if self.repeated_complete_tool_call() {
+            let already_running = self
+                .running_turn
+                .as_ref()
+                .is_some_and(|turn| turn.streaming_tool_inputs.contains_key(&tool_use.id));
+            self.note_loop_stop(crate::loop_guard::TOOL_LOOP_NOTICE, event_stream);
+            if !already_running {
+                self.fail_tool_call_for_loop(&tool_use, owning_message_ix, event_stream);
+                return None;
+            }
+        }
+
         if let Some(mut sender) = self
             .running_turn
             .as_mut()?
@@ -3893,6 +3946,76 @@ impl Thread {
             cancellation_rx,
             cx,
         ))
+    }
+
+    fn repeated_complete_tool_call(&self) -> bool {
+        let rounds = self.complete_tool_rounds();
+        let Some(fingerprint) = rounds.last().and_then(|round| round.last()).cloned() else {
+            return false;
+        };
+        crate::loop_guard::repeated_tool_rounds(&rounds, &fingerprint)
+    }
+
+    /// One entry per assistant completion since the last user message.
+    /// The pending completion is the last entry and already includes the
+    /// call about to run. Completions with no finished tool call are omitted.
+    fn complete_tool_rounds(&self) -> Vec<Vec<String>> {
+        let start = self
+            .messages
+            .iter()
+            .rposition(|message| matches!(message.as_ref(), Message::User(_)))
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        let mut rounds = Vec::new();
+        for message in &self.messages[start..] {
+            if let Some(agent) = message.as_agent_message() {
+                let mut round = Vec::new();
+                push_complete_tool_fingerprints(&agent.content, &mut round);
+                if !round.is_empty() {
+                    rounds.push(round);
+                }
+            }
+        }
+        if let Some(pending) = &self.pending_message {
+            let mut round = Vec::new();
+            push_complete_tool_fingerprints(&pending.content, &mut round);
+            if !round.is_empty() {
+                rounds.push(round);
+            }
+        }
+        rounds
+    }
+
+    fn note_loop_stop(&mut self, notice: &str, event_stream: &ThreadEventStream) {
+        if self.stop_for_loop {
+            return;
+        }
+        self.stop_for_loop = true;
+        self.handle_text_event(format!("\n\n{notice}\n"), event_stream);
+    }
+
+    fn fail_tool_call_for_loop(
+        &mut self,
+        tool_use: &LanguageModelToolUse,
+        owning_message_ix: usize,
+        event_stream: &ThreadEventStream,
+    ) {
+        let tool_call_id = scoped_tool_call_id(owning_message_ix, &tool_use.id);
+        event_stream.update_tool_call_fields(&tool_call_id, |update| {
+            update.status(acp_v2::ToolCallStatus::Failed)
+        });
+        self.pending_message().tool_results.insert(
+            tool_use.id.clone(),
+            LanguageModelToolResult {
+                tool_use_id: tool_use.id.clone(),
+                tool_name: tool_use.name.clone(),
+                is_error: true,
+                content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                    crate::loop_guard::TOOL_LOOP_NOTICE,
+                ))],
+                output: None,
+            },
+        );
     }
 
     fn run_tool(
@@ -4941,6 +5064,24 @@ fn subagent_partial_output_from_messages(
         .collect::<Vec<_>>();
     text_messages.reverse();
     text_messages.join("\n\n")
+}
+
+fn push_complete_tool_fingerprints(content: &[AgentMessageContent], out: &mut Vec<String>) {
+    for item in content {
+        let AgentMessageContent::ToolUse(tool_use) = item else {
+            continue;
+        };
+        if !tool_use.is_input_complete {
+            continue;
+        }
+        let Ok(json) = tool_use.input.clone().into_json() else {
+            continue;
+        };
+        out.push(crate::loop_guard::tool_fingerprint(
+            tool_use.name.as_ref(),
+            &serde_json::to_string(&json).unwrap_or_default(),
+        ));
+    }
 }
 
 fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
@@ -7648,6 +7789,16 @@ mod tests {
         input_tokens: Option<u64>,
         cx: &mut TestAppContext,
     ) {
+        finish_echo_round(fake, model, input_tokens, "tool output", cx);
+    }
+
+    fn finish_echo_round(
+        fake: &FakeLanguageModelProvider,
+        model: &LanguageModel,
+        input_tokens: Option<u64>,
+        text: &str,
+        cx: &mut TestAppContext,
+    ) {
         if let Some(input_tokens) = input_tokens {
             fake.send_last_event(
                 model,
@@ -7657,15 +7808,14 @@ mod tests {
                 }),
             );
         }
+        let raw_input = serde_json::json!({"text": text}).to_string();
         fake.send_last_event(
             model,
             LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
                 id: "echo".into(),
                 name: EchoTool::NAME.into(),
-                raw_input: r#"{"text":"tool output"}"#.to_string(),
-                input: language_model::LanguageModelToolUseInput::Json(
-                    json!({"text": "tool output"}),
-                ),
+                raw_input,
+                input: language_model::LanguageModelToolUseInput::Json(json!({"text": text})),
                 is_input_complete: true,
                 thought_signature: None,
             }),
@@ -7737,9 +7887,88 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        finish_tool_round(&fake, &model, Some(900_000), cx);
+        // A different payload from later `finish_tool_round` calls. Three
+        // identical payloads in one turn end the turn.
+        finish_echo_round(&fake, &model, Some(900_000), "before compact", cx);
         finish_compaction(&fake, &model, "summary", cx);
         (thread, fake, model, events)
+    }
+
+    #[gpui::test]
+    async fn test_third_identical_tool_call_ends_the_turn(cx: &mut gpui::TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        enable_echo_tool(&thread, cx);
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send(ClientUserMessageId::new(), vec!["prompt"], cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        finish_tool_round(&fake, &model, None, cx);
+        assert_eq!(fake.pending_completions().len(), 1);
+        finish_tool_round(&fake, &model, None, cx);
+        assert_eq!(fake.pending_completions().len(), 1);
+        finish_tool_round(&fake, &model, None, cx);
+        assert_eq!(fake.pending_completions().len(), 0);
+
+        let notice = thread.read_with(cx, |thread, _| {
+            thread.messages.iter().any(|message| {
+                message.as_agent_message().is_some_and(|agent| {
+                    agent.content.iter().any(|content| match content {
+                        AgentMessageContent::Text(text) => {
+                            text.contains(crate::loop_guard::TOOL_LOOP_NOTICE)
+                        }
+                        _ => false,
+                    })
+                })
+            })
+        });
+        assert!(notice);
+    }
+
+    #[gpui::test]
+    async fn test_repeated_thinking_ends_the_turn(cx: &mut gpui::TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send(ClientUserMessageId::new(), vec!["prompt"], cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(fake.pending_completions().len(), 1);
+
+        let passage = "x".repeat(crate::loop_guard::THINKING_REPEAT_CHARS);
+        fake.send_last_event(
+            &model,
+            LanguageModelCompletionEvent::Thinking {
+                text: passage.repeat(3),
+                signature: None,
+            },
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+
+        assert_eq!(fake.pending_completions().len(), 0);
+        let notice = thread.read_with(cx, |thread, _| {
+            thread.messages.iter().any(|message| {
+                message.as_agent_message().is_some_and(|agent| {
+                    agent.content.iter().any(|content| match content {
+                        AgentMessageContent::Text(text) => {
+                            text.contains(crate::loop_guard::THINKING_LOOP_NOTICE)
+                        }
+                        _ => false,
+                    })
+                })
+            })
+        });
+        assert!(notice);
     }
 
     fn set_registry_compaction_model(cx: &mut App, model: Option<LanguageModel>) {
