@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, IntoElement, Pixels, StyledText, Task,
-    Window, px,
+    AnyElement, App, AppContext as _, Context, Entity, IntoElement, Pixels, StyledText,
+    Subscription, Task, Window, px,
 };
 use language::{Bias, Buffer, HighlightedText, HighlightedTextBuilder, ToPoint};
 use picker::{MatchLocation, PreviewBackend, PreviewLayout, PreviewSource, PreviewUpdate};
@@ -16,7 +16,9 @@ use util::ResultExt as _;
 use util::rel_path::RelPath;
 
 use editor::{Editor, EditorSettings, RowHighlightOptions, display_map::HighlightKey};
-use multi_buffer::{MultiBuffer, MultiBufferOffset};
+use multi_buffer::{
+    Anchor, Event as MultiBufferEvent, MultiBuffer, MultiBufferOffset, ToPoint as _,
+};
 
 pub fn editor_preview(
     project: Entity<Project>,
@@ -60,8 +62,11 @@ struct EditorPreview {
     /// When set show a text message instead of a preview
     message: Option<HighlightedText>,
     preview_editor: Entity<Editor>,
+    // An empty-EOF match should keep highlighting one row even after it gains text.
+    single_row_highlight_anchor: Option<Anchor>,
     /// Store the load preview task so we have only one at the time
     pending_update: Task<()>,
+    _multibuffer_subscription: Subscription,
 }
 
 impl EditorPreview {
@@ -96,24 +101,37 @@ impl EditorPreview {
             editor
         });
 
+        let multi_buffer = preview_editor.read(cx).buffer().clone();
+        let multibuffer_subscription = cx.subscribe(&multi_buffer, |this, _, event, cx| {
+            if let MultiBufferEvent::Edited { .. } = event {
+                this.refresh_single_row_highlight(cx);
+            }
+        });
+
         let mut this = Self {
             project,
             preview_editor,
             current_path: None,
             message: None,
+            single_row_highlight_anchor: None,
             pending_update: Task::ready(()),
+            _multibuffer_subscription: multibuffer_subscription,
         };
         this.clear(); // picker starts with no results.
         this
     }
 
     fn clear(&mut self) {
+        self.pending_update = Task::ready(());
+        self.single_row_highlight_anchor = None;
         let mut message = HighlightedTextBuilder::default();
         message.push_plain("No results to preview");
         self.message = Some(message.build());
     }
 
     fn update(&mut self, update: PreviewUpdate, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_update = Task::ready(());
+        self.single_row_highlight_anchor = None;
         let PreviewUpdate {
             source,
             match_location: highlight,
@@ -209,7 +227,7 @@ impl EditorPreview {
         let max_visible_rows =
             (window.viewport_size().height / MIN_LINE_HEIGHT_PX).ceil() as u32 + MARGIN;
 
-        self.preview_editor.update(cx, |editor, cx| {
+        self.single_row_highlight_anchor = self.preview_editor.update(cx, |editor, cx| {
             let snapshot = buffer.read(cx).text_snapshot();
             let focus_row = highlight
                 .as_ref()
@@ -236,32 +254,23 @@ impl EditorPreview {
             editor.clear_row_highlights::<SearchMatchLineHighlight>();
             editor.clear_background_highlights(HighlightKey::PickerPreview, cx);
 
-            let Some(highlight) = highlight else {
-                return;
-            };
+            let highlight = highlight?;
 
             let multibuffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-            let Some(range) = multibuffer_snapshot
+            let range = multibuffer_snapshot
                 .anchor_in_excerpt(highlight.anchor_range.start)
                 .zip(multibuffer_snapshot.anchor_in_excerpt(highlight.anchor_range.end))
-                .map(|(start, end)| start..end)
-            else {
-                return;
-            };
+                .map(|(start, end)| start..end)?;
+            let single_row_highlight_anchor = highlight_empty_last_line.then_some(range.start);
 
-            let row_range = if highlight_empty_last_line {
-                // A regular zero-column endpoint excludes its row; Max includes the empty EOF row.
-                range.start..multi_buffer::Anchor::Max
-            } else {
-                range.clone()
-            };
-
-            editor.highlight_rows::<SearchMatchLineHighlight>(
-                row_range,
-                |cx| cx.theme().colors().editor_active_line_background,
-                RowHighlightOptions::default(),
-                cx,
-            );
+            if !highlight_empty_last_line {
+                editor.highlight_rows::<SearchMatchLineHighlight>(
+                    range.clone(),
+                    |cx| cx.theme().colors().editor_active_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+            }
 
             editor.highlight_background(
                 HighlightKey::PickerPreview,
@@ -269,8 +278,42 @@ impl EditorPreview {
                 |_, theme| theme.colors().search_match_background,
                 cx,
             );
+            single_row_highlight_anchor
         });
+        self.refresh_single_row_highlight(cx);
         self.scroll_to_focus_match(window, cx);
+    }
+
+    fn refresh_single_row_highlight(&self, cx: &mut Context<Self>) {
+        let Some(anchor) = self.single_row_highlight_anchor else {
+            return;
+        };
+
+        self.preview_editor.update(cx, |editor, cx| {
+            editor.clear_row_highlights::<SearchMatchLineHighlight>();
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            if snapshot.can_resolve(&anchor) {
+                let row = anchor.to_point(&snapshot).row;
+                let start = snapshot.anchor_before(Point::new(row, 0));
+                let max_point = snapshot.max_point();
+                let end = if row < max_point.row {
+                    snapshot.anchor_before(Point::new(row + 1, 0))
+                } else if max_point.column == 0 {
+                    // A zero-column endpoint excludes its row unless it is Max.
+                    Anchor::Max
+                } else {
+                    snapshot.anchor_before(max_point)
+                };
+
+                editor.highlight_rows::<SearchMatchLineHighlight>(
+                    start..end,
+                    |cx| cx.theme().colors().editor_active_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+            }
+            cx.notify();
+        });
     }
 
     /// Keep the scroll as far left as possible while showing the match.
