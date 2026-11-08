@@ -136,6 +136,31 @@ impl LineLayout {
         Some(start..end)
     }
 
+    /// The glyph cluster holding the character at the given index, as its byte range and the
+    /// horizontal span it covers.
+    ///
+    /// A ligature, such as lam-alef in some Arabic fonts, draws several characters with one
+    /// glyph, so only the first of them starts a glyph and has an `x_range_for_index`.
+    pub fn cluster_for_index(&self, index: usize) -> Option<(Range<usize>, Range<Pixels>)> {
+        if index >= self.len {
+            return None;
+        }
+        let glyph_indices = || {
+            self.runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .map(|glyph| glyph.index)
+        };
+        let start = glyph_indices()
+            .filter(|&glyph_index| glyph_index <= index)
+            .max()?;
+        let end = glyph_indices()
+            .filter(|&glyph_index| glyph_index > start)
+            .min()
+            .unwrap_or(self.len);
+        Some((start..end, self.x_range_for_index(start)?))
+    }
+
     /// The corresponding Font at the given index
     pub fn font_id_for_index(&self, index: usize) -> Option<FontId> {
         for run in &self.runs {
@@ -995,6 +1020,28 @@ mod tests {
             assert_eq!(
                 layout.x_range_for_index(index),
                 expected.map(|range| px(range.start)..px(range.end)),
+                "index {index}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_cluster_for_index() {
+        let mut lam_alef_ligature =
+            make_layout(vec![glyph_at(20., 0), glyph_at(10., 2), glyph_at(0., 6)]);
+        lam_alef_ligature.width = px(30.);
+        lam_alef_ligature.len = "\u{633}\u{644}\u{627}\u{645}".len();
+
+        for (index, expected) in [
+            (0, Some((0..2, 20.0..30.0))),
+            (2, Some((2..6, 10.0..20.0))),
+            (4, Some((2..6, 10.0..20.0))),
+            (6, Some((6..8, 0.0..10.0))),
+            (8, None),
+        ] {
+            assert_eq!(
+                lam_alef_ligature.cluster_for_index(index),
+                expected.map(|(cluster, range)| (cluster, px(range.start)..px(range.end))),
                 "index {index}",
             );
         }

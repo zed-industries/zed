@@ -111,13 +111,20 @@ impl ShapedLine {
     ///
     /// A caret sits on the leading edge of the character after it, which is the right edge
     /// inside right-to-left text. At the end of the line it follows the last character instead.
+    /// Inside a right-to-left ligature, the ligature is split evenly between its graphemes.
     pub fn caret_x_for_index(&self, index: usize) -> Pixels {
+        if self.is_right_to_left_at(index)
+            && let Some((cluster, range)) = self.cluster_for_index(index)
+            && let Some(cluster_text) = self.text.get(cluster.clone())
+            && let Some(text_before_index) = self.text.get(cluster.start..index)
+        {
+            let graphemes_before_index = text_before_index.graphemes(true).count() as f32;
+            let graphemes = cluster_text.graphemes(true).count().max(1) as f32;
+            return range.end - (range.end - range.start) * (graphemes_before_index / graphemes);
+        }
+
         if let Some(range) = self.x_range_for_index(index) {
-            return if self.is_right_to_left_at(index) {
-                range.end
-            } else {
-                range.start
-            };
+            return range.start;
         }
 
         if index == self.len()
@@ -140,9 +147,9 @@ impl ShapedLine {
                 .is_some_and(|level| level.is_rtl())
     }
 
-    /// The span the grapheme at the given index covers, counting both its advance and the ink
-    /// its glyphs draw, together with this line repainted in `color` and shifted so that the
-    /// span starts at x = 0.
+    /// The span the glyph cluster holding the given index covers, counting both its advance and
+    /// the ink its glyphs draw, together with this line repainted in `color` and shifted so that
+    /// the span starts at x = 0.
     ///
     /// Painting that line clipped to the span redraws the grapheme as it appears in context,
     /// along with any neighbouring ink that reaches into the span, such as the strokes that join
@@ -156,7 +163,7 @@ impl ShapedLine {
         if self.len() != self.text.len() {
             return None;
         }
-        let advance = self.x_range_for_index(index)?;
+        let (cluster, advance) = self.cluster_for_index(index)?;
         let scale_factor = window.scale_factor();
         let span = self
             .layout
@@ -165,7 +172,7 @@ impl ShapedLine {
             .flat_map(|run| {
                 run.glyphs
                     .iter()
-                    .filter(|glyph| glyph.index == index)
+                    .filter(|glyph| glyph.index == cluster.start)
                     .map(|glyph| (run.font_id, glyph))
             })
             .filter_map(|(font_id, glyph)| {
@@ -1170,6 +1177,12 @@ mod tests {
             70.,
             &[],
         );
+        let lam_alef_ligature = make_shaped_line(
+            "\u{633}\u{644}\u{627}\u{645}",
+            &[(0, 20.), (2, 10.), (6, 0.)],
+            30.,
+            &[],
+        );
 
         for (line, index, expected_x) in [
             (&left_to_right, 0, 0.),
@@ -1186,6 +1199,10 @@ mod tests {
             (&mixed, 8, 60.),
             (&tab_between_right_to_left, 4, 30.),
             (&tab_between_right_to_left, 5, 50.),
+            (&lam_alef_ligature, 2, 20.),
+            (&lam_alef_ligature, 4, 15.),
+            (&lam_alef_ligature, 6, 10.),
+            (&lam_alef_ligature, 8, 0.),
         ] {
             assert_eq!(
                 line.caret_x_for_index(index),
@@ -1204,6 +1221,12 @@ mod tests {
             "a \u{5d0}\u{5d1} b",
             &[(0, 0.), (1, 10.), (4, 20.), (2, 30.), (6, 40.), (7, 50.)],
             60.,
+            &[],
+        );
+        let lam_alef_ligature = make_shaped_line(
+            "\u{633}\u{644}\u{627}\u{645}",
+            &[(0, 20.), (2, 10.), (6, 0.)],
+            30.,
             &[],
         );
 
@@ -1232,7 +1255,12 @@ mod tests {
                 ]
             );
 
-            assert!(line.cell_for_index(3, color, window).is_none());
+            let (span, _) = lam_alef_ligature
+                .cell_for_index(4, color, window)
+                .expect("alef belongs to the lam-alef glyph");
+            assert_eq!(span, px(10.)..px(20.));
+
+            assert!(line.cell_for_index(line.len(), color, window).is_none());
             assert!(line.with_len(4).cell_for_index(2, color, window).is_none());
         });
     }

@@ -8311,7 +8311,12 @@ impl LineWithInvisibles {
     pub fn x_range_for_index(&self, index: usize) -> Option<Range<Pixels>> {
         let (fragment_start_x, fragment_start_index, shaped_line) =
             self.text_fragment_for_index(index)?;
-        let range = shaped_line.x_range_for_index(index - fragment_start_index)?;
+        let index = index - fragment_start_index;
+        let range = if shaped_line.is_right_to_left_at(index) {
+            shaped_line.cluster_for_index(index)?.1
+        } else {
+            shaped_line.x_range_for_index(index)?
+        };
         Some(fragment_start_x + range.start..fragment_start_x + range.end)
     }
 
