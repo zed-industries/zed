@@ -1960,9 +1960,9 @@ pub(crate) fn highlights_for_path(
     // again adjusted to the start of the file_name
     let file_name_text_and_positions = path_style
         .file_name(path)
-        .map(|file_name| {
+        .and_then(|file_name| {
             let file_name_text = file_name.to_string_lossy().into_owned();
-            let file_name_start_byte = path_byte_len - file_name_text.len();
+            let file_name_start_byte = path_text.rfind(&file_name_text)?;
             let highlight_positions = path_positions
                 .iter()
                 .copied()
@@ -1970,11 +1970,11 @@ pub(crate) fn highlights_for_path(
                 .take_while(|position| *position < file_name_start_byte + file_name_text.len())
                 .map(|position| position - file_name_start_byte)
                 .collect::<Vec<_>>();
-            HighlightedMatch {
+            Some(HighlightedMatch {
                 text: file_name_text,
                 highlight_positions,
                 color: Color::Default,
-            }
+            })
         })
         .unwrap_or_else(|| HighlightedMatch {
             text: path_text.clone(),
