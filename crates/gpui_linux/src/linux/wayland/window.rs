@@ -1834,16 +1834,17 @@ impl PlatformWindow for WaylandWindow {
             .client
             .get_client()
             .borrow()
+            .seat
             .mouse_location
             .unwrap_or_default()
     }
 
     fn modifiers(&self) -> Modifiers {
-        self.borrow().client.get_client().borrow().modifiers
+        self.borrow().client.get_client().borrow().seat.modifiers
     }
 
     fn capslock(&self) -> Capslock {
-        self.borrow().client.get_client().borrow().capslock
+        self.borrow().client.get_client().borrow().seat.capslock
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {

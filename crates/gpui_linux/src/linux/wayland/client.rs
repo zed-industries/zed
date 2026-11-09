@@ -358,10 +358,31 @@ pub struct Output {
 }
 
 pub(crate) struct WaylandClientState {
-    serial_tracker: SerialTracker,
+    pub seat: SeatState,
     globals: Globals,
     pub gpu_context: GpuContext,
     pub compositor_gpu: Option<CompositorGpuHint>,
+    // Surface to Window mapping
+    windows: HashMap<ObjectId, WaylandWindowStatePtr>,
+    // Output to scale mapping
+    outputs: HashMap<ObjectId, Output>,
+    // Kept after each `done`, since outputs only resend the properties that
+    // changed before the next one.
+    in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
+    wl_outputs: HashMap<ObjectId, wl_output::WlOutput>,
+    // Registry global names of the outputs, for `global_remove`.
+    output_globals: HashMap<u32, ObjectId>,
+    loop_handle: LoopHandle<'static, ()>,
+    startup_activation_token: Option<String>,
+    /// The environment this connection was made in, without its activation token.
+    graphical_environment: GraphicalEnvironment,
+    /// Long-lived sources this client registered on the loop, removed when it drops.
+    registrations: Vec<RegistrationToken>,
+    pub common: Rc<RefCell<LinuxCommon>>,
+}
+
+pub(crate) struct SeatState {
+    serial_tracker: SerialTracker,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     pinch_gesture: Option<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1>,
@@ -375,16 +396,6 @@ pub(crate) struct WaylandClientState {
     ime_pre_edit: Option<String>,
     composing: bool,
     last_ime_cursor_rectangle: Option<ImeCursorRectangle>,
-    // Surface to Window mapping
-    windows: HashMap<ObjectId, WaylandWindowStatePtr>,
-    // Output to scale mapping
-    outputs: HashMap<ObjectId, Output>,
-    // Kept after each `done`, since outputs only resend the properties that
-    // changed before the next one.
-    in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
-    wl_outputs: HashMap<ObjectId, wl_output::WlOutput>,
-    // Registry global names of the outputs, for `global_remove`.
-    output_globals: HashMap<u32, ObjectId>,
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
@@ -405,19 +416,12 @@ pub(crate) struct WaylandClientState {
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<WaylandWindowStatePtr>,
     keyboard_focused_window: Option<WaylandWindowStatePtr>,
-    loop_handle: LoopHandle<'static, ()>,
     cursor_style: Option<CursorStyle>,
     cursor_hidden_window: Option<WaylandWindowStatePtr>,
     clipboard: Clipboard,
     data_offers: Vec<DataOffer<WlDataOffer>>,
     primary_data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
     cursor: Cursor,
-    startup_activation_token: Option<String>,
-    /// The environment this connection was made in, without its activation token.
-    graphical_environment: GraphicalEnvironment,
-    /// Long-lived sources this client registered on the loop, removed when it drops.
-    registrations: Vec<RegistrationToken>,
-    pub common: Rc<RefCell<LinuxCommon>>,
     ime_enabled: Option<bool>,
 }
 
@@ -659,13 +663,20 @@ impl WaylandClientStatePtr {
     }
 
     pub fn get_serial(&self, kind: SerialKind) -> Serial {
-        self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
+        self.0
+            .upgrade()
+            .unwrap()
+            .borrow()
+            .seat
+            .serial_tracker
+            .get(kind)
     }
 
     pub fn activation_context(&self) -> Option<ActivationContext> {
         self.0
             .upgrade()?
             .borrow()
+            .seat
             .serial_tracker
             .activation_context()
     }
@@ -684,7 +695,7 @@ impl WaylandClientStatePtr {
 
         let (Some(data_device_manager), Some(data_device)) = (
             state.globals.data_device_manager.as_ref(),
-            state.data_device.as_ref(),
+            state.seat.data_device.as_ref(),
         ) else {
             return false;
         };
@@ -695,14 +706,14 @@ impl WaylandClientStatePtr {
             return false;
         }
 
-        let serial = state.serial_tracker.get(SerialKind::MousePress);
+        let serial = state.seat.serial_tracker.get(SerialKind::MousePress);
         let source =
             data_device_manager.create_data_source(&state.globals.qh, DataSourceKind::Drag);
         source.offer(FILE_LIST_MIME_TYPE.to_string());
         source.set_actions(DndAction::Copy | DndAction::Move);
         data_device.start_drag(Some(&source), surface, None, serial.as_raw());
 
-        state.external_drag = Some(ExternalDrag {
+        state.seat.external_drag = Some(ExternalDrag {
             source,
             bytes: uri_list.into_bytes(),
             window,
@@ -713,16 +724,16 @@ impl WaylandClientStatePtr {
     pub fn enable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
-        state.ime_enabled = Some(true);
-        state.last_ime_cursor_rectangle = None;
-        let Some(text_input) = state.text_input.take() else {
+        state.seat.ime_enabled = Some(true);
+        state.seat.last_ime_cursor_rectangle = None;
+        let Some(text_input) = state.seat.text_input.take() else {
             return;
         };
 
         text_input.enable();
         text_input.set_content_type(ContentHint::None, ContentPurpose::Normal);
         let mut cursor_rectangle = None;
-        if let Some(window) = state.keyboard_focused_window.clone() {
+        if let Some(window) = state.seat.keyboard_focused_window.clone() {
             drop(state);
             if let Some(area) = window.get_ime_area() {
                 let area = ImeCursorRectangle::from(area);
@@ -732,16 +743,16 @@ impl WaylandClientStatePtr {
             state = client.borrow_mut();
         }
         text_input.commit();
-        state.last_ime_cursor_rectangle = cursor_rectangle;
-        state.text_input = Some(text_input);
+        state.seat.last_ime_cursor_rectangle = cursor_rectangle;
+        state.seat.text_input = Some(text_input);
     }
 
     pub fn disable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
-        state.ime_enabled = Some(false);
-        state.composing = false;
-        if let Some(text_input) = &state.text_input {
+        state.seat.ime_enabled = Some(false);
+        state.seat.composing = false;
+        if let Some(text_input) = &state.seat.text_input {
             text_input.disable();
             text_input.commit();
         }
@@ -749,37 +760,42 @@ impl WaylandClientStatePtr {
 
     pub fn ime_enabled(&self) -> Option<bool> {
         let client = self.get_client();
-        client.borrow().ime_enabled
+        client.borrow().seat.ime_enabled
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
-        if state.pre_edit_text.is_some() {
+        if state.seat.pre_edit_text.is_some() {
             return;
         }
-        let Some(text_input) = state.text_input.clone() else {
+        let Some(text_input) = state.seat.text_input.clone() else {
             return;
         };
-        update_ime_cursor_rectangle(&text_input, &mut state.last_ime_cursor_rectangle, bounds);
+        update_ime_cursor_rectangle(
+            &text_input,
+            &mut state.seat.last_ime_cursor_rectangle,
+            bounds,
+        );
     }
 
     pub fn handle_keyboard_layout_change(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
-        let changed = if let Some(keymap_state) = &state.keymap_state {
+        let changed = if let Some(keymap_state) = &state.seat.keymap_state {
             let layout_idx = keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
             let keymap = keymap_state.get_keymap();
             let layout_name = keymap.layout_get_name(layout_idx);
-            let changed = layout_name != state.keyboard_layout.name();
+            let changed = layout_name != state.seat.keyboard_layout.name();
             if changed {
-                state.keyboard_layout = LinuxKeyboardLayout::new(layout_name.to_string().into());
+                state.seat.keyboard_layout =
+                    LinuxKeyboardLayout::new(layout_name.to_string().into());
             }
             changed
         } else {
-            let changed = &UNKNOWN_KEYBOARD_LAYOUT_NAME != state.keyboard_layout.name();
+            let changed = &UNKNOWN_KEYBOARD_LAYOUT_NAME != state.seat.keyboard_layout.name();
             if changed {
-                state.keyboard_layout = LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME);
+                state.seat.keyboard_layout = LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME);
             }
             changed
         };
@@ -806,25 +822,25 @@ impl WaylandClientStatePtr {
         let client = self.get_client();
         let mut state = client.borrow_mut();
         let closed_window = state.windows.remove(surface_id).unwrap();
-        if let Some(window) = state.mouse_focused_window.take()
+        if let Some(window) = state.seat.mouse_focused_window.take()
             && !window.ptr_eq(&closed_window)
         {
-            state.mouse_focused_window = Some(window);
+            state.seat.mouse_focused_window = Some(window);
         }
-        if let Some(window) = state.keyboard_focused_window.take()
+        if let Some(window) = state.seat.keyboard_focused_window.take()
             && !window.ptr_eq(&closed_window)
         {
-            state.keyboard_focused_window = Some(window);
+            state.seat.keyboard_focused_window = Some(window);
         }
-        if let Some(window) = state.cursor_hidden_window.take()
+        if let Some(window) = state.seat.cursor_hidden_window.take()
             && !window.ptr_eq(&closed_window)
         {
-            state.cursor_hidden_window = Some(window);
+            state.seat.cursor_hidden_window = Some(window);
         }
     }
 }
 
-impl WaylandClientState {
+impl SeatState {
     fn hide_cursor_until_mouse_moves(&mut self) {
         if self.cursor_hidden_window.is_some() {
             return;
@@ -899,16 +915,16 @@ impl Drop for WaylandConnection {
         let mut state = self.0.borrow_mut();
         state.windows.clear();
 
-        if let Some(wl_pointer) = &state.wl_pointer {
+        if let Some(wl_pointer) = &state.seat.wl_pointer {
             wl_pointer.release();
         }
-        if let Some(cursor_shape_device) = &state.cursor_shape_device {
+        if let Some(cursor_shape_device) = &state.seat.cursor_shape_device {
             cursor_shape_device.destroy();
         }
-        if let Some(data_device) = &state.data_device {
+        if let Some(data_device) = &state.seat.data_device {
             data_device.release();
         }
-        if let Some(text_input) = &state.text_input {
+        if let Some(text_input) = &state.seat.text_input {
             text_input.destroy();
         }
     }
@@ -1063,11 +1079,8 @@ impl WaylandConnection {
 
         let cursor = Cursor::new(&conn, &globals, 24);
 
-        let state = Rc::new(RefCell::new(WaylandClientState {
+        let seat = SeatState {
             serial_tracker: SerialTracker::new(),
-            globals,
-            gpu_context,
-            compositor_gpu,
             wl_seat: seat,
             wl_pointer: None,
             wl_keyboard: None,
@@ -1081,12 +1094,6 @@ impl WaylandConnection {
             ime_pre_edit: None,
             composing: false,
             last_ime_cursor_rectangle: None,
-            outputs: HashMap::default(),
-            in_progress_outputs,
-            output_globals,
-            wl_outputs,
-            windows: HashMap::default(),
-            common,
             keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
             keymap_state: None,
             compose_state: None,
@@ -1127,7 +1134,6 @@ impl WaylandConnection {
             button_pressed: None,
             mouse_focused_window: None,
             keyboard_focused_window: None,
-            loop_handle: handle.clone(),
             enter_token: None,
             cursor_style: None,
             cursor_hidden_window: None,
@@ -1135,13 +1141,27 @@ impl WaylandConnection {
             data_offers: Vec::new(),
             primary_data_offer: None,
             cursor,
+            ime_enabled: None,
+        };
+
+        let state = Rc::new(RefCell::new(WaylandClientState {
+            seat,
+            globals,
+            gpu_context,
+            compositor_gpu,
+            outputs: HashMap::default(),
+            in_progress_outputs,
+            output_globals,
+            wl_outputs,
+            windows: HashMap::default(),
+            common,
+            loop_handle: handle.clone(),
             startup_activation_token: activation_token,
             graphical_environment: GraphicalEnvironment {
                 activation_token: None,
                 ..environment.clone()
             },
             registrations: Vec::new(),
-            ime_enabled: None,
         }));
 
         // From here on, `Drop` removes whatever was registered if a later step fails.
@@ -1187,13 +1207,13 @@ impl WaylandConnection {
                     XDPEvent::CursorTheme(theme) => {
                         if let Some(client) = client.0.upgrade() {
                             let mut client = client.borrow_mut();
-                            client.cursor.set_theme(theme);
+                            client.seat.cursor.set_theme(theme);
                         }
                     }
                     XDPEvent::CursorSize(size) => {
                         if let Some(client) = client.0.upgrade() {
                             let mut client = client.borrow_mut();
-                            client.cursor.set_size(size);
+                            client.seat.cursor.set_size(size);
                         }
                     }
                 }
@@ -1241,7 +1261,7 @@ impl WaylandConnection {
 
 impl WaylandConnection {
     pub(crate) fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
-        Box::new(self.0.borrow().keyboard_layout.clone())
+        Box::new(self.0.borrow().seat.keyboard_layout.clone())
     }
 
     pub(crate) fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
@@ -1308,15 +1328,16 @@ impl WaylandConnection {
                 // grab before any press.
                 let popup_grab = options.grab.then(|| {
                     let serial = state
+                        .seat
                         .serial_tracker
                         .get(SerialKind::MousePress)
                         .as_raw()
-                        .max(state.serial_tracker.get(SerialKind::KeyPress).as_raw());
-                    (serial != 0).then(|| (serial, state.wl_seat.clone()))
+                        .max(state.seat.serial_tracker.get(SerialKind::KeyPress).as_raw());
+                    (serial != 0).then(|| (serial, state.seat.wl_seat.clone()))
                 });
                 (Some(parent), popup_grab.flatten())
             }
-            _ => (state.keyboard_focused_window.clone(), None),
+            _ => (state.seat.keyboard_focused_window.clone(), None),
         };
 
         let target_output = params.display_id.and_then(|display_id| {
@@ -1355,9 +1376,10 @@ impl WaylandConnection {
     pub(crate) fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
 
-        let need_update = state.cursor_style != Some(style)
-            && (state.mouse_focused_window.is_none()
+        let need_update = state.seat.cursor_style != Some(style)
+            && (state.seat.mouse_focused_window.is_none()
                 || state
+                    .seat
                     .mouse_focused_window
                     .as_ref()
                     .is_some_and(|w| !w.is_blocked()));
@@ -1366,24 +1388,25 @@ impl WaylandConnection {
             return;
         }
 
-        state.cursor_style = Some(style);
+        state.seat.cursor_style = Some(style);
 
         // Don't clobber the invisible cursor; restore reads back from `cursor_style`.
-        if state.cursor_hidden_window.is_some() {
+        if state.seat.cursor_hidden_window.is_some() {
             return;
         }
 
-        let serial = state.serial_tracker.get(SerialKind::MouseEnter);
-        if let Some(cursor_shape_device) = &state.cursor_shape_device {
+        let serial = state.seat.serial_tracker.get(SerialKind::MouseEnter);
+        if let Some(cursor_shape_device) = &state.seat.cursor_shape_device {
             cursor_shape_device.set_shape(serial.as_raw(), to_shape(style));
-        } else if let Some(focused_window) = &state.mouse_focused_window {
+        } else if let Some(focused_window) = &state.seat.mouse_focused_window {
             // cursor-shape-v1 isn't supported, set the cursor using a surface.
             let wl_pointer = state
+                .seat
                 .wl_pointer
                 .clone()
                 .expect("window is focused by pointer");
             let scale = focused_window.primary_output_scale();
-            state.cursor.set_icon(
+            state.seat.cursor.set_icon(
                 &wl_pointer,
                 serial.as_raw(),
                 cursor_style_to_icon_names(style),
@@ -1393,22 +1416,22 @@ impl WaylandConnection {
     }
 
     pub(crate) fn hide_cursor_until_mouse_moves(&self) {
-        self.0.borrow_mut().hide_cursor_until_mouse_moves();
+        self.0.borrow_mut().seat.hide_cursor_until_mouse_moves();
     }
 
     pub(crate) fn is_cursor_visible(&self) -> bool {
-        self.0.borrow().cursor_hidden_window.is_none()
+        self.0.borrow().seat.cursor_hidden_window.is_none()
     }
 
     pub(crate) fn open_uri(&self, uri: &str) {
         let state = self.0.borrow();
         if let (Some(activation), Some(context)) = (
             state.globals.activation.clone(),
-            state.serial_tracker.activation_context(),
+            state.seat.serial_tracker.activation_context(),
         ) {
             let token = activation
                 .get_activation_token(&state.globals.qh, PendingActivation::Uri(uri.to_string()));
-            token.set_serial(context.serial.as_raw(), &state.wl_seat);
+            token.set_serial(context.serial.as_raw(), &state.seat.wl_seat);
             token.set_surface(&context.requesting_surface);
             token.commit();
         } else {
@@ -1421,11 +1444,11 @@ impl WaylandConnection {
         let state = self.0.borrow();
         if let (Some(activation), Some(context)) = (
             state.globals.activation.clone(),
-            state.serial_tracker.activation_context(),
+            state.seat.serial_tracker.activation_context(),
         ) {
             let token =
                 activation.get_activation_token(&state.globals.qh, PendingActivation::Path(path));
-            token.set_serial(context.serial.as_raw(), &state.wl_seat);
+            token.set_serial(context.serial.as_raw(), &state.seat.wl_seat);
             token.set_surface(&context.requesting_surface);
             token.commit();
         } else {
@@ -1438,13 +1461,14 @@ impl WaylandConnection {
         let mut state = self.0.borrow_mut();
         let (Some(primary_selection_manager), Some(primary_selection)) = (
             state.globals.primary_selection_manager.clone(),
-            state.primary_selection.clone(),
+            state.seat.primary_selection.clone(),
         ) else {
             return;
         };
-        if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
-            state.clipboard.set_primary(item);
-            let Some(serial) = state.serial_tracker.selection_serial() else {
+        if state.seat.mouse_focused_window.is_some() || state.seat.keyboard_focused_window.is_some()
+        {
+            state.seat.clipboard.set_primary(item);
+            let Some(serial) = state.seat.serial_tracker.selection_serial() else {
                 log::warn!(
                     "Skipping Wayland primary selection ownership request because no keyboard or pointer press serial has been received"
                 );
@@ -1454,7 +1478,7 @@ impl WaylandConnection {
             for mime_type in TEXT_MIME_TYPES {
                 data_source.offer(mime_type.to_string());
             }
-            data_source.offer(state.clipboard.self_mime());
+            data_source.offer(state.seat.clipboard.self_mime());
             primary_selection.set_selection(Some(&data_source), serial.as_raw());
         }
     }
@@ -1463,13 +1487,14 @@ impl WaylandConnection {
         let mut state = self.0.borrow_mut();
         let (Some(data_device_manager), Some(data_device)) = (
             state.globals.data_device_manager.clone(),
-            state.data_device.clone(),
+            state.seat.data_device.clone(),
         ) else {
             return;
         };
-        if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
-            state.clipboard.set(item);
-            let Some(serial) = state.serial_tracker.selection_serial() else {
+        if state.seat.mouse_focused_window.is_some() || state.seat.keyboard_focused_window.is_some()
+        {
+            state.seat.clipboard.set(item);
+            let Some(serial) = state.seat.serial_tracker.selection_serial() else {
                 log::warn!(
                     "Skipping Wayland clipboard ownership request because no keyboard or pointer press serial has been received"
                 );
@@ -1480,22 +1505,23 @@ impl WaylandConnection {
             for mime_type in TEXT_MIME_TYPES {
                 data_source.offer(mime_type.to_string());
             }
-            data_source.offer(state.clipboard.self_mime());
+            data_source.offer(state.seat.clipboard.self_mime());
             data_device.set_selection(Some(&data_source), serial.as_raw());
         }
     }
 
     pub(crate) fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
-        self.0.borrow_mut().clipboard.read_primary()
+        self.0.borrow_mut().seat.clipboard.read_primary()
     }
 
     pub(crate) fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
-        self.0.borrow_mut().clipboard.read()
+        self.0.borrow_mut().seat.clipboard.read()
     }
 
     pub(crate) fn active_window(&self) -> Option<AnyWindowHandle> {
         self.0
             .borrow_mut()
+            .seat
             .keyboard_focused_window
             .as_ref()
             .map(|window| window.handle())
@@ -1521,7 +1547,7 @@ impl WaylandConnection {
         }
 
         let client_state = self.0.borrow();
-        let active_window = client_state.keyboard_focused_window.as_ref();
+        let active_window = client_state.seat.keyboard_focused_window.as_ref();
         inner(active_window.map(|aw| aw.surface()))
     }
 }
@@ -1613,14 +1639,15 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                         log::error!("ignoring wl_seat below the required version");
                         return;
                     };
-                    if let Some(wl_pointer) = state.wl_pointer.take() {
+                    if let Some(wl_pointer) = state.seat.wl_pointer.take() {
                         wl_pointer.release();
                     }
-                    if let Some(wl_keyboard) = state.wl_keyboard.take() {
+                    if let Some(wl_keyboard) = state.seat.wl_keyboard.take() {
                         wl_keyboard.release();
                     }
-                    state.wl_seat.release();
-                    state.wl_seat = registry.bind::<wl_seat::WlSeat, _, _>(name, version, qh, ());
+                    state.seat.wl_seat.release();
+                    state.seat.wl_seat =
+                        registry.bind::<wl_seat::WlSeat, _, _>(name, version, qh, ());
                 }
                 "wl_output" => {
                     let Ok(version) = wl_output_version(version) else {
@@ -1996,48 +2023,48 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             if capabilities.contains(wl_seat::Capability::Keyboard) {
                 let keyboard = seat.get_keyboard(qh, ());
 
-                if let Some(text_input) = state.text_input.take() {
+                if let Some(text_input) = state.seat.text_input.take() {
                     text_input.destroy();
-                    state.ime_pre_edit = None;
-                    state.composing = false;
+                    state.seat.ime_pre_edit = None;
+                    state.seat.composing = false;
                 }
 
-                state.text_input = state
+                state.seat.text_input = state
                     .globals
                     .text_input_manager
                     .as_ref()
                     .map(|text_input_manager| text_input_manager.get_text_input(seat, qh, ()));
 
-                if let Some(wl_keyboard) = &state.wl_keyboard {
+                if let Some(wl_keyboard) = &state.seat.wl_keyboard {
                     wl_keyboard.release();
                 }
 
-                state.wl_keyboard = Some(keyboard);
+                state.seat.wl_keyboard = Some(keyboard);
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
                 let pointer = seat.get_pointer(qh, ());
 
-                if let Some(cursor_shape_device) = state.cursor_shape_device.take() {
+                if let Some(cursor_shape_device) = state.seat.cursor_shape_device.take() {
                     cursor_shape_device.destroy();
                 }
 
-                state.cursor_shape_device = state
+                state.seat.cursor_shape_device = state
                     .globals
                     .cursor_shape_manager
                     .as_ref()
                     .map(|cursor_shape_manager| cursor_shape_manager.get_pointer(&pointer, qh, ()));
 
-                state.pinch_gesture = state.globals.gesture_manager.as_ref().map(
+                state.seat.pinch_gesture = state.globals.gesture_manager.as_ref().map(
                     |gesture_manager: &zwp_pointer_gestures_v1::ZwpPointerGesturesV1| {
                         gesture_manager.get_pinch_gesture(&pointer, qh, ())
                     },
                 );
 
-                if let Some(wl_pointer) = &state.wl_pointer {
+                if let Some(wl_pointer) = &state.seat.wl_pointer {
                     wl_pointer.release();
                 }
 
-                state.wl_pointer = Some(pointer);
+                state.seat.wl_pointer = Some(pointer);
             }
         }
     }
@@ -2056,8 +2083,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
         let mut state = client.borrow_mut();
         match event {
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
-                state.repeat.characters_per_second = rate as u32;
-                state.repeat.delay = Duration::from_millis(delay as u64);
+                state.seat.repeat.characters_per_second = rate as u32;
+                state.seat.repeat.delay = Duration::from_millis(delay as u64);
             }
             wl_keyboard::Event::Keymap {
                 format: WEnum::Value(format),
@@ -2088,34 +2115,34 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     .flatten()
                     .expect("Failed to create keymap")
                 };
-                state.keymap_state = Some(xkb::State::new(&keymap));
-                state.compose_state = get_xkb_compose_state(&xkb_context);
+                state.seat.keymap_state = Some(xkb::State::new(&keymap));
+                state.seat.compose_state = get_xkb_compose_state(&xkb_context);
                 drop(state);
 
                 this.handle_keyboard_layout_change();
             }
             wl_keyboard::Event::Enter { surface, .. } => {
-                state.keyboard_focused_window = get_window(&mut state, &surface.id());
-                state.enter_token = Some(());
+                state.seat.keyboard_focused_window = get_window(&mut state, &surface.id());
+                state.seat.enter_token = Some(());
 
-                if let Some(window) = state.keyboard_focused_window.clone() {
+                if let Some(window) = state.seat.keyboard_focused_window.clone() {
                     drop(state);
                     window.set_focused(true);
                 }
             }
             wl_keyboard::Event::Leave { surface, .. } => {
                 let keyboard_focused_window = get_window(&mut state, &surface.id());
-                state.keyboard_focused_window = None;
-                state.enter_token.take();
+                state.seat.keyboard_focused_window = None;
+                state.seat.enter_token.take();
                 // Prevent keyboard events from repeating after opening e.g. a file chooser and closing it quickly
-                state.repeat.current_id += 1;
-                state.restore_cursor_after_hide();
+                state.seat.repeat.current_id += 1;
+                state.seat.restore_cursor_after_hide();
 
                 if let Some(window) = keyboard_focused_window {
-                    if let Some(ref mut compose) = state.compose_state {
+                    if let Some(ref mut compose) = state.seat.compose_state {
                         compose.reset();
                     }
-                    state.pre_edit_text.take();
+                    state.seat.pre_edit_text.take();
                     drop(state);
                     window.handle_ime(ImeInput::DeleteText);
                     window.set_focused(false);
@@ -2128,19 +2155,19 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 group,
                 ..
             } => {
-                let focused_window = state.keyboard_focused_window.clone();
+                let focused_window = state.seat.keyboard_focused_window.clone();
 
-                let keymap_state = state.keymap_state.as_mut().unwrap();
+                let keymap_state = state.seat.keymap_state.as_mut().unwrap();
                 let old_layout =
                     keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
-                state.modifiers = modifiers_from_xkb(keymap_state);
-                let keymap_state = state.keymap_state.as_mut().unwrap();
-                state.capslock = capslock_from_xkb(keymap_state);
+                state.seat.modifiers = modifiers_from_xkb(keymap_state);
+                let keymap_state = state.seat.keymap_state.as_mut().unwrap();
+                state.seat.capslock = capslock_from_xkb(keymap_state);
 
                 let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-                    modifiers: state.modifiers,
-                    capslock: state.capslock,
+                    modifiers: state.seat.modifiers,
+                    capslock: state.seat.capslock,
                 });
                 drop(state);
 
@@ -2160,54 +2187,58 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
             } => {
                 if key_state == wl_keyboard::KeyState::Pressed {
                     let focused_surface = state
+                        .seat
                         .keyboard_focused_window
                         .as_ref()
                         .map(|window| window.surface());
-                    state.serial_tracker.update_with_focused_surface(
+                    state.seat.serial_tracker.update_with_focused_surface(
                         SerialKind::KeyPress,
                         serial,
                         focused_surface,
                     );
                 }
 
-                let focused_window = state.keyboard_focused_window.clone();
+                let focused_window = state.seat.keyboard_focused_window.clone();
                 let Some(focused_window) = focused_window else {
                     return;
                 };
 
-                let keymap_state = state.keymap_state.as_ref().unwrap();
+                let keymap_state = state.seat.keymap_state.as_ref().unwrap();
                 let keycode = Keycode::from(key + MIN_KEYCODE);
                 let keysym = keymap_state.key_get_one_sym(keycode);
 
                 match key_state {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
                         let mut keystroke =
-                            keystroke_from_xkb(keymap_state, state.modifiers, keycode);
-                        if let Some(mut compose) = state.compose_state.take() {
+                            keystroke_from_xkb(keymap_state, state.seat.modifiers, keycode);
+                        if let Some(mut compose) = state.seat.compose_state.take() {
                             compose.feed(keysym);
                             match compose.status() {
                                 xkb::Status::Composing => {
                                     keystroke.key_char = None;
-                                    state.pre_edit_text =
+                                    state.seat.pre_edit_text =
                                         compose.utf8().or(keystroke_underlying_dead_key(keysym));
-                                    let pre_edit =
-                                        state.pre_edit_text.clone().unwrap_or(String::default());
+                                    let pre_edit = state
+                                        .seat
+                                        .pre_edit_text
+                                        .clone()
+                                        .unwrap_or(String::default());
                                     drop(state);
                                     focused_window.handle_ime(ImeInput::SetMarkedText(pre_edit));
                                     state = client.borrow_mut();
                                 }
 
                                 xkb::Status::Composed => {
-                                    state.pre_edit_text.take();
+                                    state.seat.pre_edit_text.take();
                                     keystroke.key_char = compose.utf8();
                                     if let Some(keysym) = compose.keysym() {
                                         keystroke.key = xkb::keysym_get_name(keysym);
                                     }
                                 }
                                 xkb::Status::Cancelled => {
-                                    let pre_edit = state.pre_edit_text.take();
+                                    let pre_edit = state.seat.pre_edit_text.take();
                                     let new_pre_edit = keystroke_underlying_dead_key(keysym);
-                                    state.pre_edit_text = new_pre_edit.clone();
+                                    state.seat.pre_edit_text = new_pre_edit.clone();
                                     drop(state);
                                     if let Some(pre_edit) = pre_edit {
                                         focused_window.handle_ime(ImeInput::InsertText(pre_edit));
@@ -2221,7 +2252,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                 }
                                 _ => {}
                             }
-                            state.compose_state = Some(compose);
+                            state.seat.compose_state = Some(compose);
                         }
                         let input = PlatformInput::KeyDown(KeyDownEvent {
                             keystroke: keystroke.clone(),
@@ -2229,15 +2260,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             prefer_character_input: false,
                         });
 
-                        state.repeat.current_id += 1;
-                        state.repeat.current_keycode = Some(keycode);
+                        state.seat.repeat.current_id += 1;
+                        state.seat.repeat.current_keycode = Some(keycode);
 
-                        let rate = state.repeat.characters_per_second;
+                        let rate = state.seat.repeat.characters_per_second;
                         let repeat_interval = Duration::from_secs(1) / rate.max(1);
-                        let id = state.repeat.current_id;
+                        let id = state.seat.repeat.current_id;
                         state
                             .loop_handle
-                            .insert_source(Timer::from_duration(state.repeat.delay), {
+                            .insert_source(Timer::from_duration(state.seat.repeat.delay), {
                                 let input = PlatformInput::KeyDown(KeyDownEvent {
                                     keystroke,
                                     is_held: true,
@@ -2249,16 +2280,20 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                         return TimeoutAction::Drop;
                                     };
                                     let state = client.borrow();
-                                    let is_repeating = id == state.repeat.current_id
-                                        && state.repeat.current_keycode.is_some()
-                                        && state.keyboard_focused_window.is_some();
+                                    let is_repeating = id == state.seat.repeat.current_id
+                                        && state.seat.repeat.current_keycode.is_some()
+                                        && state.seat.keyboard_focused_window.is_some();
 
                                     if !is_repeating || rate == 0 {
                                         return TimeoutAction::Drop;
                                     }
 
-                                    let focused_window =
-                                        state.keyboard_focused_window.as_ref().unwrap().clone();
+                                    let focused_window = state
+                                        .seat
+                                        .keyboard_focused_window
+                                        .as_ref()
+                                        .unwrap()
+                                        .clone();
 
                                     drop(state);
                                     focused_window.handle_input(input.clone());
@@ -2274,11 +2309,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     }
                     wl_keyboard::KeyState::Released if !keysym.is_modifier_key() => {
                         let input = PlatformInput::KeyUp(KeyUpEvent {
-                            keystroke: keystroke_from_xkb(keymap_state, state.modifiers, keycode),
+                            keystroke: keystroke_from_xkb(
+                                keymap_state,
+                                state.seat.modifiers,
+                                keycode,
+                            ),
                         });
 
-                        if state.repeat.current_keycode == Some(keycode) {
-                            state.repeat.current_keycode = None;
+                        if state.seat.repeat.current_keycode == Some(keycode) {
+                            state.seat.repeat.current_keycode = None;
                         }
 
                         drop(state);
@@ -2313,8 +2352,8 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                 this.disable_ime();
             }
             zwp_text_input_v3::Event::CommitString { text } => {
-                state.composing = false;
-                let Some(window) = state.keyboard_focused_window.clone() else {
+                state.seat.composing = false;
+                let Some(window) = state.seat.keyboard_focused_window.clone() else {
                     return;
                 };
 
@@ -2338,30 +2377,33 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                 }
             }
             zwp_text_input_v3::Event::PreeditString { text, .. } => {
-                state.composing = true;
-                state.ime_pre_edit = text;
+                state.seat.composing = true;
+                state.seat.ime_pre_edit = text;
             }
             zwp_text_input_v3::Event::Done { serial } => {
-                let last_serial = state.serial_tracker.get(SerialKind::InputMethod);
-                state.serial_tracker.update(SerialKind::InputMethod, serial);
-                let Some(window) = state.keyboard_focused_window.clone() else {
+                let last_serial = state.seat.serial_tracker.get(SerialKind::InputMethod);
+                state
+                    .seat
+                    .serial_tracker
+                    .update(SerialKind::InputMethod, serial);
+                let Some(window) = state.seat.keyboard_focused_window.clone() else {
                     return;
                 };
 
-                if let Some(text) = state.ime_pre_edit.take() {
+                if let Some(text) = state.seat.ime_pre_edit.take() {
                     drop(state);
                     window.handle_ime(ImeInput::SetMarkedText(text));
                     if let Some(area) = window.get_ime_area() {
                         let mut state = client.borrow_mut();
                         set_ime_cursor_rectangle_after_done(
                             text_input,
-                            &mut state.last_ime_cursor_rectangle,
+                            &mut state.seat.last_ime_cursor_rectangle,
                             area,
                             last_serial.as_raw() == serial,
                         );
                     }
                 } else {
-                    state.composing = false;
+                    state.seat.composing = false;
                     drop(state);
                     window.handle_ime(ImeInput::DeleteText);
                 }
@@ -2412,23 +2454,26 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 ..
             } => {
                 let position = point(px(surface_x as f32), px(surface_y as f32));
-                state.serial_tracker.update(SerialKind::MouseEnter, serial);
-                state.mouse_location = Some(position);
-                state.button_pressed = None;
+                state
+                    .seat
+                    .serial_tracker
+                    .update(SerialKind::MouseEnter, serial);
+                state.seat.mouse_location = Some(position);
+                state.seat.button_pressed = None;
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
-                    state.mouse_focused_window = Some(window.clone());
+                    state.seat.mouse_focused_window = Some(window.clone());
 
-                    if state.enter_token.is_some() {
-                        state.enter_token = None;
+                    if state.seat.enter_token.is_some() {
+                        state.seat.enter_token = None;
                     }
-                    state.restore_cursor_after_hide();
-                    if let Some(style) = state.cursor_style {
-                        if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                    state.seat.restore_cursor_after_hide();
+                    if let Some(style) = state.seat.cursor_style {
+                        if let Some(cursor_shape_device) = &state.seat.cursor_shape_device {
                             cursor_shape_device.set_shape(serial, to_shape(style));
                         } else {
                             let scale = window.primary_output_scale();
-                            state.cursor.set_icon(
+                            state.seat.cursor.set_icon(
                                 wl_pointer,
                                 serial,
                                 cursor_style_to_icon_names(style),
@@ -2436,7 +2481,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             );
                         }
                     }
-                    let modifiers = state.modifiers;
+                    let modifiers = state.seat.modifiers;
                     drop(state);
                     window.set_hovered(true);
                     // No Motion follows Enter unless the pointer keeps moving, so synthesize
@@ -2449,16 +2494,16 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
             }
             wl_pointer::Event::Leave { .. } => {
-                if let Some(focused_window) = state.mouse_focused_window.clone() {
+                if let Some(focused_window) = state.seat.mouse_focused_window.clone() {
                     let input = PlatformInput::MouseExited(MouseExitEvent {
-                        position: state.mouse_location.unwrap(),
-                        pressed_button: state.button_pressed,
-                        modifiers: state.modifiers,
+                        position: state.seat.mouse_location.unwrap(),
+                        pressed_button: state.seat.button_pressed,
+                        modifiers: state.seat.modifiers,
                     });
-                    state.mouse_focused_window = None;
-                    state.mouse_location = None;
-                    state.button_pressed = None;
-                    state.cursor_hidden_window = None;
+                    state.seat.mouse_focused_window = None;
+                    state.seat.mouse_location = None;
+                    state.seat.button_pressed = None;
+                    state.seat.cursor_hidden_window = None;
 
                     drop(state);
                     focused_window.handle_input(input);
@@ -2470,30 +2515,31 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 surface_y,
                 ..
             } => {
-                if state.mouse_focused_window.is_none() {
+                if state.seat.mouse_focused_window.is_none() {
                     return;
                 }
-                state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
-                state.restore_cursor_after_hide();
+                state.seat.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
+                state.seat.restore_cursor_after_hide();
 
-                if let Some(window) = state.mouse_focused_window.clone() {
+                if let Some(window) = state.seat.mouse_focused_window.clone() {
                     if window.is_blocked() {
                         let default_style = CursorStyle::Arrow;
-                        if state.cursor_style != Some(default_style) {
-                            let serial = state.serial_tracker.get(SerialKind::MouseEnter);
-                            state.cursor_style = Some(default_style);
+                        if state.seat.cursor_style != Some(default_style) {
+                            let serial = state.seat.serial_tracker.get(SerialKind::MouseEnter);
+                            state.seat.cursor_style = Some(default_style);
 
-                            if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                            if let Some(cursor_shape_device) = &state.seat.cursor_shape_device {
                                 cursor_shape_device
                                     .set_shape(serial.as_raw(), to_shape(default_style));
                             } else {
                                 // cursor-shape-v1 isn't supported, set the cursor using a surface.
                                 let wl_pointer = state
+                                    .seat
                                     .wl_pointer
                                     .clone()
                                     .expect("window is focused by pointer");
                                 let scale = window.primary_output_scale();
-                                state.cursor.set_icon(
+                                state.seat.cursor.set_icon(
                                     &wl_pointer,
                                     serial.as_raw(),
                                     cursor_style_to_icon_names(default_style),
@@ -2503,16 +2549,17 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         }
                     }
                     if state
+                        .seat
                         .keyboard_focused_window
                         .as_ref()
                         .is_some_and(|keyboard_window| window.ptr_eq(keyboard_window))
                     {
-                        state.enter_token = None;
+                        state.seat.enter_token = None;
                     }
                     let input = PlatformInput::MouseMove(MouseMoveEvent {
-                        position: state.mouse_location.unwrap(),
-                        pressed_button: state.button_pressed,
-                        modifiers: state.modifiers,
+                        position: state.seat.mouse_location.unwrap(),
+                        pressed_button: state.seat.button_pressed,
+                        modifiers: state.seat.modifiers,
                     });
                     drop(state);
                     window.handle_input(input);
@@ -2528,10 +2575,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 // interactive moves) are declined when given a release serial.
                 if button_state == wl_pointer::ButtonState::Pressed {
                     let focused_surface = state
+                        .seat
                         .mouse_focused_window
                         .as_ref()
                         .map(|window| window.surface());
-                    state.serial_tracker.update_with_focused_surface(
+                    state.seat.serial_tracker.update_with_focused_surface(
                         SerialKind::MousePress,
                         serial,
                         focused_surface,
@@ -2539,72 +2587,74 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
                 let button = linux_button_to_gpui(button);
                 let Some(button) = button else { return };
-                if state.mouse_focused_window.is_none() {
+                if state.seat.mouse_focused_window.is_none() {
                     return;
                 }
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
-                        if let Some(window) = state.keyboard_focused_window.clone() {
-                            if state.composing && state.text_input.is_some() {
+                        if let Some(window) = state.seat.keyboard_focused_window.clone() {
+                            if state.seat.composing && state.seat.text_input.is_some() {
                                 drop(state);
                                 // text_input_v3 don't have something like a reset function
                                 this.disable_ime();
                                 this.enable_ime();
                                 window.handle_ime(ImeInput::UnmarkText);
                                 state = client.borrow_mut();
-                            } else if let (Some(text), Some(compose)) =
-                                (state.pre_edit_text.take(), state.compose_state.as_mut())
-                            {
+                            } else if let (Some(text), Some(compose)) = (
+                                state.seat.pre_edit_text.take(),
+                                state.seat.compose_state.as_mut(),
+                            ) {
                                 compose.reset();
                                 drop(state);
                                 window.handle_ime(ImeInput::InsertText(text));
                                 state = client.borrow_mut();
                             }
                         }
-                        let click_elapsed = state.click.last_click.elapsed();
+                        let click_elapsed = state.seat.click.last_click.elapsed();
 
                         if click_elapsed < DOUBLE_CLICK_INTERVAL
                             && state
+                                .seat
                                 .click
                                 .last_mouse_button
                                 .is_some_and(|prev_button| prev_button == button)
                             && is_within_click_distance(
-                                state.click.last_location,
-                                state.mouse_location.unwrap(),
+                                state.seat.click.last_location,
+                                state.seat.mouse_location.unwrap(),
                             )
                         {
-                            state.click.current_count += 1;
+                            state.seat.click.current_count += 1;
                         } else {
-                            state.click.current_count = 1;
+                            state.seat.click.current_count = 1;
                         }
 
-                        state.click.last_click = Instant::now();
-                        state.click.last_mouse_button = Some(button);
-                        state.click.last_location = state.mouse_location.unwrap();
+                        state.seat.click.last_click = Instant::now();
+                        state.seat.click.last_mouse_button = Some(button);
+                        state.seat.click.last_location = state.seat.mouse_location.unwrap();
 
-                        state.button_pressed = Some(button);
+                        state.seat.button_pressed = Some(button);
 
-                        if let Some(window) = state.mouse_focused_window.clone() {
+                        if let Some(window) = state.seat.mouse_focused_window.clone() {
                             let input = PlatformInput::MouseDown(MouseDownEvent {
                                 button,
-                                position: state.mouse_location.unwrap(),
-                                modifiers: state.modifiers,
-                                click_count: state.click.current_count,
-                                first_mouse: state.enter_token.take().is_some(),
+                                position: state.seat.mouse_location.unwrap(),
+                                modifiers: state.seat.modifiers,
+                                click_count: state.seat.click.current_count,
+                                first_mouse: state.seat.enter_token.take().is_some(),
                             });
                             drop(state);
                             window.handle_input(input);
                         }
                     }
                     wl_pointer::ButtonState::Released => {
-                        state.button_pressed = None;
+                        state.seat.button_pressed = None;
 
-                        if let Some(window) = state.mouse_focused_window.clone() {
+                        if let Some(window) = state.seat.mouse_focused_window.clone() {
                             let input = PlatformInput::MouseUp(MouseUpEvent {
                                 button,
-                                position: state.mouse_location.unwrap(),
-                                modifiers: state.modifiers,
-                                click_count: state.click.current_count,
+                                position: state.seat.mouse_location.unwrap(),
+                                modifiers: state.seat.modifiers,
+                                click_count: state.seat.click.current_count,
                             });
                             drop(state);
                             window.handle_input(input);
@@ -2618,28 +2668,29 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
             wl_pointer::Event::AxisSource {
                 axis_source: WEnum::Value(axis_source),
             } => {
-                state.axis_source = axis_source;
+                state.seat.axis_source = axis_source;
             }
             wl_pointer::Event::Axis {
                 axis: WEnum::Value(axis),
                 value,
                 ..
             } => {
-                if state.axis_source == AxisSource::Wheel {
+                if state.seat.axis_source == AxisSource::Wheel {
                     return;
                 }
-                let axis = if state.modifiers.shift {
+                let axis = if state.seat.modifiers.shift {
                     wl_pointer::Axis::HorizontalScroll
                 } else {
                     axis
                 };
                 let axis_modifier = match axis {
-                    wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
-                    wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,
+                    wl_pointer::Axis::VerticalScroll => state.seat.vertical_modifier,
+                    wl_pointer::Axis::HorizontalScroll => state.seat.horizontal_modifier,
                     _ => 1.0,
                 };
-                state.scroll_event_received = true;
+                state.seat.scroll_event_received = true;
                 let scroll_delta = state
+                    .seat
                     .continuous_scroll_delta
                     .get_or_insert(point(px(0.0), px(0.0)));
                 let modifier = 3.0;
@@ -2657,19 +2708,22 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 axis: WEnum::Value(axis),
                 discrete,
             } => {
-                state.scroll_event_received = true;
-                let axis = if state.modifiers.shift {
+                state.seat.scroll_event_received = true;
+                let axis = if state.seat.modifiers.shift {
                     wl_pointer::Axis::HorizontalScroll
                 } else {
                     axis
                 };
                 let axis_modifier = match axis {
-                    wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
-                    wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,
+                    wl_pointer::Axis::VerticalScroll => state.seat.vertical_modifier,
+                    wl_pointer::Axis::HorizontalScroll => state.seat.horizontal_modifier,
                     _ => 1.0,
                 };
 
-                let scroll_delta = state.discrete_scroll_delta.get_or_insert(point(0.0, 0.0));
+                let scroll_delta = state
+                    .seat
+                    .discrete_scroll_delta
+                    .get_or_insert(point(0.0, 0.0));
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
                         scroll_delta.y += discrete as f32 * axis_modifier * SCROLL_LINES;
@@ -2684,19 +2738,22 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 axis: WEnum::Value(axis),
                 value120,
             } => {
-                state.scroll_event_received = true;
-                let axis = if state.modifiers.shift {
+                state.seat.scroll_event_received = true;
+                let axis = if state.seat.modifiers.shift {
                     wl_pointer::Axis::HorizontalScroll
                 } else {
                     axis
                 };
                 let axis_modifier = match axis {
-                    wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
-                    wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,
+                    wl_pointer::Axis::VerticalScroll => state.seat.vertical_modifier,
+                    wl_pointer::Axis::HorizontalScroll => state.seat.horizontal_modifier,
                     _ => unreachable!(),
                 };
 
-                let scroll_delta = state.discrete_scroll_delta.get_or_insert(point(0.0, 0.0));
+                let scroll_delta = state
+                    .seat
+                    .discrete_scroll_delta
+                    .get_or_insert(point(0.0, 0.0));
                 let wheel_percent = value120 as f32 / 120.0;
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
@@ -2709,16 +2766,16 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
             }
             wl_pointer::Event::Frame => {
-                if state.scroll_event_received {
-                    state.scroll_event_received = false;
-                    let continuous = state.continuous_scroll_delta.take();
-                    let discrete = state.discrete_scroll_delta.take();
+                if state.seat.scroll_event_received {
+                    state.seat.scroll_event_received = false;
+                    let continuous = state.seat.continuous_scroll_delta.take();
+                    let discrete = state.seat.discrete_scroll_delta.take();
                     if let Some(continuous) = continuous {
-                        if let Some(window) = state.mouse_focused_window.clone() {
+                        if let Some(window) = state.seat.mouse_focused_window.clone() {
                             let input = PlatformInput::Scroll(ScrollEvent {
-                                position: state.mouse_location.unwrap(),
+                                position: state.seat.mouse_location.unwrap(),
                                 delta: ScrollDelta::Pixels(continuous),
-                                modifiers: state.modifiers,
+                                modifiers: state.seat.modifiers,
                                 touch_phase: TouchPhase::Moved,
                                 source: ScrollSource::Pointer,
                             });
@@ -2726,12 +2783,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             window.handle_input(input);
                         }
                     } else if let Some(discrete) = discrete
-                        && let Some(window) = state.mouse_focused_window.clone()
+                        && let Some(window) = state.seat.mouse_focused_window.clone()
                     {
                         let input = PlatformInput::Scroll(ScrollEvent {
-                            position: state.mouse_location.unwrap(),
+                            position: state.seat.mouse_location.unwrap(),
                             delta: ScrollDelta::Lines(discrete),
-                            modifiers: state.modifiers,
+                            modifiers: state.seat.modifiers,
                             touch_phase: TouchPhase::Moved,
                             source: ScrollSource::Pointer,
                         });
@@ -2774,7 +2831,7 @@ impl Dispatch<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1, ()>
         let client = this.get_client();
         let mut state = client.borrow_mut();
 
-        let Some(window) = state.mouse_focused_window.clone() else {
+        let Some(window) = state.seat.mouse_focused_window.clone() else {
             return;
         };
 
@@ -2785,11 +2842,11 @@ impl Dispatch<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1, ()>
                 surface: _,
                 fingers: _,
             } => {
-                state.pinch_scale = 1.0;
+                state.seat.pinch_scale = 1.0;
                 let input = PlatformInput::Pinch(PinchEvent {
-                    position: state.mouse_location.unwrap_or(point(px(0.0), px(0.0))),
+                    position: state.seat.mouse_location.unwrap_or(point(px(0.0), px(0.0))),
                     delta: 0.0,
-                    modifiers: state.modifiers,
+                    modifiers: state.seat.modifiers,
                     phase: TouchPhase::Started,
                 });
                 drop(state);
@@ -2797,14 +2854,14 @@ impl Dispatch<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1, ()>
             }
             zwp_pointer_gesture_pinch_v1::Event::Update { time: _, scale, .. } => {
                 let new_absolute_scale = scale as f32;
-                let previous_scale = state.pinch_scale;
+                let previous_scale = state.seat.pinch_scale;
                 let zoom_delta = new_absolute_scale - previous_scale;
-                state.pinch_scale = new_absolute_scale;
+                state.seat.pinch_scale = new_absolute_scale;
 
                 let input = PlatformInput::Pinch(PinchEvent {
-                    position: state.mouse_location.unwrap_or(point(px(0.0), px(0.0))),
+                    position: state.seat.mouse_location.unwrap_or(point(px(0.0), px(0.0))),
                     delta: zoom_delta,
-                    modifiers: state.modifiers,
+                    modifiers: state.seat.modifiers,
                     phase: TouchPhase::Moved,
                 });
                 drop(state);
@@ -2815,11 +2872,11 @@ impl Dispatch<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1, ()>
                 time: _,
                 cancelled: _,
             } => {
-                state.pinch_scale = 1.0;
+                state.seat.pinch_scale = 1.0;
                 let input = PlatformInput::Pinch(PinchEvent {
-                    position: state.mouse_location.unwrap_or(point(px(0.0), px(0.0))),
+                    position: state.seat.mouse_location.unwrap_or(point(px(0.0), px(0.0))),
                     delta: 0.0,
-                    modifiers: state.modifiers,
+                    modifiers: state.seat.modifiers,
                     phase: TouchPhase::Ended,
                 });
                 drop(state);
@@ -2888,22 +2945,23 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
         match event {
             // Clipboard
             wl_data_device::Event::DataOffer { id: data_offer } => {
-                state.data_offers.push(DataOffer::new(data_offer));
-                if state.data_offers.len() > 2 {
+                state.seat.data_offers.push(DataOffer::new(data_offer));
+                if state.seat.data_offers.len() > 2 {
                     // At most we store a clipboard offer and a drag and drop offer.
-                    state.data_offers.remove(0).inner.destroy();
+                    state.seat.data_offers.remove(0).inner.destroy();
                 }
             }
             wl_data_device::Event::Selection { id: data_offer } => {
                 if let Some(offer) = data_offer {
                     let offer = state
+                        .seat
                         .data_offers
                         .iter()
                         .find(|wrapper| wrapper.inner.id() == offer.id());
                     let offer = offer.cloned();
-                    state.clipboard.set_offer(offer);
+                    state.seat.clipboard.set_offer(offer);
                 } else {
-                    state.clipboard.set_offer(None);
+                    state.seat.clipboard.set_offer(None);
                 }
             }
 
@@ -2915,12 +2973,15 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 y,
                 id: data_offer,
             } => {
-                state.serial_tracker.update(SerialKind::DataDevice, serial);
+                state
+                    .seat
+                    .serial_tracker
+                    .update(SerialKind::DataDevice, serial);
                 if let Some(data_offer) = data_offer {
                     let Some(drag_window) = get_window(&mut state, &surface.id()) else {
                         return;
                     };
-                    let uri_read_generation = state.drag.begin_uri_read();
+                    let uri_read_generation = state.seat.drag.begin_uri_read();
 
                     const ACTIONS: DndAction = DndAction::Copy;
                     data_offer.set_actions(ACTIONS, ACTIONS);
@@ -2976,7 +3037,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 return;
                             };
                             let mut state = client.borrow_mut();
-                            let input = state.drag.complete_uri_read(
+                            let input = state.seat.drag.complete_uri_read(
                                 uri_read_generation,
                                 data_offer,
                                 drag_window,
@@ -2993,25 +3054,25 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 }
             }
             wl_data_device::Event::Motion { x, y, .. } => {
-                let Some(drag_window) = state.drag.window.clone() else {
+                let Some(drag_window) = state.seat.drag.window.clone() else {
                     return;
                 };
                 let position = Point::new(x.into(), y.into());
-                state.drag.position = position;
+                state.seat.drag.position = position;
 
                 let input = PlatformInput::FileDrop(FileDropEvent::Pending { position });
                 drop(state);
                 drag_window.handle_input(input);
             }
             wl_data_device::Event::Leave => {
-                let input = state.drag.handle_leave();
+                let input = state.seat.drag.handle_leave();
                 drop(state);
                 if let Some((drag_window, input)) = input {
                     drag_window.handle_input(input);
                 }
             }
             wl_data_device::Event::Drop => {
-                let input = state.drag.handle_drop();
+                let input = state.seat.drag.handle_drop();
                 drop(state);
                 if let Some((drag_window, input)) = input {
                     drag_window.handle_input(input);
@@ -3041,13 +3102,14 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
         if let wl_data_offer::Event::Offer { mime_type } = event {
             // Drag and drop
             if mime_type == FILE_LIST_MIME_TYPE {
-                let serial = state.serial_tracker.get(SerialKind::DataDevice);
+                let serial = state.seat.serial_tracker.get(SerialKind::DataDevice);
                 let mime_type = mime_type.clone();
                 data_offer.accept(serial.as_raw(), Some(mime_type));
             }
 
             // Clipboard
             if let Some(offer) = state
+                .seat
                 .data_offers
                 .iter_mut()
                 .find(|wrapper| wrapper.inner.id() == data_offer.id())
@@ -3072,23 +3134,23 @@ impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientSta
 
         match (kind, event) {
             (DataSourceKind::Clipboard, wl_data_source::Event::Send { mime_type, fd }) => {
-                state.clipboard.send(mime_type, fd);
+                state.seat.clipboard.send(mime_type, fd);
             }
             (DataSourceKind::Clipboard, wl_data_source::Event::Cancelled) => {
                 data_source.destroy();
             }
             (DataSourceKind::Drag, wl_data_source::Event::Send { fd, .. }) => {
-                let Some(external_drag) = state.external_drag.as_ref() else {
+                let Some(external_drag) = state.seat.external_drag.as_ref() else {
                     return;
                 };
                 let bytes = external_drag.bytes.clone();
-                state.clipboard.send_bytes(fd, bytes);
+                state.seat.clipboard.send_bytes(fd, bytes);
             }
             (
                 DataSourceKind::Drag,
                 wl_data_source::Event::DndFinished | wl_data_source::Event::Cancelled,
             ) => {
-                let Some(external_drag) = state.external_drag.take() else {
+                let Some(external_drag) = state.seat.external_drag.take() else {
                     return;
                 };
                 external_drag.source.destroy();
@@ -3118,17 +3180,17 @@ impl Dispatch<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1, ()>
 
         match event {
             zwp_primary_selection_device_v1::Event::DataOffer { offer } => {
-                let old_offer = state.primary_data_offer.replace(DataOffer::new(offer));
+                let old_offer = state.seat.primary_data_offer.replace(DataOffer::new(offer));
                 if let Some(old_offer) = old_offer {
                     old_offer.inner.destroy();
                 }
             }
             zwp_primary_selection_device_v1::Event::Selection { id: data_offer } => {
                 if data_offer.is_some() {
-                    let offer = state.primary_data_offer.clone();
-                    state.clipboard.set_primary_offer(offer);
+                    let offer = state.seat.primary_data_offer.clone();
+                    state.seat.clipboard.set_primary_offer(offer);
                 } else {
-                    state.clipboard.set_primary_offer(None);
+                    state.seat.clipboard.set_primary_offer(None);
                 }
             }
             _ => {}
@@ -3155,7 +3217,7 @@ impl Dispatch<zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()>
         let mut state = client.borrow_mut();
 
         if let zwp_primary_selection_offer_v1::Event::Offer { mime_type } = event
-            && let Some(offer) = state.primary_data_offer.as_mut()
+            && let Some(offer) = state.seat.primary_data_offer.as_mut()
         {
             offer.add_mime_type(mime_type);
         }
@@ -3178,7 +3240,7 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
 
         match event {
             zwp_primary_selection_source_v1::Event::Send { mime_type, fd } => {
-                state.clipboard.send_primary(mime_type, fd);
+                state.seat.clipboard.send_primary(mime_type, fd);
             }
             zwp_primary_selection_source_v1::Event::Cancelled => {
                 selection_source.destroy();
