@@ -7155,18 +7155,9 @@ impl Render for TokenUsageTooltip {
                                                     .on_click(move |_, window, cx| {
                                                         workspace
                                                             .update(cx, |workspace, cx| {
-                                                                workspace
-                                                                    .open_abs_path(
-                                                                        paths::agents_file()
-                                                                            .clone(),
-                                                                        workspace::OpenOptions {
-                                                                            focus: Some(true),
-                                                                            ..Default::default()
-                                                                        },
-                                                                        window,
-                                                                        cx,
-                                                                    )
-                                                                    .detach_and_log_err(cx);
+                                                                crate::agent_panel::open_global_rules(
+                                                                    workspace, window, cx,
+                                                                );
                                                             })
                                                             .log_err();
                                                     }),

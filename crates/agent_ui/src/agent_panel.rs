@@ -102,6 +102,7 @@ use workspace::{
     ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     item::{ItemEvent, ItemHandle},
+    notifications::NotifyTaskExt as _,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -248,18 +249,41 @@ fn project_agents_md_path(
         })
 }
 
-fn open_global_rules(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
-    workspace
-        .open_abs_path(
-            paths::agents_file().clone(),
-            workspace::OpenOptions {
-                focus: Some(true),
-                ..Default::default()
-            },
-            window,
-            cx,
-        )
-        .detach_and_log_err(cx);
+pub(crate) fn open_global_rules(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let agents_file = paths::agents_file().clone();
+    if workspace.project().read(cx).is_local() {
+        workspace
+            .open_abs_path(
+                agents_file,
+                workspace::OpenOptions {
+                    focus: Some(true),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
+        return;
+    }
+
+    // The global rules are on this machine, and `open_abs_path` would look for
+    // them on the project's machine, so show them read-only.
+    let fs = workspace.app_state().fs.clone();
+    cx.spawn_in(window, async move |workspace, cx| {
+        let content = fs.load(&agents_file).await?;
+        let title = agents_file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        workspace.update_in(cx, |workspace, window, cx| {
+            crate::ui::open_read_only_markdown_buffer(workspace, title, content, window, cx);
+        })
+    })
+    .detach_and_notify_err(workspace.weak_handle(), window, cx);
 }
 
 fn open_project_rules(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
