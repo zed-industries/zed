@@ -83,14 +83,23 @@ fn steps_until(turn: u64, steps: u64) -> zed_benchmarks::Step {
     }
 }
 
+struct ProjectPanelSession {
+    started: Instant,
+    moves: usize,
+    pending: Option<(Option<String>, &'static str, u64)>,
+    first_sent_at: u64,
+    max_depth: usize,
+}
+
 /// 1. Opens the project panel and walks into the generated tree with the arrow
-/// keys, expanding directories as it goes. The panel rebuilds its visible entries
-/// on a background thread after each expansion, so keys arrive every other frame
-/// at 120 Hz (fast key repeat) rather than all in one burst.
+/// keys at 120 Hz: right on a directory expands it and, pressed again, enters it;
+/// down moves past files. The panel rebuilds its visible entries on a background
+/// thread after an expansion, so a key that hasn't moved the selection yet is
+/// pressed again every few frames, like a held key.
 #[gpui::bench]
 fn project_panel_expand(cx: &mut BenchAppContext) {
-    const KEYS: &[&str] = &["right", "right", "down"];
-    const KEY_COUNT: usize = 24;
+    const MOVES: usize = 20;
+    const REPEAT_FRAMES: u64 = 3;
 
     let app_state = init_app(cx);
     let zed = open_zed_window(cx, &app_state);
@@ -101,6 +110,15 @@ fn project_panel_expand(cx: &mut BenchAppContext) {
             .panel::<project_panel::ProjectPanel>(cx)
             .expect("project panel was not added")
     });
+    let selection = move |cx: &App| {
+        panel.read(cx).selected_entry(cx).map(|(_, entry)| {
+            (
+                entry.path.as_unix_str().to_string(),
+                entry.path.components().count(),
+                entry.is_dir(),
+            )
+        })
+    };
 
     bench_sessions(
         cx,
@@ -109,34 +127,63 @@ fn project_panel_expand(cx: &mut BenchAppContext) {
         |cx| {
             zed.update_window(cx, |window, cx| {
                 window.dispatch_action(project_panel::CollapseAllEntries.boxed_clone(), cx);
+                keystroke(window, cx, "home");
             });
             cx.run_until_idle();
-            (Instant::now(), 0usize, None)
+            ProjectPanelSession {
+                started: Instant::now(),
+                moves: 0,
+                pending: None,
+                first_sent_at: 0,
+                max_depth: 0,
+            }
         },
-        |(started, keys_sent, selected_depth), turn, window, cx| {
+        |session, turn, window, cx| {
             if turn == 0 {
-                *started = Instant::now();
+                session.started = Instant::now();
             }
-            pace_frame(*started, turn, FPS);
-            if turn % 2 == 1 {
-                return Step::Continue;
+            pace_frame(session.started, turn, FPS);
+            let current = selection(cx);
+            if let Some((before, key, sent_at)) = session.pending.take() {
+                if current.as_ref().map(|(path, ..)| path) == before.as_ref() {
+                    if turn - sent_at >= REPEAT_FRAMES {
+                        // A directory that stays put after expanding has no visible
+                        // children to enter; move past it instead.
+                        let key = if turn - session.first_sent_at > 10 * REPEAT_FRAMES {
+                            "down"
+                        } else {
+                            key
+                        };
+                        keystroke(window, cx, key);
+                        session.pending = Some((before, key, turn));
+                    } else {
+                        session.pending = Some((before, key, sent_at));
+                    }
+                    return Step::Continue;
+                }
+                session.moves += 1;
+                if let Some((_, depth, _)) = &current {
+                    session.max_depth = session.max_depth.max(*depth);
+                }
             }
-            if *keys_sent < KEY_COUNT {
-                keystroke(window, cx, KEYS[*keys_sent % KEYS.len()]);
-                *keys_sent += 1;
-                return Step::Continue;
+            if session.moves >= MOVES {
+                return Step::Stop;
             }
-            *selected_depth = Some(panel.read_with(cx, |panel, cx| {
-                panel
-                    .selected_entry_project_path(cx)
-                    .map_or(0, |path| path.path.components().count())
-            }));
-            Step::Stop
+            let key = match &current {
+                Some((_, _, true)) => "right",
+                _ => "down",
+            };
+            keystroke(window, cx, key);
+            session.first_sent_at = turn;
+            session.pending = Some((current.map(|(path, ..)| path), key, turn));
+            Step::Continue
         },
-        |(_, _, selected_depth)| {
+        |session| {
+            assert_eq!(session.moves, MOVES, "the selection should move {MOVES} times");
             assert!(
-                selected_depth.is_some_and(|depth| depth >= 3),
-                "walking the project panel should select a nested entry, got depth {selected_depth:?}"
+                session.max_depth >= 4,
+                "walking the project panel should reach nested entries, max depth {}",
+                session.max_depth
             );
         },
     );

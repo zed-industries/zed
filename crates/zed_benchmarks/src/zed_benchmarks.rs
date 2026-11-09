@@ -743,6 +743,10 @@ pub fn bench_sessions<S: 'static>(
 ) -> FrameStats {
     let stats = Rc::new(RefCell::new(FrameStats::default()));
     let window_id = window.window_id();
+    // The harness clears the profiler's frame buffer when each measurement's trace
+    // scope ends, before session inputs are dropped; keeping the trace setting on
+    // preserves the events until `SessionInput` collects them.
+    let enabled_tracing = gpui::profiler::set_trace_enabled(true);
     cx.bench_renderer_session(
         WAIT_TIMEOUT,
         |cx| {
@@ -768,6 +772,9 @@ pub fn bench_sessions<S: 'static>(
             }
         },
     );
+    if enabled_tracing {
+        gpui::profiler::set_trace_enabled(false);
+    }
     let stats = stats.borrow().clone();
     stats.print(name);
     stats
