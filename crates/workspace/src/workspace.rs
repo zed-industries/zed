@@ -11115,7 +11115,11 @@ pub fn workspace_windows_for_location<'a>(
         })
 }
 
-fn preferred_target_for_files(host: &ProjectHost<'_>, cx: &App) -> Option<WorkspaceOpenTarget> {
+fn preferred_workspace_target(
+    host: &ProjectHost<'_>,
+    visible: OpenVisible,
+    cx: &App,
+) -> Option<WorkspaceOpenTarget> {
     let target_for_window = |window: WindowHandle<MultiWorkspace>| {
         let multi_workspace = window.read(cx).ok()?;
         let active_workspace = multi_workspace.workspace();
@@ -11134,7 +11138,7 @@ fn preferred_target_for_files(host: &ProjectHost<'_>, cx: &App) -> Option<Worksp
         Some(WorkspaceOpenTarget {
             window,
             workspace: workspace.clone(),
-            visible: OpenVisible::None,
+            visible: visible.clone(),
         })
     };
 
@@ -11164,6 +11168,7 @@ pub fn find_existing_workspace(
     cx.update(|cx| {
         let mut existing = None;
         let mut best_match = None;
+        let active_window = cx.active_window();
 
         if open_options.workspace_matching != WorkspaceMatching::None {
             for window in cx
@@ -11172,7 +11177,12 @@ pub fn find_existing_workspace(
                 .filter_map(|window| window.downcast::<MultiWorkspace>())
             {
                 if let Ok(multi_workspace) = window.read(cx) {
-                    for workspace in multi_workspace.workspaces() {
+                    let active_workspace = multi_workspace.workspace();
+                    for workspace in std::iter::once(active_workspace).chain(
+                        multi_workspace
+                            .workspaces()
+                            .filter(|workspace| *workspace != active_workspace),
+                    ) {
                         let workspace_ref = workspace.read(cx);
                         let project = workspace_ref.project.read(cx);
 
@@ -11193,25 +11203,24 @@ pub fn find_existing_workspace(
                             }
                         };
 
-                        if visibility > best_match {
+                        let match_priority = visibility
+                            .map(|visible| (visible, Some(window.into()) == active_window));
+                        if match_priority > best_match {
                             existing = Some(WorkspaceOpenTarget {
                                 window,
                                 workspace: workspace.clone(),
                                 visible: OpenVisible::All,
                             });
-                            best_match = visibility;
-                        } else if best_match.is_none()
-                            && open_options.workspace_matching
-                                == WorkspaceMatching::MatchSubdirectory
-                        {
-                            existing = Some(WorkspaceOpenTarget {
-                                window,
-                                workspace: workspace.clone(),
-                                visible: OpenVisible::All,
-                            });
+                            best_match = match_priority;
                         }
                     }
                 }
+            }
+
+            if existing.is_none()
+                && open_options.workspace_matching == WorkspaceMatching::MatchSubdirectory
+            {
+                existing = preferred_workspace_target(host, OpenVisible::All, cx);
             }
 
             let all_paths_are_files = existing.as_ref().is_some_and(|target| {
@@ -11240,7 +11249,7 @@ pub fn find_existing_workspace(
             });
 
             if open_options.wait && existing.is_some() && all_paths_are_files {
-                existing = preferred_target_for_files(host, cx).or(existing);
+                existing = preferred_workspace_target(host, OpenVisible::None, cx).or(existing);
             }
         }
 
@@ -11261,10 +11270,8 @@ pub enum WorkspaceMatching {
     /// worktree roots themselves.
     MatchSubpaths,
     /// Match paths against existing worktrees including subdirectories, and
-    /// fall back to any existing window if no worktree matched.
-    ///
-    /// For example, `zed -a foo/bar` will activate the `bar` workspace if it
-    /// exists, otherwise it will open a new window with `foo/bar` as the root.
+    /// fall back to a workspace on the requested host if none match, preferring
+    /// the focused window and its active workspace.
     MatchSubdirectory,
 }
 
@@ -11462,7 +11469,9 @@ pub fn open_paths(
 
             if all_metadatas.into_iter().all(|file| !file.is_dir) {
                 reuse_target = cx
-                    .update(|cx| preferred_target_for_files(&ProjectHost::Local, cx))
+                    .update(|cx| {
+                        preferred_workspace_target(&ProjectHost::Local, OpenVisible::None, cx)
+                    })
                     .or(reuse_target);
             }
         }
