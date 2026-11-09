@@ -4,7 +4,7 @@ use fuzzy_nucleo::StringMatchCandidate;
 
 use collections::{HashMap, HashSet};
 use git::repository::{Branch, delete_branch_flag};
-use git::{GitHostingProviderRegistry, parse_git_remote_url};
+use git::{GitHostingProviderRegistry, normalize_branch_name, parse_git_remote_url};
 use gpui::http_client::Url;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global,
@@ -27,7 +27,7 @@ use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-use crate::{branch_name::normalize_branch_name, branch_picker};
+use crate::branch_picker;
 use git_ui_core::notifications::show_error_toast;
 
 actions!(
