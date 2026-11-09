@@ -512,6 +512,8 @@ mod imp {
             fs: if permissions.allow_fs_write {
                 SandboxFsPolicy::Unrestricted {
                     protected_paths: Vec::new(),
+                    unreadable_paths: Vec::new(),
+                    readable_paths: Vec::new(),
                 }
             } else {
                 SandboxFsPolicy::Restricted {
@@ -522,12 +524,15 @@ mod imp {
                         .filter_map(|path| HostFilesystemLocation::capture(path).ok())
                         .collect(),
                     protected_paths: Vec::new(),
+                    unreadable_paths: Vec::new(),
+                    readable_paths: Vec::new(),
                 }
             },
             network: match permissions.network {
                 NetworkAccess::None => SandboxNetPolicy::Blocked,
                 NetworkAccess::All => SandboxNetPolicy::Unrestricted,
             },
+            allowed_unix_sockets: Vec::new(),
         };
         let command = CommandAndArgs {
             program: program.to_string(),

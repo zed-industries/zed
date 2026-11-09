@@ -15,9 +15,9 @@
 //! 3. Returning the program/args needed to launch the original command
 //!    under `sandbox-exec -f <config-path>`.
 //!
-//! Reads are permitted by default; writes are restricted to a caller-
-//! provided list of directories; IP network access and unrestricted writes
-//! must be opted into per command. Callers may separately allow specific
+//! Reads are permitted by default except for caller-listed unreadable paths;
+//! writes are restricted to a caller-provided list of directories; IP network
+//! access and unrestricted writes must be opted into per command. Callers may separately allow specific
 //! Unix domain sockets for local IPC; those do not permit sending packets to
 //! other machines.
 
@@ -64,6 +64,47 @@ pub enum NetworkAccess {
     All,
 }
 
+/// Everything the config generator needs to know about one command.
+///
+/// All paths are already the canonical identities captured once, at validation
+/// time, by the policy layer. The generator uses them verbatim as rule literals
+/// and must NOT re-canonicalize: re-resolving a path at profile-generation time
+/// is the time-of-check-to-time-of-use hole this design closes.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SeatbeltConfigInputs<'a> {
+    /// Directory subtrees where the command may write when
+    /// `permissions.allow_fs_write` is false. Pass the project's worktree paths
+    /// here, not the working directory of the command: the working directory is
+    /// model-controlled, and using it as the writable scope would let the model
+    /// widen its own writable scope.
+    pub writable_directories: &'a [&'a Path],
+    /// Paths whose writes are denied even if they fall under a writable
+    /// directory (or `allow_fs_write` is set). Contents remain readable.
+    pub protected_paths: &'a [&'a Path],
+    /// Paths whose contents (and metadata) the command may neither read nor
+    /// write.
+    pub unreadable_paths: &'a [&'a Path],
+    /// Windows into the unreadable paths: subtrees that stay readable, and
+    /// writable where the write rules make them so, as if they were outside the
+    /// unreadable path.
+    pub readable_paths: &'a [&'a Path],
+    /// Unix domain sockets the command may connect to for local IPC even when
+    /// IP network access is otherwise disabled. Emitted verbatim: it isn't
+    /// guaranteed whether Seatbelt resolves symlinks before matching a
+    /// `remote unix-socket` literal, so the caller passes both the path the
+    /// child connects to and its canonical form. This does not permit sending
+    /// packets to other machines.
+    pub allowed_unix_socket_paths: &'a [&'a Path],
+    /// Destination ports the command may open raw outbound TCP connections to,
+    /// on any host, when `permissions.network` is
+    /// [`NetworkAccess::LocalhostPort`]. Seatbelt cannot filter raw TCP by
+    /// hostname, so each port grant is host-wide. Ignored for the other network
+    /// modes.
+    pub allowed_tcp_ports: &'a [u16],
+    /// Sandbox relaxations requested for this command.
+    pub permissions: SandboxPermissions,
+}
+
 /// A Seatbelt config file written to a temporary path on disk, suitable
 /// for `sandbox-exec -f <path>`. The file is deleted when this is dropped.
 ///
@@ -79,36 +120,13 @@ pub struct SeatbeltConfigFile {
 }
 
 impl SeatbeltConfigFile {
-    /// Generate a Seatbelt config from `permissions` and write it to a
-    /// fresh temporary file.
-    ///
-    /// `writable_directories` lists every directory subtree where the
-    /// command is allowed to write when `permissions.allow_fs_write` is
-    /// false. Pass the project's worktree paths here — not the working
-    /// directory of the command, since that is model-controlled and would
-    /// let the model widen its own writable scope.
-    ///
-    /// `protected_paths` lists paths whose writes should be blocked even if they
-    /// fall under a writable directory. Contents remain readable.
-    ///
-    /// `allowed_unix_socket_paths` lists Unix domain sockets the command may
-    /// connect to for local IPC even when IP network access is otherwise
-    /// disabled. This does not permit sending packets to other machines.
-    pub fn new(
-        writable_directories: &[&Path],
-        protected_paths: &[&Path],
-        allowed_unix_socket_paths: &[&Path],
-        permissions: SandboxPermissions,
-    ) -> Result<Self> {
+    /// Generate a Seatbelt config from `inputs` and write it to a fresh
+    /// temporary file.
+    pub fn new(inputs: SeatbeltConfigInputs<'_>) -> Result<Self> {
         let mut file =
             NamedTempFile::new().context("failed to create temporary Seatbelt config file")?;
 
-        let config = generate_seatbelt_config(
-            writable_directories,
-            protected_paths,
-            allowed_unix_socket_paths,
-            permissions,
-        )?;
+        let config = generate_seatbelt_config(inputs)?;
         file.write_all(config.as_bytes())
             .context("failed to write Seatbelt config")?;
         file.flush().context("failed to flush Seatbelt config")?;
@@ -120,7 +138,7 @@ impl SeatbeltConfigFile {
 }
 
 /// Wrap a process invocation so it runs under macOS's `sandbox-exec(1)`
-/// with a Seatbelt config built from `permissions`.
+/// with a Seatbelt config built from `inputs`.
 ///
 /// Returns the new program and arguments to execute, along with a
 /// [`SeatbeltConfigFile`] that **must** be kept alive for the duration of
@@ -132,17 +150,7 @@ impl SeatbeltConfigFile {
 ///   but anything that takes its arguments via `argv` works).
 /// * `args` - The full argument list that would have been passed to
 ///   `program`.
-/// * `writable_directories` - Directory subtrees where the command is
-///   allowed to write when `permissions.allow_fs_write` is false. Pass
-///   the project's worktree paths here, not the working directory of the
-///   command (the working directory is model-controlled, and using it as
-///   the writable scope would let the model write outside the project).
-/// * `protected_paths` - Paths whose writes should be denied even if they fall
-///   under a writable directory. Contents remain readable.
-/// * `allowed_unix_socket_paths` - Unix domain sockets the command may
-///   connect to for local IPC even when IP network access is otherwise
-///   disabled. This does not permit sending packets to other machines.
-/// * `permissions` - Sandbox relaxations requested for this command.
+/// * `inputs` - What the command may read, write, and connect to.
 ///
 /// # Returns
 /// A tuple of `(program, args, config_file)` where `config_file` must be
@@ -150,17 +158,9 @@ impl SeatbeltConfigFile {
 pub fn wrap_invocation(
     program: &str,
     args: &[String],
-    writable_directories: &[&Path],
-    protected_paths: &[&Path],
-    allowed_unix_socket_paths: &[&Path],
-    permissions: SandboxPermissions,
+    inputs: SeatbeltConfigInputs<'_>,
 ) -> Result<(String, Vec<String>, SeatbeltConfigFile)> {
-    let config_file = SeatbeltConfigFile::new(
-        writable_directories,
-        protected_paths,
-        allowed_unix_socket_paths,
-        permissions,
-    )?;
+    let config_file = SeatbeltConfigFile::new(inputs)?;
 
     let mut wrapped_args = vec![
         "-f".to_string(),
@@ -185,45 +185,27 @@ pub fn wrap_invocation(
     ))
 }
 
-/// Generate a Seatbelt config string that reads everywhere by default.
-/// Writes to each entry in `writable_directories` (typically the project's
-/// worktree paths plus any per-command scratch directory the caller wants
-/// allowed) and the standard `/dev/*` write targets are also allowed by
-/// default. Writes to paths in `protected_paths` are denied even when they
-/// would otherwise be writable; contents remain readable. Unix domain socket paths in
-/// `allowed_unix_socket_paths` are reachable for local IPC even when IP
-/// network access is otherwise blocked. This does not permit sending packets
-/// to other machines.
+/// Generate a Seatbelt config that reads everywhere by default, except for the
+/// unreadable paths, whose readable windows are then allowed back. Writes to
+/// each writable directory and the standard `/dev/*` write targets are allowed;
+/// writes to unreadable paths are denied, except where a window overlaps a
+/// writable directory (or, with unrestricted writes, in the windows themselves);
+/// writes to protected paths are denied even when they would otherwise be
+/// writable, with contents remaining readable. Allowed Unix domain sockets are
+/// reachable for local IPC even when IP network access is otherwise blocked.
+///
+/// Seatbelt applies the *last* matching rule, so for each of reads and writes the
+/// rules are emitted in the order the policy layers override each other: the
+/// default, the unreadable mask, the readable windows, and for writes finally the
+/// protected paths, whose `deny` nothing follows.
 ///
 /// Network access and unrestricted filesystem writes must be requested via
 /// [`SandboxPermissions`].
 ///
 /// The returned string is the textual content to write to the
 /// [`SeatbeltConfigFile`] passed to `sandbox-exec -f`.
-fn generate_seatbelt_config(
-    writable_directories: &[&Path],
-    protected_paths: &[&Path],
-    allowed_unix_socket_paths: &[&Path],
-    permissions: SandboxPermissions,
-) -> Result<String> {
-    // These paths are already the canonical identities captured once, at
-    // validation time, inside each `HostFilesystemLocation` (resolving symlinks
-    // and, for a not-yet-created leaf, its existing parent). We deliberately do
-    // NOT re-canonicalize here: re-resolving a path at profile-generation time
-    // is the time-of-check-to-time-of-use hole this design closes. Use them
-    // verbatim as Seatbelt rule literals.
-    let canonical_writable_directories: Vec<PathBuf> = writable_directories
-        .iter()
-        .map(|path| path.to_path_buf())
-        .collect();
-    let canonical_protected_paths: Vec<PathBuf> = protected_paths
-        .iter()
-        .map(|path| path.to_path_buf())
-        .collect();
-    // Unlike file paths, Unix socket literals are emitted verbatim: it isn't
-    // guaranteed whether Seatbelt resolves symlinks before matching a
-    // `remote unix-socket` literal, so the caller passes both the path the
-    // child connects to and its canonical form, and we keep them as given.
+fn generate_seatbelt_config(inputs: SeatbeltConfigInputs<'_>) -> Result<String> {
+    let permissions = inputs.permissions;
 
     let mut config = r#"(version 1)
 
@@ -307,6 +289,28 @@ fn generate_seatbelt_config(
 "#
     .to_string();
 
+    for unreadable_path in inputs.unreadable_paths {
+        let escaped_path = escape_sandbox_path(unreadable_path)?;
+        config.push_str(&format!(
+            r#"
+; Block reads of a hidden path
+(deny file-read*
+    (subpath "{escaped_path}"))
+"#
+        ));
+    }
+
+    for readable_path in inputs.readable_paths {
+        let escaped_path = escape_sandbox_path(readable_path)?;
+        config.push_str(&format!(
+            r#"
+; Allow reads of a path kept visible inside a hidden path
+(allow file-read*
+    (subpath "{escaped_path}"))
+"#
+        ));
+    }
+
     if permissions.allow_fs_write {
         config.push_str(
             r#"
@@ -315,8 +319,8 @@ fn generate_seatbelt_config(
 "#,
         );
     } else {
-        for canonical_path in &canonical_writable_directories {
-            let escaped_path = escape_sandbox_path(canonical_path)?;
+        for writable_directory in inputs.writable_directories {
+            let escaped_path = escape_sandbox_path(writable_directory)?;
             config.push_str(&format!(
                 r#"
 ; Allow writing to a permitted directory
@@ -341,7 +345,51 @@ fn generate_seatbelt_config(
         );
     }
 
-    for protected_path in &canonical_protected_paths {
+    for unreadable_path in inputs.unreadable_paths {
+        let escaped_path = escape_sandbox_path(unreadable_path)?;
+        config.push_str(&format!(
+            r#"
+; Block writes to a hidden path
+(deny file-write*
+    (subpath "{escaped_path}"))
+"#
+        ));
+    }
+
+    // A window is writable exactly where it would be outside the mask: anywhere
+    // with unrestricted writes, otherwise where it overlaps a writable directory
+    // (whichever of the two is the inner path).
+    let mut windowed_writable_paths: Vec<&Path> = Vec::new();
+    for readable_path in inputs.readable_paths {
+        if permissions.allow_fs_write {
+            windowed_writable_paths.push(readable_path);
+            continue;
+        }
+        for writable_directory in inputs.writable_directories {
+            let inner = if readable_path.starts_with(writable_directory) {
+                readable_path
+            } else if writable_directory.starts_with(readable_path) {
+                writable_directory
+            } else {
+                continue;
+            };
+            if !windowed_writable_paths.contains(inner) {
+                windowed_writable_paths.push(inner);
+            }
+        }
+    }
+    for windowed_writable_path in windowed_writable_paths {
+        let escaped_path = escape_sandbox_path(windowed_writable_path)?;
+        config.push_str(&format!(
+            r#"
+; Allow writes to a path kept visible inside a hidden path
+(allow file-write*
+    (subpath "{escaped_path}"))
+"#
+        ));
+    }
+
+    for protected_path in inputs.protected_paths {
         let escaped_path = escape_sandbox_path(protected_path)?;
         // `subpath` already matches the path itself plus everything beneath it,
         // so no redundant `literal` rule is needed.
@@ -374,10 +422,38 @@ fn generate_seatbelt_config(
                 r#"
 ; Allow outbound network only to the in-process proxy on localhost
 (allow network-outbound (remote tcp "localhost:{port}"))
+"#,
+            ));
+            for allowed_tcp_port in inputs.allowed_tcp_ports {
+                config.push_str(&format!(
+                    r#"
+; Allow raw outbound TCP to a granted destination port, on any host
+(allow network-outbound (remote tcp "*:{allowed_tcp_port}"))
+"#,
+                ));
+            }
+            config.push_str(
+                r#"
 ; Network binds (sandboxed process picking its own ephemeral source port)
 (allow network-bind (local ip "localhost:*"))
 "#,
-            ));
+            );
+            if !inputs.allowed_tcp_ports.is_empty() {
+                config.push_str(
+                    r#"
+; A raw TCP grant means the command resolves hostnames itself (proxy-only
+; commands don't: the proxy resolves names outside the sandbox), and
+; getaddrinfo on macOS talks to mDNSResponder over this Unix socket rather
+; than sending DNS packets. Without it every hostname lookup fails with
+; "nodename nor servname provided".
+(allow system-socket
+    (socket-domain AF_UNIX))
+(allow network-outbound
+    (remote unix-socket
+        (literal "/private/var/run/mDNSResponder")))
+"#,
+                );
+            }
         }
     }
 
@@ -408,7 +484,7 @@ fn generate_seatbelt_config(
         );
     }
 
-    if !allowed_unix_socket_paths.is_empty() {
+    if !inputs.allowed_unix_socket_paths.is_empty() {
         config.push_str(
             r#"
 ; Allow local IPC to inherited Unix domain sockets. Seatbelt models this as
@@ -425,7 +501,7 @@ fn generate_seatbelt_config(
 "#,
         );
 
-        for socket_path in allowed_unix_socket_paths {
+        for socket_path in inputs.allowed_unix_socket_paths {
             let escaped_path = escape_sandbox_path(socket_path)?;
             config.push_str(&format!(
                 r#"(allow network-outbound
@@ -458,6 +534,42 @@ fn escape_sandbox_path(path: &Path) -> Result<String> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    fn generate_seatbelt_config(
+        writable_directories: &[&Path],
+        protected_paths: &[&Path],
+        allowed_unix_socket_paths: &[&Path],
+        permissions: SandboxPermissions,
+    ) -> Result<String> {
+        super::generate_seatbelt_config(SeatbeltConfigInputs {
+            writable_directories,
+            protected_paths,
+            allowed_unix_socket_paths,
+            permissions,
+            ..Default::default()
+        })
+    }
+
+    fn wrap_invocation(
+        program: &str,
+        args: &[String],
+        writable_directories: &[&Path],
+        protected_paths: &[&Path],
+        allowed_unix_socket_paths: &[&Path],
+        permissions: SandboxPermissions,
+    ) -> Result<(String, Vec<String>, SeatbeltConfigFile)> {
+        super::wrap_invocation(
+            program,
+            args,
+            SeatbeltConfigInputs {
+                writable_directories,
+                protected_paths,
+                allowed_unix_socket_paths,
+                permissions,
+                ..Default::default()
+            },
+        )
+    }
 
     /// Strip SBPL comment lines (`;`-prefixed) from a generated Seatbelt profile
     /// so assertions match on the actual rules rather than on documentation.

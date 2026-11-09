@@ -142,6 +142,14 @@ impl HostFilesystemLocation {
         }
     }
 
+    /// Whether this location is `other` or nested under it, comparing the
+    /// captured canonical paths. Lets callers drop a grant the sandbox would
+    /// reject for overlapping a protected or unreadable path.
+    pub fn is_within(&self, other: &HostFilesystemLocation) -> bool {
+        self.canonical_or_raw_path()
+            .starts_with(other.canonical_or_raw_path())
+    }
+
     /// The captured canonical path, falling back to the raw path only on
     /// platforms that do not resolve a separate canonical identity.
     ///

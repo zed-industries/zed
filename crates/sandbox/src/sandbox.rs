@@ -15,7 +15,9 @@ use std::{
 
 use http_proxy::ProxyHandle;
 #[cfg(not(target_os = "windows"))]
-use http_proxy::{Allowlist, HostPattern, ProxyConfig, ProxyEvent, UpstreamProxy};
+use http_proxy::{Allowlist, HostPattern, ProxyConfig, UpstreamProxy};
+
+pub use http_proxy::{DenyReason, ProxyEvent, RequestMethod, RequestOutcome};
 
 #[cfg(target_os = "linux")]
 mod linux_bubblewrap;
@@ -85,23 +87,49 @@ impl From<PathBuf> for SandboxFilesystemLocation {
 pub struct SandboxPolicy {
     pub fs: SandboxFsPolicy,
     pub network: SandboxNetPolicy,
+    /// Unix domain sockets the command may connect to for local IPC even when
+    /// IP networking is blocked. Connecting to a socket never permits sending
+    /// packets to other machines. Only the macOS backend supports this; Linux
+    /// and WSL reject a policy that lists any.
+    pub allowed_unix_sockets: Vec<PathBuf>,
 }
 
 /// Filesystem policy for a sandboxed command.
+///
+/// In both variants, `protected_paths` stay readable but not writable, and
+/// `unreadable_paths` are masked: they can be neither read, listed, nor
+/// written. `readable_paths` are windows into masked subtrees: each behaves
+/// as if it were outside the mask, so it is readable, and writable where the
+/// rest of the policy makes it so (an unrestricted policy, or a writable path
+/// containing it). Windows are the only way into a masked subtree: a writable
+/// path inside an unreadable path must lie inside a window, or
+/// [`Sandbox::new`] rejects the policy.
+///
+/// Backends resolve overlaps in this order, each layer overriding the ones
+/// before it: the writable paths (or unrestricted writes), then the unreadable
+/// mask, then the readable windows (writable where they overlap the writable
+/// layer), then the protected paths, which nothing overrides.
+///
+/// Only the macOS backend supports `unreadable_paths` and `readable_paths`;
+/// Linux and WSL reject a policy that lists any.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SandboxFsPolicy {
-    /// Allow unrestricted filesystem writes except for protected paths, which
-    /// remain readable but not writable.
+    /// Allow unrestricted filesystem writes except for protected and
+    /// unreadable paths.
     Unrestricted {
         protected_paths: Vec<HostFilesystemLocation>,
+        unreadable_paths: Vec<HostFilesystemLocation>,
+        readable_paths: Vec<HostFilesystemLocation>,
     },
-    /// Reads are allowed everywhere; writes are confined to these locations
-    /// (and the standard ephemeral locations the platform provides). Each is a
-    /// [`HostFilesystemLocation`] captured at validation time, never a bare path
-    /// the enforcement layer would re-resolve.
+    /// Writes are confined to these locations (and the standard ephemeral
+    /// locations the platform provides). Each is a [`HostFilesystemLocation`]
+    /// captured at validation time, never a bare path the enforcement layer
+    /// would re-resolve.
     Restricted {
         writable_paths: Vec<HostFilesystemLocation>,
         protected_paths: Vec<HostFilesystemLocation>,
+        unreadable_paths: Vec<HostFilesystemLocation>,
+        readable_paths: Vec<HostFilesystemLocation>,
     },
 }
 
@@ -112,9 +140,22 @@ pub enum SandboxNetPolicy {
     Unrestricted,
     /// Block all outbound network access.
     Blocked,
-    /// Allow outbound HTTP(S) only to these hostnames (exact hosts or
-    /// leading-`*.` subdomain wildcards), enforced by an in-process proxy.
-    Restricted { allowed_domains: Vec<String> },
+    /// Allow outbound HTTP(S) to `allowed_domains` and raw outbound TCP to
+    /// `allowed_tcp_ports`, and nothing else.
+    Restricted {
+        /// Hostnames the command may reach over HTTP(S), as exact hosts or
+        /// leading-`*.` subdomain wildcards, enforced by an in-process proxy.
+        allowed_domains: Vec<String>,
+        /// Destination ports the command may open raw TCP connections to,
+        /// bypassing the proxy, for protocols a CONNECT proxy cannot carry
+        /// (SSH on port 22, for example).
+        ///
+        /// A port grant is host-wide: the sandbox cannot filter raw TCP by
+        /// hostname, so granting port 22 allows SSH to *any* host. Port 0 is
+        /// rejected at [`Sandbox::new`]. Only the macOS backend supports this;
+        /// Linux and WSL reject a policy that lists any.
+        allowed_tcp_ports: Vec<u16>,
+    },
 }
 
 /// Host paths that should remain readable but not writable, even when they fall
@@ -160,13 +201,17 @@ pub fn wsl_distro_registered() -> bool {
 
 impl SandboxPolicy {
     /// Combine two policy layers. Filesystem/network grants are unioned into the
-    /// least-restrictive policy that satisfies both layers, while protected paths
-    /// within restricted filesystem policies are unioned so every layer's
-    /// protected subtrees remain protected.
+    /// least-restrictive policy that satisfies both layers, while protected and
+    /// unreadable paths are unioned so every layer's restrictions remain in
+    /// force.
     pub fn merge(self, other: SandboxPolicy) -> SandboxPolicy {
         SandboxPolicy {
             fs: self.fs.merge(other.fs),
             network: self.network.merge(other.network),
+            allowed_unix_sockets: union_in_order(
+                self.allowed_unix_sockets,
+                other.allowed_unix_sockets,
+            ),
         }
     }
 
@@ -176,6 +221,7 @@ impl SandboxPolicy {
         match &mut self.fs {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: existing,
+                ..
             }
             | SandboxFsPolicy::Restricted {
                 protected_paths: existing,
@@ -184,6 +230,16 @@ impl SandboxPolicy {
         }
         self
     }
+}
+
+/// Append each item of `other` that `items` doesn't already contain.
+fn union_in_order<T: PartialEq>(mut items: Vec<T>, other: Vec<T>) -> Vec<T> {
+    for item in other {
+        if !items.contains(&item) {
+            items.push(item);
+        }
+    }
+    items
 }
 
 fn merge_locations(
@@ -206,6 +262,32 @@ fn validate_writable_paths_do_not_overlap_protected_paths(
                     "writable sandbox path `{}` overlaps protected path `{}`",
                     writable_path.untrusted_path_display(),
                     protected_path.untrusted_path_display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A writable path inside a masked subtree is re-allowed after the mask, so it
+/// must sit inside a window; otherwise the mask would hide a subtree the command
+/// could still write.
+fn validate_writable_paths_inside_unreadable_paths_are_windowed(
+    writable_paths: &[HostFilesystemLocation],
+    unreadable_paths: &[HostFilesystemLocation],
+    readable_paths: &[HostFilesystemLocation],
+) -> Result<(), SandboxError> {
+    for writable_path in writable_paths {
+        for unreadable_path in unreadable_paths {
+            if writable_path.is_within(unreadable_path)
+                && !readable_paths
+                    .iter()
+                    .any(|readable_path| writable_path.is_within(readable_path))
+            {
+                return Err(SandboxError::InvalidRequest(format!(
+                    "writable sandbox path `{}` lies inside unreadable path `{}` without a readable path containing it",
+                    writable_path.untrusted_path_display(),
+                    unreadable_path.untrusted_path_display()
                 )));
             }
         }
@@ -294,51 +376,56 @@ fn linux_location_is_equal_or_descendant(
 }
 
 impl SandboxFsPolicy {
-    /// Unrestricted access dominates; otherwise the writable subtrees union.
+    /// Unrestricted writes dominate; otherwise the writable subtrees union.
+    /// Protected, unreadable, and readable paths always union.
     pub fn merge(self, other: SandboxFsPolicy) -> SandboxFsPolicy {
         match (self, other) {
-            (
-                SandboxFsPolicy::Unrestricted {
-                    protected_paths: protected_a,
-                },
-                SandboxFsPolicy::Unrestricted {
-                    protected_paths: protected_b,
-                },
-            ) => SandboxFsPolicy::Unrestricted {
-                protected_paths: merge_locations(protected_a, protected_b),
-            },
-            (
-                SandboxFsPolicy::Unrestricted {
-                    protected_paths: protected_a,
-                },
-                SandboxFsPolicy::Restricted {
-                    protected_paths: protected_b,
-                    ..
-                },
-            )
-            | (
-                SandboxFsPolicy::Restricted {
-                    protected_paths: protected_a,
-                    ..
-                },
-                SandboxFsPolicy::Unrestricted {
-                    protected_paths: protected_b,
-                },
-            ) => SandboxFsPolicy::Unrestricted {
-                protected_paths: merge_locations(protected_a, protected_b),
-            },
             (
                 SandboxFsPolicy::Restricted {
                     writable_paths: writable_a,
                     protected_paths: protected_a,
+                    unreadable_paths: unreadable_a,
+                    readable_paths: readable_a,
                 },
                 SandboxFsPolicy::Restricted {
                     writable_paths: writable_b,
                     protected_paths: protected_b,
+                    unreadable_paths: unreadable_b,
+                    readable_paths: readable_b,
                 },
             ) => SandboxFsPolicy::Restricted {
                 writable_paths: merge_locations(writable_a, writable_b),
                 protected_paths: merge_locations(protected_a, protected_b),
+                unreadable_paths: merge_locations(unreadable_a, unreadable_b),
+                readable_paths: merge_locations(readable_a, readable_b),
+            },
+            (
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: protected_a,
+                    unreadable_paths: unreadable_a,
+                    readable_paths: readable_a,
+                }
+                | SandboxFsPolicy::Restricted {
+                    protected_paths: protected_a,
+                    unreadable_paths: unreadable_a,
+                    readable_paths: readable_a,
+                    ..
+                },
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: protected_b,
+                    unreadable_paths: unreadable_b,
+                    readable_paths: readable_b,
+                }
+                | SandboxFsPolicy::Restricted {
+                    protected_paths: protected_b,
+                    unreadable_paths: unreadable_b,
+                    readable_paths: readable_b,
+                    ..
+                },
+            ) => SandboxFsPolicy::Unrestricted {
+                protected_paths: merge_locations(protected_a, protected_b),
+                unreadable_paths: merge_locations(unreadable_a, unreadable_b),
+                readable_paths: merge_locations(readable_a, readable_b),
             },
         }
     }
@@ -346,7 +433,7 @@ impl SandboxFsPolicy {
 
 impl SandboxNetPolicy {
     /// Unrestricted access dominates and `Blocked` is the identity; otherwise the
-    /// allowed domains union.
+    /// allowed domains and TCP ports each union.
     pub fn merge(self, other: SandboxNetPolicy) -> SandboxNetPolicy {
         match (self, other) {
             (SandboxNetPolicy::Unrestricted, _) | (_, SandboxNetPolicy::Unrestricted) => {
@@ -355,17 +442,17 @@ impl SandboxNetPolicy {
             (SandboxNetPolicy::Blocked, other) | (other, SandboxNetPolicy::Blocked) => other,
             (
                 SandboxNetPolicy::Restricted {
-                    allowed_domains: mut a,
+                    allowed_domains,
+                    allowed_tcp_ports,
                 },
-                SandboxNetPolicy::Restricted { allowed_domains: b },
-            ) => {
-                for domain in b {
-                    if !a.contains(&domain) {
-                        a.push(domain);
-                    }
-                }
-                SandboxNetPolicy::Restricted { allowed_domains: a }
-            }
+                SandboxNetPolicy::Restricted {
+                    allowed_domains: other_domains,
+                    allowed_tcp_ports: other_ports,
+                },
+            ) => SandboxNetPolicy::Restricted {
+                allowed_domains: union_in_order(allowed_domains, other_domains),
+                allowed_tcp_ports: union_in_order(allowed_tcp_ports, other_ports),
+            },
         }
     }
 }
@@ -459,6 +546,10 @@ struct FsSetup {
     allow_fs_write: bool,
     writable_paths: Vec<HostFilesystemLocation>,
     protected_paths: Vec<HostFilesystemLocation>,
+    #[cfg(target_os = "macos")]
+    unreadable_paths: Vec<HostFilesystemLocation>,
+    #[cfg(target_os = "macos")]
+    readable_paths: Vec<HostFilesystemLocation>,
 }
 
 /// Resolved network plan derived from [`SandboxNetPolicy`]. For the restricted
@@ -473,6 +564,8 @@ enum NetSetup {
     #[cfg(not(target_os = "windows"))]
     Restricted {
         allowlist: Allowlist,
+        #[cfg(target_os = "macos")]
+        allowed_tcp_ports: Vec<u16>,
     },
 }
 
@@ -485,9 +578,16 @@ enum NetSetup {
 pub struct Sandbox {
     fs: FsSetup,
     network: NetSetup,
+    /// Each allowed socket as requested plus, where it differs, its canonical
+    /// form, since it isn't guaranteed which one Seatbelt matches against.
+    #[cfg(target_os = "macos")]
+    allowed_unix_socket_paths: Vec<PathBuf>,
     /// In-process network proxy for the restricted-network case, spawned on the
     /// first `wrap`. Dropped on a background thread (the join blocks).
     proxy: Option<ProxyHandle>,
+    /// Where the proxy reports its events; `None` falls back to debug logging.
+    #[cfg(not(target_os = "windows"))]
+    network_events: Option<futures::channel::mpsc::UnboundedSender<ProxyEvent>>,
     /// Linux only: the host endpoint that hands the in-sandbox validator the
     /// captured `O_PATH` fds over a unix socket. Runs entirely in-process (a
     /// short-lived background thread, never a separate process) and is owned by
@@ -517,24 +617,72 @@ impl Sandbox {
     /// upstream proxy named in the command's environment), and `bwrap`
     /// availability is checked separately via [`Sandbox::can_create`].
     pub fn new(policy: SandboxPolicy) -> Result<Self, SandboxError> {
+        Self::build(policy, None)
+    }
+
+    /// Like [`Sandbox::new`], but report the network proxy's events (the
+    /// `Ready` port, then each allowed or denied request) to `network_events`
+    /// instead of logging them, so denied hosts can be turned into user-facing
+    /// approval prompts. Events only exist for a
+    /// [`SandboxNetPolicy::Restricted`] policy; for the other network policies
+    /// the sender is never used.
+    pub fn with_network_events(
+        policy: SandboxPolicy,
+        network_events: futures::channel::mpsc::UnboundedSender<ProxyEvent>,
+    ) -> Result<Self, SandboxError> {
+        Self::build(policy, Some(network_events))
+    }
+
+    fn build(
+        policy: SandboxPolicy,
+        network_events: Option<futures::channel::mpsc::UnboundedSender<ProxyEvent>>,
+    ) -> Result<Self, SandboxError> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        reject_unsupported_policy_features(&policy)?;
+
         let fs = match policy.fs {
-            SandboxFsPolicy::Unrestricted { protected_paths } => FsSetup {
-                allow_fs_write: true,
-                writable_paths: Vec::new(),
+            SandboxFsPolicy::Unrestricted {
                 protected_paths,
-            },
+                unreadable_paths,
+                readable_paths,
+            } => {
+                #[cfg(not(target_os = "macos"))]
+                drop((unreadable_paths, readable_paths));
+                FsSetup {
+                    allow_fs_write: true,
+                    writable_paths: Vec::new(),
+                    protected_paths,
+                    #[cfg(target_os = "macos")]
+                    unreadable_paths,
+                    #[cfg(target_os = "macos")]
+                    readable_paths,
+                }
+            }
             SandboxFsPolicy::Restricted {
                 writable_paths,
                 protected_paths,
+                unreadable_paths,
+                readable_paths,
             } => {
                 validate_writable_paths_do_not_overlap_protected_paths(
                     &writable_paths,
                     &protected_paths,
                 )?;
+                validate_writable_paths_inside_unreadable_paths_are_windowed(
+                    &writable_paths,
+                    &unreadable_paths,
+                    &readable_paths,
+                )?;
+                #[cfg(not(target_os = "macos"))]
+                drop((unreadable_paths, readable_paths));
                 FsSetup {
                     allow_fs_write: false,
                     writable_paths,
                     protected_paths,
+                    #[cfg(target_os = "macos")]
+                    unreadable_paths,
+                    #[cfg(target_os = "macos")]
+                    readable_paths,
                 }
             }
         };
@@ -542,15 +690,23 @@ impl Sandbox {
         let network = match policy.network {
             SandboxNetPolicy::Unrestricted => NetSetup::Unrestricted,
             SandboxNetPolicy::Blocked => NetSetup::Blocked,
-            SandboxNetPolicy::Restricted { allowed_domains } => {
-                resolve_restricted_network(&allowed_domains)?
-            }
+            SandboxNetPolicy::Restricted {
+                allowed_domains,
+                allowed_tcp_ports,
+            } => resolve_restricted_network(&allowed_domains, allowed_tcp_ports)?,
         };
+
+        #[cfg(target_os = "windows")]
+        drop(network_events);
 
         Ok(Self {
             fs,
             network,
+            #[cfg(target_os = "macos")]
+            allowed_unix_socket_paths: resolve_allowed_unix_sockets(policy.allowed_unix_sockets),
             proxy: None,
+            #[cfg(not(target_os = "windows"))]
+            network_events,
             #[cfg(target_os = "linux")]
             validation_fd_sender: None,
             #[cfg(target_os = "windows")]
@@ -585,6 +741,7 @@ impl Sandbox {
     pub fn can_create(policy: &SandboxPolicy) -> Result<(), SandboxError> {
         #[cfg(target_os = "linux")]
         {
+            reject_unsupported_policy_features(policy)?;
             let permissions = linux_bubblewrap::SandboxPermissions {
                 network: linux_probe_network(&policy.network),
                 allow_fs_write: matches!(policy.fs, SandboxFsPolicy::Unrestricted { .. }),
@@ -593,6 +750,7 @@ impl Sandbox {
         }
         #[cfg(target_os = "windows")]
         {
+            reject_unsupported_policy_features(policy)?;
             if matches!(policy.network, SandboxNetPolicy::Restricted { .. }) {
                 return Err(unsupported_restricted_network_on_windows());
             }
@@ -671,17 +829,24 @@ impl Sandbox {
         &mut self,
         env: &mut HashMap<String, String>,
     ) -> Result<Option<(u16, Option<PathBuf>)>, SandboxError> {
-        let NetSetup::Restricted { allowlist } = &self.network else {
+        let NetSetup::Restricted { allowlist, .. } = &self.network else {
             return Ok(None);
         };
 
         if self.proxy.is_none() {
             let upstream = upstream_proxy_from_env(env);
-            let (events_tx, events_rx) = futures::channel::mpsc::unbounded();
+            let events = match &self.network_events {
+                Some(sender) => sender.clone(),
+                None => {
+                    let (sender, receiver) = futures::channel::mpsc::unbounded();
+                    spawn_proxy_event_logger(receiver);
+                    sender
+                }
+            };
             let config = ProxyConfig {
                 allowlist: allowlist.clone(),
                 upstream,
-                events: events_tx,
+                events,
             };
             #[cfg(target_os = "linux")]
             let handle = ProxyHandle::spawn_unix_temp(config);
@@ -690,7 +855,6 @@ impl Sandbox {
             let handle = handle.map_err(|error| {
                 SandboxError::Io(format!("failed to start network proxy: {error:#}"))
             })?;
-            spawn_proxy_event_logger(events_rx);
             self.proxy = Some(handle);
         }
 
@@ -820,11 +984,16 @@ impl Sandbox {
         let mut env = command.env.clone();
         let proxy = self.ensure_restricted_proxy(&mut env)?;
 
-        let network = match &self.network {
-            NetSetup::Unrestricted => macos_seatbelt::NetworkAccess::All,
-            NetSetup::Blocked => macos_seatbelt::NetworkAccess::None,
-            NetSetup::Restricted { .. } => macos_seatbelt::NetworkAccess::LocalhostPort(
-                proxy.as_ref().map(|(port, _)| *port).unwrap_or(0),
+        let (network, allowed_tcp_ports): (_, &[u16]) = match &self.network {
+            NetSetup::Unrestricted => (macos_seatbelt::NetworkAccess::All, &[]),
+            NetSetup::Blocked => (macos_seatbelt::NetworkAccess::None, &[]),
+            NetSetup::Restricted {
+                allowed_tcp_ports, ..
+            } => (
+                macos_seatbelt::NetworkAccess::LocalhostPort(
+                    proxy.as_ref().map(|(port, _)| *port).unwrap_or(0),
+                ),
+                allowed_tcp_ports,
             ),
         };
 
@@ -847,16 +1016,36 @@ impl Sandbox {
             .iter()
             .map(HostFilesystemLocation::macos_canonical_path)
             .collect();
+        let unreadable: Vec<&Path> = self
+            .fs
+            .unreadable_paths
+            .iter()
+            .map(HostFilesystemLocation::macos_canonical_path)
+            .collect();
+        let readable: Vec<&Path> = self
+            .fs
+            .readable_paths
+            .iter()
+            .map(HostFilesystemLocation::macos_canonical_path)
+            .collect();
+        let allowed_unix_socket_paths: Vec<&Path> = self
+            .allowed_unix_socket_paths
+            .iter()
+            .map(PathBuf::as_path)
+            .collect();
 
-        // SSH-agent socket handling (commit signing) is deferred, so no unix
-        // sockets are allowed for now.
         let (program, args, config) = macos_seatbelt::wrap_invocation(
             &command.program,
             &command.args,
-            &writable,
-            &protected,
-            &[],
-            permissions,
+            macos_seatbelt::SeatbeltConfigInputs {
+                writable_directories: &writable,
+                protected_paths: &protected,
+                unreadable_paths: &unreadable,
+                readable_paths: &readable,
+                allowed_unix_socket_paths: &allowed_unix_socket_paths,
+                allowed_tcp_ports,
+                permissions,
+            },
         )
         .map_err(map_anyhow_error)?;
         // Keep the temporary Seatbelt policy file alive for the command's life.
@@ -964,8 +1153,85 @@ pub fn run_sandbox_launcher_if_invoked() {
 // with no writable binds rather than re-deriving paths from the opaque
 // locations.
 
+/// Canonicalizes once, at construction, for the same reason
+/// [`HostFilesystemLocation`] captures its identity up front: resolving a socket
+/// path again at wrap time would let a symlink planted in between redirect the
+/// grant.
+#[cfg(target_os = "macos")]
+fn resolve_allowed_unix_sockets(socket_paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut allowed_unix_socket_paths = Vec::new();
+    for socket_path in socket_paths {
+        let canonical_socket_path = canonicalize_allowing_missing_leaf(&socket_path);
+        if !allowed_unix_socket_paths.contains(&socket_path) {
+            allowed_unix_socket_paths.push(socket_path);
+        }
+        if !allowed_unix_socket_paths.contains(&canonical_socket_path) {
+            allowed_unix_socket_paths.push(canonical_socket_path);
+        }
+    }
+    allowed_unix_socket_paths
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn reject_unsupported_policy_features(policy: &SandboxPolicy) -> Result<(), SandboxError> {
+    let unsupported_features = unsupported_policy_features(policy);
+    if unsupported_features.is_empty() {
+        return Ok(());
+    }
+    let platform = if cfg!(target_os = "windows") {
+        "Windows (WSL)"
+    } else {
+        "Linux"
+    };
+    Err(SandboxError::UnsupportedPolicy(format!(
+        "the {platform} sandbox does not support {}",
+        unsupported_features.join(", ")
+    )))
+}
+
+/// The policy features that only the macOS backend enforces. The Linux and WSL
+/// backends must refuse these rather than ignore them, because running a command
+/// with less isolation than the policy describes is a sandbox escape.
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+fn unsupported_policy_features(policy: &SandboxPolicy) -> Vec<&'static str> {
+    let (unreadable_paths, readable_paths) = match &policy.fs {
+        SandboxFsPolicy::Unrestricted {
+            unreadable_paths,
+            readable_paths,
+            ..
+        }
+        | SandboxFsPolicy::Restricted {
+            unreadable_paths,
+            readable_paths,
+            ..
+        } => (unreadable_paths, readable_paths),
+    };
+    let allows_tcp_ports = matches!(
+        &policy.network,
+        SandboxNetPolicy::Restricted { allowed_tcp_ports, .. } if !allowed_tcp_ports.is_empty()
+    );
+
+    let mut features = Vec::new();
+    if !unreadable_paths.is_empty() {
+        features.push("unreadable paths");
+    }
+    if !readable_paths.is_empty() {
+        features.push("readable paths");
+    }
+    if allows_tcp_ports {
+        features.push("raw TCP port grants");
+    }
+    if !policy.allowed_unix_sockets.is_empty() {
+        features.push("Unix socket grants");
+    }
+    features
+}
+
 #[cfg(not(target_os = "windows"))]
-fn resolve_restricted_network(allowed_domains: &[String]) -> Result<NetSetup, SandboxError> {
+fn resolve_restricted_network(
+    allowed_domains: &[String],
+    allowed_tcp_ports: Vec<u16>,
+) -> Result<NetSetup, SandboxError> {
     let mut patterns = Vec::with_capacity(allowed_domains.len());
     for domain in allowed_domains {
         let pattern = HostPattern::parse(domain).map_err(|error| {
@@ -973,13 +1239,25 @@ fn resolve_restricted_network(allowed_domains: &[String]) -> Result<NetSetup, Sa
         })?;
         patterns.push(pattern);
     }
+    if allowed_tcp_ports.contains(&0) {
+        return Err(SandboxError::InvalidRequest(
+            "allowed TCP port 0 is not a valid destination port".to_string(),
+        ));
+    }
+    #[cfg(not(target_os = "macos"))]
+    drop(allowed_tcp_ports);
     Ok(NetSetup::Restricted {
         allowlist: Allowlist::from_patterns(patterns),
+        #[cfg(target_os = "macos")]
+        allowed_tcp_ports: union_in_order(Vec::new(), allowed_tcp_ports),
     })
 }
 
 #[cfg(target_os = "windows")]
-fn resolve_restricted_network(_allowed_domains: &[String]) -> Result<NetSetup, SandboxError> {
+fn resolve_restricted_network(
+    _allowed_domains: &[String],
+    _allowed_tcp_ports: Vec<u16>,
+) -> Result<NetSetup, SandboxError> {
     Err(unsupported_restricted_network_on_windows())
 }
 
@@ -1153,8 +1431,11 @@ mod tests {
                 fs: SandboxFsPolicy::Restricted {
                     writable_paths: vec![writable_path],
                     protected_paths: vec![protected_git.clone()],
+                    unreadable_paths: Vec::new(),
+                    readable_paths: Vec::new(),
                 },
                 network: SandboxNetPolicy::Blocked,
+                allowed_unix_sockets: Vec::new(),
             });
 
             assert!(matches!(result, Err(SandboxError::InvalidRequest(_))));
@@ -1185,8 +1466,11 @@ mod tests {
             fs: SandboxFsPolicy::Restricted {
                 writable_paths: vec![writable_displayed_inside_git],
                 protected_paths: vec![protected_git],
+                unreadable_paths: Vec::new(),
+                readable_paths: Vec::new(),
             },
             network: SandboxNetPolicy::Blocked,
+            allowed_unix_sockets: Vec::new(),
         })
         .expect("captured writable fd is outside protected metadata");
     }
@@ -1194,77 +1478,264 @@ mod tests {
     #[test]
     fn fs_merge_unrestricted_dominates_else_unions_paths() {
         // Writable paths are captured as real `HostFilesystemLocation`s (keyed on
-        // the inode), so the union/dedup test needs three distinct real dirs.
+        // the inode), so the union/dedup test needs distinct real dirs.
         let dir_a = tempfile::tempdir().expect("create temp dir a");
         let dir_b = tempfile::tempdir().expect("create temp dir b");
         let dir_c = tempfile::tempdir().expect("create temp dir c");
         let dir_d = tempfile::tempdir().expect("create temp dir d");
+        let dir_e = tempfile::tempdir().expect("create temp dir e");
+        let window_e = dir_e.path().join("window");
+        std::fs::create_dir(&window_e).expect("create window in e");
         let location = |dir: &tempfile::TempDir| {
             HostFilesystemLocation::capture(dir.path()).expect("capture temp dir")
         };
+        let window_location =
+            || HostFilesystemLocation::capture(&window_e).expect("capture window");
 
         let a = SandboxFsPolicy::Restricted {
             writable_paths: vec![location(&dir_a), location(&dir_b)],
             protected_paths: vec![location(&dir_c)],
+            unreadable_paths: vec![location(&dir_e)],
+            readable_paths: vec![window_location()],
         };
         let b = SandboxFsPolicy::Restricted {
             writable_paths: vec![location(&dir_b), location(&dir_c)],
             protected_paths: vec![location(&dir_c), location(&dir_d)],
+            unreadable_paths: vec![location(&dir_e), location(&dir_d)],
+            readable_paths: vec![window_location(), location(&dir_d)],
         };
         assert_eq!(
             a.clone().merge(b),
             SandboxFsPolicy::Restricted {
                 writable_paths: vec![location(&dir_a), location(&dir_b), location(&dir_c)],
                 protected_paths: vec![location(&dir_c), location(&dir_d)],
+                unreadable_paths: vec![location(&dir_e), location(&dir_d)],
+                readable_paths: vec![window_location(), location(&dir_d)],
             }
         );
         assert_eq!(
             a.merge(SandboxFsPolicy::Unrestricted {
                 protected_paths: vec![location(&dir_a)],
+                unreadable_paths: Vec::new(),
+                readable_paths: Vec::new(),
             }),
             SandboxFsPolicy::Unrestricted {
                 protected_paths: vec![location(&dir_c), location(&dir_a)],
+                unreadable_paths: vec![location(&dir_e)],
+                readable_paths: vec![window_location()],
             }
         );
         assert_eq!(
             SandboxFsPolicy::Unrestricted {
                 protected_paths: vec![location(&dir_d)],
+                unreadable_paths: Vec::new(),
+                readable_paths: Vec::new(),
             }
             .merge(SandboxFsPolicy::Restricted {
                 writable_paths: vec![location(&dir_a)],
                 protected_paths: vec![location(&dir_c)],
+                unreadable_paths: vec![location(&dir_e)],
+                readable_paths: vec![window_location()],
             }),
             SandboxFsPolicy::Unrestricted {
                 protected_paths: vec![location(&dir_d), location(&dir_c)],
+                unreadable_paths: vec![location(&dir_e)],
+                readable_paths: vec![window_location()],
             }
         );
     }
 
     #[test]
     fn net_merge_unrestricted_dominates_blocked_is_identity_else_unions() {
-        let hosts = |list: &[&str]| SandboxNetPolicy::Restricted {
-            allowed_domains: list.iter().map(|s| s.to_string()).collect(),
+        let restricted = |domains: &[&str], ports: &[u16]| SandboxNetPolicy::Restricted {
+            allowed_domains: domains.iter().map(|host| host.to_string()).collect(),
+            allowed_tcp_ports: ports.to_vec(),
         };
         assert_eq!(
-            hosts(&["a.com", "b.com"]).merge(hosts(&["b.com", "c.com"])),
-            hosts(&["a.com", "b.com", "c.com"])
+            restricted(&["a.com", "b.com"], &[22])
+                .merge(restricted(&["b.com", "c.com"], &[22, 5432])),
+            restricted(&["a.com", "b.com", "c.com"], &[22, 5432])
         );
         assert_eq!(
-            SandboxNetPolicy::Blocked.merge(hosts(&["a.com"])),
-            hosts(&["a.com"])
+            SandboxNetPolicy::Blocked.merge(restricted(&["a.com"], &[22])),
+            restricted(&["a.com"], &[22])
         );
         assert_eq!(
-            hosts(&["a.com"]).merge(SandboxNetPolicy::Blocked),
-            hosts(&["a.com"])
+            restricted(&["a.com"], &[22]).merge(SandboxNetPolicy::Blocked),
+            restricted(&["a.com"], &[22])
         );
         assert_eq!(
             SandboxNetPolicy::Blocked.merge(SandboxNetPolicy::Blocked),
             SandboxNetPolicy::Blocked
         );
         assert_eq!(
-            hosts(&["a.com"]).merge(SandboxNetPolicy::Unrestricted),
+            restricted(&["a.com"], &[22]).merge(SandboxNetPolicy::Unrestricted),
             SandboxNetPolicy::Unrestricted
         );
+    }
+
+    #[test]
+    fn policy_merge_unions_unix_sockets_in_order() {
+        let policy = |sockets: &[&str]| SandboxPolicy {
+            fs: SandboxFsPolicy::Unrestricted {
+                protected_paths: Vec::new(),
+                unreadable_paths: Vec::new(),
+                readable_paths: Vec::new(),
+            },
+            network: SandboxNetPolicy::Blocked,
+            allowed_unix_sockets: sockets.iter().map(PathBuf::from).collect(),
+        };
+        assert_eq!(
+            policy(&["/tmp/app.sock"]).merge(policy(&["/tmp/ssh.sock", "/tmp/app.sock"])),
+            policy(&["/tmp/app.sock", "/tmp/ssh.sock"])
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn writable_paths_inside_unreadable_paths_need_a_readable_window() {
+        let data_dir = tempfile::tempdir().expect("create data dir");
+        let checkout_dir = data_dir.path().join("worktrees/checkout");
+        let other_dir = data_dir.path().join("worktrees/other");
+        std::fs::create_dir_all(&checkout_dir).expect("create checkout dir");
+        std::fs::create_dir_all(&other_dir).expect("create other dir");
+        let location = |path: &Path| HostFilesystemLocation::capture(path).expect("capture path");
+        let restricted = |writable_path: &Path, readable_path: &Path| SandboxPolicy {
+            fs: SandboxFsPolicy::Restricted {
+                writable_paths: vec![location(writable_path)],
+                protected_paths: Vec::new(),
+                unreadable_paths: vec![location(data_dir.path())],
+                readable_paths: vec![location(readable_path)],
+            },
+            network: SandboxNetPolicy::Blocked,
+            allowed_unix_sockets: Vec::new(),
+        };
+
+        assert!(Sandbox::new(restricted(&checkout_dir, &checkout_dir)).is_ok());
+        assert!(matches!(
+            Sandbox::new(restricted(&other_dir, &checkout_dir)),
+            Err(SandboxError::InvalidRequest(_))
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn restricted_network_rejects_port_zero() {
+        let policy = |ports: &[u16]| SandboxPolicy {
+            fs: SandboxFsPolicy::Unrestricted {
+                protected_paths: Vec::new(),
+                unreadable_paths: Vec::new(),
+                readable_paths: Vec::new(),
+            },
+            network: SandboxNetPolicy::Restricted {
+                allowed_domains: Vec::new(),
+                allowed_tcp_ports: ports.to_vec(),
+            },
+            allowed_unix_sockets: Vec::new(),
+        };
+        assert!(Sandbox::new(policy(&[22])).is_ok());
+        assert!(matches!(
+            Sandbox::new(policy(&[22, 0])),
+            Err(SandboxError::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn unsupported_policy_features_lists_each_feature_a_policy_uses() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let location = || HostFilesystemLocation::capture(dir.path()).expect("capture dir");
+        let unrestricted_fs = || SandboxFsPolicy::Unrestricted {
+            protected_paths: Vec::new(),
+            unreadable_paths: Vec::new(),
+            readable_paths: Vec::new(),
+        };
+
+        assert!(
+            unsupported_policy_features(&SandboxPolicy {
+                fs: SandboxFsPolicy::Restricted {
+                    writable_paths: vec![location()],
+                    protected_paths: Vec::new(),
+                    unreadable_paths: Vec::new(),
+                    readable_paths: Vec::new(),
+                },
+                network: SandboxNetPolicy::Restricted {
+                    allowed_domains: vec!["example.com".to_string()],
+                    allowed_tcp_ports: Vec::new(),
+                },
+                allowed_unix_sockets: Vec::new(),
+            })
+            .is_empty()
+        );
+
+        assert_eq!(
+            unsupported_policy_features(&SandboxPolicy {
+                fs: SandboxFsPolicy::Restricted {
+                    writable_paths: Vec::new(),
+                    protected_paths: Vec::new(),
+                    unreadable_paths: vec![location()],
+                    readable_paths: vec![location()],
+                },
+                network: SandboxNetPolicy::Blocked,
+                allowed_unix_sockets: Vec::new(),
+            }),
+            ["unreadable paths", "readable paths"]
+        );
+        assert_eq!(
+            unsupported_policy_features(&SandboxPolicy {
+                fs: SandboxFsPolicy::Unrestricted {
+                    protected_paths: Vec::new(),
+                    unreadable_paths: vec![location()],
+                    readable_paths: Vec::new(),
+                },
+                network: SandboxNetPolicy::Blocked,
+                allowed_unix_sockets: Vec::new(),
+            }),
+            ["unreadable paths"]
+        );
+        assert_eq!(
+            unsupported_policy_features(&SandboxPolicy {
+                fs: unrestricted_fs(),
+                network: SandboxNetPolicy::Restricted {
+                    allowed_domains: Vec::new(),
+                    allowed_tcp_ports: vec![22],
+                },
+                allowed_unix_sockets: Vec::new(),
+            }),
+            ["raw TCP port grants"]
+        );
+        assert_eq!(
+            unsupported_policy_features(&SandboxPolicy {
+                fs: unrestricted_fs(),
+                network: SandboxNetPolicy::Blocked,
+                allowed_unix_sockets: vec![PathBuf::from("/tmp/app.sock")],
+            }),
+            ["Unix socket grants"]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_rejects_policies_using_macos_only_features() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let policy = SandboxPolicy {
+            fs: SandboxFsPolicy::Unrestricted {
+                protected_paths: Vec::new(),
+                unreadable_paths: vec![
+                    HostFilesystemLocation::capture(dir.path()).expect("capture dir"),
+                ],
+                readable_paths: Vec::new(),
+            },
+            network: SandboxNetPolicy::Blocked,
+            allowed_unix_sockets: Vec::new(),
+        };
+        assert!(matches!(
+            Sandbox::can_create(&policy),
+            Err(SandboxError::UnsupportedPolicy(_))
+        ));
+        assert!(matches!(
+            Sandbox::new(policy),
+            Err(SandboxError::UnsupportedPolicy(_))
+        ));
     }
 
     #[test]
@@ -1310,6 +1781,419 @@ mod tests {
             assert_eq!(env.get(key).map(String::as_str), Some(""));
         }
         assert_eq!(env.get("PATH").map(String::as_str), Some("/usr/bin"));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests run sandbox-exec synchronously to observe what the generated profile permits"
+)]
+mod macos_policy_tests {
+    use super::*;
+    use std::io::ErrorKind;
+    use std::net::TcpListener;
+    use std::os::unix::net::UnixListener;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    use futures::StreamExt as _;
+
+    #[test]
+    fn restricted_fs_confines_writes_and_hides_unreadable_paths() {
+        let project_dir = tempfile::tempdir().expect("create project dir");
+        // A quote and a backslash in the name exercise profile-literal escaping:
+        // an unescaped path would make `sandbox-exec` reject the profile outright.
+        let scratch_dir = tempfile::Builder::new()
+            .prefix("q\"uo\\te-")
+            .tempdir()
+            .expect("create scratch dir");
+        let protected_file = project_dir.path().join(".gitignore");
+        std::fs::write(&protected_file, "target\n").expect("write protected file");
+        let secrets_dir = project_dir.path().join("secrets");
+        std::fs::create_dir(&secrets_dir).expect("create secrets dir");
+        let secret_file = secrets_dir.join("id_ed25519");
+        std::fs::write(&secret_file, "private\n").expect("write secret");
+        let kept_dir = secrets_dir.join("kept");
+        std::fs::create_dir(&kept_dir).expect("create kept dir");
+        let kept_file = kept_dir.join("notes");
+        std::fs::write(&kept_file, "kept\n").expect("write kept file");
+        let readme_file = project_dir.path().join("README");
+        std::fs::write(&readme_file, "public\n").expect("write readme");
+
+        let mut sandbox = Sandbox::new(policy(
+            restricted_fs(
+                &[project_dir.path(), scratch_dir.path(), &kept_dir],
+                &[&protected_file],
+                &[&secrets_dir],
+                &[&kept_dir],
+            ),
+            SandboxNetPolicy::Blocked,
+        ))
+        .expect("create sandbox");
+
+        let scratch_written = scratch_dir.path().join("written");
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo hello > '{}'", scratch_written.display()),
+        );
+        assert!(output.status.success(), "{}", failure(&output));
+
+        let output = run_shell(&mut sandbox, &format!("cat '{}'", protected_file.display()));
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "target\n");
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo changed > '{}'", protected_file.display()),
+        );
+        assert!(!output.status.success(), "write to protected file");
+        assert_eq!(
+            std::fs::read_to_string(&protected_file).expect("read protected file"),
+            "target\n"
+        );
+
+        let output = run_shell(&mut sandbox, &format!("cat '{}'", readme_file.display()));
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "public\n");
+        let output = run_shell(&mut sandbox, &format!("cat '{}'", secret_file.display()));
+        assert!(!output.status.success(), "read under unreadable path");
+        assert!(output.stdout.is_empty(), "no secret bytes may leak");
+        let output = run_shell(&mut sandbox, &format!("ls '{}'", secrets_dir.display()));
+        assert!(!output.status.success(), "list unreadable directory");
+
+        // A kept path inside the unreadable directory is readable, and writable
+        // because it is also a writable path; its siblings stay hidden.
+        let output = run_shell(&mut sandbox, &format!("cat '{}'", kept_file.display()));
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "kept\n");
+        let kept_written = kept_dir.join("written");
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo hello > '{}'", kept_written.display()),
+        );
+        assert!(output.status.success(), "{}", failure(&output));
+        assert_eq!(
+            std::fs::read_to_string(&kept_written).expect("read kept written file"),
+            "hello\n"
+        );
+        let hidden_written = secrets_dir.join("written");
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo hello > '{}'", hidden_written.display()),
+        );
+        assert!(!output.status.success(), "write under unreadable path");
+        assert!(!hidden_written.exists());
+    }
+
+    #[test]
+    fn unrestricted_fs_writes_stop_at_unreadable_paths_but_reach_windows() {
+        let scratch_dir = tempfile::Builder::new()
+            .prefix("zed-sandbox-write-test-")
+            .tempdir_in("/tmp")
+            .expect("create scratch dir in /tmp");
+        let repo_dir = tempfile::tempdir().expect("create repo dir");
+        let protected_file = repo_dir.path().join(".gitignore");
+        std::fs::write(&protected_file, "target\n").expect("write protected file");
+        let secrets_dir = repo_dir.path().join("secrets");
+        let kept_dir = secrets_dir.join("kept");
+        std::fs::create_dir_all(&kept_dir).expect("create kept dir");
+
+        let mut sandbox = Sandbox::new(policy(
+            SandboxFsPolicy::Unrestricted {
+                protected_paths: vec![location(&protected_file)],
+                unreadable_paths: vec![location(&secrets_dir)],
+                readable_paths: vec![location(&kept_dir)],
+            },
+            SandboxNetPolicy::Blocked,
+        ))
+        .expect("create sandbox");
+
+        let written = scratch_dir.path().join("written");
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo hello > '{}'", written.display()),
+        );
+        assert!(output.status.success(), "{}", failure(&output));
+
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo changed > '{}'", protected_file.display()),
+        );
+        assert!(!output.status.success(), "write to protected file");
+
+        let hidden_written = secrets_dir.join("written");
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo hello > '{}'", hidden_written.display()),
+        );
+        assert!(!output.status.success(), "write under unreadable path");
+        assert!(!hidden_written.exists());
+
+        let kept_written = kept_dir.join("written");
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo hello > '{}'", kept_written.display()),
+        );
+        assert!(output.status.success(), "{}", failure(&output));
+        assert_eq!(
+            std::fs::read_to_string(&kept_written).expect("read kept written file"),
+            "hello\n"
+        );
+    }
+
+    #[test]
+    fn protected_paths_win_over_a_readable_window() {
+        let project_dir = tempfile::tempdir().expect("create project dir");
+        let secrets_dir = project_dir.path().join("secrets");
+        let kept_dir = secrets_dir.join("kept");
+        std::fs::create_dir_all(&kept_dir).expect("create kept dir");
+        let protected_file = kept_dir.join("locked");
+        std::fs::write(&protected_file, "locked\n").expect("write protected file");
+
+        let mut sandbox = Sandbox::new(policy(
+            restricted_fs(
+                &[&kept_dir],
+                &[&protected_file],
+                &[&secrets_dir],
+                &[&kept_dir],
+            ),
+            SandboxNetPolicy::Blocked,
+        ))
+        .expect("create sandbox");
+
+        let output = run_shell(&mut sandbox, &format!("cat '{}'", protected_file.display()));
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "locked\n");
+        let output = run_shell(
+            &mut sandbox,
+            &format!("echo changed > '{}'", protected_file.display()),
+        );
+        assert!(!output.status.success(), "write to protected file");
+        assert_eq!(
+            std::fs::read_to_string(&protected_file).expect("read protected file"),
+            "locked\n"
+        );
+    }
+
+    #[test]
+    fn blocked_network_allows_only_allowlisted_unix_sockets() {
+        // Bind under `/tmp` rather than the default temp dir: macOS temp paths
+        // (`/var/folders/...`) overflow the `sun_path` limit for Unix sockets.
+        // `/tmp` is also a symlink, so the requested path differs from the one
+        // Seatbelt matches against.
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-sock-")
+            .tempdir_in("/tmp")
+            .expect("create temp dir");
+        let allowed_socket = temp_dir.path().join("allowed.sock");
+        let other_socket = temp_dir.path().join("other.sock");
+        let allowed_listener = UnixListener::bind(&allowed_socket).expect("bind allowed socket");
+        let other_listener = UnixListener::bind(&other_socket).expect("bind other socket");
+        other_listener
+            .set_nonblocking(true)
+            .expect("other listener should switch to non-blocking");
+
+        let mut sandbox = Sandbox::new(SandboxPolicy {
+            fs: restricted_fs(&[], &[], &[], &[]),
+            network: SandboxNetPolicy::Blocked,
+            allowed_unix_sockets: vec![allowed_socket.clone()],
+        })
+        .expect("create sandbox");
+
+        let accepted = accept_one_within(allowed_listener, Duration::from_secs(10));
+        let output = run_netcat(&mut sandbox, &["-U", &allowed_socket.display().to_string()]);
+        assert!(
+            accepted.join().expect("accept thread"),
+            "allowlisted socket was not reached: {}",
+            failure(&output)
+        );
+
+        let output = run_netcat(&mut sandbox, &["-U", &other_socket.display().to_string()]);
+        assert!(
+            !output.status.success(),
+            "connected to a socket outside the allowlist"
+        );
+        assert!(matches!(
+            other_listener.accept(),
+            Err(error) if error.kind() == ErrorKind::WouldBlock
+        ));
+    }
+
+    #[test]
+    fn restricted_network_allows_only_the_proxy_and_granted_ports() {
+        // The kernel completes `nc -z`'s connect from the listen backlog, so the
+        // listeners never need to accept.
+        let granted_listener = TcpListener::bind("127.0.0.1:0").expect("bind granted listener");
+        let other_listener = TcpListener::bind("127.0.0.1:0").expect("bind other listener");
+        let granted_port = granted_listener
+            .local_addr()
+            .expect("granted listener address")
+            .port();
+        let other_port = other_listener
+            .local_addr()
+            .expect("other listener address")
+            .port();
+
+        let (events_sender, mut events) = futures::channel::mpsc::unbounded();
+        let mut sandbox = Sandbox::with_network_events(
+            policy(
+                restricted_fs(&[], &[], &[], &[]),
+                SandboxNetPolicy::Restricted {
+                    allowed_domains: vec!["example.com".to_string()],
+                    allowed_tcp_ports: vec![granted_port],
+                },
+            ),
+            events_sender,
+        )
+        .expect("create sandbox");
+
+        let wrapped = wrap(&mut sandbox, &CommandAndArgs::default());
+        let proxy_port = match futures::executor::block_on(events.next()) {
+            Some(ProxyEvent::Ready { port }) => port,
+            other => panic!("expected the proxy's Ready event, got {other:?}"),
+        };
+
+        // A raw TCP grant means the command resolves hostnames itself, which on
+        // macOS goes through the mDNSResponder socket; that can't be observed
+        // offline, so check the rule.
+        assert!(profile_rules(&wrapped).contains("(literal \"/private/var/run/mDNSResponder\")"));
+
+        assert!(tcp_connects(&mut sandbox, proxy_port), "proxy port");
+        assert!(tcp_connects(&mut sandbox, granted_port), "granted port");
+        assert!(
+            !tcp_connects(&mut sandbox, other_port),
+            "reached a port that was not granted"
+        );
+
+        sandbox.drop_on_current_thread();
+    }
+
+    #[test]
+    fn restricted_network_without_port_grants_has_no_dns_socket_rule() {
+        let mut sandbox = Sandbox::new(policy(
+            restricted_fs(&[], &[], &[], &[]),
+            SandboxNetPolicy::Restricted {
+                allowed_domains: Vec::new(),
+                allowed_tcp_ports: Vec::new(),
+            },
+        ))
+        .expect("create sandbox");
+
+        let wrapped = wrap(&mut sandbox, &CommandAndArgs::default());
+        let rules = profile_rules(&wrapped);
+        assert!(wrapped.env.contains_key("HTTPS_PROXY"));
+        assert!(rules.contains("(allow network-bind (local ip \"localhost:*\"))"));
+        assert!(!rules.contains("mDNSResponder"));
+
+        sandbox.drop_on_current_thread();
+    }
+
+    fn location(path: &Path) -> HostFilesystemLocation {
+        HostFilesystemLocation::capture(path).expect("capture location")
+    }
+
+    fn restricted_fs(
+        writable_paths: &[&Path],
+        protected_paths: &[&Path],
+        unreadable_paths: &[&Path],
+        readable_paths: &[&Path],
+    ) -> SandboxFsPolicy {
+        SandboxFsPolicy::Restricted {
+            writable_paths: writable_paths.iter().map(|path| location(path)).collect(),
+            protected_paths: protected_paths.iter().map(|path| location(path)).collect(),
+            unreadable_paths: unreadable_paths.iter().map(|path| location(path)).collect(),
+            readable_paths: readable_paths.iter().map(|path| location(path)).collect(),
+        }
+    }
+
+    fn policy(fs: SandboxFsPolicy, network: SandboxNetPolicy) -> SandboxPolicy {
+        SandboxPolicy {
+            fs,
+            network,
+            allowed_unix_sockets: Vec::new(),
+        }
+    }
+
+    fn wrap(sandbox: &mut Sandbox, command: &CommandAndArgs) -> WrappedCommand {
+        futures::executor::block_on(sandbox.wrap(command)).expect("wrap command")
+    }
+
+    /// The rules of the profile a wrapped command runs under, with SBPL comment
+    /// lines stripped so assertions can't match on documentation.
+    fn profile_rules(wrapped: &WrappedCommand) -> String {
+        let profile_path = wrapped.args.get(1).expect("sandbox-exec profile argument");
+        std::fs::read_to_string(profile_path)
+            .expect("read generated profile")
+            .lines()
+            .filter(|line| !line.trim_start().starts_with(';'))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn run_sandboxed(sandbox: &mut Sandbox, program: &str, args: &[&str]) -> Output {
+        let wrapped = wrap(
+            sandbox,
+            &CommandAndArgs {
+                program: program.to_string(),
+                args: args.iter().map(|argument| argument.to_string()).collect(),
+                env: HashMap::new(),
+                cwd: None,
+            },
+        );
+        Command::new(&wrapped.program)
+            .args(&wrapped.args)
+            .envs(&wrapped.env)
+            .stdin(Stdio::null())
+            .output()
+            .expect("failed to execute sandbox-exec")
+    }
+
+    fn run_shell(sandbox: &mut Sandbox, script: &str) -> Output {
+        run_sandboxed(sandbox, "/bin/sh", &["-c", script])
+    }
+
+    fn run_netcat(sandbox: &mut Sandbox, args: &[&str]) -> Output {
+        let mut all_args = vec!["-w", "5"];
+        all_args.extend_from_slice(args);
+        run_sandboxed(sandbox, "/usr/bin/nc", &all_args)
+    }
+
+    fn tcp_connects(sandbox: &mut Sandbox, port: u16) -> bool {
+        run_netcat(sandbox, &["-z", "127.0.0.1", &port.to_string()])
+            .status
+            .success()
+    }
+
+    /// Accept (and immediately drop) one connection on a background thread,
+    /// giving up after `timeout` so a wrongly denied connection fails the test
+    /// instead of hanging it.
+    fn accept_one_within(
+        listener: UnixListener,
+        timeout: Duration,
+    ) -> std::thread::JoinHandle<bool> {
+        listener
+            .set_nonblocking(true)
+            .expect("listener should switch to non-blocking");
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + timeout;
+            loop {
+                match listener.accept() {
+                    Ok(_) => return true,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        if Instant::now() >= deadline {
+                            return false;
+                        }
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(_) => return false,
+                }
+            }
+        })
+    }
+
+    fn failure(output: &Output) -> String {
+        format!(
+            "exit={:?} stdout={} stderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
     }
 }
 

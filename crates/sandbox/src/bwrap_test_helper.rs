@@ -196,6 +196,8 @@ mod imp {
         let fs = match check.fs {
             FsMode::Unrestricted => SandboxFsPolicy::Unrestricted {
                 protected_paths: capture_protected_paths(&check.protected_paths),
+                unreadable_paths: Vec::new(),
+                readable_paths: Vec::new(),
             },
             FsMode::Restricted => {
                 let mut writable_paths = Vec::new();
@@ -213,6 +215,8 @@ mod imp {
                 SandboxFsPolicy::Restricted {
                     writable_paths,
                     protected_paths,
+                    unreadable_paths: Vec::new(),
+                    readable_paths: Vec::new(),
                 }
             }
         };
@@ -221,9 +225,14 @@ mod imp {
             NetMode::Blocked => SandboxNetPolicy::Blocked,
             NetMode::Restricted => SandboxNetPolicy::Restricted {
                 allowed_domains: check.allowed_domains.clone(),
+                allowed_tcp_ports: Vec::new(),
             },
         };
-        Ok(SandboxPolicy { fs, network })
+        Ok(SandboxPolicy {
+            fs,
+            network,
+            allowed_unix_sockets: Vec::new(),
+        })
     }
 
     /// Capture protected paths best-effort, mirroring production

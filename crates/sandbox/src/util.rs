@@ -62,34 +62,45 @@ pub(crate) fn lexically_normalized_absolute(path: &Path) -> Option<PathBuf> {
     Some(normalized)
 }
 
-/// Canonicalize `path`, resolving symlinks, even when its final component
-/// doesn't exist yet.
+/// Canonicalize `path`, resolving symlinks, even when its trailing components
+/// don't exist yet.
 ///
 /// `std::fs::canonicalize` fails if any component is missing, which would leave
-/// a not-yet-created path in a non-canonical form. The sandbox layers
-/// canonicalize the writable parent
-/// (the worktree root) but, with a plain `canonicalize`, fall back to the raw
-/// path for a missing child; the two then disagree when a component is a
-/// symlink (`/tmp` -> `/private/tmp` on macOS), and the protection rule for the
-/// child misses the real path the command ends up writing. Canonicalizing the
-/// existing parent and re-appending the final component keeps the child
-/// consistent with its parent. If neither the path nor its parent can be
-/// canonicalized, the path is returned unchanged.
+/// a not-yet-created path in a non-canonical form. Canonicalizing the nearest
+/// existing ancestor and re-appending the missing components keeps the child
+/// consistent with that ancestor (`/tmp` -> `/private/tmp` on macOS), so a rule
+/// for a path that is created later still names the real path the command ends
+/// up touching; Seatbelt matches rules against real paths, so a rule for the
+/// unresolved form would never apply. If no ancestor can be canonicalized, or a
+/// missing component is `.` or `..` (which only a real directory could
+/// resolve), the path is returned unchanged.
 //
 // Only the macOS Seatbelt layer uses this (Linux skips not-yet-existing
 // protected paths rather than emitting a rule for them), so it's gated to macOS
 // to avoid a dead-code warning elsewhere.
 #[cfg(target_os = "macos")]
 pub(crate) fn canonicalize_allowing_missing_leaf(path: &std::path::Path) -> std::path::PathBuf {
-    if let Ok(canonical) = path.canonicalize() {
-        return canonical;
+    use std::path::Component;
+
+    let mut missing_components = Vec::new();
+    let mut ancestor = path;
+    loop {
+        if let Ok(canonical_ancestor) = ancestor.canonicalize() {
+            return missing_components
+                .into_iter()
+                .rev()
+                .fold(canonical_ancestor, |resolved, component| {
+                    resolved.join(component)
+                });
+        }
+        match (ancestor.parent(), ancestor.components().next_back()) {
+            (Some(parent), Some(Component::Normal(component))) => {
+                missing_components.push(component);
+                ancestor = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
     }
-    if let (Some(parent), Some(file_name)) = (path.parent(), path.file_name())
-        && let Ok(canonical_parent) = parent.canonicalize()
-    {
-        return canonical_parent.join(file_name);
-    }
-    path.to_path_buf()
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -116,8 +127,30 @@ mod macos_tests {
             canonical_dir.join("not-created-yet"),
         );
 
-        // A path whose parent also doesn't exist is returned unchanged.
-        let deeper = missing.join(".git");
-        assert_eq!(canonicalize_allowing_missing_leaf(&deeper), deeper);
+        // Every missing component resolves through the nearest existing
+        // ancestor.
+        let deeper = missing.join("nested/.git");
+        assert_eq!(
+            canonicalize_allowing_missing_leaf(&deeper),
+            canonical_dir.join("not-created-yet/nested/.git"),
+        );
+
+        // A symlinked ancestor resolves to its target, including when components
+        // beneath it are missing.
+        let target = dir.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, dir.path().join("link")).unwrap();
+        assert_eq!(
+            canonicalize_allowing_missing_leaf(&dir.path().join("link/build/out")),
+            canonical_dir.join("target/build/out"),
+        );
+
+        // A `..` through a directory that doesn't exist can't be resolved, so the
+        // path is returned unchanged rather than guessed.
+        let unresolvable = dir.path().join("not-created-yet/../other");
+        assert_eq!(
+            canonicalize_allowing_missing_leaf(&unresolvable),
+            unresolvable
+        );
     }
 }

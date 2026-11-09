@@ -7359,7 +7359,9 @@ fn fs_grants_nothing(fs: &SandboxFsDisplay) -> bool {
 fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
     match network {
         SandboxNetPolicy::Blocked => true,
-        SandboxNetPolicy::Restricted { allowed_domains } => allowed_domains.is_empty(),
+        SandboxNetPolicy::Restricted {
+            allowed_domains, ..
+        } => allowed_domains.is_empty(),
         SandboxNetPolicy::Unrestricted => false,
     }
 }
@@ -7394,10 +7396,14 @@ fn sandbox_network_rows(network: &SandboxNetPolicy) -> Vec<SandboxRow> {
     match network {
         SandboxNetPolicy::Unrestricted => vec![SandboxRow::message("All domains (unrestricted)")],
         SandboxNetPolicy::Blocked => vec![SandboxRow::message("None")],
-        SandboxNetPolicy::Restricted { allowed_domains } if allowed_domains.is_empty() => {
+        SandboxNetPolicy::Restricted {
+            allowed_domains, ..
+        } if allowed_domains.is_empty() => {
             vec![SandboxRow::message("None")]
         }
-        SandboxNetPolicy::Restricted { allowed_domains } => allowed_domains
+        SandboxNetPolicy::Restricted {
+            allowed_domains, ..
+        } => allowed_domains
             .iter()
             .map(|domain| SandboxRow::domain(domain.clone()))
             .collect(),
