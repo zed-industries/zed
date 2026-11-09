@@ -19,7 +19,8 @@ use crate::{
     column_pixels,
     cursor_animation::{CursorViewport, LogicalCursorPosition, animated_corners_overlap_target},
     display_map::{
-        Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
+        Block, BlockContext, BlockRowsIdentity, BlockStyle, ChunkRendererId, DisplaySnapshot,
+        EditorMargins,
         HighlightKey, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
@@ -8514,8 +8515,12 @@ impl Element for EditorElement {
                         max_lines,
                     } => {
                         let editor_handle = cx.entity();
+                        let key = AutoHeightLayoutKey::new(
+                            editor, &self.style, min_lines, max_lines, window, cx,
+                        );
                         window.request_measured_layout(
                             Style::default(),
+                            key,
                             move |known_dimensions, available_space, window, cx| {
                                 editor_handle
                                     .update(cx, |editor, cx| {
@@ -11384,6 +11389,46 @@ fn calculate_wrap_width(
         SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
         SoftWrap::EditorWidth => Some(editor_width),
         SoftWrap::Bounded(column) => Some(editor_width.min(wrap_width_for(column))),
+    }
+}
+
+/// Everything an auto-height editor's measured size depends on besides the space it is
+/// given, so that it is only measured again when one of them changes.
+#[derive(PartialEq)]
+struct AutoHeightLayoutKey {
+    min_lines: usize,
+    max_lines: Option<usize>,
+    font: Font,
+    font_size: Pixels,
+    line_height: Pixels,
+    soft_wrap: SoftWrap,
+    gutter_dimensions: GutterDimensions,
+    rows: BlockRowsIdentity,
+}
+
+impl AutoHeightLayoutKey {
+    fn new(
+        editor: &mut Editor,
+        style: &EditorStyle,
+        min_lines: usize,
+        max_lines: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Self {
+        let font = style.text.font();
+        let font_id = window.text_system().resolve_font(&font);
+        let font_size = style.text.font_size.to_pixels(window.rem_size());
+        let snapshot = editor.snapshot(window, cx);
+        Self {
+            min_lines,
+            max_lines,
+            font,
+            font_size,
+            line_height: style.text.line_height_in_pixels(window.rem_size()),
+            soft_wrap: editor.soft_wrap_mode(cx),
+            gutter_dimensions: snapshot.gutter_dimensions(font_id, font_size, style, window, cx),
+            rows: snapshot.display_snapshot.rows_identity(),
+        }
     }
 }
 

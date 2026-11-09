@@ -9,7 +9,7 @@ use crate::{
 use collections::{FxHashMap, FxHashSet};
 use slotmap::{DefaultKey, KeyData, SecondaryMap, SlotMap};
 use smallvec::SmallVec;
-use std::{fmt::Debug, ops::Range, sync::LazyLock};
+use std::{any::Any, fmt::Debug, ops::Range, sync::LazyLock};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
@@ -23,13 +23,60 @@ type StackSafe<T> = stacksafe::StackSafe<T>;
 #[cfg(not(feature = "stacker"))]
 type StackSafe<T> = T;
 
-type MeasureFn =
-    dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>;
-type NodeMeasureFn = StackSafe<Box<MeasureFn>>;
+type NodeContext = StackSafe<Box<dyn Measure>>;
 
-enum NodeContext {
-    Measure(NodeMeasureFn),
-    Text(Box<crate::elements::TextMeasure>),
+/// Measures a layout node, and describes what its measurements depend on.
+pub(crate) trait Measure: Any {
+    /// `final_layout` is false when Taffy is only probing the node's size.
+    fn measure(
+        &mut self,
+        known_dimensions: Size<Option<Pixels>>,
+        available_space: Size<AvailableSpace>,
+        final_layout: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Size<Pixels>;
+
+    /// Called on the measure requested for a node with the one it was measured with
+    /// before. Returns whether both would measure the same sizes, in which case the
+    /// sizes Taffy cached for the node are kept, after taking over whatever `previous`
+    /// kept from measuring.
+    fn reuse(&mut self, previous: &mut dyn Measure) -> bool;
+}
+
+fn measure_mut(context: &mut NodeContext) -> &mut dyn Measure {
+    let measure: &mut Box<dyn Measure> = context;
+    &mut **measure
+}
+
+/// A measure function, and a key that is equal for measure functions measuring the same.
+struct KeyedMeasure<K, F> {
+    key: K,
+    measure: F,
+}
+
+impl<K, F> Measure for KeyedMeasure<K, F>
+where
+    K: PartialEq + 'static,
+    F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+        + 'static,
+{
+    fn measure(
+        &mut self,
+        known_dimensions: Size<Option<Pixels>>,
+        available_space: Size<AvailableSpace>,
+        _final_layout: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Size<Pixels> {
+        (self.measure)(known_dimensions, available_space, window, cx)
+    }
+
+    fn reuse(&mut self, previous: &mut dyn Measure) -> bool {
+        (previous as &mut dyn Any)
+            .downcast_ref::<Self>()
+            .is_some_and(|previous| previous.key == self.key)
+    }
 }
 
 pub struct TaffyLayoutEngine {
@@ -128,7 +175,7 @@ static LAYOUT_CACHE_ENABLED: LazyLock<bool> =
 
 #[cfg(test)]
 thread_local! {
-    static TEXT_MEASUREMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static MEASUREMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
@@ -206,43 +253,40 @@ impl TaffyLayoutEngine {
         self.request_node(scope, style, rem_size, scale_factor, children, None)
     }
 
-    pub fn request_measured_layout(
+    pub fn request_measured_layout<K, F>(
         &mut self,
         scope: u64,
         style: &Style,
         rem_size: Pixels,
         scale_factor: f32,
-        measure: impl FnMut(
-            Size<Option<Pixels>>,
-            Size<AvailableSpace>,
-            &mut Window,
-            &mut App,
-        ) -> Size<Pixels>
-        + 'static,
-    ) -> LayoutId {
-        let measure = Box::new(measure) as Box<MeasureFn>;
-        #[cfg(feature = "stacker")]
-        let measure = StackSafe::new(measure);
-        let context = NodeContext::Measure(measure);
-        self.request_node(scope, style, rem_size, scale_factor, &[], Some(context))
-    }
-
-    pub(crate) fn request_text_layout(
-        &mut self,
-        scope: u64,
-        rem_size: Pixels,
-        scale_factor: f32,
-        measure: crate::elements::TextMeasure,
-    ) -> LayoutId {
-        let context = NodeContext::Text(Box::new(measure));
-        self.request_node(
+        key: K,
+        measure: F,
+    ) -> LayoutId
+    where
+        K: PartialEq + 'static,
+        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+            + 'static,
+    {
+        self.request_measure(
             scope,
-            &Style::default(),
+            style,
             rem_size,
             scale_factor,
-            &[],
-            Some(context),
+            Box::new(KeyedMeasure { key, measure }),
         )
+    }
+
+    pub(crate) fn request_measure(
+        &mut self,
+        scope: u64,
+        style: &Style,
+        rem_size: Pixels,
+        scale_factor: f32,
+        measure: Box<dyn Measure>,
+    ) -> LayoutId {
+        #[cfg(feature = "stacker")]
+        let measure = StackSafe::new(measure);
+        self.request_node(scope, style, rem_size, scale_factor, &[], Some(measure))
     }
 
     fn request_node(
@@ -252,7 +296,7 @@ impl TaffyLayoutEngine {
         rem_size: Pixels,
         scale_factor: f32,
         children: &[LayoutId],
-        context: Option<NodeContext>,
+        mut context: Option<NodeContext>,
     ) -> LayoutId {
         // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
         let children = LayoutId::to_taffy_slice(children);
@@ -329,18 +373,17 @@ impl TaffyLayoutEngine {
         };
 
         cache.nodes[node_key(id)].frame = frame;
-        // Text that hasn't changed keeps the sizes Taffy cached for it.
-        if let Some(NodeContext::Text(measure)) = &context
-            && let Some(NodeContext::Text(previous)) = contexts.get_mut(node_key(id))
-            && measure.reuse_measurement(previous)
+        // A measure that measures the same as the node's previous one keeps the sizes
+        // Taffy cached from it; any other must invalidate them.
+        if let Some(measure) = &mut context
+            && let Some(previous) = contexts.get_mut(node_key(id))
+            && measure.reuse(measure_mut(previous))
         {
-            if let Some(NodeContext::Text(measure)) = context {
+            if let Some(measure) = context {
                 *previous = measure;
             }
             return id.into();
         }
-        // A measure function can depend on anything, so replacing it must invalidate the
-        // sizes Taffy cached from the previous one.
         let measure_changed = match context {
             Some(context) => {
                 contexts.insert(node_key(id), context);
@@ -536,24 +579,16 @@ impl TaffyLayoutEngine {
                                 untransform(available_space.height),
                             );
 
-                            let measured_size = match node_context {
-                                NodeContext::Measure(measure) => {
-                                    measure(known_dimensions, available_space, window, cx)
-                                }
-                                NodeContext::Text(measure) => {
-                                    #[cfg(test)]
-                                    TEXT_MEASUREMENTS.set(TEXT_MEASUREMENTS.get() + 1);
-                                    let final_layout =
-                                        input.run_mode == taffy::RunMode::PerformLayout;
-                                    measure.measure(
-                                        known_dimensions,
-                                        available_space,
-                                        final_layout,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            };
+                            #[cfg(test)]
+                            MEASUREMENTS.set(MEASUREMENTS.get() + 1);
+                            let final_layout = input.run_mode == taffy::RunMode::PerformLayout;
+                            let measured_size = node_context.measure(
+                                known_dimensions,
+                                available_space,
+                                final_layout,
+                                window,
+                                cx,
+                            );
                             snap_measured_size_to_device_pixels(measured_size, scale_factor).into()
                         },
                     )
@@ -1241,7 +1276,7 @@ mod tests {
             frame.set(index);
             let [cached, uncached] = windows.map(|window| {
                 cx.update_window(window, |_, window, cx| {
-                    let measured_before = TEXT_MEASUREMENTS.get();
+                    let measured_before = MEASUREMENTS.get();
                     window.refresh();
                     window.draw(cx).clear(cx);
                     let mut bounds = window
@@ -1251,7 +1286,7 @@ mod tests {
                         .map(|(selector, bounds)| (selector.clone(), *bounds))
                         .collect::<Vec<_>>();
                     bounds.sort_by(|a, b| a.0.cmp(&b.0));
-                    (bounds, TEXT_MEASUREMENTS.get() - measured_before)
+                    (bounds, MEASUREMENTS.get() - measured_before)
                 })
                 .expect("window should remain open")
             });
@@ -1269,7 +1304,8 @@ mod tests {
         Box::new(render)
     }
 
-    /// A leaf whose size comes from its measure function, which captures it.
+    /// A leaf whose size comes from its measure function, which captures it and is keyed
+    /// by it.
     struct MeasuredLeaf(Size<Pixels>);
 
     impl IntoElement for MeasuredLeaf {
@@ -1300,8 +1336,11 @@ mod tests {
             _: &mut App,
         ) -> (LayoutId, ()) {
             let measured = self.0;
-            let layout_id =
-                window.request_measured_layout(Style::default(), move |_, _, _, _| measured);
+            let layout_id = window.request_measured_layout(
+                Style::default(),
+                measured,
+                move |_, _, _, _| measured,
+            );
             (layout_id, ())
         }
 
@@ -1375,7 +1414,7 @@ mod tests {
     }
 
     #[crate::test]
-    fn measured_leaf_is_measured_again_when_its_style_is_unchanged(cx: &mut TestAppContext) {
+    fn measured_leaf_is_measured_again_only_when_its_key_changes(cx: &mut TestAppContext) {
         let measured = |width: f32, height: f32| {
             frame(move |_| {
                 div()
@@ -1388,14 +1427,25 @@ mod tests {
                     .into_any_element()
             })
         };
-        assert_frames_match_uncached(
+        let measurements = assert_frames_match_uncached(
             cx,
             vec![
+                measured(10., 10.),
                 measured(10., 10.),
                 measured(30., 20.),
                 measured(30., 20.),
                 measured(5., 40.),
             ],
+        );
+        // Opening the window draws the first frame, so drawing it again measures nothing.
+        let measured = measurements
+            .iter()
+            .map(|count| *count > 0)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            measured,
+            [false, false, true, false, true],
+            "measurements per frame: {measurements:?}"
         );
     }
 
@@ -1574,11 +1624,11 @@ mod tests {
         let child = parent.read_with(cx, |parent, _| parent.child.clone());
         let draw = |cx: &mut TestAppContext| {
             cx.update_window(window.into(), |_, window, cx| {
-                let measured_before = TEXT_MEASUREMENTS.get();
+                let measured_before = MEASUREMENTS.get();
                 window.draw(cx).clear(cx);
                 (
                     window.layout_node_count(),
-                    TEXT_MEASUREMENTS.get() - measured_before,
+                    MEASUREMENTS.get() - measured_before,
                 )
             })
             .expect("window should remain open")

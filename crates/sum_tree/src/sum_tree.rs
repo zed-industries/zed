@@ -223,6 +223,13 @@ where
 }
 
 impl<T: Item> SumTree<T> {
+    /// Whether both trees are the same tree, rather than equal trees. Trees are only
+    /// shared by cloning, so while both are alive, a tree that was changed is never the
+    /// same tree as before.
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
     pub fn new(cx: <T::Summary as Summary>::Context<'_>) -> Self {
         SumTree(Arc::new(Node::Leaf {
             summary: <T::Summary as Summary>::zero(cx),

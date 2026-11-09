@@ -84,6 +84,7 @@ pub use block_map::{
     BlockPoint, BlockProperties, BlockRows, BlockStyle, CompanionView, CompanionViewMut,
     CustomBlockId, EditorMargins, RenderBlock, StickyHeaderExcerpt,
 };
+pub(crate) use block_map::BlockRowsIdentity;
 pub use crease_map::*;
 pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
@@ -1521,6 +1522,11 @@ pub struct DisplaySnapshot {
 }
 
 impl DisplaySnapshot {
+    /// Identifies this snapshot's display rows; see [`BlockRowsIdentity`].
+    pub(crate) fn rows_identity(&self) -> BlockRowsIdentity {
+        self.block_snapshot.rows_identity()
+    }
+
     pub fn companion_snapshot(&self) -> Option<&DisplaySnapshot> {
         self.companion_display_snapshot.as_deref()
     }

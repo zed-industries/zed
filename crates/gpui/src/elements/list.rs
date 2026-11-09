@@ -1508,6 +1508,7 @@ impl Element for List {
 
                     window.request_measured_layout(
                         style,
+                        (max_element_width, total_height),
                         move |known_dimensions, available_space, _window, _cx| {
                             let width =
                                 known_dimensions
