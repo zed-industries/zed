@@ -257,6 +257,14 @@ pub(crate) fn render_skills_setup_page(
 ) -> AnyElement {
     let remote_project = remote_global_skills_project(settings_window, cx);
     let skills: Vec<Skill> = displayed_skills(settings_window, remote_project.as_ref(), cx);
+    // The user tab otherwise looks the same for this machine and a remote one.
+    let remote_host = match (&settings_window.current_file, &remote_project) {
+        (SettingsUiFile::User, Some(project)) => project
+            .read(cx)
+            .remote_connection_options(cx)
+            .map(|options| options.display_name()),
+        _ => None,
+    };
 
     v_flex()
         .id("skills-page")
@@ -265,10 +273,13 @@ pub(crate) fn render_skills_setup_page(
         .pb_16()
         .map(|this| {
             if skills.is_empty() {
-                let message = match &settings_window.current_file {
-                    SettingsUiFile::User => "No global skills installed.",
-                    SettingsUiFile::Project(_) => "No project skills found.",
-                    _ => "No skills available for this context.",
+                let message = match (&settings_window.current_file, &remote_host) {
+                    (SettingsUiFile::User, Some(remote_host)) => {
+                        format!("No global skills installed on {remote_host}.")
+                    }
+                    (SettingsUiFile::User, None) => "No global skills installed.".to_string(),
+                    (SettingsUiFile::Project(_), _) => "No project skills found.".to_string(),
+                    _ => "No skills available for this context.".to_string(),
                 };
 
                 this.px_8().items_center().justify_center().child(
@@ -297,6 +308,15 @@ pub(crate) fn render_skills_setup_page(
             } else {
                 this.track_scroll(scroll_handle)
                     .overflow_y_scroll()
+                    .when_some(remote_host, |this, remote_host| {
+                        this.child(
+                            div().px_8().pb_1().child(
+                                Label::new(format!("Global skills on {remote_host}"))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                        )
+                    })
                     .children(skills.iter().enumerate().flat_map(|(i, skill)| {
                         let mut elements: Vec<AnyElement> = vec![render_skill_row(
                             skill,
