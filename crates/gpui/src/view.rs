@@ -559,6 +559,7 @@ fn prepaint_view(
                 {
                     let prepaint_start = window.prepaint_index();
                     window.reuse_prepaint(element_state.prepaint_range.clone());
+                    window.retain_cached_view_layout();
                     cx.entities
                         .extend_accessed(element_state.accessed_entities.iter().copied());
                     let prepaint_end = window.prepaint_index();
@@ -570,10 +571,16 @@ fn prepaint_view(
                 let refreshing = mem::replace(&mut window.refreshing, true);
                 let prepaint_start = window.prepaint_index();
                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
-                    let mut element = render(window, cx);
-                    element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
-                    element.prepaint_at(bounds.origin, window, cx);
-                    element
+                    window.with_cached_view_layout(|window| {
+                        let mut element = render(window, cx);
+                        element.layout_as_root(
+                            Size::<AvailableSpace>::from(bounds.size),
+                            window,
+                            cx,
+                        );
+                        element.prepaint_at(bounds.origin, window, cx);
+                        element
+                    })
                 });
 
                 let prepaint_end = window.prepaint_index();
