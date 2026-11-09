@@ -12101,6 +12101,20 @@ impl LspStore {
         }
     }
 
+    /// Delivers a `$/progress` notification to the handler a running language server's
+    /// notification subscription calls, so benchmarks can simulate server work without a
+    /// server process. The status must already be registered with the token in
+    /// `progress_tokens`, as `window/workDoneProgress/create` does.
+    #[cfg(feature = "bench-support")]
+    pub fn bench_on_lsp_progress(
+        &mut self,
+        progress_params: lsp::ProgressParams,
+        language_server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_lsp_progress(progress_params, language_server_id, None, cx);
+    }
+
     fn handle_work_done_progress(
         &mut self,
         progress: lsp::WorkDoneProgress,

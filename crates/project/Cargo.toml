@@ -18,6 +18,8 @@ required-features = ["test-support"]
 path = "tests/integration/project_tests.rs"
 
 [features]
+# Narrow, production-faithful seams for the `zed_benchmarks` crate. Must never enable `test-support`.
+bench-support = []
 test-support = [
     "buffer_diff/test-support",
     "client/test-support",
