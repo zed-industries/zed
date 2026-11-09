@@ -5530,7 +5530,7 @@ impl Window {
     /// the rest of the window's so they can be retained while the view replays its last
     /// frame. The view's element ID must be on the stack.
     pub(crate) fn with_cached_view_layout<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let key = self.layout_scope();
+        let key = self.layout_owner_key();
         self.layout_engine
             .as_mut()
             .unwrap()
@@ -5543,15 +5543,27 @@ impl Window {
     /// Keeps the layout nodes of a `.cached()` view that replays its last frame, so that
     /// Taffy's cache still holds its layout when the view is next rendered.
     pub(crate) fn retain_cached_view_layout(&mut self) {
-        let key = self.layout_scope();
+        let key = self.layout_owner_key();
+        let interner = &mut self.element_id_interner;
         self.layout_engine
             .as_mut()
             .unwrap()
-            .retain_layout_owner(key);
+            .retain_layout_owner(key, |scope| {
+                interner.mark_used_if_live(scope.index, scope.generation)
+            });
     }
 
     /// Identifies the element ID path layout nodes are requested under.
-    fn layout_scope(&self) -> u64 {
+    fn layout_scope(&self) -> crate::taffy::ScopeKey {
+        let handle = self.element_id_stack.handle();
+        crate::taffy::ScopeKey {
+            index: handle.index(),
+            generation: handle.generation(),
+        }
+    }
+
+    /// Identifies the `.cached()` view whose contents are laid out.
+    fn layout_owner_key(&self) -> u64 {
         self.element_id_interner
             .path_hash(self.element_id_stack.handle())
     }

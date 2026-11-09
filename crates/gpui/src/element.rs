@@ -231,6 +231,14 @@ impl InternedHandle {
         index: 0,
         generation: 0,
     };
+
+    pub(crate) fn index(self) -> u32 {
+        self.index
+    }
+
+    pub(crate) fn generation(self) -> u32 {
+        self.generation
+    }
 }
 
 struct InternedPath {
@@ -352,6 +360,18 @@ impl ElementIdInterner {
             parent = self.intern(parent, element_id.clone(), &id.ids[..=index]);
         }
         parent
+    }
+
+    /// Keeps a path alive, as when the layout nodes requested under it are retained,
+    /// unless it was already reclaimed.
+    pub(crate) fn mark_used_if_live(&mut self, index: u32, generation: u32) {
+        if self
+            .nodes
+            .get(index as usize)
+            .is_some_and(|slot| slot.generation == generation && slot.node.is_some())
+        {
+            self.mark_used(InternedHandle { index, generation });
+        }
     }
 
     pub(crate) fn mark_used(&mut self, mut handle: InternedHandle) {

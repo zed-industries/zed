@@ -125,7 +125,8 @@ struct CachedNode {
 #[derive(Default)]
 struct LayoutOwner {
     key: u64,
-    scopes: FxHashMap<u64, LayoutScope>,
+    /// The scope slots this owner claimed, with the generation it claimed them in.
+    scopes: Vec<ScopeKey>,
     /// The last frame this owner's nodes were requested or retained in.
     frame: u64,
     /// Whether its nodes were requested in `frame`, rather than retained.
@@ -135,7 +136,32 @@ struct LayoutOwner {
     nested: SmallVec<[DefaultKey; 2]>,
 }
 
+/// Identifies an interned element ID path: scopes are found by indexing with it, without
+/// hashing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ScopeKey {
+    pub(crate) index: u32,
+    pub(crate) generation: u32,
+}
+
+/// The scopes of one interned path: a `.cached()` view's path has one in the owner that
+/// requests the view's node and one in the view's own owner.
+#[derive(Default)]
+struct ScopeSlot {
+    scopes: SmallVec<[OwnedScope; 1]>,
+}
+
+struct OwnedScope {
+    owner: DefaultKey,
+    /// The generation of the path the scope was claimed for.
+    generation: u32,
+    scope: LayoutScope,
+}
+
 struct LayoutCache {
+    scope_slots: Vec<ScopeSlot>,
+    /// Nodes of scopes whose slot was claimed for another path or owner.
+    orphaned_nodes: Vec<NodeId>,
     owners: SlotMap<DefaultKey, LayoutOwner>,
     owner_keys: FxHashMap<u64, DefaultKey>,
     root_owner: DefaultKey,
@@ -154,6 +180,8 @@ impl Default for LayoutCache {
         let mut owners = SlotMap::default();
         let root_owner = owners.insert(LayoutOwner::default());
         Self {
+            scope_slots: Vec::new(),
+            orphaned_nodes: Vec::new(),
             owners,
             owner_keys: FxHashMap::default(),
             root_owner,
@@ -236,15 +264,17 @@ impl TaffyLayoutEngine {
 
     /// Keeps the layout nodes of a `.cached()` view that replays its last frame, as
     /// they were, until it is laid out again.
-    pub(crate) fn retain_layout_owner(&mut self, key: u64) {
+    /// Calls `retain_scope` with every scope retained, whose interned path must be
+    /// kept alive for the scope to be found again.
+    pub(crate) fn retain_layout_owner(&mut self, key: u64, retain_scope: impl FnMut(ScopeKey)) {
         if let Some(cache) = self.cache.as_mut() {
-            cache.retain_owner(key);
+            cache.retain_owner(key, retain_scope);
         }
     }
 
     pub fn request_layout(
         &mut self,
-        scope: u64,
+        scope: ScopeKey,
         style: &Style,
         rem_size: Pixels,
         scale_factor: f32,
@@ -255,7 +285,7 @@ impl TaffyLayoutEngine {
 
     pub fn request_measured_layout<K, F>(
         &mut self,
-        scope: u64,
+        scope: ScopeKey,
         style: &Style,
         rem_size: Pixels,
         scale_factor: f32,
@@ -278,7 +308,7 @@ impl TaffyLayoutEngine {
 
     pub(crate) fn request_measure(
         &mut self,
-        scope: u64,
+        scope: ScopeKey,
         style: &Style,
         rem_size: Pixels,
         scale_factor: f32,
@@ -291,7 +321,7 @@ impl TaffyLayoutEngine {
 
     fn request_node(
         &mut self,
-        scope: u64,
+        scope: ScopeKey,
         style: &Style,
         rem_size: Pixels,
         scale_factor: f32,
@@ -317,10 +347,38 @@ impl TaffyLayoutEngine {
         };
 
         let frame = cache.frame;
-        let scope = cache.owners[cache.current_owner]
-            .scopes
-            .entry(scope)
-            .or_default();
+        let index = scope.index as usize;
+        if index >= cache.scope_slots.len() {
+            cache.scope_slots.resize_with(index + 1, ScopeSlot::default);
+        }
+        let slot = &mut cache.scope_slots[index];
+        let owner = cache.current_owner;
+        let position = match slot.scopes.iter().position(|owned| owned.owner == owner) {
+            Some(position) => {
+                let owned = &mut slot.scopes[position];
+                if owned.generation != scope.generation {
+                    cache.orphaned_nodes.extend(owned.scope.nodes.drain(..));
+                    owned.generation = scope.generation;
+                    owned.scope.requested = 0;
+                    owned.scope.frame = frame;
+                    cache.owners[owner].scopes.push(scope);
+                }
+                position
+            }
+            None => {
+                slot.scopes.push(OwnedScope {
+                    owner,
+                    generation: scope.generation,
+                    scope: LayoutScope {
+                        frame,
+                        ..Default::default()
+                    },
+                });
+                cache.owners[owner].scopes.push(scope);
+                slot.scopes.len() - 1
+            }
+        };
+        let scope = &mut slot.scopes[position].scope;
         if scope.frame != frame {
             scope.frame = frame;
             scope.requested = 0;
@@ -709,6 +767,20 @@ impl TaffyLayoutEngine {
     }
 }
 
+/// The scope `owner` claimed for `key`, if it still holds it, and its position in its slot.
+fn claimed_scope<'a>(
+    scope_slots: &'a mut [ScopeSlot],
+    owner: DefaultKey,
+    key: &ScopeKey,
+) -> Option<(&'a mut ScopeSlot, usize)> {
+    let slot = &mut scope_slots[key.index as usize];
+    let position = slot
+        .scopes
+        .iter()
+        .position(|owned| owned.owner == owner && owned.generation == key.generation)?;
+    Some((slot, position))
+}
+
 impl LayoutCache {
     fn begin_owner(&mut self, key: u64) {
         let owners = &mut self.owners;
@@ -731,7 +803,7 @@ impl LayoutCache {
         }
     }
 
-    fn retain_owner(&mut self, key: u64) {
+    fn retain_owner(&mut self, key: u64, mut retain_scope: impl FnMut(ScopeKey)) {
         let Some(&owner) = self.owner_keys.get(&key) else {
             return;
         };
@@ -745,6 +817,7 @@ impl LayoutCache {
                 owner.frame = self.frame;
                 owner.laid_out = false;
                 retained.extend(owner.nested.iter().copied());
+                owner.scopes.iter().copied().for_each(&mut retain_scope);
             }
         }
     }
@@ -767,24 +840,44 @@ impl LayoutCache {
         root_owner.laid_out = true;
         root_owner.nested.clear();
 
+        // Orphaned nodes weren't requested this frame, but may still be children of nodes
+        // retained for a cached view.
+        for id in self.orphaned_nodes.drain(..) {
+            if let Some(parent) = taffy.parent(id) {
+                taffy.remove_child(parent, id).expect(EXPECT_MESSAGE);
+            }
+            self.free_nodes.push(id);
+        }
+
         let free_nodes = &mut self.free_nodes;
         let owner_keys = &mut self.owner_keys;
-        self.owners.retain(|_, owner| {
+        let scope_slots = &mut self.scope_slots;
+        self.owners.retain(|owner_key, owner| {
             if owner.frame != frame {
-                for scope in owner.scopes.values_mut() {
-                    free_nodes.extend(scope.nodes.drain(..));
+                for key in &owner.scopes {
+                    if let Some((slot, position)) = claimed_scope(scope_slots, owner_key, key) {
+                        free_nodes.extend(slot.scopes.swap_remove(position).scope.nodes);
+                    }
                 }
                 owner_keys.remove(&owner.key);
                 return false;
             }
             if owner.laid_out {
-                owner.scopes.retain(|_, scope| {
+                owner.scopes.retain(|key| {
+                    let Some((slot, position)) = claimed_scope(scope_slots, owner_key, key)
+                    else {
+                        return false;
+                    };
+                    let scope = &mut slot.scopes[position].scope;
                     let requested = if scope.frame == frame {
                         scope.requested
                     } else {
                         0
                     };
                     free_nodes.extend(scope.nodes.drain(requested..));
+                    if requested == 0 {
+                        slot.scopes.swap_remove(position);
+                    }
                     requested > 0
                 });
             }
