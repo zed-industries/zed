@@ -643,38 +643,10 @@ pub(crate) struct TextMeasure {
     element_state: TextLayout,
 }
 
-impl crate::taffy::Measure for TextMeasure {
-    fn measure(
-        &mut self,
-        known_dimensions: Size<Option<Pixels>>,
-        available_space: Size<crate::AvailableSpace>,
-        final_layout: bool,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Size<Pixels> {
-        TextMeasure::measure(
-            self,
-            known_dimensions,
-            available_space,
-            final_layout,
-            window,
-            cx,
-        )
-    }
-
+impl TextMeasure {
     /// Takes over the lines `previous` measured, so a text element that hasn't changed
     /// since the last frame can paint without being measured again.
-    fn reuse(&mut self, previous: &mut dyn crate::taffy::Measure) -> bool {
-        let Some(previous) = (previous as &mut dyn std::any::Any).downcast_mut::<TextMeasure>()
-        else {
-            return false;
-        };
-        self.reuse_measurement(previous)
-    }
-}
-
-impl TextMeasure {
-    fn reuse_measurement(&self, previous: &TextMeasure) -> bool {
+    fn reuse_measurement(&mut self, previous: &mut TextMeasure) -> bool {
         if self.text != previous.text
             || self.font_size != previous.font_size
             || self.line_height != previous.line_height
@@ -887,9 +859,11 @@ impl TextLayout {
         window: &mut Window,
         _: &mut App,
     ) -> LayoutId {
-        window.request_measure(
+        window.request_keyed_measure(
             &crate::Style::default(),
-            Box::new(self.measurement(text, runs, window)),
+            self.measurement(text, runs, window),
+            TextMeasure::reuse_measurement,
+            TextMeasure::measure,
         )
     }
 
@@ -1489,7 +1463,7 @@ mod tests {
                 };
 
             let layout = TextLayout::default();
-            let measure = layout.measurement(text.clone(), None, window);
+            let mut measure = layout.measurement(text.clone(), None, window);
             let narrow_size = measure.measure(Size::default(), narrow, true, window, cx);
             // An unconstrained probe measures the unwrapped text, rather than answering
             // with the size of whatever was measured before it.
@@ -1510,8 +1484,8 @@ mod tests {
             // A measure with the same inputs takes over the lines, and measures the same
             // as one measuring from scratch.
             let next_layout = TextLayout::default();
-            let next = next_layout.measurement(text.clone(), None, window);
-            assert!(next.reuse_measurement(&measure));
+            let mut next = next_layout.measurement(text.clone(), None, window);
+            assert!(next.reuse_measurement(&mut measure));
             assert_eq!(painted_height(&next_layout), Some(wide_size.height));
             for space in [narrow, wide, unconstrained] {
                 assert_eq!(
@@ -1520,8 +1494,8 @@ mod tests {
                 );
             }
 
-            let changed = TextLayout::default().measurement("Other text".into(), None, window);
-            assert!(!changed.reuse_measurement(&next));
+            let mut changed = TextLayout::default().measurement("Other text".into(), None, window);
+            assert!(!changed.reuse_measurement(&mut next));
         });
     }
 

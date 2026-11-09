@@ -5492,10 +5492,47 @@ impl Window {
     /// key that never compares equal to have `measure` called every frame.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
-    pub fn request_measured_layout<K, F>(&mut self, style: Style, key: K, measure: F) -> LayoutId
+    pub fn request_measured_layout<K, F>(
+        &mut self,
+        style: Style,
+        key: K,
+        mut measure: F,
+    ) -> LayoutId
     where
         K: PartialEq + 'static,
         F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+            + 'static,
+    {
+        self.request_keyed_measure(
+            &style,
+            key,
+            |key, previous| key == previous,
+            move |_, known_dimensions, available_space, _, window, cx| {
+                measure(known_dimensions, available_space, window, cx)
+            },
+        )
+    }
+
+    /// Like [`Self::request_measured_layout`], but `reuse` decides whether a key measures
+    /// the same as the previous one, and `measure` is given the key and whether this is
+    /// the node's final measurement rather than a sizing probe.
+    pub(crate) fn request_keyed_measure<K, F>(
+        &mut self,
+        style: &Style,
+        key: K,
+        reuse: fn(&mut K, &mut K) -> bool,
+        measure: F,
+    ) -> LayoutId
+    where
+        K: 'static,
+        F: FnMut(
+                &K,
+                Size<Option<Pixels>>,
+                Size<AvailableSpace>,
+                bool,
+                &mut Window,
+                &mut App,
+            ) -> Size<Pixels>
             + 'static,
     {
         self.invalidator.debug_assert_prepaint();
@@ -5503,27 +5540,13 @@ impl Window {
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
         let scope = self.element_id_stack.hash();
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .request_measured_layout(scope, &style, rem_size, scale_factor, key, measure)
-    }
-
-    pub(crate) fn request_measure(
-        &mut self,
-        style: &Style,
-        measure: Box<dyn crate::taffy::Measure>,
-    ) -> LayoutId {
-        self.invalidator.debug_assert_prepaint();
-
-        let rem_size = self.rem_size();
-        let scale_factor = self.scale_factor();
-        let scope = self.element_id_stack.hash();
-        self.layout_engine.as_mut().unwrap().request_measure(
+        self.layout_engine.as_mut().unwrap().request_keyed_measure(
             scope,
             style,
             rem_size,
             scale_factor,
+            key,
+            reuse,
             measure,
         )
     }

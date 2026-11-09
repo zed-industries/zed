@@ -25,8 +25,9 @@ type StackSafe<T> = T;
 
 type NodeContext = StackSafe<Box<dyn Measure>>;
 
-/// Measures a layout node, and describes what its measurements depend on.
-pub(crate) trait Measure: Any {
+/// Lets a node hold any [`KeyedMeasure`] in a single allocation, and compare it with the
+/// one it held before, which may be of another type.
+trait Measure: Any {
     /// `final_layout` is false when Taffy is only probing the node's size.
     fn measure(
         &mut self,
@@ -37,10 +38,8 @@ pub(crate) trait Measure: Any {
         cx: &mut App,
     ) -> Size<Pixels>;
 
-    /// Called on the measure requested for a node with the one it was measured with
-    /// before. Returns whether both would measure the same sizes, in which case the
-    /// sizes Taffy cached for the node are kept, after taking over whatever `previous`
-    /// kept from measuring.
+    /// Whether this measure would measure the same sizes as `previous`, which the node
+    /// was measured with before, in which case the sizes Taffy cached are kept.
     fn reuse(&mut self, previous: &mut dyn Measure) -> bool;
 }
 
@@ -49,33 +48,50 @@ fn measure_mut(context: &mut NodeContext) -> &mut dyn Measure {
     &mut **measure
 }
 
-/// A measure function, and a key that is equal for measure functions measuring the same.
+/// A measure function, and a key that `reuse` finds equal for measure functions
+/// measuring the same. `reuse` can also hand over whatever the previous key kept from
+/// measuring.
 struct KeyedMeasure<K, F> {
     key: K,
+    reuse: fn(&mut K, &mut K) -> bool,
     measure: F,
 }
 
 impl<K, F> Measure for KeyedMeasure<K, F>
 where
-    K: PartialEq + 'static,
-    F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+    K: 'static,
+    F: FnMut(
+            &K,
+            Size<Option<Pixels>>,
+            Size<AvailableSpace>,
+            bool,
+            &mut Window,
+            &mut App,
+        ) -> Size<Pixels>
         + 'static,
 {
     fn measure(
         &mut self,
         known_dimensions: Size<Option<Pixels>>,
         available_space: Size<AvailableSpace>,
-        _final_layout: bool,
+        final_layout: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Size<Pixels> {
-        (self.measure)(known_dimensions, available_space, window, cx)
+        (self.measure)(
+            &self.key,
+            known_dimensions,
+            available_space,
+            final_layout,
+            window,
+            cx,
+        )
     }
 
     fn reuse(&mut self, previous: &mut dyn Measure) -> bool {
         (previous as &mut dyn Any)
-            .downcast_ref::<Self>()
-            .is_some_and(|previous| previous.key == self.key)
+            .downcast_mut::<Self>()
+            .is_some_and(|previous| (self.reuse)(&mut self.key, &mut previous.key))
     }
 }
 
@@ -241,37 +257,34 @@ impl TaffyLayoutEngine {
         self.request_node(scope, style, rem_size, scale_factor, children, None)
     }
 
-    pub fn request_measured_layout<K, F>(
+    /// See [`Window::request_keyed_measure`].
+    pub(crate) fn request_keyed_measure<K, F>(
         &mut self,
         scope: u64,
         style: &Style,
         rem_size: Pixels,
         scale_factor: f32,
         key: K,
+        reuse: fn(&mut K, &mut K) -> bool,
         measure: F,
     ) -> LayoutId
     where
-        K: PartialEq + 'static,
-        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+        K: 'static,
+        F: FnMut(
+                &K,
+                Size<Option<Pixels>>,
+                Size<AvailableSpace>,
+                bool,
+                &mut Window,
+                &mut App,
+            ) -> Size<Pixels>
             + 'static,
     {
-        self.request_measure(
-            scope,
-            style,
-            rem_size,
-            scale_factor,
-            Box::new(KeyedMeasure { key, measure }),
-        )
-    }
-
-    pub(crate) fn request_measure(
-        &mut self,
-        scope: u64,
-        style: &Style,
-        rem_size: Pixels,
-        scale_factor: f32,
-        measure: Box<dyn Measure>,
-    ) -> LayoutId {
+        let measure: Box<dyn Measure> = Box::new(KeyedMeasure {
+            key,
+            reuse,
+            measure,
+        });
         #[cfg(feature = "stacker")]
         let measure = StackSafe::new(measure);
         self.request_node(scope, style, rem_size, scale_factor, &[], Some(measure))
