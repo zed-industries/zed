@@ -1,6 +1,6 @@
 use super::tool_permissions::{
-    authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
-    sensitive_settings_kind,
+    SensitiveSettingsKind, authorize_symlink_access, canonicalize_worktree_roots,
+    detect_symlink_escape, sensitive_settings_kind,
 };
 use agent_client_protocol::v2::schema as acp;
 use agent_settings::AgentSettings;
@@ -153,9 +153,14 @@ impl AgentTool for CreateDirectoryTool {
                     .map(|(_, target)| target)
             });
 
+            // Only the machine the skills are on can resolve a path into them, so
+            // this machine's checks alone can miss a remote one.
             let sensitive_kind =
                 sensitive_settings_kind(Path::new(&input.path), &canonical_roots, fs.as_ref())
-                    .await;
+                    .await
+                    .or(global_skill_directory
+                        .as_ref()
+                        .map(|_| SensitiveSettingsKind::AgentSkills));
 
             let decision =
                 if matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some() {

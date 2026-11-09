@@ -1,6 +1,6 @@
 use super::tool_permissions::{
-    authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
-    sensitive_settings_kind,
+    SensitiveSettingsKind, authorize_symlink_access, canonicalize_worktree_roots,
+    detect_symlink_escape, sensitive_settings_kind,
 };
 use crate::{
     AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, ToolPermissionDecision,
@@ -118,8 +118,14 @@ impl AgentTool for DeletePathTool {
                     .map(|(_, target)| target)
             });
 
+            // Only the machine the skills are on can resolve a path into them, so
+            // this machine's checks alone can miss a remote one.
             let settings_kind =
-                sensitive_settings_kind(Path::new(&path), &canonical_roots, fs.as_ref()).await;
+                sensitive_settings_kind(Path::new(&path), &canonical_roots, fs.as_ref())
+                    .await
+                    .or(global_skill_path
+                        .as_ref()
+                        .map(|_| SensitiveSettingsKind::AgentSkills));
 
             let decision =
                 if matches!(decision, ToolPermissionDecision::Allow) && settings_kind.is_some() {
