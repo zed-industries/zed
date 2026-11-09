@@ -154,6 +154,312 @@ async fn test_multi_workspace_collapses_when_agent_is_disabled(cx: &mut TestAppC
     });
 }
 
+fn update_retention_settings(disable_ai: Option<bool>, keep_projects: Option<bool>, cx: &mut App) {
+    cx.update_global::<SettingsStore, ()>(|store, cx| {
+        store.update_user_settings(cx, |content| {
+            if let Some(disable_ai) = disable_ai {
+                content.project.disable_ai = Some(settings::SaturatingBool(disable_ai));
+            }
+            if let Some(keep_projects) = keep_projects {
+                content.workspace.keep_projects_in_window = Some(keep_projects);
+            }
+        });
+    });
+}
+
+fn assert_retention_state(
+    multi_workspace: &Entity<MultiWorkspace>,
+    expect_multi_workspace_enabled: bool,
+    expect_keep_projects_in_window: bool,
+    cx: &mut VisualTestContext,
+) {
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert_eq!(
+            multi_workspace.multi_workspace_enabled(cx),
+            expect_multi_workspace_enabled,
+            "unexpected multi_workspace_enabled precondition"
+        );
+        assert_eq!(
+            WorkspaceSettings::get_global(cx).keep_projects_in_window,
+            expect_keep_projects_in_window,
+            "unexpected keep_projects_in_window precondition"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_switching_projects_with_ai_disabled_keeps_old_workspace_when_setting_enabled(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| update_retention_settings(Some(true), Some(true), cx));
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root_a"), json!({ "file_a.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/root_b"), json!({ "file_b.txt": "" }))
+        .await;
+    let project_a = Project::test(fs.clone(), [path!("/root_a").as_ref()], cx).await;
+    let project_b = Project::test(fs, [path!("/root_b").as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+    let workspace_a = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+
+    assert_retention_state(&multi_workspace, false, true, cx);
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b, window, cx)
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |mw, cx| {
+        assert_eq!(
+            mw.workspace().entity_id(),
+            workspace_b.entity_id(),
+            "the new workspace should become active"
+        );
+        assert_eq!(
+            mw.workspaces().count(),
+            2,
+            "the previous workspace should be kept when the setting is enabled"
+        );
+        assert_eq!(mw.project_groups(cx).len(), 2);
+    });
+    assert!(
+        workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_some()),
+        "the previous workspace should remain attached to the session"
+    );
+}
+
+#[gpui::test]
+async fn test_switching_projects_with_ai_disabled_replaces_old_workspace_by_default(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| update_retention_settings(Some(true), None, cx));
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root_a"), json!({ "file_a.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/root_b"), json!({ "file_b.txt": "" }))
+        .await;
+    let project_a = Project::test(fs.clone(), [path!("/root_a").as_ref()], cx).await;
+    let project_b = Project::test(fs, [path!("/root_b").as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+    let workspace_a = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+
+    assert_retention_state(&multi_workspace, false, false, cx);
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b, window, cx)
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert_eq!(
+            mw.workspace().entity_id(),
+            workspace_b.entity_id(),
+            "the new workspace should become active"
+        );
+        assert_eq!(
+            mw.workspaces().count(),
+            1,
+            "the previous workspace should be replaced when the setting is at its default"
+        );
+    });
+    assert!(
+        workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_none()),
+        "the replaced workspace should be detached from the session"
+    );
+}
+
+#[gpui::test]
+async fn test_disabling_ai_keeps_workspaces_when_setting_enabled(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| update_retention_settings(None, Some(true), cx));
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root_a"), json!({ "file.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/root_b"), json!({ "file.txt": "" }))
+        .await;
+    let project_a = Project::test(fs.clone(), [path!("/root_a").as_ref()], cx).await;
+    let project_b = Project::test(fs, [path!("/root_b").as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b, window, cx);
+    });
+    cx.run_until_parked();
+    assert_retention_state(&multi_workspace, true, true, cx);
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert_eq!(mw.workspaces().count(), 2);
+    });
+
+    cx.update(|_window, cx| update_retention_settings(Some(true), None, cx));
+    cx.run_until_parked();
+
+    assert_retention_state(&multi_workspace, false, true, cx);
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert_eq!(
+            mw.workspaces().count(),
+            2,
+            "disabling AI must not collapse workspaces while the setting is enabled"
+        );
+        assert_eq!(mw.project_group_keys().len(), 2);
+    });
+}
+
+#[gpui::test]
+async fn test_disabling_ai_closes_sidebar_when_setting_enabled(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| update_retention_settings(None, Some(true), cx));
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root_a"), json!({ "file.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/root_b"), json!({ "file.txt": "" }))
+        .await;
+    let project_a = Project::test(fs.clone(), [path!("/root_a").as_ref()], cx).await;
+    let project_b = Project::test(fs, [path!("/root_b").as_ref()], cx).await;
+
+    let (multi_workspace, cx) = setup_multi_workspace(&[project_a, project_b], cx);
+    assert_retention_state(&multi_workspace, true, true, cx);
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert!(mw.sidebar_open(), "the sidebar should start open");
+        assert_eq!(mw.workspaces().count(), 2);
+    });
+
+    cx.update(|_window, cx| update_retention_settings(Some(true), None, cx));
+    cx.run_until_parked();
+
+    assert_retention_state(&multi_workspace, false, true, cx);
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert!(
+            !mw.sidebar_open(),
+            "the sidebar must close when AI features are disabled"
+        );
+        assert_eq!(mw.workspaces().count(), 2);
+    });
+}
+
+#[gpui::test]
+async fn test_disabling_keep_projects_setting_collapses_when_ai_disabled(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| update_retention_settings(Some(true), Some(true), cx));
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root_a"), json!({ "file.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/root_b"), json!({ "file.txt": "" }))
+        .await;
+    let project_a = Project::test(fs.clone(), [path!("/root_a").as_ref()], cx).await;
+    let project_b = Project::test(fs, [path!("/root_b").as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b, window, cx);
+    });
+    cx.run_until_parked();
+    assert_retention_state(&multi_workspace, false, true, cx);
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert_eq!(mw.workspaces().count(), 2, "two workspaces should be held");
+    });
+
+    cx.update(|_window, cx| update_retention_settings(None, Some(false), cx));
+    cx.run_until_parked();
+
+    assert_retention_state(&multi_workspace, false, false, cx);
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert_eq!(
+            mw.workspaces().count(),
+            1,
+            "turning the setting off with AI disabled should collapse to one workspace"
+        );
+        assert!(mw.project_group_keys().is_empty());
+    });
+}
+
+#[gpui::test]
+async fn test_sidebar_stays_disabled_with_ai_off_when_setting_enabled(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| update_retention_settings(Some(true), Some(true), cx));
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    assert_retention_state(&multi_workspace, false, true, cx);
+    multi_workspace.update_in(cx, |mw, window, cx| mw.toggle_sidebar(window, cx));
+
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert!(
+            !mw.sidebar_open(),
+            "the sidebar must stay unavailable while AI is disabled"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_open_project_with_ai_disabled_keeps_old_workspace_when_setting_enabled(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| update_retention_settings(Some(true), Some(true), cx));
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/root_a"), json!({ "file_a.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/root_b"), json!({ "file_b.txt": "" }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root_a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    cx.run_until_parked();
+    let workspace_a = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let multi_workspace = window.root(cx).unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    assert_retention_state(&multi_workspace, false, true, cx);
+    let workspace_b = window
+        .update(cx, |mw, window, cx| {
+            mw.open_project(
+                vec![PathBuf::from(path!("/root_b"))],
+                OpenMode::Activate,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert_eq!(mw.workspace(), &workspace_b);
+            assert_eq!(
+                mw.workspaces().count(),
+                2,
+                "the previous workspace should be kept when opening a project"
+            );
+        })
+        .unwrap();
+    assert!(
+        workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_some()),
+        "the previous workspace should remain attached to the session"
+    );
+}
+
+#[gpui::test]
+async fn test_keep_projects_in_window_defaults_to_false(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        assert!(!WorkspaceSettings::get_global(cx).keep_projects_in_window);
+    });
+}
+
 #[gpui::test]
 async fn test_project_group_keys_initial(cx: &mut TestAppContext) {
     init_test(cx);

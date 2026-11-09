@@ -80,6 +80,20 @@ Both settings accept the same values:
 
 It's worth noting that explicit flags provided to the CLI will override the CLI setting. In particular, `-n` forces a new window even when a path matches an open project. See [CLI Reference](./reference/cli.md) for the available flags.
 
+## Switching Projects with AI Disabled
+
+With AI features disabled (`disable_ai` set to `true`, or `agent.enabled` set to `false`), the threads sidebar is not available, and opening another project in the current window replaces the current one, closing its tabs and terminals.
+
+To keep the previous project open instead, enable `keep_projects_in_window`:
+
+```json [settings]
+{
+  "keep_projects_in_window": true
+}
+```
+
+Projects kept in the window are listed under "This Window" in File > Open Recent, where you can switch back to them or remove them from the window.
+
 ## Adding Folders to a Project
 
 If you want to add a folder to your current project (not as a separate project in the threads sidebar), you have several options:
