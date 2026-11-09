@@ -84,10 +84,13 @@ fn steps_until(turn: u64, steps: u64) -> zed_benchmarks::Step {
 }
 
 /// 1. Opens the project panel and walks into the generated tree with the arrow
-/// keys, expanding directories as it goes.
+/// keys, expanding directories as it goes. The panel rebuilds its visible entries
+/// on a background thread after each expansion, so keys arrive every other frame
+/// at 120 Hz (fast key repeat) rather than all in one burst.
 #[gpui::bench]
 fn project_panel_expand(cx: &mut BenchAppContext) {
-    const STEPS: u64 = 40;
+    const KEYS: &[&str] = &["right", "right", "down"];
+    const KEY_COUNT: usize = 24;
 
     let app_state = init_app(cx);
     let zed = open_zed_window(cx, &app_state);
@@ -108,11 +111,19 @@ fn project_panel_expand(cx: &mut BenchAppContext) {
                 window.dispatch_action(project_panel::CollapseAllEntries.boxed_clone(), cx);
             });
             cx.run_until_idle();
-            None
+            (Instant::now(), 0usize, None)
         },
-        |selected_depth, turn, window, cx| {
-            keystroke(window, cx, if turn % 2 == 0 { "right" } else { "down" });
-            if turn + 1 < STEPS {
+        |(started, keys_sent, selected_depth), turn, window, cx| {
+            if turn == 0 {
+                *started = Instant::now();
+            }
+            pace_frame(*started, turn, FPS);
+            if turn % 2 == 1 {
+                return Step::Continue;
+            }
+            if *keys_sent < KEY_COUNT {
+                keystroke(window, cx, KEYS[*keys_sent % KEYS.len()]);
+                *keys_sent += 1;
                 return Step::Continue;
             }
             *selected_depth = Some(panel.read_with(cx, |panel, cx| {
@@ -122,7 +133,7 @@ fn project_panel_expand(cx: &mut BenchAppContext) {
             }));
             Step::Stop
         },
-        |selected_depth| {
+        |(_, _, selected_depth)| {
             assert!(
                 selected_depth.is_some_and(|depth| depth >= 3),
                 "walking the project panel should select a nested entry, got depth {selected_depth:?}"

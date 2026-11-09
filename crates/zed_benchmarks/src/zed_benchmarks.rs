@@ -251,15 +251,20 @@ pub fn create_project() -> PathBuf {
 }
 
 fn load_default_keymap(cx: &mut App) {
-    // Mirrors `zed::load_default_keymap` for the default base keymap without vim mode.
+    // Mirrors `zed::load_default_keymap` for the default base keymap without vim
+    // mode. Bindings to actions from crates this suite doesn't link (vim, terminal,
+    // debugger, ...) are skipped; production binds them too, but they can't fire in
+    // these scenarios.
     for path in [
         settings::DEFAULT_KEYMAP_PATH,
         settings::SPECIFIC_OVERRIDES_KEYMAP_PATH,
     ] {
-        match KeymapFile::load_asset(path, Some(KeybindSource::Default), cx) {
-            Ok(bindings) => cx.bind_keys(bindings),
-            Err(error) => panic!("failed to load {path}: {error:#}"),
+        let mut bindings = KeymapFile::load_asset_allow_partial_failure(path, cx)
+            .unwrap_or_else(|error| panic!("failed to load {path}: {error:#}"));
+        for binding in &mut bindings {
+            binding.set_meta(KeybindSource::Default.meta());
         }
+        cx.bind_keys(bindings);
     }
 }
 
@@ -441,11 +446,9 @@ impl ZedWindow {
         update: impl FnOnce(&mut Workspace, &mut Window, &mut gpui::Context<Workspace>) -> R,
     ) -> R {
         let workspace = self.workspace.clone();
-        self.window
-            .update(cx, |_, window, cx| {
-                workspace.update(cx, |workspace, cx| update(workspace, window, cx))
-            })
-            .expect("benchmark window was closed")
+        self.update_window(cx, |window, cx| {
+            workspace.update(cx, |workspace, cx| update(workspace, window, cx))
+        })
     }
 
     pub fn update_window<R>(
@@ -453,8 +456,9 @@ impl ZedWindow {
         cx: &mut BenchAppContext,
         update: impl FnOnce(&mut Window, &mut App) -> R,
     ) -> R {
-        self.window
-            .update(cx, |_, window, cx| update(window, cx))
+        // Through the untyped handle, so the root view isn't leased while input
+        // dispatched here reaches it.
+        cx.update_window(self.any_window(), |_, window, cx| update(window, cx))
             .expect("benchmark window was closed")
     }
 
