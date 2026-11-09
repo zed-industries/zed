@@ -317,8 +317,9 @@ impl OpenRequest {
             Some(urlencoding::decode(url.username())?.into_owned())
         };
         let port = url.port();
+        // Refuse earlier local paths; earlier ssh paths are left to the connection check below.
         anyhow::ensure!(
-            self.open_paths.is_empty(),
+            self.open_paths.is_empty() || self.remote_connection.is_some(),
             "cannot open both local and ssh paths"
         );
         let mut connection_options =
@@ -1449,6 +1450,76 @@ mod tests {
                 )
             });
             assert!(result.is_err(), "{input} should be rejected");
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_ssh_urls_of_one_connection(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "ssh://me@host/project".into(),
+                        "ssh://me@host/project/README.md".into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+        assert_eq!(
+            request.remote_connection.unwrap(),
+            RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "host".into(),
+                username: Some("me".into()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(request.open_paths, vec!["/project", "/project/README.md"]);
+    }
+
+    #[gpui::test]
+    fn test_reject_ssh_urls_with_other_paths(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        for (wsl, urls, expected) in [
+            (
+                None,
+                ["file:///tmp/local", "ssh://me@host/project"],
+                "cannot open both local and ssh paths",
+            ),
+            (
+                None,
+                ["ssh://me@host/project", "ssh://me@other/project"],
+                "cannot open multiple different remote connections",
+            ),
+            (
+                None,
+                ["ssh://me@host/project", "ssh://you@host/project"],
+                "cannot open multiple different remote connections",
+            ),
+            (
+                Some("Ubuntu"),
+                ["file:///home/me/project", "ssh://me@host/project"],
+                "cannot open multiple different remote connections",
+            ),
+        ] {
+            let error = cx
+                .update(|cx| {
+                    OpenRequest::parse(
+                        RawOpenRequest {
+                            urls: urls.iter().map(|url| url.to_string()).collect(),
+                            wsl: wsl.map(str::to_string),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                })
+                .unwrap_err();
+            assert_eq!(error.to_string(), expected, "{urls:?}");
         }
     }
 
