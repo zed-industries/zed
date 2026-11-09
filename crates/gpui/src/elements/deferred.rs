@@ -78,14 +78,6 @@ impl Element for Deferred {
     }
 }
 
-impl IntoElement for Deferred {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Deferred {
     /// Sets a priority for the element. A higher priority conceptually means painting the element
     /// on top of deferred draws with a lower priority (i.e. closer to the viewer).
