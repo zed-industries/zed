@@ -1203,9 +1203,7 @@ async fn resolve_global_skill_path_for_edit_session(
             } else {
                 // The skills are on a machine whose path style may differ
                 // from this one's, so the parent isn't `Path::parent`.
-                let path_style = context
-                    .project
-                    .read_with(cx, |project, cx| project.path_style(cx));
+                let path_style = cx.update(|cx| global_skill_files.path_style(cx));
                 let parent_path = path_style
                     .parent(&abs_path)
                     .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
