@@ -103,8 +103,19 @@ struct ProcessFixture {
     next_project: AtomicUsize,
 }
 
+/// The Zed clone the pinned fixtures are read from: `ZED_BENCHMARKS_REPO` if set,
+/// else the checkout the binary was built in, else the current directory (a copied
+/// binary may outlive the worktree that built it).
 fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    if let Some(repository) = std::env::var_os("ZED_BENCHMARKS_REPO") {
+        return PathBuf::from(repository);
+    }
+    let build_checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    if build_checkout.exists() {
+        build_checkout
+    } else {
+        PathBuf::from(".")
+    }
 }
 
 fn read_pinned_file(repository_path: &str) -> Result<String> {

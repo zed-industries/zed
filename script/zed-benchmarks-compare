@@ -183,9 +183,11 @@ def main():
 
     output = cache / "runs" / time.strftime("%Y%m%d-%H%M%S")
     output.mkdir(parents=True)
-    command_tail = ["--noplot"] + ([args.filter] if args.filter else [])
+    filter_arguments = [args.filter] if args.filter else []
+    # Criterion binaries run in test mode unless given --bench.
+    command_tail = ["--bench", "--noplot", *filter_arguments]
     for index, (_, binary) in enumerate(revisions):
-        run([str(binary), "--test", *command_tail[1:]], cwd=output,
+        run([str(binary), "--test", *filter_arguments], cwd=output,
             log=output / f"smoke-{index}.log", timeout=args.timeout)
 
     samples = [[], []]
