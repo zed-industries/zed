@@ -465,13 +465,6 @@ message Envelope {
     KillKernel kill_kernel = 428;
     GitRemoveWorktree git_remove_worktree = 431;
     GitRenameWorktree git_rename_worktree = 432;
-    GitCreateCheckpoint git_create_checkpoint = 433;
-    GitCreateCheckpointResponse git_create_checkpoint_response = 434;
-    GitRestoreCheckpoint git_restore_checkpoint = 435;
-    GitCompareCheckpoints git_compare_checkpoints = 436;
-    GitCompareCheckpointsResponse git_compare_checkpoints_response = 437;
-    GitDiffCheckpoints git_diff_checkpoints = 438;
-    GitDiffCheckpointsResponse git_diff_checkpoints_response = 439;
     GitGetHeadSha git_get_head_sha = 440;
     GitGetHeadShaResponse git_get_head_sha_response = 441;
     GitRepairWorktrees git_repair_worktrees = 442;
@@ -553,6 +546,7 @@ message Envelope {
   reserved 211 to 216, 232 to 233;
   reserved 397 to 398;
   reserved 406 to 408;
+  reserved 433 to 439;
 }
 
 message Hello {

@@ -2126,7 +2126,12 @@ async fn test_collaborating_with_code_lens_resolve(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
-    let fake_language_server = fake_language_servers.next().await.unwrap();
+    let mut fake_language_server = fake_language_servers.next().await.unwrap();
+    // Fake servers are handed out before they are initialized, while registrations need a
+    // running server, which the buffer being opened in it ensures.
+    fake_language_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
     fake_language_server
         .request::<lsp::request::RegisterCapability>(
             lsp::RegistrationParams {

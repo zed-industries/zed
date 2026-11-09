@@ -1354,6 +1354,100 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_project_tasks_and_debug_scenarios_require_trust(cx: &mut gpui::TestAppContext) {
+    use project::trusted_worktrees::{self, DbTrustedPaths, PathTrust, TrustedWorktrees};
+
+    init_test(cx);
+    TaskStore::init(None);
+    cx.update(|cx| trusted_worktrees::init(DbTrustedPaths::default(), cx));
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".zed": {
+                "settings.json": r#"{ "tab_size": 8 }"#,
+                "tasks.json": r#"[{ "label": "initial", "command": "echo initial", "hooks": ["create_worktree"] }]"#,
+                "debug.json": r#"[{ "label": "debug", "adapter": "Debugpy", "request": "launch" }]"#,
+            },
+            "file.rs": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test_with_worktree_trust(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    cx.run_until_parked();
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+    let inventory = project.read_with(cx, |project, cx| {
+        project
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .unwrap()
+            .clone()
+    });
+    let contexts = TaskContexts {
+        active_worktree_context: Some((worktree_id, TaskContext::default())),
+        ..Default::default()
+    };
+    let hooks = HashSet::from_iter([task::TaskHook::CreateWorktree]);
+
+    assert!(inventory.read_with(cx, |inventory, _| {
+        inventory
+            .templates_with_hooks(&hooks, worktree_id)
+            .is_empty()
+    }));
+    let (_, scenarios) = inventory
+        .update(cx, |inventory, cx| {
+            inventory.list_debug_scenarios(&contexts, Vec::new(), Vec::new(), false, cx)
+        })
+        .await;
+    assert!(scenarios.is_empty());
+
+    fs.save(
+        path!("/dir/.zed/tasks.json").as_ref(),
+        &r#"[{ "label": "updated", "command": "echo updated", "hooks": ["create_worktree"] }]"#
+            .into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+    assert!(inventory.read_with(cx, |inventory, _| {
+        inventory
+            .templates_with_hooks(&hooks, worktree_id)
+            .is_empty()
+    }));
+
+    let trusted_worktrees = cx.update(|cx| TrustedWorktrees::try_get_global(cx).unwrap());
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let templates = inventory.read_with(cx, |inventory, _| {
+        inventory.templates_with_hooks(&hooks, worktree_id)
+    });
+    assert_eq!(templates.len(), 1);
+    assert_eq!(templates[0].1.label, "updated");
+    assert_eq!(templates[0].1.command, "echo updated");
+    let (_, scenarios) = inventory
+        .update(cx, |inventory, cx| {
+            inventory.list_debug_scenarios(&contexts, Vec::new(), Vec::new(), false, cx)
+        })
+        .await;
+    assert_eq!(scenarios.len(), 1);
+    assert_eq!(scenarios[0].1.label, "debug");
+}
+
+#[gpui::test]
 async fn test_invalid_local_tasks_shows_toast_with_doc_link(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     TaskStore::init(None);
@@ -11419,7 +11513,7 @@ async fn test_dynamic_formatting_registrations_honor_document_selectors(
 }
 
 #[gpui::test]
-async fn test_dynamic_formatting_registration_with_pattern_only_selector_fails_open(
+async fn test_dynamic_formatting_registration_with_pattern_only_selector(
     cx: &mut gpui::TestAppContext,
 ) {
     init_test(cx);
@@ -11466,40 +11560,55 @@ async fn test_dynamic_formatting_registration_with_pattern_only_selector_fails_o
         }
     });
 
-    fake_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: "pattern-only-formatting".to_string(),
-                    method: "textDocument/formatting".to_string(),
-                    register_options: Some(json!({
-                        "documentSelector": [{ "pattern": "**/*.nomatch" }],
-                    })),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    project
-        .update(cx, |project, cx| {
-            project.format(
-                HashSet::from_iter([buffer.clone()]),
-                project::lsp_store::LspFormatTarget::Buffers,
-                false,
-                project::lsp_store::FormatTrigger::Manual,
-                cx,
+    let register_formatting = async |id: &str, pattern: &str| {
+        fake_server
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: id.to_string(),
+                        method: "textDocument/formatting".to_string(),
+                        register_options: Some(json!({
+                            "documentSelector": [{ "pattern": pattern }],
+                        })),
+                    }],
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
             )
-        })
-        .await
-        .unwrap();
+            .await
+            .into_response()
+            .unwrap();
+    };
+    let format = async |cx: &mut gpui::TestAppContext| {
+        project
+            .update(cx, |project, cx| {
+                project.format(
+                    HashSet::from_iter([buffer.clone()]),
+                    project::lsp_store::LspFormatTarget::Buffers,
+                    false,
+                    project::lsp_store::FormatTrigger::Manual,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+    };
+
+    register_formatting("pattern-only-formatting", "**/*.nomatch").await;
+    cx.executor().run_until_parked();
+    format(cx).await;
+    assert_eq!(
+        format_request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected a pattern-only filter not matching the buffer's path not to route the formatting request",
+    );
+
+    register_formatting("matching-pattern-formatting", "**/*.rs").await;
+    cx.executor().run_until_parked();
+    format(cx).await;
     assert_eq!(
         format_request_count.load(atomic::Ordering::SeqCst),
         1,
-        "expected a pattern-only filter to fail open and route the formatting request",
+        "expected a pattern-only filter matching the buffer's path to route the formatting request",
     );
 }
 

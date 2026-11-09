@@ -1,8 +1,9 @@
 use super::{CallbackSlot, platform::IosPlatformState, window::IosWindowState};
 use gpui::{AppLifecyclePhase, WindowVisibility};
+use gpui_apple::main_thread_marker;
 use objc2::{
-    ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, extern_class,
-    extern_methods, msg_send,
+    ClassType, DefinedClass, MainThreadOnly, Message, define_class, extern_class, extern_methods,
+    msg_send,
     rc::{Allocated, Retained},
     runtime::AnyObject,
     sel,
@@ -47,7 +48,7 @@ pub(super) fn current_platform() -> Option<Rc<IosPlatformState>> {
 }
 
 pub(super) fn run(platform: &Rc<IosPlatformState>, on_finish_launching: Box<dyn FnOnce()>) {
-    let main_thread = MainThreadMarker::new().expect("UIKit requires the main thread");
+    let main_thread = main_thread_marker().expect("UIKit requires the main thread");
     CURRENT_PLATFORM.with_borrow_mut(|current| {
         assert!(
             current.upgrade().is_none(),

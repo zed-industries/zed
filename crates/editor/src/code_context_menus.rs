@@ -1009,8 +1009,10 @@ impl CompletionsMenu {
                                 label_match.string == completion.label.filter_text()
                             })
                             .or_else(|| {
-                                (completion.filter_text() == completion.label.filter_text())
-                                    .then_some(mat)
+                                // Some servers change labels during resolve despite our advertised capabilities.
+                                // Match offsets index mat.string: the candidate text, not the user's query.
+                                // Reuse those offsets only if that text equals the displayed label's filter slice.
+                                (mat.string == completion.label.filter_text()).then_some(mat)
                             })
                             .into_iter()
                             .flat_map(|string_match| {
