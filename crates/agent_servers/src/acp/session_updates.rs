@@ -173,6 +173,15 @@ pub enum InboundSessionUpdate {
         plan: acp_v2::PlanItems,
         update_meta: Option<acp_v2::Meta>,
     },
+    PlanMarkdown {
+        plan: acp_v2::PlanMarkdown,
+        update_meta: Option<acp_v2::Meta>,
+    },
+    PlanFile {
+        plan: acp_v2::PlanFile,
+        update_meta: Option<acp_v2::Meta>,
+    },
+    PlanRemoved(acp_v2::PlanRemoved),
     Terminal(DecodedTerminalUpdate),
     SessionInfo(acp_v2::SessionInfoUpdate),
     AvailableCommands(acp_v2::AvailableCommandsUpdate),
@@ -232,29 +241,33 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
             acp_v2::SessionUpdate::ToolCallContentChunk(chunk) => {
                 InboundSessionUpdate::ToolCallContentChunk(chunk)
             }
-            acp_v2::SessionUpdate::PlanUpdate(mut update) => {
-                // Zed only renders item plans, but any plan type replaces the plan with that ID.
-                let plan = match update.plan {
-                    acp_v2::PlanUpdateContent::Items(plan) => plan,
-                    acp_v2::PlanUpdateContent::File(plan) => {
-                        acp_v2::PlanItems::new(plan.plan_id, Vec::new())
-                    }
-                    acp_v2::PlanUpdateContent::Markdown(plan) => {
-                        acp_v2::PlanItems::new(plan.plan_id, Vec::new())
-                    }
-                    acp_v2::PlanUpdateContent::Other(plan) => {
-                        acp_v2::PlanItems::new(plan.plan_id, Vec::new())
-                    }
-                    content => {
-                        update.plan = content;
-                        notification.update = acp_v2::SessionUpdate::PlanUpdate(update);
-                        return Err(notification);
-                    }
-                };
-                InboundSessionUpdate::PlanItems {
+            acp_v2::SessionUpdate::PlanUpdate(mut update) => match update.plan {
+                acp_v2::PlanUpdateContent::Items(plan) => InboundSessionUpdate::PlanItems {
                     plan,
                     update_meta: update.meta,
+                },
+                acp_v2::PlanUpdateContent::Markdown(plan) => InboundSessionUpdate::PlanMarkdown {
+                    plan,
+                    update_meta: update.meta,
+                },
+                acp_v2::PlanUpdateContent::File(plan) => InboundSessionUpdate::PlanFile {
+                    plan,
+                    update_meta: update.meta,
+                },
+                // Zed can't render an unknown plan type, but it still replaces the plan with
+                // that ID.
+                acp_v2::PlanUpdateContent::Other(plan) => InboundSessionUpdate::PlanItems {
+                    plan: acp_v2::PlanItems::new(plan.plan_id, Vec::new()),
+                    update_meta: update.meta,
+                },
+                content => {
+                    update.plan = content;
+                    notification.update = acp_v2::SessionUpdate::PlanUpdate(update);
+                    return Err(notification);
                 }
+            },
+            acp_v2::SessionUpdate::PlanRemoved(removed) => {
+                InboundSessionUpdate::PlanRemoved(removed)
             }
             acp_v2::SessionUpdate::SessionInfoUpdate(update) => {
                 InboundSessionUpdate::SessionInfo(update)
@@ -329,6 +342,18 @@ impl InboundSessionNotification {
             }
             InboundSessionUpdate::PlanItems { plan, update_meta } => {
                 thread.upsert_plan_items(plan, update_meta, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::PlanMarkdown { plan, update_meta } => {
+                thread.upsert_plan_markdown(plan, update_meta, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::PlanFile { plan, update_meta } => {
+                thread.upsert_plan_file(plan, update_meta, cx);
+                Ok(())
+            }
+            InboundSessionUpdate::PlanRemoved(removed) => {
+                thread.remove_plan(removed.plan_id, cx);
                 Ok(())
             }
             InboundSessionUpdate::Terminal(update) => DecodedTerminalNotification {

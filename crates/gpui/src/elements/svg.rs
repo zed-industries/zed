@@ -7,8 +7,8 @@ use std::{
 
 use crate::{
     App, Asset, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString, Size,
-    StyleRefinement, Styled, TransformationMatrix, Window, point, px, radians, size,
+    Interactivity, LayoutId, Pixels, Point, Radians, SharedString, Size, StyleRefinement, Styled,
+    TransformationMatrix, Window, point, px, radians, size,
 };
 use gpui_util::ResultExt;
 
@@ -186,14 +186,6 @@ impl Element for Svg {
                 }
             },
         )
-    }
-}
-
-impl IntoElement for Svg {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
