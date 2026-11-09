@@ -66,7 +66,7 @@ pub async fn canonical_global_skills_dir(fs: &dyn Fs) -> Option<PathBuf> {
 /// This is the gate that lets `read_file` / `list_directory` reach into the
 /// global skills directory — which lives outside any worktree — without
 /// also opening up arbitrary external paths.
-pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
     let normalized_path = resolve_lexical_global_skill_path(path)?;
 
     // Canonicalize both sides so symlinks can't sneak the path out of the
@@ -161,7 +161,7 @@ fn resolve_lexical_global_skill_path(path: &Path) -> Option<PathBuf> {
 /// to read, write, or create it. Returns `None` for any other path, including
 /// siblings of the global skills tree or paths that would escape it with `..`
 /// or symlinks.
-pub async fn resolve_creatable_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+async fn resolve_creatable_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
     let normalized_path = resolve_lexical_global_skill_path(path)?;
     let canonical_path = canonicalize_with_ancestors(&normalized_path, fs).await?;
     let canonical_skills_dir = canonical_global_skills_dir(fs).await?;

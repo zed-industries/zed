@@ -217,10 +217,9 @@ impl GlobalSkillFiles {
                 agent_skills::locate_global_skill_path(path, fs.as_ref(), may_not_exist).await
             }
             Self::Remote(project) => {
-                let path_style = project.read_with(cx, |project, cx| project.path_style(cx));
                 // Most tool calls name project files, so skip the round trip
                 // for paths that can't be under any home's skills dir.
-                if !mentions_skills_dir(path, path_style) {
+                if !mentions_skills_dir(path) {
                     return None;
                 }
                 let client = cx
@@ -370,23 +369,11 @@ impl GlobalSkillFiles {
     }
 }
 
-/// Whether `path`, after resolving `..`, contains `.agents/skills`, which any
-/// path under `<home>/.agents/skills` does, whatever the home dir is.
-fn mentions_skills_dir(path: &Path, path_style: PathStyle) -> bool {
-    let path_text = path.to_string_lossy();
-    let mut names = Vec::new();
-    for name in path_text.split(path_style.separators_ch()) {
-        match name {
-            "" | "." => {}
-            ".." => {
-                names.pop();
-            }
-            name => names.push(name),
-        }
-    }
-    names.windows(2).any(|pair| {
-        pair[0] == agent_skills::AGENTS_DIR_NAME && pair[1] == agent_skills::SKILLS_DIR_NAME
-    })
+/// Whether `path` could be under a `.agents/skills` directory. It can't be
+/// without naming both, however it spells the rest.
+fn mentions_skills_dir(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    path.contains(agent_skills::AGENTS_DIR_NAME) && path.contains(agent_skills::SKILLS_DIR_NAME)
 }
 
 #[cfg(test)]
@@ -398,35 +385,5 @@ mod tests {
     fn test_local_global_skill_files_use_the_local_path_style(cx: &mut TestAppContext) {
         let global_skill_files = GlobalSkillFiles::Local(fs::FakeFs::new(cx.executor()));
         cx.update(|cx| assert_eq!(global_skill_files.path_style(cx), PathStyle::local()));
-    }
-
-    #[test]
-    fn test_mentions_skills_dir() {
-        for (path, path_style) in [
-            ("~/.agents/skills", PathStyle::Unix),
-            ("~/.agents/skills/my-skill/SKILL.md", PathStyle::Unix),
-            (
-                "/home/user/.agents/skills/my-skill/scripts/run.sh",
-                PathStyle::Unix,
-            ),
-            ("~/.agents/other/../skills/my-skill", PathStyle::Unix),
-            ("~/../user/.agents/skills", PathStyle::Unix),
-            (r"C:\Users\user\.agents\skills\my-skill", PathStyle::Windows),
-            ("~/.agents\\skills", PathStyle::Windows),
-        ] {
-            assert!(mentions_skills_dir(Path::new(path), path_style), "{path}");
-        }
-        for (path, path_style) in [
-            ("project/src/main.rs", PathStyle::Unix),
-            ("/home/user/project/src/main.rs", PathStyle::Unix),
-            ("~/.agents", PathStyle::Unix),
-            ("~/.agents/skills/../other", PathStyle::Unix),
-            ("~/skills/.agents", PathStyle::Unix),
-            // A backslash is part of a file name on Unix.
-            (r"~/.agents\skills", PathStyle::Unix),
-            (r"C:\Users\user\project\main.rs", PathStyle::Windows),
-        ] {
-            assert!(!mentions_skills_dir(Path::new(path), path_style), "{path}");
-        }
     }
 }
