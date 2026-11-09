@@ -1,3 +1,15 @@
+//! This crate defines resources managed by Zed.
+//!
+//! In order to function properly, Zed has to fetch and invoke various binaries; language servers, node runtime, debuggers and a bunch of others.
+//! In the past, it did so without consulting the user. Which binary was ran was not really clear to users, as discussed in e.g. #12589.
+//!
+//! This crate attempts to define a common entry point for all external entities we need to interface with in order to implement core Zed functionalities.
+//! A Resource's definition is very lenient: it is any operation through which we might modify perform an operation on user's behalf that may affect their machine's state.
+//! By that definition, sending a HTTP request is a resource.
+//!
+//! In order to interact with a resource, you ought to implement [ManagedResourceCommand].
+//! One example of a resource is a language server binary. Zed may need to install it on user's behalf. The user may also want us to use the binary available on their system.
+//! But then, whenever we want to invoke said binary, we should let the user know as well, as running arbitrary processes on their PC might affect their machine state.
 use futures::{FutureExt, future::Shared};
 use gpui::{App, AsyncApp, Context, Task, WeakEntity};
 use serde::{Deserialize, Serialize};
@@ -9,6 +21,17 @@ use std::{
     sync::Arc,
 };
 
+enum ExecutionBillRoot {
+    Extension,
+    Debugger,
+    LanguageServer,
+}
+
+struct ResourceExecutionBill {
+    root: ExecutionBillRoot,
+    reasoning: Vec<()>,
+}
+
 pub trait ManagedResource: Sized + Send + Sync + 'static {
     type Key: 'static;
     type Context: ?Sized + 'static;
@@ -18,10 +41,8 @@ pub trait ManagedResource: Sized + Send + Sync + 'static {
     /// Include configuration that changes what is authorized; context is not part of the cache key.
     fn id(key: &Self::Key) -> ResourceId;
 
-    fn obtain(
-        key: &Self::Key,
-        context: &Self::Context,
-    ) -> impl Future<Output = anyhow::Result<Self>>;
+    #[expect(async_fn_in_trait)]
+    async fn obtain(key: &Self::Key, context: &Self::Context) -> anyhow::Result<Self>;
 }
 
 pub trait ManagedResourceCommand<Resource: ManagedResource>: Sized + 'static {
@@ -160,6 +181,7 @@ impl ManagedResourceStore {
         &mut self,
         key: Resource::Key,
         context: Rc<Resource::Context>,
+        reason: ResourceExecutionBill,
         command: Resource::Command,
         cx: &mut Context<Self>,
     ) -> Task<
