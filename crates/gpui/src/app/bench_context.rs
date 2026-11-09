@@ -14,10 +14,11 @@ pub use bench_metrics::{BenchMeasurement, CountingAllocator, MetricReport};
 use hdrhistogram::Histogram;
 
 use crate::{
-    AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds, Context, Empty,
-    Entity, EntityId, Focusable, ForegroundExecutor, Global, Pixels, Platform,
-    PlatformHeadlessRenderer, PlatformTextSystem, Render, Reservation, Size, Task, TestPlatform,
-    ThreadedDispatcher, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
+    AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor, Bounds,
+    Context, Empty, Entity, EntityId, Focusable, ForegroundExecutor, Global, Pixels, Platform,
+    PlatformHeadlessRenderer, PlatformTextSystem, Render, Reservation, Size, SvgRenderer, Task,
+    TestPlatform, ThreadedDispatcher, VisualContext, Window, WindowBounds, WindowHandle,
+    WindowOptions,
     app::GpuiBorrow,
     profiler::{
         self, FrameEvent, FrameTimingCollector,
@@ -562,6 +563,15 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             bencher: Rc::new(RefCell::new(Some(bencher))),
             report,
         }
+    }
+
+    /// Replaces the app's asset source, as `Application::with_assets` does at startup,
+    /// so benchmarks can render the same icons and load the same embedded fonts as the
+    /// application they measure.
+    pub fn set_asset_source(&mut self, asset_source: Arc<dyn AssetSource>) {
+        let mut app = self.app.borrow_mut();
+        app.svg_renderer = SvgRenderer::new(asset_source.clone());
+        app.asset_source = asset_source;
     }
 
     /// The benchmark function name that created this context.
