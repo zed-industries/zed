@@ -232,7 +232,7 @@ where
     );
 
     matcher::return_matcher(matcher);
-    if outcome.is_err() {
+    if outcome.is_err() || is_cancelled(cancel_flag, atomic::Ordering::Acquire) {
         return Vec::new();
     }
     gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
@@ -591,6 +591,36 @@ mod tests {
     fn test_sync_cancellation() {
         let cs = candidates(&["hello", "world"]);
         let cancel = AtomicBool::new(true);
+        let results = match_strings(
+            &cs,
+            "hel",
+            StringMatchOptions {
+                cancel_flag: Some(&cancel),
+                ..options()
+            },
+        );
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_sync_cancellation_during_last_candidate() {
+        struct CancellingCandidate<'a> {
+            candidate: StringMatchCandidate,
+            cancel: &'a AtomicBool,
+        }
+
+        impl Borrow<StringMatchCandidate> for CancellingCandidate<'_> {
+            fn borrow(&self) -> &StringMatchCandidate {
+                self.cancel.store(true, atomic::Ordering::Release);
+                &self.candidate
+            }
+        }
+
+        let cancel = AtomicBool::new(false);
+        let cs = [CancellingCandidate {
+            candidate: StringMatchCandidate::new(0, "hello"),
+            cancel: &cancel,
+        }];
         let results = match_strings(
             &cs,
             "hel",

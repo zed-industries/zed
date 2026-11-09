@@ -300,7 +300,7 @@ pub fn match_fixed_path_set(
         cancel_flag,
     );
     matcher::return_matcher(matcher);
-    if outcome.is_err() {
+    if outcome.is_err() || is_cancelled(cancel_flag, atomic::Ordering::Acquire) {
         return Vec::new();
     }
     gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
