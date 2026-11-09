@@ -1,10 +1,10 @@
 use gpui::{
-    FontFeatures, FontStyle, FontWeight, Modifiers, Pixels, SharedString,
+    FontFeatures, FontStyle, FontWeight, Modifiers, ObjectFit, Pixels, SharedString,
     WindowBackgroundAppearance, px,
 };
 use settings_content::{
-    FontFamilyName, FontFeaturesContent, FontSize, FontStyleContent, FontWeightContent,
-    ModifiersContent, PixelSetting, WindowBackgroundContent,
+    BackgroundImageFit, FontFamilyName, FontFeaturesContent, FontSize, FontStyleContent,
+    FontWeightContent, ModifiersContent, PixelSetting, WindowBackgroundContent,
 };
 use std::sync::Arc;
 
@@ -52,6 +52,20 @@ impl IntoGpui for WindowBackgroundContent {
             WindowBackgroundContent::Blurred => WindowBackgroundAppearance::Blurred,
             WindowBackgroundContent::MicaBackdrop => WindowBackgroundAppearance::MicaBackdrop,
             WindowBackgroundContent::MicaAltBackdrop => WindowBackgroundAppearance::MicaAltBackdrop,
+        }
+    }
+}
+
+impl IntoGpui for BackgroundImageFit {
+    type Output = ObjectFit;
+
+    fn into_gpui(self) -> Self::Output {
+        match self {
+            BackgroundImageFit::Cover => ObjectFit::Cover,
+            BackgroundImageFit::Contain => ObjectFit::Contain,
+            BackgroundImageFit::Fill => ObjectFit::Fill,
+            BackgroundImageFit::ScaleDown => ObjectFit::ScaleDown,
+            BackgroundImageFit::None => ObjectFit::None,
         }
     }
 }
