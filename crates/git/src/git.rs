@@ -162,6 +162,7 @@ pub struct RenameBranch {
     pub branch: Option<String>,
 }
 
+/// Trim. Then replace ` `  with `-`.
 pub fn normalize_branch_name(query: &str) -> String {
     query.trim().replace(' ', "-")
 }
