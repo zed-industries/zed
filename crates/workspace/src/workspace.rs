@@ -60,10 +60,10 @@ use futures::{
 };
 use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AppContext, AsyncApp, AsyncWindowContext, Axis,
-    Bounds, ClipboardItem, Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke,
-    ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size,
-    Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity,
+    Bounds, ClipboardItem, Context, Corners, CursorStyle, Decorations, DragMoveEvent, Entity,
+    EntityId, EventEmitter, FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext,
+    Keystroke, ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
+    Size, Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity,
     WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas, point, relative, size,
     transparent_black,
 };
@@ -12242,8 +12242,26 @@ pub fn client_side_decorations(
     };
 
     match decorations {
-        Decorations::Client { .. } => window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW),
-        Decorations::Server => window.set_client_inset(px(0.0)),
+        Decorations::Client { .. } => {
+            window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
+            let radius = |rounded| {
+                if rounded {
+                    theme::CLIENT_SIDE_DECORATION_ROUNDING
+                } else {
+                    px(0.0)
+                }
+            };
+            window.set_client_corner_radii(Corners {
+                top_left: radius(!tiling.top && !tiling.left),
+                top_right: radius(!tiling.top && !tiling.right),
+                bottom_left: radius(!tiling.bottom && !tiling.left),
+                bottom_right: radius(!tiling.bottom && !tiling.right),
+            });
+        }
+        Decorations::Server => {
+            window.set_client_inset(px(0.0));
+            window.set_client_corner_radii(Corners::default());
+        }
     }
 
     struct GlobalResizeEdge(ResizeEdge);
@@ -17262,6 +17280,67 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             let right_dock = workspace.right_dock();
             assert!(!right_dock.read(cx).is_open());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_dock_panel_activation(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+            multi_workspace.workspace().clone()
+        });
+
+        // Create two test panels, adding them both to the same dock so that we
+        // can later assert that emitting a `PanelEvent::Activate` on one panel
+        // does not end up transitively activating the other when the dock is
+        // re-opened.
+        let (panel_a, panel_b) = workspace.update_in(cx, |workspace, window, cx| {
+            let panel_a = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 0, cx));
+            let panel_b = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 1, cx));
+            workspace.add_panel(panel_a.clone(), window, cx);
+            workspace.add_panel(panel_b.clone(), window, cx);
+            (panel_a, panel_b)
+        });
+
+        panel_a.update(cx, |_, cx| cx.emit(PanelEvent::Activate));
+        workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(dock.is_open(),);
+            assert_eq!(dock.visible_panel().unwrap().panel_id(), panel_a.panel_id(),);
+        });
+
+        panel_a.update(cx, |_, cx| cx.emit(PanelEvent::Close));
+        workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(!dock.is_open(),);
+            assert_eq!(dock.active_panel().unwrap().panel_id(), panel_a.panel_id(),);
+        });
+
+        // Ensure that [`TestPanel::activation_history`] is cleared before we
+        // emit events from Panel B, so we can ensure it's still empty
+        // afterwards.
+        panel_a.update(cx, |panel, _| {
+            assert!(!panel.active);
+            panel.activation_history.clear();
+        });
+
+        panel_b.update(cx, |_, cx| cx.emit(PanelEvent::Activate));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(dock.is_open());
+            assert!(panel_b.read(cx).active);
+            assert!(panel_b.focus_handle(cx).is_focused(window));
+            assert!(!panel_a.read(cx).active);
+            assert_eq!(dock.visible_panel().unwrap().panel_id(), panel_b.panel_id());
+
+            assert!(
+                !panel_a.read(cx).activation_history.contains(&true),
+                "activating Panel B should not transiently activate Panel A"
+            );
         });
     }
 

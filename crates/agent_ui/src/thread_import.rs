@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use acp_thread::AgentSessionListRequest;
 use agent::ThreadStore;
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use chrono::Utc;
 use collections::{HashMap, HashSet};
 use db::kvp::Dismissable;
@@ -1262,7 +1262,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary database directory should exist");
         let connection = create_channel_db(directory.path(), ReleaseChannel::Nightly);
         let legacy_session_id =
-            agent_client_protocol::schema::v1::SessionId::new("legacy/session:opaque-☃");
+            agent_client_protocol::v1::schema::SessionId::new("legacy/session:opaque-☃");
         let saved_thread_id = ThreadId::new();
         let draft_thread_id = ThreadId::new();
         let mut insert = connection
