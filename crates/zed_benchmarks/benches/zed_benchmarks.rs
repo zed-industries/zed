@@ -592,7 +592,11 @@ fn buffer_search(cx: &mut BenchAppContext) {
             }
             // The search runs in the background; frames keep drawing while it does.
             if !session.found_match {
-                session.found_match = search_bar.read(cx).has_active_match();
+                session.found_match = search_bar.read(cx).query(cx) == QUERY
+                    && search_bar.read(cx).has_active_match()
+                    && editor
+                        .read(cx)
+                        .has_background_highlights(editor::HighlightKey::BufferSearchHighlights);
                 return Step::Continue;
             }
             if session.selected_rows.len() < NEXT_MATCHES {
@@ -628,10 +632,15 @@ fn buffer_search(cx: &mut BenchAppContext) {
         }
     });
     wait_until(cx, "search results", |cx| {
-        search_bar.read_with(cx, |search_bar, _| search_bar.has_active_match())
+        let query = search_bar.read_with(cx, |search_bar, cx| search_bar.query(cx));
+        query == QUERY
+            && editor.read_with(cx, |editor, _| {
+                editor.has_background_highlights(editor::HighlightKey::BufferSearchHighlights)
+            })
     });
+    // Distinct highlighted ranges whose text is the query; selection-occurrence
+    // highlights of the active match cover the same ranges and are deduplicated.
     let highlighted = zed.update_window(cx, |window, cx| {
-        let match_color = cx.theme().colors().search_match_background;
         editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(window, cx);
             let buffer_snapshot = snapshot.buffer_snapshot();
@@ -640,8 +649,14 @@ fn buffer_search(cx: &mut BenchAppContext) {
             editor
                 .background_highlights_in_range(range, &snapshot.display_snapshot, cx.theme())
                 .into_iter()
-                .filter(|(_, color)| *color == match_color)
-                .count()
+                .filter_map(|(range, _)| {
+                    let start = range.start.to_point(&snapshot.display_snapshot);
+                    let end = range.end.to_point(&snapshot.display_snapshot);
+                    let text = buffer_snapshot.text_for_range(start..end).collect::<String>();
+                    (text == QUERY).then_some((start, end))
+                })
+                .collect::<BTreeSet<_>>()
+                .len()
         })
     });
     assert_eq!(
