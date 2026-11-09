@@ -5505,6 +5505,30 @@ impl Window {
             .request_measured_layout(scope, &style, rem_size, scale_factor, measure)
     }
 
+    /// Lays out a `.cached()` view's contents in `f`, keeping their layout nodes apart from
+    /// the rest of the window's so they can be retained while the view replays its last
+    /// frame. The view's element ID must be on the stack.
+    pub(crate) fn with_cached_view_layout<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let key = self.element_id_stack.hash();
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .begin_layout_owner(key);
+        let result = f(self);
+        self.layout_engine.as_mut().unwrap().end_layout_owner();
+        result
+    }
+
+    /// Keeps the layout nodes of a `.cached()` view that replays its last frame, so that
+    /// Taffy's cache still holds its layout when the view is next rendered.
+    pub(crate) fn retain_cached_view_layout(&mut self) {
+        let key = self.element_id_stack.hash();
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .retain_layout_owner(key);
+    }
+
     #[cfg(test)]
     pub(crate) fn set_layout_cache_enabled(&mut self, enabled: bool) {
         self.layout_engine
