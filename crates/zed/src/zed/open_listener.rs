@@ -21,6 +21,8 @@ use onboarding::show_onboarding_view;
 use recent_projects::{RemoteSettings, navigate_to_positions, open_remote_project};
 use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
+#[cfg(target_os = "windows")]
+use std::path::{Component, Prefix};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -162,9 +164,9 @@ impl OpenRequest {
                     index: action_index.parse()?,
                 });
             } else if let Some(file) = url.strip_prefix("file://") {
-                this.parse_file_path(file)
+                this.parse_local_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
-                this.parse_file_path(file)
+                this.parse_local_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://ssh") {
                 let ssh_url = "ssh:/".to_string() + file;
                 this.parse_ssh_file_path(&ssh_url, cx)?
@@ -216,6 +218,23 @@ impl OpenRequest {
 
     fn parse_file_path(&mut self, file: &str) {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
+            self.open_paths.push(decoded.into_owned())
+        }
+    }
+
+    fn parse_local_file_path(&mut self, file: &str) {
+        if let Some(decoded) = urlencoding::decode(file).log_err() {
+            // URL paths keep a `/` before a Windows drive letter (`/C:/x`), which Windows cannot open.
+            #[cfg(target_os = "windows")]
+            if let Some(path) = decoded.strip_prefix('/')
+                && matches!(
+                    Path::new(path).components().next(),
+                    Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_))
+                )
+            {
+                self.open_paths.push(path.to_owned());
+                return;
+            }
             self.open_paths.push(decoded.into_owned())
         }
     }
@@ -1363,6 +1382,32 @@ mod tests {
             paths,
             vec![(path!("/root/test.txt").to_string(), Some(10), None)]
         );
+    }
+
+    // The path part of `file://` and `zed://file` URLs starts with `/` before the drive letter,
+    // `/C:/root/test.txt` should be parsed as `C:/root/test.txt`
+    #[cfg(target_os = "windows")]
+    #[gpui::test]
+    fn test_parse_file_urls_with_drive_letter_on_windows(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        for (input, expected) in [
+            ("zed://file/C:/root/test.txt:10", "C:/root/test.txt:10"),
+            ("zed://file/C%3A/root/test.txt", "C:/root/test.txt"),
+            ("file:///C:/root/test.txt", "C:/root/test.txt"),
+        ] {
+            let request = cx.update(|cx| {
+                OpenRequest::parse(
+                    RawOpenRequest {
+                        urls: vec![input.into()],
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .unwrap()
+            });
+            assert_eq!(request.open_paths, vec![expected], "{input}");
+        }
     }
 
     #[gpui::test]
