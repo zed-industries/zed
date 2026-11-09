@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Build two revisions once, then alternate bounded runs of the zed_benchmarks suite.
+
+Usage: script/zed-benchmarks-compare BASELINE CANDIDATE [--runs 3] [--filter REGEX]
+
+Both revisions must contain the zed_benchmarks crate and its bench-support seams
+(cherry-pick the suite's commits onto a revision that lacks them). The invoking
+checkout's crates/zed_benchmarks is copied over both revisions so they run
+identical benchmark code. Both revisions build in one detached worktree under
+target/zed-benchmarks-compare, sharing a target directory: checking out a
+revision rewrites only the files that differ, so Cargo rebuilds just the crates
+they affect and the comparison needs one target directory's worth of disk.
+
+Runs alternate (B N N B B N ...) and each run of the whole suite is killed after
+--timeout seconds (at most 300). Reported numbers are medians across runs of
+Criterion's per-iteration estimate and of the GPUI frame report, which includes
+Criterion warm-up. Raw logs stay in target/zed-benchmarks-compare/runs. Don't run
+other benchmarks or builds on the machine meanwhile.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import statistics
+import subprocess
+import sys
+import time
+
+SUITE = Path("crates/zed_benchmarks")
+UNITS = {"ns": 1e-9, "µs": 1e-6, "us": 1e-6, "ms": 1e-3, "s": 1.0}
+
+
+def git(root, *arguments):
+    return subprocess.check_output(["git", "-C", str(root), *arguments], text=True).strip()
+
+
+def run(command, *, cwd, log, timeout, environment=None):
+    started = time.monotonic()
+    with log.open("w") as output:
+        process = subprocess.Popen(command, cwd=cwd, env=environment, stdout=output,
+                                   stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            returncode = process.wait(timeout=timeout)
+        except BaseException as error:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            if isinstance(error, subprocess.TimeoutExpired):
+                raise RuntimeError(f"timed out after {timeout}s; see {log}") from error
+            raise
+    if returncode != 0:
+        raise RuntimeError(f"{command[0]} exited with status {returncode}; see {log}")
+    return time.monotonic() - started
+
+
+def suite_digest(root):
+    digest = hashlib.sha256()
+    for path in sorted((root / SUITE).rglob("*")):
+        if path.is_file():
+            digest.update(str(path.relative_to(root)).encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def build(root, cache, revision, digest, build_timeout):
+    commit = git(root, "rev-parse", "--verify", f"{revision}^{{commit}}")
+    binary = cache / "binaries" / f"{commit[:12]}-{digest[:12]}" / "zed_benchmarks"
+    if binary.exists():
+        return commit, binary
+    source = cache / "source"
+    if not source.exists():
+        subprocess.run(["git", "-C", str(root), "worktree", "add", "--detach", str(source), commit],
+                       check=True)
+    subprocess.run(["git", "-C", str(source), "checkout", "--detach", "--force", commit], check=True)
+    subprocess.run(["git", "-C", str(source), "clean", "-fdq", "--", str(SUITE)], check=True)
+    if not (source / SUITE).exists():
+        raise RuntimeError(f"{revision} has no {SUITE}; cherry-pick the zed_benchmarks commits onto it")
+    shutil.rmtree(source / SUITE)
+    shutil.copytree(root / SUITE, source / SUITE, symlinks=True)
+    environment = dict(os.environ, CARGO_TARGET_DIR=str(cache / "target"))
+    environment.setdefault("CARGO_PROFILE_RELEASE_FAST_DEBUG", "line-tables-only")
+    logs = binary.parent
+    logs.mkdir(parents=True, exist_ok=True)
+    run([str(source / "script/check-zed-benchmarks-features")], cwd=source,
+        log=logs / "features.log", timeout=build_timeout, environment=environment)
+    print(f"Building {revision} ({commit[:12]})...", flush=True)
+    elapsed = run(["cargo", "bench", "--locked", "-p", "zed_benchmarks", "--bench", "zed_benchmarks",
+                   "--profile", "release-fast", "--no-run", "--message-format=json"],
+                  cwd=source, log=logs / "build.log", timeout=build_timeout, environment=environment)
+    for line in (logs / "build.log").read_text().splitlines():
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (message.get("reason") == "compiler-artifact" and message.get("executable")
+                and message["target"]["name"] == "zed_benchmarks"):
+            shutil.copy2(message["executable"], binary)
+            print(f"  built in {elapsed:.0f}s", flush=True)
+            return commit, binary
+    raise RuntimeError(f"no zed_benchmarks executable in {logs / 'build.log'}")
+
+
+def duration(value, unit):
+    return float(value) * UNITS[unit]
+
+
+def parse(log):
+    """Returns {benchmark: {metric: seconds or count}} from one suite run."""
+    results = {}
+    previous = None
+    report = None
+    section = None
+    for line in log.read_text().splitlines():
+        match = re.match(r"^(\S.*?)\s+time:\s+\[\S+ \S+ ([\d.]+) (\S+) \S+ \S+\]", line)
+        if match:
+            results.setdefault(match[1], {})["criterion"] = duration(match[2], match[3])
+            continue
+        match = re.match(r"^\s+time:\s+\[\S+ \S+ ([\d.]+) (\S+) \S+ \S+\]", line)
+        if match and previous:
+            results.setdefault(previous, {})["criterion"] = duration(match[1], match[2])
+            continue
+        if line and not line[0].isspace() and "time:" not in line and ":" not in line:
+            previous = line.strip()
+        match = re.match(r"^GPUI bench report \(all observed iterations\): (.+)$", line)
+        if match:
+            report = match[1]
+            section = None
+            continue
+        match = re.match(r"^  (window dirty-to-draw|window draw|foreground executor work).*:$", line)
+        if match and report:
+            section = match[1]
+            continue
+        match = re.match(r"^    (p50|p95|max|total|samples): ([\d.]+)(ms)?$", line)
+        if match and report and section:
+            value = float(match[2]) * (1e-3 if match[3] else 1)
+            results.setdefault(report, {})[f"{section} {match[1]}"] = value
+            continue
+        match = re.match(r"^zed bench frames: (\S+): (\d+) sessions, (\d+) draws", line)
+        if match:
+            name = match[1]
+            key = name if name in results else name
+            results.setdefault(key, {})["draws/session"] = int(match[3]) / max(int(match[2]), 1)
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("baseline")
+    parser.add_argument("candidate")
+    parser.add_argument("--runs", type=int, default=3, help="suite runs per revision")
+    parser.add_argument("--filter", default="", help="Criterion benchmark filter regex")
+    parser.add_argument("--timeout", type=int, default=300,
+                        help="hard timeout for each suite run, at most 300 seconds")
+    parser.add_argument("--build-timeout", type=int, default=3600)
+    parser.add_argument("--cache", type=Path)
+    args = parser.parse_args()
+    if not 1 <= args.timeout <= 300 or args.runs < 1:
+        parser.error("timeout must be 1..300 and runs positive")
+
+    root = Path(git(Path(__file__).resolve().parent, "rev-parse", "--show-toplevel"))
+    cache = (args.cache or root / "target/zed-benchmarks-compare").resolve()
+    cache.mkdir(parents=True, exist_ok=True)
+    digest = suite_digest(root)
+    revisions = [build(root, cache, revision, digest, args.build_timeout)
+                 for revision in (args.baseline, args.candidate)]
+
+    output = cache / "runs" / time.strftime("%Y%m%d-%H%M%S")
+    output.mkdir(parents=True)
+    command_tail = ["--noplot"] + ([args.filter] if args.filter else [])
+    for index, (_, binary) in enumerate(revisions):
+        run([str(binary), "--test", *command_tail[1:]], cwd=output,
+            log=output / f"smoke-{index}.log", timeout=args.timeout)
+
+    samples = [[], []]
+    for repetition in range(args.runs):
+        for index in ([0, 1] if repetition % 2 == 0 else [1, 0]):
+            log = output / f"run-{repetition}-{index}.log"
+            environment = dict(os.environ, CRITERION_HOME=str(output / f"criterion-{index}"))
+            elapsed = run([str(revisions[index][1]), *command_tail], cwd=output, log=log,
+                          timeout=args.timeout, environment=environment)
+            print(f"run {repetition} {'baseline' if index == 0 else 'candidate'}: {elapsed:.1f}s",
+                  flush=True)
+            samples[index].append(parse(log))
+
+    def median(index, benchmark, metric):
+        values = [run[benchmark][metric] for run in samples[index]
+                  if metric in run.get(benchmark, {})]
+        return statistics.median(values) if values else None
+
+    benchmarks = sorted(set().union(*(run.keys() for side in samples for run in side)))
+    metrics = ["criterion", "window draw p50", "window draw p95", "window dirty-to-draw p95",
+               "foreground executor work total", "draws/session"]
+    summary = {}
+    print(f"\nbaseline {revisions[0][0][:12]} vs candidate {revisions[1][0][:12]}, "
+          f"median of {args.runs} runs each")
+    for benchmark in benchmarks:
+        print(benchmark)
+        for metric in metrics:
+            baseline, candidate = median(0, benchmark, metric), median(1, benchmark, metric)
+            if baseline is None or candidate is None:
+                continue
+            change = (candidate / baseline - 1) * 100 if baseline else float("nan")
+            scale, unit = (1, "") if metric == "draws/session" else (1e3, "ms")
+            print(f"  {metric:32} {baseline * scale:10.3f}{unit:2} {candidate * scale:10.3f}{unit:2} "
+                  f"{change:+7.1f}%")
+            summary.setdefault(benchmark, {})[metric] = [baseline, candidate]
+    (output / "summary.json").write_text(json.dumps({
+        "revisions": [commit for commit, _ in revisions],
+        "runs": args.runs,
+        "results": summary,
+        "samples": samples,
+    }, indent=2) + "\n")
+    print(f"\nRaw logs and summary.json: {output}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (RuntimeError, subprocess.CalledProcessError) as error:
+        sys.exit(str(error))

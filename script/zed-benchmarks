@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Builds and runs the zed_benchmarks suite (crates/zed_benchmarks). Arguments go
+# to the Criterion benchmark binary.
+#
+#   script/zed-benchmarks                   # full suite, about a minute
+#   script/zed-benchmarks --test            # smoke: every scenario once, with assertions
+#   script/zed-benchmarks editor_scroll     # one benchmark (Criterion regex filter)
+#   script/zed-benchmarks --save-baseline main / --baseline main
+#
+# Every run of the benchmark binary is killed after ZED_BENCHMARKS_TIMEOUT seconds
+# (default and maximum 300). Compare two commits with script/zed-benchmarks-compare.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+timeout="${ZED_BENCHMARKS_TIMEOUT:-300}"
+if (( timeout < 1 || timeout > 300 )); then
+    echo "ZED_BENCHMARKS_TIMEOUT must be between 1 and 300 seconds" >&2
+    exit 1
+fi
+
+script/check-zed-benchmarks-features >&2
+
+# Line tables keep profiles symbolicated without the disk cost of full debug info.
+export CARGO_PROFILE_RELEASE_FAST_DEBUG="${CARGO_PROFILE_RELEASE_FAST_DEBUG:-line-tables-only}"
+binary="$(
+    cargo bench --locked -p zed_benchmarks --bench zed_benchmarks --profile release-fast \
+        --no-run --message-format=json-render-diagnostics |
+        python3 -c '
+import json, sys
+for line in sys.stdin:
+    message = json.loads(line)
+    if message.get("reason") == "compiler-artifact" and message.get("executable") \
+            and message["target"]["name"] == "zed_benchmarks":
+        print(message["executable"])
+'
+)"
+if [[ -z "$binary" ]]; then
+    echo "failed to locate the zed_benchmarks executable" >&2
+    exit 1
+fi
+
+# `perl -e alarm` is a portable hard timeout: the alarm survives exec and kills
+# the benchmark process when it fires.
+exec perl -e 'alarm shift; exec @ARGV or die "exec failed: $!"' "$timeout" \
+    "$binary" --noplot "$@"

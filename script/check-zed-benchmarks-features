@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Fails if any crate in the zed_benchmarks dependency graph enables `test-support`.
+# The suite measures production code paths; test-only fakes, executors and
+# reduced settings would make its numbers meaningless.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+feature_tree="$(cargo tree --locked -p zed_benchmarks -e normal,build,dev,features)"
+if grep -F 'feature "test-support"' <<< "$feature_tree"; then
+    echo "zed_benchmarks must not enable test-support (see the matches above)." >&2
+    echo "Inspect with: cargo tree -p zed_benchmarks -e features -i <crate>" >&2
+    exit 1
+fi
+echo "zed_benchmarks feature graph is free of test-support."

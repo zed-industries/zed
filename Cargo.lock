@@ -22721,6 +22721,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "activity_indicator",
+ "agent",
+ "agent-client-protocol",
+ "agent_settings",
+ "agent_ui",
+ "anyhow",
+ "assets",
+ "breadcrumbs",
+ "client",
+ "criterion",
+ "db",
+ "editor",
+ "fs",
+ "go_to_line",
+ "gpui",
+ "gpui_platform",
+ "gpui_tokio",
+ "keymap_editor",
+ "language",
+ "language_model",
+ "language_selector",
+ "languages",
+ "log",
+ "lsp",
+ "menu",
+ "node_runtime",
+ "paths",
+ "project",
+ "project_panel",
+ "prompt_store",
+ "release_channel",
+ "search",
+ "semver",
+ "serde_json",
+ "session",
+ "settings",
+ "settings_ui",
+ "tempfile",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "zed_credentials_provider"
 version = "0.1.0"
 dependencies = [
