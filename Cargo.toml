@@ -843,6 +843,7 @@ pet-fs = { git = "https://github.com/zed-industries/python-environment-tools.git
 pet-poetry = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
 pet-reporter = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
 pet-virtualenv = { git = "https://github.com/zed-industries/python-environment-tools.git", rev = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+phf = { version = "0.13.1", features = ["macros"] }
 piper = "0.2"
 plist = "1.3"
 postage = { version = "0.5", default-features = false }
