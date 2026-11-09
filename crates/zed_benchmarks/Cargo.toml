@@ -13,10 +13,6 @@ path = "src/zed_benchmarks.rs"
 doctest = false
 test = false
 
-[package.metadata.cargo-shear]
-# Used by the gpui::bench expansion.
-ignored = ["gpui_platform"]
-
 # Keep this package free of `test-support`: `script/check-zed-benchmarks-features`
 # fails if any crate in this graph enables it.
 [dependencies]
@@ -50,6 +46,7 @@ paths.workspace = true
 project = { workspace = true, features = ["bench-support"] }
 project_panel.workspace = true
 prompt_store.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 search.workspace = true
 semver.workspace = true

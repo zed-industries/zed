@@ -2,6 +2,7 @@
 """Build two revisions once, then alternate bounded runs of the zed_benchmarks suite.
 
 Usage: script/zed-benchmarks-compare BASELINE CANDIDATE [--runs 3] [--filter REGEX]
+       script/zed-benchmarks-compare BASELINE CANDIDATE --binaries BASE_BINARY CANDIDATE_BINARY
 
 Both revisions must contain the zed_benchmarks crate and its bench-support seams
 (cherry-pick the suite's commits onto a revision that lacks them). The invoking
@@ -10,6 +11,11 @@ identical benchmark code. Both revisions build in one detached worktree under
 target/zed-benchmarks-compare, sharing a target directory: checking out a
 revision rewrites only the files that differ, so Cargo rebuilds just the crates
 they affect and the comparison needs one target directory's worth of disk.
+
+A Zed release-fast target directory takes over 10 GB. When disk is short, build
+each revision in place instead (check it out, run `script/zed-benchmarks --list`,
+copy the binary it prints from target/release-fast/deps) and pass both binaries
+with --binaries; BASELINE and CANDIDATE then only label the results.
 
 Runs alternate (B N N B B N ...) and each run of the whole suite is killed after
 --timeout seconds (at most 300). Reported numbers are medians across runs of
@@ -82,7 +88,7 @@ def build(root, cache, revision, digest, build_timeout):
     shutil.rmtree(source / SUITE)
     shutil.copytree(root / SUITE, source / SUITE, symlinks=True)
     environment = dict(os.environ, CARGO_TARGET_DIR=str(cache / "target"))
-    environment.setdefault("CARGO_PROFILE_RELEASE_FAST_DEBUG", "line-tables-only")
+    environment.setdefault("CARGO_PROFILE_RELEASE_FAST_DEBUG", "none")
     logs = binary.parent
     logs.mkdir(parents=True, exist_ok=True)
     run([str(source / "script/check-zed-benchmarks-features")], cwd=source,
@@ -158,6 +164,8 @@ def main():
                         help="hard timeout for each suite run, at most 300 seconds")
     parser.add_argument("--build-timeout", type=int, default=3600)
     parser.add_argument("--cache", type=Path)
+    parser.add_argument("--binaries", nargs=2, type=Path, metavar=("BASELINE", "CANDIDATE"),
+                        help="prebuilt zed_benchmarks binaries; skips building")
     args = parser.parse_args()
     if not 1 <= args.timeout <= 300 or args.runs < 1:
         parser.error("timeout must be 1..300 and runs positive")
@@ -165,9 +173,13 @@ def main():
     root = Path(git(Path(__file__).resolve().parent, "rev-parse", "--show-toplevel"))
     cache = (args.cache or root / "target/zed-benchmarks-compare").resolve()
     cache.mkdir(parents=True, exist_ok=True)
-    digest = suite_digest(root)
-    revisions = [build(root, cache, revision, digest, args.build_timeout)
-                 for revision in (args.baseline, args.candidate)]
+    if args.binaries:
+        revisions = [(revision, binary.resolve())
+                     for revision, binary in zip((args.baseline, args.candidate), args.binaries)]
+    else:
+        digest = suite_digest(root)
+        revisions = [build(root, cache, revision, digest, args.build_timeout)
+                     for revision in (args.baseline, args.candidate)]
 
     output = cache / "runs" / time.strftime("%Y%m%d-%H%M%S")
     output.mkdir(parents=True)

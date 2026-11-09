@@ -21,8 +21,10 @@ fi
 
 script/check-zed-benchmarks-features >&2
 
-# Line tables keep profiles symbolicated without the disk cost of full debug info.
-export CARGO_PROFILE_RELEASE_FAST_DEBUG="${CARGO_PROFILE_RELEASE_FAST_DEBUG:-line-tables-only}"
+# Without debug info a Zed release-fast target directory is several GB smaller;
+# profiles still get function names from the symbol table. Set this to
+# line-tables-only when profiling needs inlined frames and source lines.
+export CARGO_PROFILE_RELEASE_FAST_DEBUG="${CARGO_PROFILE_RELEASE_FAST_DEBUG:-none}"
 binary="$(
     cargo bench --locked -p zed_benchmarks --bench zed_benchmarks --profile release-fast \
         --no-run --message-format=json-render-diagnostics |
@@ -42,5 +44,13 @@ fi
 
 # `perl -e alarm` is a portable hard timeout: the alarm survives exec and kills
 # the benchmark process when it fires.
+# Criterion binaries run in test mode unless given --bench.
+mode=--bench
+for argument in "$@"; do
+    if [[ "$argument" == "--test" || "$argument" == "--list" ]]; then
+        mode=
+    fi
+done
+
 exec perl -e 'alarm shift; exec @ARGV or die "exec failed: $!"' "$timeout" \
-    "$binary" --noplot "$@"
+    "$binary" $mode --noplot "$@"

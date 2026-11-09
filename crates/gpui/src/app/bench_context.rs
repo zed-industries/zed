@@ -503,6 +503,20 @@ pub struct BenchAppContext<'a, 'measurement> {
     report: BenchReport,
 }
 
+impl BenchAppContext<'static, 'static> {
+    /// Creates a benchmark app context with no Criterion bencher, for building a
+    /// fixture once outside of Criterion's routine. Measure it with
+    /// [`BenchAppContext::with_bencher`] and call [`BenchAppContext::teardown`]
+    /// when done; `report` aggregates every measurement made through it.
+    pub fn new_detached(
+        platform: Rc<dyn Platform>,
+        benchmark_name: Option<&'static str>,
+        report: BenchReport,
+    ) -> Self {
+        Self::build(platform, benchmark_name, None, report)
+    }
+}
+
 impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// Creates a new benchmark app context backed by the provided platform.
     ///
@@ -514,7 +528,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         benchmark_name: Option<&'static str>,
         bencher: &'a mut criterion::Bencher<'measurement, BenchMeasurement>,
     ) -> Self {
-        Self::build(platform, benchmark_name, bencher, BenchReport::default())
+        Self::build(platform, benchmark_name, Some(bencher), BenchReport::default())
     }
 
     /// Creates a new benchmark app context backed by the provided platform.
@@ -529,13 +543,13 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         bencher: &'a mut criterion::Bencher<'measurement, BenchMeasurement>,
         report: BenchReport,
     ) -> Self {
-        Self::build(platform, benchmark_name, bencher, report)
+        Self::build(platform, benchmark_name, Some(bencher), report)
     }
 
     fn build(
         platform: Rc<dyn Platform>,
         benchmark_name: Option<&'static str>,
-        bencher: &'a mut criterion::Bencher<'measurement, BenchMeasurement>,
+        bencher: Option<&'a mut criterion::Bencher<'measurement, BenchMeasurement>>,
         report: BenchReport,
     ) -> Self {
         let background_executor = platform.background_executor();
@@ -560,8 +574,28 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             background_executor,
             foreground_executor,
             benchmark_name,
-            bencher: Rc::new(RefCell::new(Some(bencher))),
+            bencher: Rc::new(RefCell::new(bencher)),
             report,
+        }
+    }
+
+    /// Returns a context for the same app that measures with `bencher`.
+    ///
+    /// Criterion calls a benchmark routine once per sample. Benchmarks whose
+    /// fixture is expensive to build (a whole application window, say) can build
+    /// it once with [`Self::new_detached`] and measure it in every routine call
+    /// through this, instead of rebuilding it per sample.
+    pub fn with_bencher<'b, 'm>(
+        &self,
+        bencher: &'b mut criterion::Bencher<'m, BenchMeasurement>,
+    ) -> BenchAppContext<'b, 'm> {
+        BenchAppContext {
+            app: self.app.clone(),
+            background_executor: self.background_executor.clone(),
+            foreground_executor: self.foreground_executor.clone(),
+            benchmark_name: self.benchmark_name,
+            bencher: Rc::new(RefCell::new(Some(bencher))),
+            report: self.report.clone(),
         }
     }
 

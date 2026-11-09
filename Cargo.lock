@@ -22754,6 +22754,7 @@ dependencies = [
  "project",
  "project_panel",
  "prompt_store",
+ "regex",
  "release_channel",
  "search",
  "semver",

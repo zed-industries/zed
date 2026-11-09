@@ -7,6 +7,11 @@
 //! application database in a temporary data directory, and a client with no network
 //! access. No crate in this graph may enable `test-support`; see
 //! `script/check-zed-benchmarks-features`.
+//!
+//! Run the suite with `script/zed-benchmarks` (about a minute), a smoke pass of
+//! every scenario with `script/zed-benchmarks --test`, one scenario with a
+//! Criterion filter such as `script/zed-benchmarks editor_scroll`, and compare
+//! two commits that both contain the suite with `script/zed-benchmarks-compare`.
 
 mod agent_thread;
 
@@ -30,10 +35,10 @@ use client::{Client, UserStore};
 use editor::Editor;
 use fs::{Fs, RealFs};
 use gpui::{
-    AnyWindowHandle, App, AppContext as _, BenchAppContext, Entity, Keystroke, Modifiers,
-    MouseMoveEvent, PlatformInput, Point, ScrollDelta, ScrollEvent, ScrollSource, TouchPhase,
-    UpdateGlobal as _, Window, WindowHandle, profiler::FrameEvent, profiler::FrameTimingCollector,
-    px,
+    AnyWindowHandle, App, AppContext as _, BenchAppContext, BenchMeasurement, BenchReport, Entity,
+    Keystroke, Modifiers, MouseMoveEvent, PlatformInput, Point, ScrollDelta, ScrollEvent,
+    ScrollSource, TouchPhase, UpdateGlobal as _, Window, WindowHandle, profiler::FrameEvent,
+    profiler::FrameTimingCollector, px,
 };
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
@@ -301,8 +306,8 @@ pub fn init_app_with_settings(cx: &mut BenchAppContext, extra_settings: &str) ->
         }
         // Like a user's settings.json: startup code that edits settings (such as
         // migrations) rewrites the file and reloads it.
-        let user_settings = serde_json::to_string_pretty(&user_settings)
-            .expect("benchmark settings serialize");
+        let user_settings =
+            serde_json::to_string_pretty(&user_settings).expect("benchmark settings serialize");
         let settings_file = paths::settings_file();
         std::fs::create_dir_all(settings_file.parent().expect("settings file has a parent"))
             .expect("failed to create the settings directory");
@@ -676,6 +681,14 @@ pub struct FrameStats {
 }
 
 impl FrameStats {
+    fn add(&mut self, other: &FrameStats) {
+        self.sessions += other.sessions;
+        self.draws += other.draws;
+        self.request_layout += other.request_layout;
+        self.prepaint += other.prepaint;
+        self.paint += other.paint;
+    }
+
     pub fn print(&self, name: &str) {
         let per_draw = |duration: Duration| {
             if self.draws == 0 {
@@ -787,8 +800,91 @@ pub fn bench_sessions<S: 'static>(
         gpui::profiler::set_trace_enabled(false);
     }
     let stats = stats.borrow().clone();
-    stats.print(name);
+    SCENARIO_FRAME_STATS.with(|total| {
+        let mut total = total.borrow_mut();
+        let total = total.get_or_insert_with(|| (name.to_string(), FrameStats::default()));
+        total.1.add(&stats);
+    });
     stats
+}
+
+thread_local! {
+    static SCENARIO_FRAME_STATS: RefCell<Option<(String, FrameStats)>> = const { RefCell::new(None) };
+}
+
+/// A measurement of an already-built fixture, run once per Criterion routine call.
+pub type Measure = Box<dyn FnMut(&mut BenchAppContext<'_, '_>)>;
+
+/// Returns Criterion's benchmark filter from the command line, if any.
+fn criterion_filter() -> Option<regex::Regex> {
+    const TAKES_VALUE: &[&str] = &[
+        "--save-baseline",
+        "-s",
+        "--baseline",
+        "-b",
+        "--baseline-lenient",
+        "--load-baseline",
+        "--sample-size",
+        "--warm-up-time",
+        "--measurement-time",
+        "--nresamples",
+        "--noise-threshold",
+        "--confidence-level",
+        "--significance-level",
+        "--profile-time",
+        "--plotting-backend",
+        "--output-format",
+        "--color",
+        "-c",
+        "--format",
+    ];
+    let mut arguments = std::env::args().skip(1);
+    while let Some(argument) = arguments.next() {
+        if TAKES_VALUE.contains(&argument.as_str()) {
+            arguments.next();
+        } else if !argument.starts_with('-') {
+            return Some(
+                regex::Regex::new(&argument).unwrap_or_else(|error| panic!("bad filter: {error}")),
+            );
+        }
+    }
+    None
+}
+
+/// Registers one Criterion benchmark whose fixture is built once by `setup`,
+/// outside every measurement, and measured by the returned closure in each
+/// Criterion routine call (warm-up and every sample). Building a Zed window takes
+/// far longer than a measured session, so rebuilding it per sample as
+/// `#[gpui::bench]` does would dominate the suite's run time.
+pub fn zed_bench(
+    criterion: &mut criterion::Criterion<BenchMeasurement>,
+    name: &str,
+    setup: impl FnOnce(&mut BenchAppContext<'static, 'static>) -> Measure,
+) {
+    if criterion_filter().is_some_and(|filter| !filter.is_match(name)) {
+        return;
+    }
+    let report = BenchReport::with_fps(120);
+    let mut cx = BenchAppContext::new_detached(
+        gpui::bench_platform(
+            Some(Box::new(gpui_platform::current_headless_renderer)),
+            gpui_platform::bench_text_system(),
+        ),
+        None,
+        report.clone(),
+    );
+    SCENARIO_FRAME_STATS.with(|total| total.borrow_mut().take());
+    let mut measure = setup(&mut cx);
+    criterion.bench_function(name, |bencher| {
+        let mut cx = cx.with_bencher(bencher);
+        measure(&mut cx);
+    });
+    report.print(name);
+    if let Some((_, stats)) = SCENARIO_FRAME_STATS.with(|total| total.borrow_mut().take()) {
+        stats.print(name);
+    }
+    drop(measure);
+    cx.teardown();
 }
 
 /// Sleeps until `turn` frame intervals at `fps` have passed since `started`, so
