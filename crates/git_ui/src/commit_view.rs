@@ -35,7 +35,6 @@ use project::{
 use settings::{DiffViewStyle, Settings};
 use std::{
     any::{Any, TypeId},
-    collections::HashSet,
     path::PathBuf,
     sync::Arc,
 };
@@ -367,7 +366,6 @@ impl CommitView {
         let collapse_files = !commit_view_settings.expand_files && file_filter.is_none();
 
         let load_diff_task = cx.spawn_in(window, async move |this, cx| {
-            let mut folded_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
             // In case there's a file we should scroll to, i.e.,
@@ -380,7 +378,7 @@ impl CommitView {
                 .map(|index| files.remove(index));
 
             if let Some(file) = target_file {
-                let loaded = load_commit_file(
+                let mut loaded = load_commit_file(
                     file,
                     &repository_clone,
                     &project_clone,
@@ -389,20 +387,23 @@ impl CommitView {
                     cx,
                 )
                 .await?;
+                loaded.load_diff(cx).await?;
                 let is_binary = loaded.is_binary;
-                let (buffer_id, file_status) = Self::append_commit_file(&this, loaded, cx).await?;
+                let (buffer_id, file_status) =
+                    Self::append_commit_file(&this, &loaded, false, cx).await?;
 
                 file_statuses.insert(buffer_id, file_status);
-
-                // The revealed file is the one asked for, so keep it expanded.
-                if is_binary {
-                    folded_buffer_ids.insert(buffer_id);
-                }
 
                 // Establish the scroll anchor before inserting files that may
                 // end up being sorted before it.
                 this.update_in(cx, |this, window, cx| {
                     this.reveal_first_file(buffer_id, window, cx);
+                    // The revealed file is the one asked for, so keep it expanded. Binary
+                    // files are folded only after revealing, which needs an unfolded header.
+                    if is_binary {
+                        let rhs_editor = this.editor.read(cx).rhs_editor().clone();
+                        rhs_editor.update(cx, |editor, cx| editor.fold_buffer(buffer_id, cx));
+                    }
                 })?;
             }
 
@@ -415,7 +416,7 @@ impl CommitView {
                 let language_registry = language_registry.clone();
                 let commit_sha = commit_sha.clone();
                 async move {
-                    load_commit_file(
+                    let mut loaded = load_commit_file(
                         file,
                         &repository,
                         &project,
@@ -423,23 +424,30 @@ impl CommitView {
                         &language_registry,
                         &mut cx,
                     )
-                    .await
+                    .await?;
+                    // Diffing is the slow part, so collapsed files are listed first and
+                    // diffed afterwards.
+                    if !collapse_files {
+                        loaded.load_diff(&mut cx).await?;
+                    }
+                    anyhow::Ok(loaded)
                 }
             }))
             .buffered(MAX_CONCURRENT_BUFFER_LOADS);
 
+            let mut pending_diffs = Vec::new();
             while let Some(loaded) = loads.next().await {
                 // Buffered loads can already be complete when we poll them, in which
                 // case this loop never awaits and starves the foreground thread.
                 yield_now().await;
                 let loaded = loaded?;
-                let is_binary = loaded.is_binary;
-                let (buffer_id, file_status) = Self::append_commit_file(&this, loaded, cx).await?;
+                let fold = loaded.is_binary || collapse_files;
+                let (buffer_id, file_status) =
+                    Self::append_commit_file(&this, &loaded, fold, cx).await?;
 
                 file_statuses.insert(buffer_id, file_status);
-
-                if is_binary || collapse_files {
-                    folded_buffer_ids.insert(buffer_id);
+                if !loaded.is_diffed {
+                    pending_diffs.push(loaded);
                 }
             }
 
@@ -447,18 +455,26 @@ impl CommitView {
                 let commit_view = cx.weak_entity();
 
                 this.editor.update(cx, |editor, cx| {
-                    editor.rhs_editor().update(cx, |editor, cx| {
+                    editor.rhs_editor().update(cx, |editor, _cx| {
                         editor.register_addon(CommitDiffAddon {
                             file_statuses,
                             commit_view,
                         });
-
-                        if !folded_buffer_ids.is_empty() {
-                            editor.fold_buffers(folded_buffer_ids, cx);
-                        }
                     });
                 });
             })?;
+
+            // Replace the placeholder excerpts of files listed before diffing with their hunks.
+            let mut diffs = stream::iter(pending_diffs.into_iter().map(|mut loaded| {
+                let mut cx = load_cx.clone();
+                async move { loaded.load_diff(&mut cx).await.map(|()| loaded) }
+            }))
+            .buffered(MAX_CONCURRENT_BUFFER_LOADS);
+
+            while let Some(loaded) = diffs.next().await {
+                yield_now().await;
+                Self::append_commit_file(&this, &loaded?, false, cx).await?;
+            }
 
             anyhow::Ok(())
         });
@@ -497,10 +513,11 @@ impl CommitView {
         }
     }
 
-    /// Inserts a loaded file's excerpts into the view, in batches.
+    /// Inserts a loaded file's excerpts into the view, in batches, folding the file if `fold`.
     async fn append_commit_file(
         commit_view: &WeakEntity<Self>,
-        loaded: LoadedCommitFile,
+        loaded: &LoadedCommitFile,
+        fold: bool,
         cx: &mut AsyncWindowContext,
     ) -> Result<(BufferId, FileStatus)> {
         let LoadedCommitFile {
@@ -508,10 +525,11 @@ impl CommitView {
             buffer_diff,
             status_code,
             is_binary,
+            ..
         } = loaded;
         let buffer_id = cx.update(|_window, cx| buffer.read(cx).remote_id())?;
         let file_status = FileStatus::Tracked(TrackedStatus {
-            index_status: status_code,
+            index_status: *status_code,
             worktree_status: StatusCode::Unmodified,
         });
 
@@ -522,8 +540,12 @@ impl CommitView {
                 snapshot.file().unwrap().path().clone(),
             );
 
-            let ranges = if is_binary {
+            let ranges = if *is_binary {
                 vec![language::Point::zero()..snapshot.max_point()]
+            } else if !loaded.is_diffed {
+                // A placeholder until diffed. `update_excerpts_for_path` keeps excerpts that
+                // overlap the new ranges, so a whole-file one would never narrow to the hunks.
+                vec![language::Point::zero()..language::Point::zero()]
             } else {
                 let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
                 let mut hunks = diff_snapshot.hunks(&snapshot).peekable();
@@ -561,6 +583,13 @@ impl CommitView {
                     );
                     if is_first_batch && editor.diff_view_style() == DiffViewStyle::Split {
                         editor.split(window, cx);
+                    }
+                    // Fold along with the first excerpts, so a collapsed file never renders
+                    // expanded while the rest of the commit is still loading.
+                    if is_first_batch && fold {
+                        editor.rhs_editor().update(cx, |editor, cx| {
+                            editor.fold_buffer(buffer_id, cx);
+                        });
                     }
                 });
             })?;
@@ -1222,10 +1251,37 @@ struct LoadedCommitFile {
     buffer_diff: Entity<BufferDiff>,
     status_code: StatusCode,
     is_binary: bool,
+    old_text: Option<String>,
+    is_diffed: bool,
 }
 
-/// Builds the buffer and diff for one file of a commit. Most of the time goes into
-/// parsing the old text, so callers run several of these concurrently.
+impl LoadedCommitFile {
+    /// Diffs the buffer against the old text. Most of the time loading a file goes into
+    /// parsing the old text, so callers run several of these concurrently.
+    async fn load_diff(&mut self, cx: &mut AsyncWindowContext) -> Result<()> {
+        if self.is_diffed {
+            return Ok(());
+        }
+        self.is_diffed = true;
+        let old_text = self.old_text.take();
+        let old_text = cx
+            .background_spawn(async move {
+                old_text.map(|mut old_text| {
+                    LineEnding::normalize(&mut old_text);
+                    Arc::<str>::from(old_text)
+                })
+            })
+            .await;
+        let buffer = cx.update(|_, cx| self.buffer.read(cx).text_snapshot())?;
+        self.buffer_diff
+            .update(cx, |diff, cx| diff.set_base_text(old_text, buffer, cx))
+            .await;
+        Ok(())
+    }
+}
+
+/// Builds the buffer for one file of a commit, with a diff that has no base text until
+/// `LoadedCommitFile::load_diff`.
 async fn load_commit_file(
     file: CommitFile,
     repository: &Entity<Repository>,
@@ -1269,21 +1325,18 @@ async fn load_commit_file(
 
     let buffer = build_buffer(new_text, blob, language_registry, cx).await?;
 
-    let buffer_diff = if is_binary {
-        cx.update(|_, cx| {
-            let snapshot = buffer.read(cx).snapshot();
-            cx.new(|cx| {
-                BufferDiff::new_unchanged(
-                    &snapshot,
-                    snapshot.language().cloned(),
-                    Some(language_registry.clone()),
-                    cx,
-                )
-            })
-        })?
-    } else {
-        build_buffer_diff(old_text, &buffer, language_registry, cx).await?
-    };
+    let buffer_diff = cx.update(|_, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        let language = snapshot.language().cloned();
+        let language_registry = Some(language_registry.clone());
+        cx.new(|cx| {
+            if is_binary {
+                BufferDiff::new_unchanged(&snapshot, language, language_registry, cx)
+            } else {
+                BufferDiff::new(&snapshot, language, language_registry, cx)
+            }
+        })
+    })?;
 
     let status_code = if is_created {
         StatusCode::Added
@@ -1298,6 +1351,8 @@ async fn load_commit_file(
         buffer_diff,
         status_code,
         is_binary,
+        old_text,
+        is_diffed: is_binary,
     })
 }
 
@@ -1339,35 +1394,6 @@ pub(crate) async fn build_buffer(
         buffer
     });
     Ok(buffer)
-}
-
-async fn build_buffer_diff(
-    old_text: Option<String>,
-    buffer: &Entity<Buffer>,
-    language_registry: &Arc<LanguageRegistry>,
-    cx: &mut AsyncWindowContext,
-) -> Result<Entity<BufferDiff>> {
-    let old_text = cx
-        .background_spawn(async move {
-            old_text.map(|mut old_text| {
-                LineEnding::normalize(&mut old_text);
-                Arc::<str>::from(old_text)
-            })
-        })
-        .await;
-
-    let language = cx.update(|_, cx| buffer.read(cx).language().cloned())?;
-    let buffer = cx.update(|_, cx| buffer.read(cx).snapshot())?;
-
-    let diff =
-        cx.new(|cx| BufferDiff::new(&buffer.text, language, Some(language_registry.clone()), cx));
-
-    diff.update(cx, |diff, cx| {
-        diff.set_base_text(old_text, buffer.text.clone(), cx)
-    })
-    .await;
-
-    Ok(diff)
 }
 
 impl EventEmitter<EditorEvent> for CommitView {}
@@ -1733,7 +1759,7 @@ mod tests {
     use super::*;
     use gpui::{EmptyView, TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
-    use language::{Language, LanguageConfig, LanguageMatcher, markdown_lang};
+    use language::{Language, LanguageConfig, LanguageMatcher, ToPoint as _, markdown_lang};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -1753,6 +1779,9 @@ mod tests {
     }
 
     /// Opens a commit view for a commit that modifies `a.txt` and `b.txt`.
+    /// Lines before the change in each test commit file, so excerpts don't span the whole file.
+    const UNCHANGED_LINES: &str = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n";
+
     async fn open_test_commit_view(
         file_filter: Option<RepoPath>,
         cx: &mut TestAppContext,
@@ -1784,8 +1813,8 @@ mod tests {
             files: ["a.txt", "b.txt"]
                 .map(|path| CommitFile {
                     path: RepoPath::new(path).expect("valid repository path"),
-                    old_text: Some(format!("{path} old\n")),
-                    new_text: Some(format!("{path} new\n")),
+                    old_text: Some(format!("{}{path} old\n", UNCHANGED_LINES)),
+                    new_text: Some(format!("{}{path} new\n", UNCHANGED_LINES)),
                     is_binary: false,
                 })
                 .into(),
@@ -1866,6 +1895,35 @@ mod tests {
         commit_view.read_with(cx, |commit_view, cx| {
             assert!(commit_view.message_expanded);
             assert_eq!(folded_files(commit_view, cx), 2);
+
+            // Collapsed files are listed before diffing, so check they were diffed and
+            // narrowed to their hunks afterwards.
+            let multibuffer = commit_view.multibuffer.read(cx);
+            let multibuffer_snapshot = multibuffer.snapshot(cx);
+            let mut base_texts = Vec::new();
+            for buffer in multibuffer.all_buffers() {
+                let buffer = buffer.read(cx);
+                let diff = multibuffer
+                    .diff_for(buffer.remote_id())
+                    .expect("file should have a diff");
+                base_texts.extend(diff.read(cx).base_text_string(cx));
+                let excerpt_start_rows = multibuffer_snapshot
+                    .excerpts_for_buffer(buffer.remote_id())
+                    .map(|excerpt| excerpt.context.start.to_point(buffer).row)
+                    .collect::<Vec<_>>();
+                assert!(
+                    !excerpt_start_rows.is_empty() && !excerpt_start_rows.contains(&0),
+                    "excerpts should cover only the hunk, got start rows {excerpt_start_rows:?}"
+                );
+            }
+            base_texts.sort();
+            assert_eq!(
+                base_texts,
+                [
+                    format!("{UNCHANGED_LINES}a.txt old\n"),
+                    format!("{UNCHANGED_LINES}b.txt old\n"),
+                ]
+            );
         });
     }
 
