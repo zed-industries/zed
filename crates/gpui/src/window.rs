@@ -3000,12 +3000,24 @@ impl Window {
     /// This updates internal state like `viewport_size` and `scale_factor` from
     /// the platform window, then notifies observers. Normally called automatically
     /// by the platform's resize callback, but exposed publicly for test infrastructure.
+    ///
+    /// Only a viewport size or scale factor change schedules a frame: content is
+    /// laid out in window-local coordinates, so a move doesn't change what is
+    /// drawn. Platforms report every position change while a window is dragged,
+    /// and a refresh there would rebuild the UI tree for each one.
     pub fn bounds_changed(&mut self, cx: &mut App) {
-        self.scale_factor = self.platform_window.scale_factor();
-        self.viewport_size = self.platform_window.content_size();
+        let scale_factor = self.platform_window.scale_factor();
+        let viewport_size = self.platform_window.content_size();
+        let size_or_scale_changed = self.viewport_size != viewport_size
+            || self.scale_factor.to_bits() != scale_factor.to_bits();
+
+        self.scale_factor = scale_factor;
+        self.viewport_size = viewport_size;
         self.mouse_position = self.platform_window.mouse_position();
 
-        self.refresh();
+        if size_or_scale_changed {
+            self.refresh();
+        }
 
         self.bounds_observers
             .clone()
@@ -8919,6 +8931,91 @@ mod tests {
                 (scale_factor, expected_bounds, resized_size)
             );
         }
+    }
+
+    struct RenderCounter {
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for RenderCounter {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div()
+        }
+    }
+
+    /// Regression test for drag performance: repainting on every move would
+    /// rebuild the UI tree continuously while a window is dragged.
+    #[gpui::test]
+    fn test_window_move_does_not_render(cx: &mut TestAppContext) {
+        let renders = Rc::new(Cell::new(0));
+        let bounds_changes = Rc::new(Cell::new(0));
+        let window = {
+            let renders = renders.clone();
+            let bounds_changes = bounds_changes.clone();
+            cx.add_window(move |window, cx| {
+                cx.observe_window_bounds(window, {
+                    let bounds_changes = bounds_changes.clone();
+                    move |_, _, _| bounds_changes.set(bounds_changes.get() + 1)
+                })
+                .detach();
+                RenderCounter { renders }
+            })
+        };
+        let handle: AnyWindowHandle = window.into();
+        let mut test_window = cx.test_window(handle);
+        test_window.simulate_active_status_change(true);
+        cx.run_until_parked();
+
+        let renders_before_move = renders.get();
+        let bounds_changes_before_move = bounds_changes.get();
+
+        test_window.simulate_move(point(px(40.), px(80.)));
+        cx.run_until_parked();
+
+        assert!(
+            bounds_changes.get() > bounds_changes_before_move,
+            "a move must still be reported to bounds observers"
+        );
+        assert_eq!(
+            renders.get(),
+            renders_before_move,
+            "moving a window must not re-render its content"
+        );
+
+        let renders_before_notify = renders.get();
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.run_until_parked();
+        assert!(
+            renders.get() > renders_before_notify,
+            "content changes during a move must still render"
+        );
+
+        let renders_before_resize = renders.get();
+        let current_size = window
+            .update(cx, |_, window, _| window.viewport_size())
+            .unwrap();
+        cx.simulate_window_resize(
+            handle,
+            size(current_size.width + px(10.), current_size.height + px(10.)),
+        );
+        cx.run_until_parked();
+        assert!(
+            renders.get() > renders_before_resize,
+            "resizing a window must re-render its content"
+        );
+
+        let renders_before_scale_change = renders.get();
+        let scale_factor = window
+            .update(cx, |_, window, _| window.scale_factor())
+            .unwrap();
+        let other_scale_factor = if scale_factor == 1.0 { 2.0 } else { 1.0 };
+        cx.simulate_window_scale_factor_change(handle, other_scale_factor);
+        cx.run_until_parked();
+        assert!(
+            renders.get() > renders_before_scale_change,
+            "a scale factor change must re-render the window content"
+        );
     }
 
     /// Platforms that stop requesting frames for idle windows (currently web)

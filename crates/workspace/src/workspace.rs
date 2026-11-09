@@ -1699,6 +1699,9 @@ pub struct Workspace {
     _schedule_serialize_ssh_paths: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
+    /// Viewport size the bounds observer last saw, used to tell a resize (which
+    /// needs a redraw) from a move (which doesn't).
+    last_viewport_size: Option<Size<Pixels>>,
     pub centered_layout: bool,
     bounds_save_task_queued: Option<Task<()>>,
     on_prompt_for_new_path: Option<PromptForNewPath>,
@@ -2132,7 +2135,14 @@ impl Workspace {
                     })
                     .ok();
                 }));
-                cx.notify();
+
+                // A move still has to persist the window bounds above, but it
+                // doesn't change the layout, so only redraw on an actual resize.
+                let viewport_size = window.viewport_size();
+                if this.last_viewport_size != Some(viewport_size) {
+                    this.last_viewport_size = Some(viewport_size);
+                    cx.notify();
+                }
             }),
             cx.observe_window_appearance(window, |_, window, cx| {
                 let window_appearance = window.appearance();
@@ -2208,6 +2218,7 @@ impl Workspace {
             workspace_actions: Default::default(),
             // This data will be incorrect, but it will be overwritten by the time it needs to be used.
             bounds: Default::default(),
+            last_viewport_size: None,
             centered_layout: false,
             bounds_save_task_queued: None,
             on_prompt_for_new_path: None,
