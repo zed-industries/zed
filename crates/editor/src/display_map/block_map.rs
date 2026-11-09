@@ -41,6 +41,8 @@ pub struct BlockMap {
     custom_blocks: Vec<Arc<CustomBlock>>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     transforms: RefCell<SumTree<Transform>>,
+    /// Incremented whenever `transforms` is replaced.
+    transforms_version: Cell<u64>,
     buffer_header_height: u32,
     excerpt_header_height: u32,
     pub(super) folded_buffers: HashSet<BufferId>,
@@ -75,6 +77,7 @@ struct BlockMapInverseWriter<'a> {
 pub struct BlockSnapshot {
     pub(super) wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
+    transforms_version: u64,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     pub(super) buffer_header_height: u32,
     pub(super) excerpt_header_height: u32,
@@ -665,6 +668,7 @@ impl BlockMap {
             folded_buffers: HashSet::default(),
             buffers_with_disabled_headers: HashSet::default(),
             transforms: RefCell::new(transforms),
+            transforms_version: Cell::new(0),
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             buffer_header_height,
             excerpt_header_height,
@@ -695,6 +699,7 @@ impl BlockMap {
             snapshot: BlockSnapshot {
                 wrap_snapshot,
                 transforms: self.transforms.borrow().clone(),
+                transforms_version: self.transforms_version.get(),
                 custom_blocks_by_id: self.custom_blocks_by_id.clone(),
                 buffer_header_height: self.buffer_header_height,
                 excerpt_header_height: self.excerpt_header_height,
@@ -1196,6 +1201,8 @@ impl BlockMap {
 
         drop(cursor);
         *transforms = new_transforms;
+        self.transforms_version
+            .set(self.transforms_version.get().wrapping_add(1));
     }
 
     #[ztracing::instrument(skip_all)]
@@ -2198,21 +2205,11 @@ impl BlockMapWriter<'_> {
     }
 }
 
-/// Identifies a block snapshot's rows: two identities are equal only if nothing that
-/// maps buffer rows to display rows (text, folds, inlays, tabs, wrapping or blocks)
-/// changed between their snapshots, since any such change replaces the transforms.
-#[derive(Clone)]
-pub(crate) struct BlockRowsIdentity(SumTree<Transform>);
-
-impl PartialEq for BlockRowsIdentity {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.ptr_eq(&other.0)
-    }
-}
-
 impl BlockSnapshot {
-    pub(crate) fn rows_identity(&self) -> BlockRowsIdentity {
-        BlockRowsIdentity(self.transforms.clone())
+    /// Changes whenever anything mapping buffer rows to display rows (text, folds, inlays,
+    /// tabs, wrapping or blocks) changes, since the block map then replaces its transforms.
+    pub(crate) fn rows_version(&self) -> u64 {
+        self.transforms_version
     }
 
     #[inline(always)]
