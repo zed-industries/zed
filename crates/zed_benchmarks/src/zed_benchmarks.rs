@@ -92,6 +92,9 @@ const BENCH_USER_SETTINGS: &str = r#"{
 
 /// A hard limit for any single wait in fixture setup or a measured session, so a
 /// broken fixture fails instead of hanging the benchmark process.
+/// The display refresh rate sessions run at.
+pub const FPS: u64 = 120;
+
 pub const WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 
 struct ProcessFixture {
@@ -753,8 +756,9 @@ pub enum Step {
 }
 
 /// Measures repeated sessions of input against a Zed window with
-/// `bench_renderer_session`: every turn runs ready foreground work, delivers one
-/// step of input and draws any frame it scheduled. `setup` runs before each
+/// `bench_vsync_session` at 120 Hz: every turn is one display frame that runs the
+/// foreground work that became ready, delivers one step of input and draws once if
+/// anything was invalidated. `setup` runs before each
 /// session and `finish` after it, both outside the timed interval; `finish` should
 /// assert that the session did its work.
 pub fn bench_sessions<S: 'static>(
@@ -771,7 +775,8 @@ pub fn bench_sessions<S: 'static>(
     // scope ends, before session inputs are dropped; keeping the trace setting on
     // preserves the events until `SessionInput` collects them.
     let enabled_tracing = gpui::profiler::set_trace_enabled(true);
-    cx.bench_renderer_session(
+    cx.bench_vsync_session(
+        FPS,
         WAIT_TIMEOUT,
         |cx| {
             let state = setup(cx);
@@ -885,14 +890,4 @@ pub fn zed_bench(
     }
     drop(measure);
     cx.teardown();
-}
-
-/// Sleeps until `turn` frame intervals at `fps` have passed since `started`, so
-/// idle sessions run at a display's cadence instead of spinning.
-pub fn pace_frame(started: Instant, turn: u64, fps: u64) {
-    let target = started + Duration::from_nanos(1_000_000_000 / fps * turn);
-    let now = Instant::now();
-    if target > now {
-        std::thread::sleep(target - now);
-    }
 }

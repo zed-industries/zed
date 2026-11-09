@@ -528,7 +528,12 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         benchmark_name: Option<&'static str>,
         bencher: &'a mut criterion::Bencher<'measurement, BenchMeasurement>,
     ) -> Self {
-        Self::build(platform, benchmark_name, Some(bencher), BenchReport::default())
+        Self::build(
+            platform,
+            benchmark_name,
+            Some(bencher),
+            BenchReport::default(),
+        )
     }
 
     /// Creates a new benchmark app context backed by the provided platform.
@@ -908,10 +913,47 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     pub fn bench_renderer_session<Input>(
         &mut self,
         timeout: Duration,
+        setup: impl FnMut(&mut Self) -> (Input, AnyWindowHandle, Arc<AtomicBool>),
+        input: impl FnMut(&mut Input, u64, &mut Window, &mut App),
+    ) {
+        self.renderer_session("bench_renderer_session", None, timeout, setup, input);
+    }
+
+    /// Like [`Self::bench_renderer_session`], but each turn is one display frame at
+    /// `fps`, as on a display with vsync: a turn starts on the next frame boundary,
+    /// runs the foreground tasks that became ready since the previous turn without
+    /// drawing, delivers `input`, and then draws at most once. Invalidations from
+    /// several polls coalesce into one frame, so draw counts and dirty-to-draw
+    /// latency resemble the app's, and background work runs in real time between
+    /// frames. Wall time is dominated by the frame cadence, so compare these
+    /// sessions by their frame and foreground-work metrics rather than by time.
+    pub fn bench_vsync_session<Input>(
+        &mut self,
+        fps: u64,
+        timeout: Duration,
+        setup: impl FnMut(&mut Self) -> (Input, AnyWindowHandle, Arc<AtomicBool>),
+        input: impl FnMut(&mut Input, u64, &mut Window, &mut App),
+    ) {
+        assert!(fps > 0, "frame rate must be greater than zero");
+        let frame_interval = Duration::from_nanos(NANOS_PER_SECOND as u64 / fps);
+        self.renderer_session(
+            "bench_vsync_session",
+            Some(frame_interval),
+            timeout,
+            setup,
+            input,
+        );
+    }
+
+    fn renderer_session<Input>(
+        &mut self,
+        benchmark_kind: &str,
+        frame_interval: Option<Duration>,
+        timeout: Duration,
         mut setup: impl FnMut(&mut Self) -> (Input, AnyWindowHandle, Arc<AtomicBool>),
         mut input: impl FnMut(&mut Input, u64, &mut Window, &mut App),
     ) {
-        let bencher = self.take_bencher("bench_renderer_session");
+        let bencher = self.take_bencher(benchmark_kind);
         let mut setup_context = self.clone();
         let mut benchmark_context = self.clone();
         let dispatcher = self.background_executor.dispatcher().clone();
@@ -970,14 +1012,27 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
                     check_deadline();
                 };
                 let mut frame = 0;
+                let mut next_frame_at = started;
                 loop {
                     check_deadline();
                     if is_finished(&benchmark_context) {
                         break;
                     }
+                    if let Some(frame_interval) = frame_interval {
+                        let now = Instant::now();
+                        if next_frame_at > now {
+                            std::thread::sleep(next_frame_at - now);
+                        }
+                        // A turn that overran its frame skips the missed vsyncs
+                        // instead of catching up with back-to-back frames.
+                        next_frame_at =
+                            (next_frame_at + frame_interval).max(Instant::now());
+                    }
                     if can_poll() {
                         dispatcher.run_ready_main_tasks_with(&can_poll, || {
-                            dispatch_frames(&benchmark_context);
+                            if frame_interval.is_none() {
+                                dispatch_frames(&benchmark_context);
+                            }
                         });
                         if !can_poll() {
                             continue;

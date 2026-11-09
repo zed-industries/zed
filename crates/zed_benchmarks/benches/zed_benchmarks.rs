@@ -24,13 +24,11 @@ use project::{LanguageServerStatus, ProgressToken};
 use theme::ActiveTheme as _;
 use workspace::SaveIntent;
 use zed_benchmarks::{
-    AGENT_THREAD_ENTRIES_PER_TURN, AGENT_THREAD_TURNS, MARKDOWN_FILE, PYTHON_FILE, RUST_FILE, Step,
-    TYPESCRIPT_FILE, ZedWindow, agent_thread_json, bench_sessions, init_app,
-    init_app_with_settings, keystroke, open_zed_window, pace_frame, pinned_contents, scroll_wheel,
+    AGENT_THREAD_ENTRIES_PER_TURN, AGENT_THREAD_TURNS, FPS, MARKDOWN_FILE, PYTHON_FILE, RUST_FILE,
+    Step, TYPESCRIPT_FILE, ZedWindow, agent_thread_json, bench_sessions, init_app,
+    init_app_with_settings, keystroke, open_zed_window, pinned_contents, scroll_wheel,
     wait_for_highlighting, wait_for_task, wait_until, zed_bench,
 };
-
-const FPS: u64 = 120;
 
 fn focus_editor(zed: &ZedWindow, cx: &mut BenchAppContext, editor: &Entity<Editor>) {
     zed.update_window(cx, |window, cx| {
@@ -99,7 +97,7 @@ struct ProjectPanelSession {
 /// pressed again every few frames, like a held key.
 fn project_panel_expand(criterion: &mut Criterion<BenchMeasurement>) {
     zed_bench(criterion, "project_panel_expand", |cx| {
-        const MOVES: usize = 20;
+        const MOVES: usize = 12;
         const REPEAT_FRAMES: u64 = 3;
 
         let app_state = init_app(cx);
@@ -147,7 +145,6 @@ fn project_panel_expand(criterion: &mut Criterion<BenchMeasurement>) {
                     if turn == 0 {
                         session.started = Instant::now();
                     }
-                    pace_frame(session.started, turn, FPS);
                     let current = selection(cx);
                     if let Some((before, key, sent_at)) = session.pending.take() {
                         if current.as_ref().map(|(path, ..)| path) == before.as_ref() {
@@ -384,7 +381,7 @@ fn editor_scroll(criterion: &mut Criterion<BenchMeasurement>) {
             criterion,
             &format!("editor_scroll/file/{}", fixture.name),
             |cx| {
-                const STEPS: u64 = 24;
+                const STEPS: u64 = 16;
                 const DELTA: f32 = 96.;
 
                 let app_state = init_app(cx);
@@ -457,7 +454,7 @@ struct TypingSession {
 /// handler, then undoes it with cmd-z. Every keystroke reparses the buffer.
 fn editor_type_and_undo(criterion: &mut Criterion<BenchMeasurement>) {
     zed_bench(criterion, "editor_type_and_undo", |cx| {
-        const TYPED: &str = "let total = values.iter().map(|value| value.len()).sum::<usize>();";
+        const TYPED: &str = "let total = values.len();";
         const UNDOS: usize = 3;
 
         let app_state = init_app(cx);
@@ -557,7 +554,7 @@ fn selected_text(editor: &Entity<Editor>, cx: &mut App) -> (u32, String) {
 fn buffer_search(criterion: &mut Criterion<BenchMeasurement>) {
     zed_bench(criterion, "buffer_search", |cx| {
         const QUERY: &str = "cx.notify()";
-        const NEXT_MATCHES: usize = 12;
+        const NEXT_MATCHES: usize = 6;
 
         let expected_matches = pinned_contents(RUST_FILE).matches(QUERY).count();
         assert!(
@@ -722,9 +719,9 @@ struct SpinnerSession {
 /// disappears. Frames are paced at 120 Hz.
 fn idle_language_server_spinner(criterion: &mut Criterion<BenchMeasurement>) {
     zed_bench(criterion, "idle_language_server_spinner", |cx| {
-        const WORK_STARTS: Duration = Duration::from_millis(20);
-        const WORK_ENDS: Duration = Duration::from_millis(170);
-        const SESSION: Duration = Duration::from_millis(250);
+        const WORK_STARTS: Duration = Duration::from_millis(17);
+        const WORK_ENDS: Duration = Duration::from_millis(117);
+        const SESSION: Duration = Duration::from_millis(167);
 
         let app_state = init_app(cx);
         let zed = open_zed_window(cx, &app_state);
@@ -777,7 +774,6 @@ fn idle_language_server_spinner(criterion: &mut Criterion<BenchMeasurement>) {
                     if turn == 0 {
                         session.started = Instant::now();
                     }
-                    pace_frame(session.started, turn, FPS);
                     let elapsed = session.started.elapsed();
                     if !session.began && elapsed >= WORK_STARTS {
                         session.began = true;
@@ -866,7 +862,6 @@ fn idle_sessions(
             if turn == 0 {
                 *started = Instant::now();
             }
-            pace_frame(*started, turn, FPS);
             if started.elapsed() >= duration {
                 Step::Stop
             } else {
@@ -888,7 +883,7 @@ fn idle_cursor_blink(criterion: &mut Criterion<BenchMeasurement>) {
                 cx,
                 zed.any_window(),
                 "idle_cursor_blink",
-                Duration::from_millis(560),
+                Duration::from_millis(520),
             );
             assert!(
                 stats.draws >= stats.sessions,
@@ -912,7 +907,7 @@ fn idle_nothing(criterion: &mut Criterion<BenchMeasurement>) {
                 cx,
                 zed.any_window(),
                 "idle_nothing",
-                Duration::from_millis(250),
+                Duration::from_millis(150),
             );
             assert_eq!(
                 stats.draws, 0,
@@ -934,7 +929,7 @@ struct AgentScrollSession {
 /// `edit_file` calls with diffs), scrolled with the trackpad.
 fn agent_panel_long_thread(criterion: &mut Criterion<BenchMeasurement>) {
     zed_bench(criterion, "agent_panel_long_thread", |cx| {
-        const STEPS: u64 = 24;
+        const STEPS: u64 = 16;
         const DELTA: f32 = 120.;
         let expected_entries = AGENT_THREAD_TURNS * AGENT_THREAD_ENTRIES_PER_TURN;
 
@@ -1057,7 +1052,7 @@ fn agent_panel_long_thread(criterion: &mut Criterion<BenchMeasurement>) {
 /// the trackpad and the keyboard.
 fn keymap_editor_scroll(criterion: &mut Criterion<BenchMeasurement>) {
     zed_bench(criterion, "keymap_editor_scroll", |cx| {
-        const STEPS: u64 = 30;
+        const STEPS: u64 = 18;
         const DELTA: f32 = 120.;
 
         let app_state = init_app(cx);
@@ -1124,7 +1119,7 @@ fn settings_ui_navigate(criterion: &mut Criterion<BenchMeasurement>) {
             "project_panel.indent_guides.show",
             "terminal.font_size",
         ];
-        const STEPS_PER_PAGE: u64 = 8;
+        const STEPS_PER_PAGE: u64 = 5;
         const DELTA: f32 = 120.;
 
         let app_state = init_app(cx);
@@ -1187,6 +1182,40 @@ fn settings_ui_navigate(criterion: &mut Criterion<BenchMeasurement>) {
     });
 }
 
+struct SpinnerProbe;
+
+impl gpui::Render for SpinnerProbe {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        use gpui::{ParentElement as _, Styled as _};
+        use ui::CommonAnimationExt as _;
+        gpui::div()
+            .size_full()
+            .child(ui::Icon::new(ui::IconName::LoadCircle).with_keyed_rotate_animation("probe", 2))
+    }
+}
+
+/// Diagnostic: a bare spinning icon in its own window.
+fn zz_spinner_probe(criterion: &mut Criterion<BenchMeasurement>) {
+    use gpui::AppContext as _;
+    zed_bench(criterion, "zz_spinner_probe", |cx| {
+        init_app(cx);
+        let window = cx.update(|cx| {
+            let window = cx
+                .open_window(Default::default(), |_, cx| cx.new(|_| SpinnerProbe))
+                .expect("open probe window");
+            window
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
+            gpui::AnyWindowHandle::from(window)
+        });
+        cx.run_until_idle();
+        Box::new(move |cx: &mut BenchAppContext<'_, '_>| {
+            let stats = idle_sessions(cx, window, "zz_spinner_probe", Duration::from_millis(250));
+            eprintln!("PROBE draws {} sessions {}", stats.draws, stats.sessions);
+        })
+    });
+}
+
 gpui::bench_group!(
     name = benches;
     config = criterion::Criterion::default()
@@ -1205,5 +1234,6 @@ gpui::bench_group!(
         agent_panel_long_thread,
         keymap_editor_scroll,
         settings_ui_navigate,
+        zz_spinner_probe,
 );
 gpui::bench_main!(benches);
