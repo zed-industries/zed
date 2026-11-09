@@ -70,6 +70,16 @@ fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[Pat
         .any(|root| canonical_path.starts_with(root))
 }
 
+/// The kind for a path that resolved into the project's global skills. Only
+/// the machine the skills are on can resolve a path into them, so
+/// [`sensitive_settings_kind`], which looks on this machine, can miss a remote
+/// one.
+pub fn global_skill_settings_kind(
+    global_skill_path: Option<&PathBuf>,
+) -> Option<SensitiveSettingsKind> {
+    global_skill_path.map(|_| SensitiveSettingsKind::AgentSkills)
+}
+
 /// Returns the kind of sensitive settings or agent skills location this path targets, if any:
 /// either inside a `.zed/` local-settings directory, inside `.agents/skills/`, or inside
 /// the global config dir.
@@ -513,17 +523,13 @@ pub fn authorize_file_edit(
         } else {
             sensitive_settings_kind(&path_owned, &canonical_roots, fs.as_ref()).await
         };
-        // Only the machine the skills are on can resolve a path into them, so
-        // this machine's checks alone can miss a remote one.
         let settings_kind = match settings_kind {
             Some(settings_kind) => Some(settings_kind),
             None => {
                 let global_skill_files =
                     cx.update(|cx| GlobalSkillFiles::for_project(&project_entity, cx));
-                global_skill_files
-                    .resolve_creatable(&path_owned, cx)
-                    .await
-                    .map(|_| SensitiveSettingsKind::AgentSkills)
+                let global_skill_path = global_skill_files.resolve_creatable(&path_owned, cx).await;
+                global_skill_settings_kind(global_skill_path.as_ref())
             }
         };
 

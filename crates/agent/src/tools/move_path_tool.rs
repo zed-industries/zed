@@ -1,6 +1,6 @@
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_escapes, canonicalize_worktree_roots,
-    collect_symlink_escapes, sensitive_settings_kind,
+    authorize_symlink_escapes, canonicalize_worktree_roots, collect_symlink_escapes,
+    global_skill_settings_kind, sensitive_settings_kind,
 };
 use crate::{
     AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, ToolPermissionDecision,
@@ -165,12 +165,11 @@ impl AgentTool for MovePathTool {
                 fs.as_ref(),
             )
             .await)
-            // Only the machine the skills are on can resolve a path into them, so
-            // this machine's checks alone can miss a remote one.
-            .or(global_source_path
-                .as_ref()
-                .or(global_destination_path.as_ref())
-                .map(|_| SensitiveSettingsKind::AgentSkills));
+            .or(global_skill_settings_kind(
+                global_source_path
+                    .as_ref()
+                    .or(global_destination_path.as_ref()),
+            ));
 
             let needs_confirmation = matches!(decision, ToolPermissionDecision::Confirm)
                 || (matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some());
