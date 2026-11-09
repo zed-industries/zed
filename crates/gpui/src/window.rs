@@ -5484,15 +5484,19 @@ impl Window {
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
     /// this variant takes a function that is invoked during layout so you can use arbitrary logic to
-    /// determine the element's size. One place this is used internally is when measuring text.
+    /// determine the element's size.
     ///
     /// The given closure is invoked at layout time with the known dimensions and available space and
-    /// returns a `Size`.
+    /// returns a `Size`. `key` must describe everything else the size depends on: while it equals
+    /// the key the element's node was last measured with, the sizes measured then can be used
+    /// without calling `measure` again, and the node doesn't need to be laid out again. Give a
+    /// key that never compares equal to have `measure` called every frame.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
-    pub fn request_measured_layout<F>(&mut self, style: Style, measure: F) -> LayoutId
+    pub fn request_measured_layout<K, F>(&mut self, style: Style, key: K, measure: F) -> LayoutId
     where
-        F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+        K: PartialEq + 'static,
+        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
     {
         self.invalidator.debug_assert_prepaint();
@@ -5503,7 +5507,23 @@ impl Window {
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(scope, &style, rem_size, scale_factor, measure)
+            .request_measured_layout(scope, &style, rem_size, scale_factor, key, measure)
+    }
+
+    pub(crate) fn request_measure(
+        &mut self,
+        style: &Style,
+        measure: Box<dyn crate::taffy::Measure>,
+    ) -> LayoutId {
+        self.invalidator.debug_assert_prepaint();
+
+        let rem_size = self.rem_size();
+        let scale_factor = self.scale_factor();
+        let scope = self.element_id_stack.hash();
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .request_measure(scope, style, rem_size, scale_factor, measure)
     }
 
     /// Lays out a `.cached()` view's contents in `f`, keeping their layout nodes apart from
@@ -5541,23 +5561,6 @@ impl Window {
     #[cfg(test)]
     pub(crate) fn layout_node_count(&self) -> usize {
         self.layout_engine.as_ref().unwrap().node_count()
-    }
-
-    pub(crate) fn request_text_layout(
-        &mut self,
-        measure: crate::elements::TextMeasure,
-    ) -> LayoutId {
-        self.invalidator.debug_assert_prepaint();
-
-        let rem_size = self.rem_size();
-        let scale_factor = self.scale_factor();
-        let scope = self.element_id_stack.hash();
-        self.layout_engine.as_mut().unwrap().request_text_layout(
-            scope,
-            rem_size,
-            scale_factor,
-            measure,
-        )
     }
 
     /// Compute the layout for the given id within the given available space.

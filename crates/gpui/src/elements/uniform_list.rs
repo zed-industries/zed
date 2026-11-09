@@ -291,6 +291,7 @@ impl Element for UniformList {
                     window.with_text_style(style.text_style().cloned(), |window| {
                         window.request_measured_layout(
                             style,
+                            (item_size, max_items),
                             move |known_dimensions, available_space, _window, _cx| {
                                 let desired_height = item_size.height * max_items;
                                 let width = known_dimensions.width.unwrap_or(match available_space

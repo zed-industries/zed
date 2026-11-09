@@ -651,11 +651,38 @@ pub(crate) struct TextMeasure {
 
 type LineLayoutRanges = SmallVec<[Range<LineLayoutIndex>; 2]>;
 
-impl TextMeasure {
+impl crate::taffy::Measure for TextMeasure {
+    fn measure(
+        &mut self,
+        known_dimensions: Size<Option<Pixels>>,
+        available_space: Size<crate::AvailableSpace>,
+        final_layout: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Size<Pixels> {
+        TextMeasure::measure(
+            self,
+            known_dimensions,
+            available_space,
+            final_layout,
+            window,
+            cx,
+        )
+    }
+
     /// Takes over the lines `previous` measured, so a text element that hasn't changed
-    /// since the last frame can paint without being measured again. Returns whether it
-    /// did; if not, this text must be measured.
-    pub(crate) fn reuse_measurement(&self, previous: &TextMeasure) -> bool {
+    /// since the last frame can paint without being measured again.
+    fn reuse(&mut self, previous: &mut dyn crate::taffy::Measure) -> bool {
+        let Some(previous) = (previous as &mut dyn std::any::Any).downcast_mut::<TextMeasure>()
+        else {
+            return false;
+        };
+        self.reuse_measurement(previous)
+    }
+}
+
+impl TextMeasure {
+    fn reuse_measurement(&self, previous: &TextMeasure) -> bool {
         if self.text != previous.text
             || self.font_size != previous.font_size
             || self.line_height != previous.line_height
@@ -700,7 +727,7 @@ impl TextMeasure {
     /// after any sizing probes): Taffy may serve that measurement from its cache while
     /// measuring a probe again, and the probe's lines would be painted in bounds that
     /// weren't computed from them.
-    pub(crate) fn measure(
+    fn measure(
         &self,
         known_dimensions: Size<Option<Pixels>>,
         available_space: Size<crate::AvailableSpace>,
@@ -905,7 +932,10 @@ impl TextLayout {
         _: &mut App,
     ) -> LayoutId {
         let measured_before = self.0.borrow().is_some();
-        let layout_id = window.request_text_layout(self.measurement(text, runs, window));
+        let layout_id = window.request_measure(
+            &crate::Style::default(),
+            Box::new(self.measurement(text, runs, window)),
+        );
         // Text whose measurement was taken over from the last frame isn't shaped in this
         // one, so its line layouts would leave the cache, and shaping the same text again
         // (as when list rows move between elements) would miss it.

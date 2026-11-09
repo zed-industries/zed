@@ -2198,7 +2198,23 @@ impl BlockMapWriter<'_> {
     }
 }
 
+/// Identifies a block snapshot's rows: two identities are equal only if nothing that
+/// maps buffer rows to display rows (text, folds, inlays, tabs, wrapping or blocks)
+/// changed between their snapshots, since any such change replaces the transforms.
+#[derive(Clone)]
+pub(crate) struct BlockRowsIdentity(SumTree<Transform>);
+
+impl PartialEq for BlockRowsIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ptr_eq(&other.0)
+    }
+}
+
 impl BlockSnapshot {
+    pub(crate) fn rows_identity(&self) -> BlockRowsIdentity {
+        BlockRowsIdentity(self.transforms.clone())
+    }
+
     #[inline(always)]
     pub fn has_replacement_blocks(&self) -> bool {
         self.transforms.summary().has_replacement_blocks
