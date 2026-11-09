@@ -1126,7 +1126,7 @@ impl X11WindowStatePtr {
             .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
 
         let was_active = state.active;
-        let was_maximized = state.is_maximized();
+        let was_maximized = state.maximized_vertical && state.maximized_horizontal;
         state.active = false;
         state.fullscreen = false;
         state.maximized_vertical = false;
@@ -1154,7 +1154,9 @@ impl X11WindowStatePtr {
         }
 
         // Maximized changes without a geometry change get no ConfigureNotify, so report them as a move.
-        let maximized_changed = state.is_maximized() != was_maximized;
+        // This ignores `hidden`, since minimizing shouldn't notify bounds observers.
+        let maximized_changed =
+            (state.maximized_vertical && state.maximized_horizontal) != was_maximized;
         drop(state);
         if maximized_changed {
             let callback = self.callbacks.borrow_mut().moved.take();
