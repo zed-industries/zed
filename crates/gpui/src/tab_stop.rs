@@ -7,14 +7,16 @@ use crate::{FocusHandle, FocusId};
 /// Represents a collection of focus handles using the tab-index APIs.
 ///
 /// Every focusable element is inserted on every frame, while the tab order is only needed
-/// when the user moves focus with tab. So insertion just records the node, and the order
-/// is computed by sorting when it's needed.
+/// when the user moves focus with tab. So insertion just appends the node, and the nodes
+/// are sorted in place the first time the order is needed after an insertion.
 #[derive(Debug, Default)]
 pub(crate) struct TabStopMap {
     current_path: TabStopPath,
     pub(crate) insertion_history: Vec<TabStopOperation>,
+    /// Index into `nodes` of each focus handle's most recent insertion.
     by_id: FxHashMap<FocusId, usize>,
     nodes: Vec<TabStopNode>,
+    sorted: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +74,7 @@ impl TabStopMap {
         let mut path = self.current_path.clone();
         path.0.push(focus_handle.tab_index);
         self.by_id.insert(focus_handle.id, self.nodes.len());
+        self.sorted = false;
         self.nodes.push(TabStopNode {
             node_insertion_index: self.insertion_history.len() - 1,
             tab_stop: focus_handle.tab_stop,
@@ -95,44 +98,56 @@ impl TabStopMap {
         self.insertion_history.clear();
         self.by_id.clear();
         self.nodes.clear();
+        self.sorted = false;
     }
 
-    pub fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let order = self.sorted_nodes();
-        let start = match focused_id.and_then(|id| self.position_in(&order, id)) {
-            Some(position) => position + 1,
-            None => 0,
-        };
-        let node = order[start..]
+    pub fn next(&mut self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
+        self.ensure_sorted();
+        let start = focused_id
+            .and_then(|id| self.by_id.get(id))
+            .map_or(0, |position| position + 1);
+        let node = self.nodes[start..]
             .iter()
-            .chain(&order[..start])
+            .chain(&self.nodes[..start])
             .find(|node| node.tab_stop)?;
         self.focus_handle_for_order(node)
     }
 
-    pub fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let order = self.sorted_nodes();
-        let end = match focused_id.and_then(|id| self.position_in(&order, id)) {
-            Some(position) => position,
-            None => order.len(),
-        };
-        let node = order[..end]
+    pub fn prev(&mut self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
+        self.ensure_sorted();
+        let end = focused_id
+            .and_then(|id| self.by_id.get(id).copied())
+            .unwrap_or(self.nodes.len());
+        let node = self.nodes[..end]
             .iter()
             .rev()
-            .chain(order[end..].iter().rev())
+            .chain(self.nodes[end..].iter().rev())
             .find(|node| node.tab_stop)?;
         self.focus_handle_for_order(node)
     }
 
-    fn sorted_nodes(&self) -> Vec<&TabStopNode> {
-        let mut order = self.nodes.iter().collect::<Vec<_>>();
-        order.sort_unstable();
-        order
-    }
-
-    fn position_in(&self, order: &[&TabStopNode], focused_id: &FocusId) -> Option<usize> {
-        let node = self.nodes.get(*self.by_id.get(focused_id)?)?;
-        order.binary_search(&node).ok()
+    fn ensure_sorted(&mut self) {
+        if self.sorted {
+            return;
+        }
+        // Nodes never compare equal, since their insertion indices differ, so an unstable
+        // sort gives the same order as a stable one without allocating a scratch buffer.
+        self.nodes.sort_unstable();
+        self.by_id.clear();
+        for (position, node) in self.nodes.iter().enumerate() {
+            let Some(focus_handle) = self
+                .insertion_history
+                .get(node.node_insertion_index)
+                .and_then(TabStopOperation::focus_handle)
+            else {
+                continue;
+            };
+            let latest = self.by_id.entry(focus_handle.id).or_insert(position);
+            if self.nodes[*latest].node_insertion_index < node.node_insertion_index {
+                *latest = position;
+            }
+        }
+        self.sorted = true;
     }
 
     pub fn replay(&mut self, nodes: &[TabStopOperation]) {
@@ -331,20 +346,20 @@ mod tests {
         }
 
         fn traverse_tab_map(
-            &self,
-            traverse: impl Fn(&TabStopMap, Option<&FocusId>) -> Option<FocusHandle>,
+            &mut self,
+            traverse: impl Fn(&mut TabStopMap, Option<&FocusId>) -> Option<FocusHandle>,
         ) -> Vec<FocusId> {
             let mut last_focus_id = None;
             let mut found = vec![];
             for _ in 0..self.expected.len() {
-                let handle = traverse(&self.tab_map, last_focus_id.as_ref()).unwrap();
+                let handle = traverse(&mut self.tab_map, last_focus_id.as_ref()).unwrap();
                 last_focus_id = Some(handle.id);
                 found.push(handle.id);
             }
             found
         }
 
-        fn assert(self) {
+        fn assert(mut self) {
             let mut expected = self.expected.iter().map(|(_, id)| *id).collect_vec();
 
             // Check next order
@@ -372,6 +387,22 @@ mod tests {
                 expected.first().cloned(),
             );
         }
+    }
+
+    #[test]
+    fn test_insert_after_sorting() {
+        let focus_map = Arc::new(RwLock::new(FocusMap::default()));
+        let mut tab_index_map = TabStopMap::default();
+        let second = FocusHandle::new(&focus_map).tab_stop(true).tab_index(1);
+        let first = FocusHandle::new(&focus_map).tab_stop(true).tab_index(0);
+
+        tab_index_map.insert(&second);
+        assert_eq!(tab_index_map.next(None), Some(second.clone()));
+
+        tab_index_map.insert(&first);
+        assert_eq!(tab_index_map.next(None), Some(first.clone()));
+        assert_eq!(tab_index_map.next(Some(&first.id)), Some(second.clone()));
+        assert_eq!(tab_index_map.prev(Some(&first.id)), Some(second));
     }
 
     #[test]
