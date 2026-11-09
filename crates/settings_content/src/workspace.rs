@@ -117,6 +117,10 @@ pub struct WorkspaceSettingsContent {
     /// Values: empty_tab, launchpad, readme
     /// Default: launchpad
     pub on_new_window: Option<OnNewWindow>,
+    /// Welcome / launchpad page options.
+    ///
+    /// When unset, the built-in Get Started section is shown.
+    pub welcome: Option<WelcomeSettingsContent>,
     /// What to do when the last window is closed
     ///
     /// Default: auto (nothing on macOS, "app quit" otherwise)
@@ -741,6 +745,43 @@ pub enum OnNewWindow {
     /// Open a root-level README in a preview tab when opening a project with no open items.
     /// Leave the pane empty if no README is found.
     Readme,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct WelcomeSettingsContent {
+    /// Actions shown in the Get Started section of the welcome page.
+    ///
+    /// When unset, the built-in Get Started actions are shown. When set, only
+    /// the listed actions appear, in order. Unknown values are ignored.
+    ///
+    /// Values: new_file, open_project, clone_repository, command_palette,
+    /// connect_ssh, ssh_config
+    pub get_started: Option<Vec<String>>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum WelcomeGetStartedAction {
+    NewFile,
+    OpenProject,
+    CloneRepository,
+    CommandPalette,
+    ConnectSsh,
+    SshConfig,
+}
+
+impl WelcomeGetStartedAction {
+    pub fn from_setting(value: &str) -> Option<Self> {
+        Some(match value {
+            "new_file" => Self::NewFile,
+            "open_project" => Self::OpenProject,
+            "clone_repository" => Self::CloneRepository,
+            "command_palette" => Self::CommandPalette,
+            "connect_ssh" => Self::ConnectSsh,
+            "ssh_config" => Self::SshConfig,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(

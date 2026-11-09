@@ -15,11 +15,17 @@ use menu::{SelectNext, SelectPrevious};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DefaultOpenBehavior, Settings};
+use settings::{DefaultOpenBehavior, Settings, WelcomeGetStartedAction};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use util::ResultExt;
 use zed_actions::{
-    Extensions, OpenKeymap, OpenOnboarding, OpenSettings, assistant::ToggleFocus, command_palette,
+    Extensions, OpenKeymap, OpenOnboarding, OpenRemote, OpenSettings, OpenSshConfig,
+    assistant::ToggleFocus, command_palette,
+};
+
+const OPEN_REMOTE: OpenRemote = OpenRemote {
+    from_existing_connection: false,
+    create_new_window: None,
 };
 
 #[derive(PartialEq, Clone, Debug, Deserialize, Serialize, JsonSchema, Action)]
@@ -130,6 +136,7 @@ impl RenderOnce for SectionButton {
     }
 }
 
+#[derive(Clone)]
 enum SectionVisibility {
     Always,
 }
@@ -142,6 +149,7 @@ impl SectionVisibility {
     }
 }
 
+#[derive(Clone)]
 struct SectionEntry {
     icon: IconName,
     title: &'static str,
@@ -163,63 +171,122 @@ impl SectionEntry {
     }
 }
 
-const CONTENT: (Section<4>, Section<3>) = (
-    Section {
-        title: "Get Started",
-        entries: [
-            SectionEntry {
-                icon: IconName::Plus,
-                title: "New File",
-                action: &NewFile,
-                visibility_guard: SectionVisibility::Always,
-            },
-            SectionEntry {
-                icon: IconName::FolderOpen,
-                title: "Open Project",
-                action: &Open::DEFAULT,
-                visibility_guard: SectionVisibility::Always,
-            },
-            SectionEntry {
-                icon: IconName::CloudDownload,
-                title: "Clone Repository",
-                action: &GitClone,
-                visibility_guard: SectionVisibility::Always,
-            },
-            SectionEntry {
-                icon: IconName::ListCollapse,
-                title: "Open Command Palette",
-                action: &command_palette::Toggle,
-                visibility_guard: SectionVisibility::Always,
-            },
-        ],
+const DEFAULT_GET_STARTED: [SectionEntry; 4] = [
+    SectionEntry {
+        icon: IconName::Plus,
+        title: "New File",
+        action: &NewFile,
+        visibility_guard: SectionVisibility::Always,
     },
-    Section {
-        title: "Configure",
-        entries: [
-            SectionEntry {
-                icon: IconName::Settings,
-                title: "Open Settings",
-                action: &OpenSettings,
-                visibility_guard: SectionVisibility::Always,
-            },
-            SectionEntry {
-                icon: IconName::Keyboard,
-                title: "Customize Keymaps",
-                action: &OpenKeymap,
-                visibility_guard: SectionVisibility::Always,
-            },
-            SectionEntry {
-                icon: IconName::Blocks,
-                title: "Explore Extensions",
-                action: &Extensions {
-                    category_filter: None,
-                    id: None,
-                },
-                visibility_guard: SectionVisibility::Always,
-            },
-        ],
+    SectionEntry {
+        icon: IconName::FolderOpen,
+        title: "Open Project",
+        action: &Open::DEFAULT,
+        visibility_guard: SectionVisibility::Always,
     },
-);
+    SectionEntry {
+        icon: IconName::CloudDownload,
+        title: "Clone Repository",
+        action: &GitClone,
+        visibility_guard: SectionVisibility::Always,
+    },
+    SectionEntry {
+        icon: IconName::ListCollapse,
+        title: "Open Command Palette",
+        action: &command_palette::Toggle,
+        visibility_guard: SectionVisibility::Always,
+    },
+];
+
+const CONFIGURE: Section<3> = Section {
+    title: "Configure",
+    entries: [
+        SectionEntry {
+            icon: IconName::Settings,
+            title: "Open Settings",
+            action: &OpenSettings,
+            visibility_guard: SectionVisibility::Always,
+        },
+        SectionEntry {
+            icon: IconName::Keyboard,
+            title: "Customize Keymaps",
+            action: &OpenKeymap,
+            visibility_guard: SectionVisibility::Always,
+        },
+        SectionEntry {
+            icon: IconName::Blocks,
+            title: "Explore Extensions",
+            action: &Extensions {
+                category_filter: None,
+                id: None,
+            },
+            visibility_guard: SectionVisibility::Always,
+        },
+    ],
+};
+
+fn get_started_entries(cx: &App) -> Vec<SectionEntry> {
+    match WorkspaceSettings::get_global(cx).welcome_get_started.as_ref() {
+        Some(actions) => actions
+            .iter()
+            .filter_map(|action| match action {
+                WelcomeGetStartedAction::NewFile => Some(SectionEntry {
+                    icon: IconName::Plus,
+                    title: "New File",
+                    action: &NewFile,
+                    visibility_guard: SectionVisibility::Always,
+                }),
+                WelcomeGetStartedAction::OpenProject => Some(SectionEntry {
+                    icon: IconName::FolderOpen,
+                    title: "Open Project",
+                    action: &Open::DEFAULT,
+                    visibility_guard: SectionVisibility::Always,
+                }),
+                WelcomeGetStartedAction::CloneRepository => Some(SectionEntry {
+                    icon: IconName::CloudDownload,
+                    title: "Clone Repository",
+                    action: &GitClone,
+                    visibility_guard: SectionVisibility::Always,
+                }),
+                WelcomeGetStartedAction::CommandPalette => Some(SectionEntry {
+                    icon: IconName::ListCollapse,
+                    title: "Open Command Palette",
+                    action: &command_palette::Toggle,
+                    visibility_guard: SectionVisibility::Always,
+                }),
+                WelcomeGetStartedAction::ConnectSsh => Some(SectionEntry {
+                    icon: IconName::Server,
+                    title: "Connect via SSH",
+                    action: &OPEN_REMOTE,
+                    visibility_guard: SectionVisibility::Always,
+                }),
+                WelcomeGetStartedAction::SshConfig => Some(SectionEntry {
+                    icon: IconName::Terminal,
+                    title: "SSH Config",
+                    action: &OpenSshConfig,
+                    visibility_guard: SectionVisibility::Always,
+                }),
+            })
+            .collect(),
+        None => DEFAULT_GET_STARTED.to_vec(),
+    }
+}
+
+fn render_get_started(
+    entries: &[SectionEntry],
+    index_offset: usize,
+    focus: &FocusHandle,
+) -> impl IntoElement {
+    v_flex()
+        .min_w_full()
+        .child(SectionHeader::new("Get Started"))
+        .children(
+            entries
+                .iter()
+                .enumerate()
+                .filter_map(|(index, entry)| entry.render(index_offset + index, focus)),
+        )
+}
 
 struct Section<const COLS: usize> {
     title: &'static str,
@@ -416,9 +483,9 @@ impl WelcomePage {
 
 impl Render for WelcomePage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (first_section, second_section) = CONTENT;
-        let first_section_entries = first_section.entries.len();
-        let mut next_tab_index = first_section_entries + second_section.entries.len();
+        let get_started = get_started_entries(cx);
+        let first_section_entries = get_started.len();
+        let mut next_tab_index = first_section_entries + CONFIGURE.entries.len();
 
         let ai_enabled = AgentSettings::get_global(cx).enabled(cx);
 
@@ -445,7 +512,7 @@ impl Render for WelcomePage {
             self.render_recent_project_section(recent_projects)
                 .into_any_element()
         } else {
-            second_section
+            CONFIGURE
                 .render(first_section_entries, &self.focus_handle)
                 .into_any_element()
         };
@@ -490,7 +557,11 @@ impl Render for WelcomePage {
                                 ),
                             ),
                     )
-                    .child(first_section.render(Default::default(), &self.focus_handle))
+                    .child(render_get_started(
+                        &get_started,
+                        Default::default(),
+                        &self.focus_handle,
+                    ))
                     .child(second_section)
                     .when(ai_enabled && !showing_recent_projects, |this| {
                         let agent_tab_index = next_tab_index;

@@ -107,7 +107,7 @@ use workspace::{CloseProject, CloseWindow, RestoreBanner, with_active_or_new_wor
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenProjectTasks,
-    OpenServerSettings, OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
+    OpenServerSettings, OpenSettingsFile, OpenSshConfig, OpenStatusPage, OpenZedUrl, Quit,
 };
 
 const DOCS_URL: &str = "https://zed.dev/docs/";
@@ -262,6 +262,16 @@ pub fn init(cx: &mut App) {
             open_settings_file(
                 paths::settings_file(),
                 || settings::initial_user_settings_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    })
+    .on_action(|_: &OpenSshConfig, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                prepare_user_ssh_config(),
+                || USER_SSH_CONFIG_STARTER.into(),
                 window,
                 cx,
             );
@@ -2732,6 +2742,41 @@ fn open_bundled_file(
             .await
     })
     .detach_and_log_err(cx);
+}
+
+const USER_SSH_CONFIG_STARTER: &str = "\
+# Hosts for Zed SSH. This file is ~/.ssh/config.
+# Host example
+#     HostName example.com
+#     User name
+";
+
+fn user_ssh_config_path() -> &'static Path {
+    static PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(paths::user_ssh_config_file).as_path()
+}
+
+fn prepare_user_ssh_config() -> &'static Path {
+    let path = user_ssh_config_path();
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent).log_err();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).log_err();
+        }
+    }
+    if !path.exists() {
+        std::fs::write(path, USER_SSH_CONFIG_STARTER).log_err();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).log_err();
+        }
+    }
+    path
 }
 
 fn open_settings_file(

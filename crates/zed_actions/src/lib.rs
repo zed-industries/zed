@@ -63,6 +63,8 @@ actions!(
         OpenAccountSettings,
         /// Opens server settings.
         OpenServerSettings,
+        /// Opens the user SSH config (`~/.ssh/config`).
+        OpenSshConfig,
         /// Quits the application.
         Quit,
         /// Shows information about Zed.

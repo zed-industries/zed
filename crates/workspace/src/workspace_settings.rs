@@ -34,6 +34,7 @@ pub struct WorkspaceSettings {
     pub max_tabs: Option<NonZeroUsize>,
     pub when_closing_with_no_tabs: settings::CloseWindowWhenNoItems,
     pub on_new_window: settings::OnNewWindow,
+    pub welcome_get_started: Option<Vec<settings::WelcomeGetStartedAction>>,
     pub on_last_window_closed: settings::OnLastWindowClosed,
     pub text_rendering_mode: settings::TextRenderingMode,
     pub use_display_p3: bool,
@@ -134,6 +135,16 @@ impl Settings for WorkspaceSettings {
             max_tabs: workspace.max_tabs,
             when_closing_with_no_tabs: workspace.when_closing_with_no_tabs.unwrap(),
             on_new_window: workspace.on_new_window.unwrap(),
+            welcome_get_started: workspace.welcome.as_ref().and_then(|welcome| {
+                welcome.get_started.as_ref().map(|actions| {
+                    actions
+                        .iter()
+                        .filter_map(|action| {
+                            settings::WelcomeGetStartedAction::from_setting(action)
+                        })
+                        .collect()
+                })
+            }),
             on_last_window_closed: workspace.on_last_window_closed.unwrap(),
             text_rendering_mode: workspace.text_rendering_mode.unwrap(),
             use_display_p3: workspace.use_display_p3.unwrap(),
