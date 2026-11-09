@@ -1061,8 +1061,8 @@ fn keymap_editor_scroll(cx: &mut BenchAppContext) {
 fn settings_ui_navigate(cx: &mut BenchAppContext) {
     const SETTINGS: &[&str] = &[
         "buffer_font_size",
-        "tab_size",
-        "git.inline_blame.enabled",
+        "relative_line_numbers",
+        "project_panel.indent_guides.show",
         "terminal.font_size",
     ];
     const STEPS_PER_PAGE: u64 = 8;
