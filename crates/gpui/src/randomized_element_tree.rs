@@ -414,6 +414,9 @@ pub enum RandomizedElementTreeMutationKind {
     ChildClipping,
     /// Toggle visibility on a seeded random descendant.
     ChildVisibility,
+    /// Change a seeded random descendant's text, adding text to one that had none or
+    /// removing it from one that didn't always have it.
+    ChildText,
     /// Reorder a seeded random descendant among its siblings.
     Reorder,
     /// Insert a generated descendant below a seeded random parent.
@@ -428,7 +431,7 @@ pub enum RandomizedElementTreeMutationKind {
 
 impl RandomizedElementTreeMutationKind {
     /// Every supported mutation kind, suitable for parameterized tests and benchmarks.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::RootColor,
         Self::RootOpacity,
         Self::RootBorder,
@@ -441,6 +444,7 @@ impl RandomizedElementTreeMutationKind {
         Self::ChildBounds,
         Self::ChildClipping,
         Self::ChildVisibility,
+        Self::ChildText,
         Self::Reorder,
         Self::Insert,
         Self::Remove,
@@ -490,6 +494,11 @@ pub enum RandomizedElementTreeMutation {
     },
     /// Toggled a descendant's visibility.
     ChildVisibility {
+        /// The stable ID of the mutated element.
+        element_id: u64,
+    },
+    /// Changed a descendant's text.
+    ChildText {
         /// The stable ID of the mutated element.
         element_id: u64,
     },
@@ -807,6 +816,9 @@ impl RandomizedElementTree {
             RandomizedElementTreeMutationKind::ChildVisibility => {
                 self.mutate_random_child(RandomizedChildMutation::Visibility)
             }
+            RandomizedElementTreeMutationKind::ChildText => {
+                self.mutate_random_child(RandomizedChildMutation::Text)
+            }
             RandomizedElementTreeMutationKind::Reorder => self.reorder_child(),
             RandomizedElementTreeMutationKind::Insert => self.insert_child_internal(),
             RandomizedElementTreeMutationKind::Remove => self
@@ -1001,6 +1013,11 @@ impl RandomizedElementTree {
             RandomizedChildMutation::Visibility => {
                 node.style.visible = !node.style.visible;
                 RandomizedElementTreeMutation::ChildVisibility { element_id }
+            }
+            RandomizedChildMutation::Text => {
+                node.style.label =
+                    (node.style.label + self.rng.random_range(1..LABELS.len())) % LABELS.len();
+                RandomizedElementTreeMutation::ChildText { element_id }
             }
         };
         AppliedRandomizedElementTreeMutation {
@@ -1286,7 +1303,19 @@ struct RandomizedElementStyle {
     visible: bool,
     vertical: bool,
     wrap: bool,
+    /// Index into [`LABELS`] of the element's text. Not drawn when generating a tree, so
+    /// adding it left every seed's tree as it was.
+    label: usize,
 }
+
+/// The texts an element can show. Elements whose number is 1 more than a multiple of 4
+/// show the first; others show text only once a mutation changes their label.
+const LABELS: [&str; 4] = [
+    "Retained glyphs: abc Ω",
+    "Retained glyphs: abc Ω, now with enough words that narrow parents wrap them",
+    "Ω",
+    "",
+];
 
 impl RandomizedElementStyle {
     fn random_root(rng: &mut StdRng) -> Self {
@@ -1304,6 +1333,7 @@ impl RandomizedElementStyle {
             visible: true,
             vertical: rng.random_bool(0.5),
             wrap: rng.random_bool(0.7),
+            label: 0,
         }
     }
 
@@ -1322,6 +1352,7 @@ impl RandomizedElementStyle {
             visible: rng.random_bool(0.9),
             vertical: rng.random_bool(0.5),
             wrap: rng.random_bool(0.4),
+            label: 0,
         }
     }
 
@@ -1340,6 +1371,7 @@ enum RandomizedChildMutation {
     Bounds,
     Clipping,
     Visibility,
+    Text,
 }
 
 #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
@@ -1445,8 +1477,10 @@ fn render_node_body(
                     ),
             )
         })
-        .when(node.id % 4 == 1, |element| {
-            element.underline().child("Retained glyphs: abc Ω")
+        .when(node.id % 4 == 1 || style.label != 0, |element| {
+            element
+                .underline()
+                .child(LABELS[style.label % LABELS.len()])
         })
         .child({
             let color = style.border_color;
@@ -1854,6 +1888,7 @@ mod tests {
             RandomizedChildMutation::Bounds,
             RandomizedChildMutation::Clipping,
             RandomizedChildMutation::Visibility,
+            RandomizedChildMutation::Text,
         ] {
             tree.mutate_random_child(mutation);
             assert_eq!(tree.snapshot().element_ids(), initial_ids);
