@@ -581,8 +581,9 @@ fn buffer_search(criterion: &mut Criterion<BenchMeasurement>) {
 
         // Count the highlighted matches outside the measurement.
         focus_editor(&zed, cx, &editor);
+        zed.update_window(cx, |window, cx| keystroke(window, cx, "cmd-f"));
+        cx.run_until_idle();
         zed.update_window(cx, |window, cx| {
-            keystroke(window, cx, "cmd-f");
             for character in QUERY.chars() {
                 keystroke(window, cx, &typed_keystroke(character));
             }
@@ -1182,40 +1183,6 @@ fn settings_ui_navigate(criterion: &mut Criterion<BenchMeasurement>) {
     });
 }
 
-struct SpinnerProbe;
-
-impl gpui::Render for SpinnerProbe {
-    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
-        use gpui::{ParentElement as _, Styled as _};
-        use ui::CommonAnimationExt as _;
-        gpui::div()
-            .size_full()
-            .child(ui::Icon::new(ui::IconName::LoadCircle).with_keyed_rotate_animation("probe", 2))
-    }
-}
-
-/// Diagnostic: a bare spinning icon in its own window.
-fn zz_spinner_probe(criterion: &mut Criterion<BenchMeasurement>) {
-    use gpui::AppContext as _;
-    zed_bench(criterion, "zz_spinner_probe", |cx| {
-        init_app(cx);
-        let window = cx.update(|cx| {
-            let window = cx
-                .open_window(Default::default(), |_, cx| cx.new(|_| SpinnerProbe))
-                .expect("open probe window");
-            window
-                .update(cx, |_, window, _| window.activate_window())
-                .ok();
-            gpui::AnyWindowHandle::from(window)
-        });
-        cx.run_until_idle();
-        Box::new(move |cx: &mut BenchAppContext<'_, '_>| {
-            let stats = idle_sessions(cx, window, "zz_spinner_probe", Duration::from_millis(250));
-            eprintln!("PROBE draws {} sessions {}", stats.draws, stats.sessions);
-        })
-    });
-}
-
 gpui::bench_group!(
     name = benches;
     config = criterion::Criterion::default()
@@ -1234,6 +1201,5 @@ gpui::bench_group!(
         agent_panel_long_thread,
         keymap_editor_scroll,
         settings_ui_navigate,
-        zz_spinner_probe,
 );
 gpui::bench_main!(benches);
