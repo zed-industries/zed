@@ -318,6 +318,12 @@ impl ElementIdInterner {
         handle
     }
 
+    pub(crate) fn path_hash(&self, handle: InternedHandle) -> u64 {
+        let slot = &self.nodes[handle.index as usize];
+        debug_assert_eq!(slot.generation, handle.generation);
+        slot.node.as_ref().map_or(EMPTY_PATH_HASH, |node| node.hash)
+    }
+
     pub(crate) fn global_id(&self, handle: InternedHandle) -> GlobalElementId {
         let slot = &self.nodes[handle.index as usize];
         debug_assert_eq!(slot.generation, handle.generation);
