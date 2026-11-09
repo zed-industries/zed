@@ -843,11 +843,23 @@ fn idle_sessions(
         name,
         |cx| {
             // Let startup work that finishes on timers (debounced serialization,
-            // diff and outline refreshes) settle, so the session measures a window
+            // diff and outline refreshes) settle: wait until the window has gone
+            // 300 ms without drawing (at most 3 s), so the session measures a window
             // that has been left alone.
-            let settle_until = Instant::now() + Duration::from_millis(300);
-            while Instant::now() < settle_until {
+            let window_id = window.window_id();
+            let mut frames = gpui::profiler::FrameTimingCollector::new();
+            let started = Instant::now();
+            let mut quiet_since = Instant::now();
+            while quiet_since.elapsed() < Duration::from_millis(300)
+                && started.elapsed() < Duration::from_secs(3)
+            {
                 cx.run_until_idle();
+                let drew = frames.collect_unseen().iter().any(|event| {
+                    matches!(event, gpui::profiler::FrameEvent::Draw(timing) if timing.window_id == window_id)
+                });
+                if drew {
+                    quiet_since = Instant::now();
+                }
                 std::thread::sleep(Duration::from_millis(5));
             }
             cx.run_until_idle();
