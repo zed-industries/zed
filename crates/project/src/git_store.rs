@@ -707,6 +707,8 @@ pub struct Repository {
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
+    #[cfg(any(test, feature = "test-support"))]
+    graph_data_fetches_started: usize,
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
 }
@@ -6638,6 +6640,8 @@ impl Repository {
             active_jobs: Default::default(),
             job_debug_queue: job_debug_queue::GitJobDebugQueue::new(),
             initial_graph_data: Default::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            graph_data_fetches_started: 0,
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
         };
@@ -6690,6 +6694,8 @@ impl Repository {
             job_debug_queue: job_debug_queue::GitJobDebugQueue::new(),
             job_id: 0,
             initial_graph_data: Default::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            graph_data_fetches_started: 0,
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
         }
@@ -7440,6 +7446,10 @@ impl Repository {
             .initial_graph_data
             .entry((log_source.clone(), log_order))
             .or_insert_with(|| {
+                #[cfg(any(test, feature = "test-support"))]
+                {
+                    self.graph_data_fetches_started += 1;
+                }
                 let state = self.repository_state.clone();
                 let log_source = log_source.clone();
 
@@ -11465,6 +11475,10 @@ async fn append_pattern_to_ignore_file(
 
 #[cfg(any(test, feature = "test-support"))]
 impl Repository {
+    pub fn graph_data_fetches_started_for_test(&self) -> usize {
+        self.graph_data_fetches_started
+    }
+
     pub fn set_branch_list_for_test(&mut self, branches: Vec<Branch>, cx: &mut Context<Self>) {
         self.snapshot.branch_list = branches.into();
         cx.emit(RepositoryEvent::BranchListChanged);
