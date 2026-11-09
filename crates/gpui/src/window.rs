@@ -3286,6 +3286,27 @@ impl Window {
         self.platform_window.set_traffic_light_position(position);
     }
 
+    /// Removes or restores the native frame of the window on macOS.
+    ///
+    /// A borderless window has no titlebar, and AppKit draws nothing around its content,
+    /// so a window with a transparent background shows only what it paints itself.
+    /// AppKit also stops providing the titlebar drag region, so a borderless window that
+    /// should stay movable has to move itself via [`Window::start_window_move`].
+    #[cfg(target_os = "macos")]
+    pub fn set_borderless(&self, borderless: bool) {
+        self.platform_window.set_borderless(borderless);
+    }
+
+    /// Enables or disables the native shadow of the window on macOS.
+    ///
+    /// AppKit shapes the shadow of a borderless window with a transparent background
+    /// around the content the window paints, so disable the shadow only for windows
+    /// that should cast none at all.
+    #[cfg(target_os = "macos")]
+    pub fn set_has_shadow(&self, has_shadow: bool) {
+        self.platform_window.set_has_shadow(has_shadow);
+    }
+
     /// Sets the application identifier.
     pub fn set_app_id(&mut self, app_id: &str) {
         self.platform_window.set_app_id(app_id);
