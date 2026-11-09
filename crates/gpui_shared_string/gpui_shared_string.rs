@@ -16,8 +16,6 @@ pub struct SharedString(SmolStr);
 
 impl PartialEq for SharedString {
     fn eq(&self, other: &Self) -> bool {
-        // Clones of a heap-allocated or static string share its bytes, so comparing them
-        // doesn't need to read the whole string.
         let (this, other_str) = (self.as_str(), other.as_str());
         (this.as_ptr() == other_str.as_ptr() && this.len() == other_str.len()) || self.0 == other.0
     }
