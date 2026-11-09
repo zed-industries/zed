@@ -9542,7 +9542,7 @@ impl GitPanel {
         Self::new(workspace, window, cx)
     }
 
-    pub fn commit_history_shas_for_test(&self) -> Vec<Oid> {
+    pub fn commit_history_shas(&self) -> Vec<Oid> {
         self.commit_history_entries()
             .iter()
             .map(|entry| entry.sha)

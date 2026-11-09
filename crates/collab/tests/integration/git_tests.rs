@@ -19,11 +19,13 @@ use gpui::{
     AppContext as _, BackgroundExecutor, Entity, IntoElement as _, SharedString, TestAppContext,
     VisualContext as _, VisualTestContext, point, px, size,
 };
+use parking_lot::Mutex;
 use project::{
     ProjectPath,
     git_store::{CommitDataState, MAX_CONCURRENT_OBJECT_READS, Repository},
 };
 use rand::{SeedableRng, rngs::StdRng};
+use rpc::proto;
 use serde_json::json;
 
 use util::{path, rel_path::rel_path};
@@ -35,7 +37,7 @@ use fs::FakeFs;
 use http_client::BlockedHttpClient;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
-use remote::RemoteClient;
+use remote::{MockConnection, RemoteClient};
 use remote_server::{HeadlessAppState, HeadlessProject};
 
 #[gpui::test]
@@ -1686,6 +1688,39 @@ async fn test_ssh_branch_switch_does_not_fetch_history(
     let client_a = server.create_client(cx_a, "user_a").await;
 
     let (opts, server_ssh, _) = RemoteClient::fake_server(cx_a, server_cx);
+    let history_sources = Arc::new(Mutex::new(Vec::new()));
+    let delayed_updates = Arc::new(Mutex::new(None::<Vec<proto::UpdateRepository>>));
+    cx_a.update(|cx| {
+        MockConnection::intercept_messages(
+            &opts,
+            cx,
+            {
+                let history_sources = history_sources.clone();
+                move |envelope| {
+                    if let Some(proto::envelope::Payload::GetInitialGraphData(request)) =
+                        &envelope.payload
+                    {
+                        history_sources.lock().push(request.log_source.clone());
+                    }
+                }
+            },
+            {
+                let delayed_updates = delayed_updates.clone();
+                move |envelope| {
+                    if let Some(proto::envelope::Payload::UpdateRepository(update)) =
+                        envelope.payload.as_mut()
+                        && update.is_last_update
+                        && let Some(updates) = delayed_updates.lock().as_mut()
+                    {
+                        updates.push(update.clone());
+                        update.is_last_update = false;
+                        update.branch_list.clear();
+                        update.branch_list_error = None;
+                    }
+                }
+            },
+        );
+    });
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -1705,7 +1740,7 @@ async fn test_ssh_branch_switch_does_not_fetch_history(
     let _headless_project = server_cx.new(|cx| {
         HeadlessProject::new(
             HeadlessAppState {
-                session: server_ssh,
+                session: server_ssh.clone(),
                 fs: remote_fs.clone(),
                 http_client: Arc::new(BlockedHttpClient),
                 node_runtime: NodeRuntime::unavailable(),
@@ -1733,17 +1768,13 @@ async fn test_ssh_branch_switch_does_not_fetch_history(
     server_cx.run_until_parked();
     let repository =
         project_a.read_with(cx_a, |project, cx| project.active_repository(cx).unwrap());
-    let fetches_started = |cx: &mut VisualTestContext| {
-        repository.read_with(cx, |repository, _| {
-            repository.graph_data_fetches_started_for_test()
-        })
-    };
     assert_eq!(
-        fetches_started(cx_a),
+        history_sources.lock().len(),
         0,
         "opening the project with Changes selected should not fetch history"
     );
 
+    *delayed_updates.lock() = Some(Vec::new());
     remote_fs.set_branch_name(dot_git, Some("feature"));
     remote_fs.set_head_for_repo(dot_git, &[("file.txt", "changed".into())], "sha2");
     executor.run_until_parked();
@@ -1755,11 +1786,31 @@ async fn test_ssh_branch_switch_does_not_fetch_history(
             .map(|branch| branch.name().to_string())
     });
     assert_eq!(branch.as_deref(), Some("feature"));
+    let branch_list_head = |cx: &mut VisualTestContext| {
+        repository.read_with(cx, |repository, _| {
+            repository
+                .branch_list
+                .iter()
+                .find(|branch| branch.is_head)
+                .map(|branch| branch.name().to_string())
+        })
+    };
+    assert_eq!(branch_list_head(cx_a).as_deref(), Some("main"));
     assert_eq!(
-        fetches_started(cx_a),
+        history_sources.lock().len(),
         0,
         "switching branches with Changes selected should not fetch history"
     );
+
+    let updates = delayed_updates.lock().take().expect("branch updates held");
+    assert!(!updates.is_empty());
+    for update in updates {
+        server_ssh.send(update).unwrap();
+    }
+    executor.run_until_parked();
+    server_cx.run_until_parked();
+    assert_eq!(branch_list_head(cx_a).as_deref(), Some("feature"));
+    assert_eq!(history_sources.lock().len(), 0);
 
     workspace_a.update_in(cx_a, |workspace, window, cx| {
         workspace.focus_panel::<GitPanel>(window, cx);
@@ -1767,9 +1818,14 @@ async fn test_ssh_branch_switch_does_not_fetch_history(
     cx_a.dispatch_action(git_ui::git_panel::ActivateHistoryTab);
     executor.run_until_parked();
     server_cx.run_until_parked();
-    assert_eq!(fetches_started(cx_a), 1);
     assert_eq!(
-        panel.read_with(cx_a, |panel, _| panel.commit_history_shas_for_test()),
+        *history_sources.lock(),
+        vec![Some(proto::GitLogSource {
+            source: Some(proto::git_log_source::Source::Branch("feature".to_string())),
+        })]
+    );
+    assert_eq!(
+        panel.read_with(cx_a, |panel, _| panel.commit_history_shas()),
         commits.iter().map(|commit| commit.sha).collect::<Vec<_>>(),
         "opening History loads the host's commits"
     );
