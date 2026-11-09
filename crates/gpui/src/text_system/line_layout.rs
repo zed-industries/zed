@@ -475,6 +475,19 @@ impl WrappedLineLayout {
     }
 }
 
+/// Moves the layouts in `unused` that are held outside the cache into `cache`, and drops
+/// the rest. The two never share a key, so only the smaller map's entries are moved.
+fn keep_held_layouts<V>(
+    cache: &mut FxHashMap<Arc<CacheKey>, Arc<V>>,
+    unused: &mut FxHashMap<Arc<CacheKey>, Arc<V>>,
+) {
+    unused.retain(|_, layout| Arc::strong_count(layout) > 1);
+    if unused.len() > cache.len() {
+        std::mem::swap(cache, unused);
+    }
+    cache.extend(unused.drain());
+}
+
 pub(crate) struct LineLayoutCache {
     state: RefCell<LineLayoutCacheState>,
     wrap_scratch: RefCell<WrapScratch>,
@@ -588,8 +601,14 @@ impl LineLayoutCache {
             current_frame,
         } = &mut *self.state.borrow_mut();
         std::mem::swap(previous_frame, current_frame);
-        current_frame.lines.clear();
-        current_frame.wrapped_lines.clear();
+        // Layouts that weren't used in the finished frame but are still held outside the
+        // cache stay cached. Text whose layout node kept its measurement from an earlier
+        // frame isn't shaped again while it's unchanged, and holds its lines; when the same
+        // text is shaped in another element, as when rows of a list move between elements,
+        // it would otherwise be shaped from scratch. Wrapped lines go first, since their
+        // unwrapped lines are held by the wrapped lines kept.
+        keep_held_layouts(&mut previous_frame.wrapped_lines, &mut current_frame.wrapped_lines);
+        keep_held_layouts(&mut previous_frame.lines, &mut current_frame.lines);
         current_frame.used_lines.clear();
         current_frame.used_wrapped_lines.clear();
     }
@@ -876,6 +895,33 @@ mod tests {
         let state = text_system.line_layout_cache.state.borrow();
         let (key, _) = state.current_frame.lines.iter().next().unwrap();
         assert_eq!(key.text.as_ptr(), text.as_ptr());
+    }
+
+    #[test]
+    fn layouts_held_outside_the_cache_outlive_frames_that_dont_use_them() {
+        let text_system =
+            WindowTextSystem::new(Arc::new(TextSystem::new(Arc::new(NoopTextSystem::new()))));
+        let shape = |text: &'static str| {
+            let runs = [TextRun {
+                len: text.len(),
+                font: font(".ZedMono"),
+                ..Default::default()
+            }];
+            text_system
+                .shape_text(text.into(), px(14.), &runs, Some(px(100.)), None)
+                .unwrap()
+                .remove(0)
+                .layout
+        };
+
+        let held = shape("held");
+        let dropped = Arc::downgrade(&shape("dropped").unwrapped_layout);
+        for _ in 0..3 {
+            text_system.finish_frame();
+        }
+
+        assert!(Arc::ptr_eq(&shape("held"), &held));
+        assert!(dropped.upgrade().is_none());
     }
 
     fn glyph_at(x: f32, index: usize) -> ShapedGlyph {
