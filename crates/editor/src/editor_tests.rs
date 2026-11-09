@@ -43745,22 +43745,26 @@ let result = variable * 2;",
             Point::new(2, 13)..Point::new(2, 21), // Third "variable"
         ];
 
-        let anchor_ranges: Vec<_> = highlight_ranges
-            .iter()
-            .map(|range| range.clone().to_anchors(&buffer_snapshot))
-            .collect();
+        let [first_range, second_range, third_range] =
+            highlight_ranges.map(|range| range.to_anchors(&buffer_snapshot));
 
         editor.highlight_background(
             HighlightKey::DocumentHighlightRead,
-            &anchor_ranges,
+            &[second_range, third_range],
             |_, theme| theme.colors().editor_document_highlight_read_background,
+            cx,
+        );
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightWrite,
+            &[first_range],
+            |_, theme| theme.colors().editor_document_highlight_write_background,
             cx,
         );
     });
 
     // Go to next highlight - should move to second "variable"
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight, window, cx);
+        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight::default(), window, cx);
     });
     cx.assert_editor_state(
         "let variable = 42;
@@ -43770,7 +43774,7 @@ let result = variable * 2;",
 
     // Go to next highlight - should move to third "variable"
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight, window, cx);
+        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight::default(), window, cx);
     });
     cx.assert_editor_state(
         "let variable = 42;
@@ -43780,7 +43784,11 @@ let result = ˇvariable * 2;",
 
     // Go to next highlight - should stay at third "variable" (no wrap-around)
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight, window, cx);
+        editor.go_to_next_document_highlight(
+            &GoToNextDocumentHighlight { wrap: false },
+            window,
+            cx,
+        );
     });
     cx.assert_editor_state(
         "let variable = 42;
@@ -43788,9 +43796,29 @@ let another = variable + 1;
 let result = ˇvariable * 2;",
     );
 
-    // Now test going backwards from third position
+    // Go to next highlight - should move to first "variable" (wrap-around default)
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight, window, cx);
+        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight::default(), window, cx);
+    });
+    cx.assert_editor_state(
+        "let ˇvariable = 42;
+let another = variable + 1;
+let result = variable * 2;",
+    );
+
+    // Go to previous highlight - should move to third "variable" (wrap-around default)
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight::default(), window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = variable + 1;
+let result = ˇvariable * 2;",
+    );
+
+    // Go to previous highlight - should move to second "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight::default(), window, cx);
     });
     cx.assert_editor_state(
         "let variable = 42;
@@ -43800,7 +43828,7 @@ let result = variable * 2;",
 
     // Go to previous highlight - should move to first "variable"
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight, window, cx);
+        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight::default(), window, cx);
     });
     cx.assert_editor_state(
         "let ˇvariable = 42;
@@ -43808,9 +43836,13 @@ let another = variable + 1;
 let result = variable * 2;",
     );
 
-    // Go to previous highlight - should stay on first "variable"
+    // Go to previous highlight - should stay on first "variable" (no wrap-around)
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight, window, cx);
+        editor.go_to_prev_document_highlight(
+            &GoToPreviousDocumentHighlight { wrap: false },
+            window,
+            cx,
+        );
     });
     cx.assert_editor_state(
         "let ˇvariable = 42;

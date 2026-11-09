@@ -1020,20 +1020,30 @@ impl Editor {
 
     pub fn go_to_next_document_highlight(
         &mut self,
-        _: &GoToNextDocumentHighlight,
+        action: &GoToNextDocumentHighlight,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.go_to_document_highlight_before_or_after_position(Direction::Next, window, cx);
+        self.go_to_document_highlight_before_or_after_position(
+            Direction::Next,
+            action.wrap,
+            window,
+            cx,
+        );
     }
 
     pub fn go_to_prev_document_highlight(
         &mut self,
-        _: &GoToPreviousDocumentHighlight,
+        action: &GoToPreviousDocumentHighlight,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.go_to_document_highlight_before_or_after_position(Direction::Prev, window, cx);
+        self.go_to_document_highlight_before_or_after_position(
+            Direction::Prev,
+            action.wrap,
+            window,
+            cx,
+        );
     }
 
     pub fn go_to_definition(
@@ -2509,6 +2519,7 @@ impl Editor {
     fn go_to_document_highlight_before_or_after_position(
         &mut self,
         direction: Direction,
+        wrap: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
@@ -2550,6 +2561,7 @@ impl Editor {
                 all_highlights
                     .iter()
                     .find(|highlight| highlight.start.cmp(&anchor_position, buffer).is_gt())
+                    .or_else(|| all_highlights.first().filter(|_| wrap))
             }
             Direction::Prev => {
                 // Find the last highlight before the current position
@@ -2557,6 +2569,7 @@ impl Editor {
                     .iter()
                     .rev()
                     .find(|highlight| highlight.end.cmp(&anchor_position, buffer).is_lt())
+                    .or_else(|| all_highlights.last().filter(|_| wrap))
             }
         };
 
