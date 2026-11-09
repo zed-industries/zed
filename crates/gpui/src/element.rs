@@ -42,7 +42,7 @@ use std::{
     any::Any,
     fmt::{self, Debug, Display},
     mem, panic,
-    sync::Arc,
+    rc::Rc,
 };
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
@@ -211,14 +211,13 @@ pub trait ParentElement {
 
 /// A globally unique identifier for an element, used to track state across frames.
 ///
-/// Identity and hashing are path-based, including across windows. The path is
-/// owned so an ID remains readable after its element or window is removed.
-#[derive(Clone, Debug)]
-pub struct GlobalElementId {
-    handle: InternedHandle,
-    ids: Arc<[ElementId]>,
-    hash: u64,
-}
+/// This is a shared pointer to the path's entry in its window's interner. Holding one
+/// keeps that entry and its ancestors from being reclaimed, so it keeps resolving to the
+/// same element state however long it's held, and its path stays readable after its
+/// element or window is gone. Identity and hashing are path-based, including across
+/// windows.
+#[derive(Clone)]
+pub struct GlobalElementId(Rc<InternedPath>);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub(crate) struct InternedHandle {
@@ -234,15 +233,18 @@ impl InternedHandle {
 }
 
 struct InternedPath {
-    parent: InternedHandle,
-    path: Arc<[ElementId]>,
+    handle: InternedHandle,
+    // Keeps the parent interned while this path is, so a held path is never
+    // re-interned under a different handle.
+    parent: Option<GlobalElementId>,
+    ids: Box<[ElementId]>,
     hash: u64,
-    last_used: u64,
 }
 
 struct PathSlot {
     generation: u32,
-    node: Option<InternedPath>,
+    last_used: u64,
+    path: Option<GlobalElementId>,
 }
 
 pub(crate) struct ElementIdInterner {
@@ -250,6 +252,7 @@ pub(crate) struct ElementIdInterner {
     nodes: Vec<PathSlot>,
     paths: collections::FxHashMap<(InternedHandle, ElementId), InternedHandle>,
     free: Vec<u32>,
+    reclaim_candidates: Vec<u32>,
 }
 
 impl Default for ElementIdInterner {
@@ -258,24 +261,21 @@ impl Default for ElementIdInterner {
             epoch: 0,
             nodes: vec![PathSlot {
                 generation: 0,
-                node: Some(InternedPath {
-                    parent: InternedHandle::ROOT,
-                    path: Arc::from([]),
-                    hash: EMPTY_PATH_HASH,
-                    last_used: 0,
-                }),
+                last_used: 0,
+                path: Some(GlobalElementId::default()),
             }],
             paths: collections::FxHashMap::default(),
             free: Vec::new(),
+            reclaim_candidates: Vec::new(),
         }
     }
 }
 
 impl ElementIdInterner {
-    fn live(&mut self, handle: InternedHandle) -> &mut InternedPath {
-        let slot = &mut self.nodes[handle.index as usize];
+    fn live(&self, handle: InternedHandle) -> &GlobalElementId {
+        let slot = &self.nodes[handle.index as usize];
         debug_assert_eq!(slot.generation, handle.generation);
-        slot.node.as_mut().expect("interned path is live")
+        slot.path.as_ref().expect("interned path is live")
     }
 
     pub(crate) fn intern(
@@ -285,65 +285,65 @@ impl ElementIdInterner {
         path: &[ElementId],
     ) -> InternedHandle {
         let epoch = self.epoch;
-        // `finish_frame` relies on a path never being used more recently than its parent.
-        debug_assert!(parent == InternedHandle::ROOT || self.live(parent).last_used == epoch);
+        // `mark_used` relies on a path never being used more recently than its parent.
+        debug_assert!(
+            parent == InternedHandle::ROOT || self.nodes[parent.index as usize].last_used == epoch
+        );
         let key = (parent, id);
         if let Some(&handle) = self.paths.get(&key) {
-            self.live(handle).last_used = epoch;
+            self.nodes[handle.index as usize].last_used = epoch;
             return handle;
         }
 
-        let node = InternedPath {
-            parent,
-            path: Arc::from(path),
-            hash: extend_path_hash(self.live(parent).hash, &key.1),
-            last_used: epoch,
+        let parent_path = self.live(parent).clone();
+        let index = match self.free.pop() {
+            Some(index) => index,
+            None => {
+                let index = u32::try_from(self.nodes.len()).expect("element id interner is full");
+                self.nodes.push(PathSlot {
+                    generation: 0,
+                    last_used: epoch,
+                    path: None,
+                });
+                index
+            }
         };
-        let index = if let Some(index) = self.free.pop() {
-            self.nodes[index as usize].node = Some(node);
-            index
-        } else {
-            let index = u32::try_from(self.nodes.len()).expect("element id interner is full");
-            self.nodes.push(PathSlot {
-                generation: 0,
-                node: Some(node),
-            });
-            index
-        };
+        let slot = &mut self.nodes[index as usize];
         let handle = InternedHandle {
             index,
-            generation: self.nodes[index as usize].generation,
+            generation: slot.generation,
         };
+        slot.last_used = epoch;
+        slot.path = Some(GlobalElementId(Rc::new(InternedPath {
+            handle,
+            hash: extend_path_hash(parent_path.0.hash, &key.1),
+            parent: Some(parent_path),
+            ids: path.into(),
+        })));
         self.paths.insert(key, handle);
         handle
     }
 
     pub(crate) fn global_id(&self, handle: InternedHandle) -> GlobalElementId {
-        let slot = &self.nodes[handle.index as usize];
-        debug_assert_eq!(slot.generation, handle.generation);
-        let node = slot.node.as_ref().expect("interned path is live");
-        GlobalElementId {
-            handle,
-            ids: node.path.clone(),
-            hash: node.hash,
-        }
+        self.live(handle).clone()
     }
 
     pub(crate) fn resolve(&mut self, id: &GlobalElementId) -> InternedHandle {
-        // Every interned path owns a distinct allocation, so sharing it proves the handle
-        // is live and belongs to this interner rather than another window's.
+        let handle = id.0.handle;
         let is_live = self
             .nodes
-            .get(id.handle.index as usize)
-            .and_then(|slot| slot.node.as_ref())
-            .is_some_and(|node| Arc::ptr_eq(&node.path, &id.ids));
+            .get(handle.index as usize)
+            .and_then(|slot| slot.path.as_ref())
+            .is_some_and(|path| Rc::ptr_eq(&path.0, &id.0));
         if is_live {
-            self.mark_used(id.handle);
-            return id.handle;
+            self.mark_used(handle);
+            return handle;
         }
+        // Holding an id keeps it live in its own window, so this is an id from another
+        // window or one built without a window.
         let mut parent = InternedHandle::ROOT;
-        for (index, element_id) in id.ids.iter().enumerate() {
-            parent = self.intern(parent, element_id.clone(), &id.ids[..=index]);
+        for (index, element_id) in id.iter().enumerate() {
+            parent = self.intern(parent, element_id.clone(), &id[..=index]);
         }
         parent
     }
@@ -351,39 +351,55 @@ impl ElementIdInterner {
     pub(crate) fn mark_used(&mut self, mut handle: InternedHandle) {
         let epoch = self.epoch;
         loop {
-            let node = self.live(handle);
-            if node.last_used == epoch {
+            let slot = &mut self.nodes[handle.index as usize];
+            debug_assert_eq!(slot.generation, handle.generation);
+            if slot.last_used == epoch {
                 break;
             }
-            node.last_used = epoch;
-            if handle == InternedHandle::ROOT {
-                break;
+            slot.last_used = epoch;
+            match slot.path.as_ref().and_then(|path| path.0.parent.as_ref()) {
+                Some(parent) => handle = parent.0.handle,
+                None => break,
             }
-            handle = node.parent;
         }
     }
 
     pub(crate) fn finish_frame(&mut self) {
         // Two frame epochs cover both frame-state buffers, including IDs used only
-        // during request_layout. Using a path also uses its ancestors, so a stale
-        // path's descendants are stale too and are removed in this same sweep.
+        // during request_layout. A stale path is reclaimed once nothing else holds
+        // it: no GlobalElementId and no child path. Reclaiming a path releases its
+        // parent, so the parent is reconsidered.
         let epoch = self.epoch;
-        for (index, slot) in self.nodes.iter_mut().enumerate().skip(1) {
-            let Some(node) = slot
-                .node
-                .take_if(|node| epoch.saturating_sub(node.last_used) > 1)
-            else {
+        let is_stale = |slot: &PathSlot| epoch.saturating_sub(slot.last_used) > 1;
+        let mut candidates = mem::take(&mut self.reclaim_candidates);
+        candidates.extend(
+            self.nodes
+                .iter()
+                .enumerate()
+                .skip(1)
+                .filter(|(_, slot)| slot.path.is_some() && is_stale(slot))
+                .map(|(index, _)| index as u32),
+        );
+        while let Some(index) = candidates.pop() {
+            let slot = &mut self.nodes[index as usize];
+            if !is_stale(slot) {
+                continue;
+            }
+            let Some(path) = slot.path.take_if(|path| Rc::strong_count(&path.0) == 1) else {
                 continue;
             };
-            let id = node
-                .path
-                .last()
-                .expect("only the root path is empty")
-                .clone();
-            self.paths.remove(&(node.parent, id));
             slot.generation = slot.generation.wrapping_add(1);
-            self.free.push(index as u32);
+            self.free.push(index);
+            let Some(parent) = path.0.parent.as_ref() else {
+                continue;
+            };
+            let id = path.last().expect("only the root path is empty").clone();
+            self.paths.remove(&(parent.0.handle, id));
+            if parent.0.handle != InternedHandle::ROOT {
+                candidates.push(parent.0.handle.index);
+            }
         }
+        self.reclaim_candidates = candidates;
         self.epoch += 1;
     }
 }
@@ -402,27 +418,28 @@ pub(crate) fn extend_path_hash(prefix: u64, id: &ElementId) -> u64 {
 }
 
 impl GlobalElementId {
+    fn detached(ids: &[ElementId]) -> Self {
+        Self(Rc::new(InternedPath {
+            handle: InternedHandle::ROOT,
+            parent: None,
+            ids: ids.into(),
+            hash: ids.iter().fold(EMPTY_PATH_HASH, extend_path_hash),
+        }))
+    }
+
     #[cfg(test)]
     pub(crate) fn new(ids: &[ElementId]) -> Self {
-        Self {
-            handle: InternedHandle::ROOT,
-            ids: Arc::from(ids),
-            hash: ids.iter().fold(EMPTY_PATH_HASH, extend_path_hash),
-        }
+        Self::detached(ids)
     }
 
     pub(crate) fn accesskit_node_id(&self) -> accesskit::NodeId {
-        accesskit::NodeId(self.hash)
+        accesskit::NodeId(self.0.hash)
     }
 }
 
 impl Default for GlobalElementId {
     fn default() -> Self {
-        Self {
-            handle: InternedHandle::ROOT,
-            ids: Arc::from([]),
-            hash: EMPTY_PATH_HASH,
-        }
+        Self::detached(&[])
     }
 }
 
@@ -430,13 +447,13 @@ impl std::ops::Deref for GlobalElementId {
     type Target = [ElementId];
 
     fn deref(&self) -> &Self::Target {
-        &self.ids
+        &self.0.ids
     }
 }
 
 impl PartialEq for GlobalElementId {
     fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash && (Arc::ptr_eq(&self.ids, &other.ids) || self.ids == other.ids)
+        Rc::ptr_eq(&self.0, &other.0) || (self.0.hash == other.0.hash && self.0.ids == other.0.ids)
     }
 }
 
@@ -444,13 +461,19 @@ impl Eq for GlobalElementId {}
 
 impl std::hash::Hash for GlobalElementId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u64(self.hash);
+        state.write_u64(self.0.hash);
+    }
+}
+
+impl Debug for GlobalElementId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("GlobalElementId").field(&self.0.ids).finish()
     }
 }
 
 impl Display for GlobalElementId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, element_id) in self.ids.iter().enumerate() {
+        for (i, element_id) in self.0.ids.iter().enumerate() {
             if i > 0 {
                 write!(f, ".")?;
             }
@@ -1082,15 +1105,19 @@ mod global_element_id_tests {
         for _ in 0..10 {
             interner.finish_frame();
             let next = intern_path(&mut interner, &ids);
-            assert_eq!(first.handle, next.handle);
-            assert!(Arc::ptr_eq(&first.ids, &next.ids));
+            assert_eq!(first.0.handle, next.0.handle);
+            assert!(Rc::ptr_eq(&first.0, &next.0));
         }
         let different = intern_path(&mut interner, &path(8, 2));
-        assert_ne!(first.handle, different.handle);
+        assert_ne!(first.0.handle, different.0.handle);
         assert_ne!(first, different);
         // Even a path-hash collision must not equate distinct paths.
-        let mut collision = different;
-        collision.hash = first.hash;
+        let collision = GlobalElementId(Rc::new(InternedPath {
+            handle: different.0.handle,
+            parent: None,
+            ids: different.0.ids.clone(),
+            hash: first.0.hash,
+        }));
         assert_ne!(first, collision);
 
         // Offset the other window's slots so `first`'s handle points at a different path there.
@@ -1100,7 +1127,7 @@ mod global_element_id_tests {
         assert_eq!(first, other);
         assert_eq!(fx_hash(&first), fx_hash(&other));
         assert_eq!(first.accesskit_node_id(), other.accesskit_node_id());
-        assert_eq!(other_window.resolve(&first), other.handle);
+        assert_eq!(other_window.resolve(&first), other.0.handle);
         assert_ne!(first, intern_path(&mut other_window, &path(8, 2)));
 
         let expected = GlobalElementId::new(&ids);
@@ -1112,41 +1139,65 @@ mod global_element_id_tests {
     }
 
     #[test]
-    fn recycled_handles_do_not_match_and_owned_paths_survive_reclamation() {
+    fn held_paths_stay_interned_and_are_reclaimed_once_released() {
         let mut interner = ElementIdInterner::default();
-        let original = intern_path(&mut interner, &[1_u64.into()]);
-        let retained = original.clone();
-        interner.finish_frame();
-        interner.finish_frame();
-        assert_eq!(interner.paths.len(), 1);
+        let held = intern_path(&mut interner, &[1_u64.into(), 2_u64.into()]);
+        let held_handle = held.0.handle;
+        intern_path(&mut interner, &[1_u64.into(), 3_u64.into()]);
+        for _ in 0..4 {
+            interner.finish_frame();
+        }
+        // The unheld sibling is reclaimed; the held path and its parent are not.
+        assert_eq!(interner.paths.len(), 2);
+        assert_eq!(interner.resolve(&held), held_handle);
+        assert!(Rc::ptr_eq(
+            &intern_path(&mut interner, &[1_u64.into(), 2_u64.into()]).0,
+            &held.0
+        ));
+
+        let parent_handle = held.0.parent.as_ref().unwrap().0.handle;
+        let retained = held.clone();
+        drop(held);
+        for _ in 0..3 {
+            interner.finish_frame();
+        }
+        assert_eq!(interner.paths.len(), 2);
+
+        drop(retained);
         interner.finish_frame();
         assert!(interner.paths.is_empty());
-        assert_eq!(Arc::strong_count(&retained.ids), 2);
-        assert_eq!(&*retained, &[1_u64.into()]);
-        assert_eq!(retained.to_string(), "1");
-        assert_eq!(original, retained);
 
-        let next = intern_path(&mut interner, &[2_u64.into()]);
-        assert_eq!(retained.handle.index, next.handle.index);
-        assert_ne!(retained.handle.generation, next.handle.generation);
-        assert_ne!(retained.handle, next.handle);
-        assert_ne!(retained, next);
-        let revived = interner.resolve(&retained);
-        assert_ne!(revived, retained.handle);
-        assert_eq!(interner.global_id(revived), retained);
+        let next = intern_path(&mut interner, &[4_u64.into()]);
+        assert!(
+            [held_handle.index, parent_handle.index].contains(&next.0.handle.index),
+            "reclaimed slots are reused"
+        );
+        assert_ne!(next.0.handle, held_handle);
+        assert_ne!(next.0.handle, parent_handle);
+    }
+
+    #[test]
+    fn held_paths_stay_readable_after_their_interner_is_gone() {
+        let mut interner = ElementIdInterner::default();
+        let held = intern_path(&mut interner, &[1_u64.into(), "a".into()]);
+        drop(interner);
+        assert_eq!(&*held, &[1_u64.into(), "a".into()]);
+        assert_eq!(held.to_string(), "1.a");
+        assert_eq!(held, GlobalElementId::new(&[1_u64.into(), "a".into()]));
     }
 
     #[test]
     fn reused_state_keeps_ancestors_live_without_reinterning() {
         let mut interner = ElementIdInterner::default();
         let original = intern_path(&mut interner, &path(32, 1));
+        let original_handle = original.0.handle;
+        drop(original);
         for _ in 0..1000 {
-            interner.mark_used(original.handle);
+            interner.mark_used(original_handle);
             interner.finish_frame();
         }
         let next = intern_path(&mut interner, &path(32, 1));
-        assert_eq!(original.handle, next.handle);
-        assert!(Arc::ptr_eq(&original.ids, &next.ids));
+        assert_eq!(original_handle, next.0.handle);
         assert_eq!(interner.paths.len(), 33);
     }
 
@@ -1310,7 +1361,7 @@ mod global_element_id_tests {
         let cached = started.elapsed();
         let started = std::time::Instant::now();
         for _ in 0..n {
-            acc ^= GlobalElementId::new(std::hint::black_box(&ids)).hash;
+            acc ^= GlobalElementId::new(std::hint::black_box(&ids)).0.hash;
         }
         let build = started.elapsed();
         eprintln!(
