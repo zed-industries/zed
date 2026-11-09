@@ -69,6 +69,7 @@ pub struct MockRemoteConnection {
     options: MockConnectionOptions,
     server_channel: Arc<ChannelClient>,
     server_cx: SendableCx,
+    message_interceptors: parking_lot::Mutex<Option<MessageInterceptors>>,
     pub(crate) proxy_tx: parking_lot::Mutex<
         Option<
             mpsc::UnboundedSender<(
@@ -134,6 +135,26 @@ pub struct MockConnection;
 pub type ConnectGuard = oneshot::Sender<()>;
 
 impl MockConnection {
+    pub fn intercept_messages(
+        options: &RemoteConnectionOptions,
+        cx: &mut App,
+        client_to_server: impl Fn(&mut Envelope) + Send + Sync + 'static,
+        server_to_client: impl Fn(&mut Envelope) + Send + Sync + 'static,
+    ) {
+        let RemoteConnectionOptions::Mock(options) = options else {
+            panic!("message interception requires a mock connection");
+        };
+        let (_, connection) = cx
+            .global::<MockConnectionRegistry>()
+            .pending
+            .get(&options.id)
+            .expect("message interceptors must be installed before connecting");
+        *connection.message_interceptors.lock() = Some(MessageInterceptors {
+            client_to_server: Arc::new(client_to_server),
+            server_to_client: Arc::new(server_to_client),
+        });
+    }
+
     /// Creates a new mock connection pair for testing.
     ///
     /// This function:
@@ -180,6 +201,7 @@ impl MockConnection {
             options: opts.clone(),
             server_channel: server_client.clone(),
             server_cx: SendableCx::new(server_cx),
+            message_interceptors: parking_lot::Mutex::new(None),
             proxy_tx: Default::default(),
         });
 
@@ -193,6 +215,12 @@ impl MockConnection {
 
         (server_client.into(), tx)
     }
+}
+
+#[derive(Clone)]
+struct MessageInterceptors {
+    client_to_server: Arc<dyn Fn(&mut Envelope) + Send + Sync>,
+    server_to_client: Arc<dyn Fn(&mut Envelope) + Send + Sync>,
 }
 
 #[async_trait(?Send)]
@@ -299,20 +327,27 @@ impl RemoteConnection for MockRemoteConnection {
             &self.server_cx.get(cx),
         ));
 
+        let message_interceptors = self.message_interceptors.lock().clone();
         cx.background_spawn(async move {
             loop {
                 select_biased! {
                     server_to_client = server_outgoing_rx.next().fuse() => {
-                        let Some(server_to_client) = server_to_client else {
+                        let Some(mut server_to_client) = server_to_client else {
                             return Ok(1)
                         };
+                        if let Some(interceptors) = &message_interceptors {
+                            (interceptors.server_to_client)(&mut server_to_client);
+                        }
                         connection_activity_tx.try_send(()).ok();
                         client_incoming_tx.send(server_to_client).await.ok();
                     }
                     client_to_server = client_outgoing_rx.next().fuse() => {
-                        let Some(client_to_server) = client_to_server else {
+                        let Some(mut client_to_server) = client_to_server else {
                             return Ok(1)
                         };
+                        if let Some(interceptors) = &message_interceptors {
+                            (interceptors.client_to_server)(&mut client_to_server);
+                        }
                         server_incoming_tx.send(client_to_server).await.ok();
                     }
                 }

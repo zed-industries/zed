@@ -7980,6 +7980,10 @@ impl GitPanel {
     }
 
     fn preload_commit_history(&mut self, cx: &mut Context<Self>) {
+        if !self.project.read(cx).is_local() {
+            return;
+        }
+
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
@@ -9914,6 +9918,13 @@ impl GitPanel {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         Self::new(workspace, window, cx)
+    }
+
+    pub fn commit_history_shas(&self) -> Vec<Oid> {
+        self.commit_history_entries()
+            .iter()
+            .map(|entry| entry.sha)
+            .collect()
     }
 
     pub fn active_repository(&self) -> Option<&Entity<Repository>> {
