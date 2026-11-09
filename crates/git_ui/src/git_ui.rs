@@ -30,7 +30,6 @@ use workspace::{
 use zed_actions;
 
 use crate::{
-    branch_name::normalize_branch_name,
     commit_view::CommitView,
     git_panel::{GitPanel, GitStatusEntry, RemoteOperationKind},
     solo_diff_view::SoloDiffView,
@@ -38,7 +37,6 @@ use crate::{
 };
 
 pub mod branch_diff;
-mod branch_name;
 pub mod branch_picker;
 mod commit_context_menu;
 mod commit_modal;
