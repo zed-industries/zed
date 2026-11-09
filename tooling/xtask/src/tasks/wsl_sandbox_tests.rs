@@ -9,7 +9,7 @@ use clap::Parser;
 /// of `cargo xtask sandbox-tests`.
 ///
 /// Where the Linux tests boot a NixOS VM, here we build and run
-/// `wsl_sandbox_test_helper` (sandbox crate, `wsl-test` feature), which drives
+/// `wsl-sandbox-test-helper` (sandbox crate, `wsl-test` feature), which drives
 /// the real `windows_wsl::wrap_invocation`, spawns the resulting `wsl.exe`
 /// command, and asserts the sandbox's grants and restrictions hold end-to-end.
 ///
@@ -45,7 +45,7 @@ pub fn run_wsl_sandbox_tests(args: WslSandboxTestsArgs) -> Result<()> {
         "--features",
         "wsl-test",
         "--bin",
-        "wsl_sandbox_test_helper",
+        "wsl-sandbox-test-helper",
     ]);
     if args.release {
         command.arg("--release");

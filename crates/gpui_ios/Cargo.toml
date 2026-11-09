@@ -1,0 +1,51 @@
+[package]
+name = "gpui_ios"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_ios.rs"
+crate-type = ["staticlib", "rlib"]
+doctest = false
+
+[[example]]
+name = "ios"
+path = "examples/ios.rs"
+test = false
+bench = false
+
+[[test]]
+name = "text_input"
+path = "tests/text_input.rs"
+harness = false
+
+[features]
+runtime_shaders = ["gpui_apple/runtime_shaders"]
+
+[dependencies]
+gpui.workspace = true
+
+[target.'cfg(target_os = "ios")'.dev-dependencies]
+gpui_platform.workspace = true
+objc2-ui-kit = { workspace = true, features = ["UIConversationContext"] }
+slotmap.workspace = true
+
+[target.'cfg(target_os = "ios")'.dependencies]
+anyhow.workspace = true
+block2.workspace = true
+futures.workspace = true
+gpui_apple = { workspace = true, features = ["font-kit"] }
+log.workspace = true
+objc2.workspace = true
+objc2-foundation = { workspace = true, features = ["NSThread", "NSOperation", "NSUserActivity", "block2"] }
+objc2-ui-kit.workspace = true
+objc2-quartz-core = { workspace = true, features = ["CADisplayLink"] }
+objc2-core-foundation = { workspace = true, default-features = true }
+parking_lot.workspace = true
+raw-window-handle.workspace = true
+uuid = { workspace = true, features = ["v5"] }

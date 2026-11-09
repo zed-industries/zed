@@ -1,6 +1,6 @@
 use crate::{
-    Bounds, Capslock, Context, Empty, IntoElement, Keystroke, LongPressEvent, Modifiers, Pixels,
-    Point, Render, TouchDragEvent, Window, point, seal::Sealed,
+    BackGestureEvent, Bounds, Capslock, Context, Empty, IntoElement, Keystroke, LongPressEvent,
+    Modifiers, Pixels, Point, Render, TouchDragEvent, Window, point, seal::Sealed,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
@@ -517,31 +517,52 @@ impl MouseMoveEvent {
     }
 }
 
-/// A mouse wheel event from the platform.
+/// One step of scrolling from a mouse wheel, trackpad, or touch pan.
 #[derive(Clone, Debug, Default)]
-pub struct ScrollWheelEvent {
-    /// The position of the mouse on the window.
+pub struct ScrollEvent {
+    /// The position the scroll targets. For touch pans this is where the pan
+    /// started, so the whole gesture stays with the container it began on.
     pub position: Point<Pixels>,
 
-    /// The change in scroll wheel position for this event.
+    /// The change in scroll position for this event.
     pub delta: ScrollDelta,
 
-    /// The modifiers that were held down when the mouse was moved.
+    /// The modifiers that were held down when the scroll happened.
     pub modifiers: Modifiers,
 
-    /// The phase of the touch event.
+    /// The phase of the scroll gesture.
     pub touch_phase: TouchPhase,
+
+    /// The kind of input that produced this scroll.
+    pub source: ScrollSource,
 }
 
-impl Sealed for ScrollWheelEvent {}
-impl InputEvent for ScrollWheelEvent {
+/// The former name of [`ScrollEvent`].
+#[deprecated(note = "renamed to `ScrollEvent`")]
+pub type ScrollWheelEvent = ScrollEvent;
+
+/// The kind of input that produced a [`ScrollEvent`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScrollSource {
+    /// A scroll the platform reported from a pointing device, such as a mouse
+    /// wheel or a trackpad. [`ScrollDelta::precise`] tells continuous devices
+    /// apart from wheel notches.
+    #[default]
+    Pointer,
+    /// A pan of a finger on a touchscreen, recognized by GPUI, including the
+    /// momentum GPUI synthesizes after the finger lifts.
+    Touch,
+}
+
+impl Sealed for ScrollEvent {}
+impl InputEvent for ScrollEvent {
     fn to_platform_input(self) -> PlatformInput {
-        PlatformInput::ScrollWheel(self)
+        PlatformInput::Scroll(self)
     }
 }
-impl MouseEvent for ScrollWheelEvent {}
+impl MouseEvent for ScrollEvent {}
 
-impl Deref for ScrollWheelEvent {
+impl Deref for ScrollEvent {
     type Target = Modifiers;
 
     fn deref(&self) -> &Self::Target {
@@ -549,7 +570,7 @@ impl Deref for ScrollWheelEvent {
     }
 }
 
-/// The scroll delta for a scroll wheel event.
+/// The scroll delta for a [`ScrollEvent`].
 #[derive(Clone, Copy, Debug)]
 pub enum ScrollDelta {
     /// An exact scroll delta in pixels.
@@ -785,14 +806,17 @@ pub enum PlatformInput {
     MouseMove(MouseMoveEvent),
     /// The mouse exited the window.
     MouseExited(MouseExitEvent),
-    /// The scroll wheel was used.
-    ScrollWheel(ScrollWheelEvent),
+    /// A mouse wheel or trackpad scrolled. Touch pans reach the window as
+    /// [`PlatformInput::Touch`] and are recognized into scrolls by GPUI.
+    Scroll(ScrollEvent),
     /// A pinch gesture was performed.
     Pinch(PinchEvent),
     /// A long-press gesture recognized from touch input.
     LongPress(LongPressEvent),
     /// A direct touch drag claimed by an element.
     TouchDrag(TouchDragEvent),
+    /// A back-navigation gesture recognized by the platform.
+    BackGesture(BackGestureEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
     /// A raw touch event on a touch screen.
@@ -810,10 +834,11 @@ impl PlatformInput {
             PlatformInput::MouseMove(event) => Some(event),
             PlatformInput::MousePressure(event) => Some(event),
             PlatformInput::MouseExited(event) => Some(event),
-            PlatformInput::ScrollWheel(event) => Some(event),
+            PlatformInput::Scroll(event) => Some(event),
             PlatformInput::Pinch(event) => Some(event),
             PlatformInput::LongPress(event) => Some(event),
             PlatformInput::TouchDrag(event) => Some(event),
+            PlatformInput::BackGesture(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
             PlatformInput::Touch(_) => None,
         }
@@ -829,10 +854,11 @@ impl PlatformInput {
             PlatformInput::MouseMove(_) => None,
             PlatformInput::MousePressure(_) => None,
             PlatformInput::MouseExited(_) => None,
-            PlatformInput::ScrollWheel(_) => None,
+            PlatformInput::Scroll(_) => None,
             PlatformInput::Pinch(_) => None,
             PlatformInput::LongPress(_) => None,
             PlatformInput::TouchDrag(_) => None,
+            PlatformInput::BackGesture(_) => None,
             PlatformInput::FileDrop(_) => None,
             PlatformInput::Touch(_) => None,
         }
@@ -850,10 +876,11 @@ impl PlatformInput {
             PlatformInput::MousePressure(_) => "mouse_pressure",
             PlatformInput::MouseMove(_) => "mouse_move",
             PlatformInput::MouseExited(_) => "mouse_exited",
-            PlatformInput::ScrollWheel(_) => "scroll_wheel",
+            PlatformInput::Scroll(_) => "scroll",
             PlatformInput::Pinch(_) => "pinch",
             PlatformInput::LongPress(_) => "long_press",
             PlatformInput::TouchDrag(_) => "touch_drag",
+            PlatformInput::BackGesture(_) => "back_gesture",
             PlatformInput::FileDrop(_) => "file_drop",
             PlatformInput::Touch(_) => "touch",
         }
