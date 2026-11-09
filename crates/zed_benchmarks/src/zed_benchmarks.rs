@@ -74,9 +74,12 @@ const GENERATED_COMPONENT_COUNT: usize = 8;
 
 /// User settings applied on top of the bundled defaults, as if read from
 /// `settings.json`. They keep the benchmark from starting language servers,
-/// sending telemetry or checking for updates, none of which is under test.
+/// sending telemetry or checking for updates, none of which is under test, and
+/// trust the generated project the way a user does once for their own projects
+/// (otherwise the restricted-mode modal covers the window).
 const BENCH_USER_SETTINGS: &str = r#"{
   "enable_language_server": false,
+  "session": { "trust_all_worktrees": true },
   "telemetry": { "diagnostics": false, "metrics": false },
   "auto_update": false,
   "show_edit_predictions": false
@@ -296,9 +299,17 @@ pub fn init_app_with_settings(cx: &mut BenchAppContext, extra_settings: &str) ->
         {
             user_settings.extend(extra_settings.clone());
         }
+        // Like a user's settings.json: startup code that edits settings (such as
+        // migrations) rewrites the file and reloads it.
+        let user_settings = serde_json::to_string_pretty(&user_settings)
+            .expect("benchmark settings serialize");
+        let settings_file = paths::settings_file();
+        std::fs::create_dir_all(settings_file.parent().expect("settings file has a parent"))
+            .expect("failed to create the settings directory");
+        std::fs::write(settings_file, &user_settings).expect("failed to write settings.json");
         SettingsStore::update_global(cx, |store, cx| {
             store
-                .set_user_settings(&user_settings.to_string(), cx)
+                .set_user_settings(&user_settings, cx)
                 .result()
                 .expect("benchmark user settings must parse");
         });
