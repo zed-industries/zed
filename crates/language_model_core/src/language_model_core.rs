@@ -694,6 +694,7 @@ pub struct LanguageModelEffortLevel {
     pub name: SharedString,
     pub value: SharedString,
     pub is_default: bool,
+    pub supports_disabling_thinking: Option<bool>,
 }
 
 /// An error that occurred when trying to authenticate the language model provider.

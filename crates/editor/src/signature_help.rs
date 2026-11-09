@@ -12,7 +12,6 @@ use multi_buffer::{Anchor, MultiBufferOffset, ToOffset};
 use settings::Settings;
 use std::ops::Range;
 use std::time::Duration;
-use text::Rope;
 use theme_settings::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, ButtonCommon, ButtonStyle, Clickable, FluentBuilder, IconButton,
@@ -232,10 +231,11 @@ impl Editor {
 
                         if let Some(language) = language {
                             for signature in &mut signature_help.signatures {
-                                let text = Rope::from(signature.label.as_ref());
                                 let highlights = language
-                                    .highlight_text(&text, 0..signature.label.len())
-                                    .into_iter()
+                                    .highlight_text(
+                                        signature.label.as_str(),
+                                        0..signature.label.len(),
+                                    )
                                     .flat_map(|(range, highlight_id)| {
                                         Some((range, *cx.theme().syntax().get(highlight_id)?))
                                     });

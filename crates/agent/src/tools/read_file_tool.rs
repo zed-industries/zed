@@ -112,7 +112,7 @@ async fn read_global_skill_file(
     event_stream.update_fields(|update| {
         update.locations(vec![
             acp::ToolCallLocation::new(canonical_path.to_path_buf())
-                .line(start_line.map(|line| line.saturating_sub(1))),
+                .line(start_line.map(|line| line.max(1))),
         ])
     });
 
@@ -358,7 +358,7 @@ impl AgentTool for ReadFileTool {
             cx.update(|_cx| {
                 event_stream.update_fields(|update| update.locations(vec![
                     acp::ToolCallLocation::new(abs_path.clone())
-                        .line(input.start_line.map(|line| line.saturating_sub(1))),
+                        .line(input.start_line.map(|line| line.max(1))),
                 ]));
             });
 

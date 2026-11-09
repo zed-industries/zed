@@ -23,6 +23,7 @@ use theme_settings::ThemeSettings;
 use ui::{IconButtonShape, Tooltip, prelude::*};
 use util::paths::PathMatcher;
 
+use super::subagent_card::acp_subagent_card;
 use crate::entry_view_state::EntryViewState;
 
 actions!(
@@ -361,6 +362,9 @@ impl ThreadSearchBar {
                         snapshot,
                     });
                 }
+                // Drawn as the subagent's card, which does not show the message.
+                AgentThreadEntry::SessionMessage(message)
+                    if acp_subagent_card(thread, entry_ix, message).is_some() => {}
                 _ => {
                     for markdown in collect_markdowns(entry_ix, entry, &entry_view_state, cx) {
                         let source = markdown.read(cx).source().clone();
@@ -780,7 +784,7 @@ impl Render for ThreadSearchBar {
         let query_empty = self.query_editor.read(cx).text(cx).is_empty();
         let in_error_state = self.query_error || (!query_empty && !has_matches);
 
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("AcpThreadSearchBar");
 
         let counter_text = self.active_match_text(cx).unwrap_or_default();
@@ -951,6 +955,9 @@ fn collect_markdowns(
     let mut out = Vec::new();
     match entry {
         AgentThreadEntry::UserMessage(_) => {}
+        AgentThreadEntry::SessionMessage(message) => {
+            out.extend(message.content.markdowns().cloned())
+        }
         AgentThreadEntry::AssistantMessage(message) => {
             for (chunk_ix, chunk) in message.chunks.iter().enumerate() {
                 match chunk {

@@ -95,7 +95,7 @@ fn main() {
 #[cfg(target_os = "macos")]
 use {
     acp_thread::{AgentConnection, StubAgentConnection},
-    agent_client_protocol::schema::{v1 as acp, v2 as acp_v2},
+    agent_client_protocol::schema::v2 as acp_v2,
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
@@ -2088,8 +2088,8 @@ fn run_agent_thread_view_test(
     cx.run_until_parked();
 
     // Collect the events from the tool execution
-    let mut tool_content: Vec<acp::ToolCallContent> = Vec::new();
-    let mut tool_locations: Vec<acp::ToolCallLocation> = Vec::new();
+    let mut tool_content: Vec<acp_v2::ToolCallContent> = Vec::new();
+    let mut tool_locations: Vec<acp_v2::ToolCallLocation> = Vec::new();
 
     while let Ok(event) = event_receiver.try_recv() {
         if let Ok(agent::ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update))) =
@@ -2102,18 +2102,11 @@ fn run_agent_thread_view_test(
                             "ReadFileTool produced non-content output in the image fixture"
                         );
                     };
-                    tool_content.push(acp::ToolCallContent::Content(
-                        acp::Content::new(acp_thread::content::to_v1(content.content)?)
-                            .meta(content.meta),
-                    ));
+                    tool_content.push(acp_v2::ToolCallContent::Content(content));
                 }
             }
             if let Some(locations) = update.locations.take() {
-                tool_locations.extend(locations.into_iter().map(|location| {
-                    acp::ToolCallLocation::new(location.path.into_inner())
-                        .line(location.line)
-                        .meta(location.meta)
-                }));
+                tool_locations.extend(locations);
             }
         }
     }
@@ -2124,16 +2117,14 @@ fn run_agent_thread_view_test(
 
     // Create stub connection with the real tool output
     let connection = StubAgentConnection::new();
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
-        acp::ToolCall::new(
-            "read_file",
-            format!("Read file `{}/test-image.png`", worktree_name),
-        )
-        .kind(acp::ToolKind::Read)
-        .status(acp::ToolCallStatus::Completed)
+    let tool_call = acp_v2::ToolCallUpdate::new("read_file")
+        .title(format!("Read file `{}/test-image.png`", worktree_name))
+        .kind(acp_v2::ToolKind::Read)
+        .status(acp_v2::ToolCallStatus::Completed)
         .locations(tool_locations)
-        .content(tool_content),
-    )]);
+        .content(tool_content);
+    connection
+        .set_next_prompt_action(move |thread, cx| thread.upsert_local_tool_call(tool_call, cx));
 
     let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection));
 

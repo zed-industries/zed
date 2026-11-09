@@ -375,8 +375,8 @@ Zed can open or copy a permanent link to a file or code selection on your Git ho
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
 
 For the current selection in the editor, use {#action editor::CopyPermalinkToLine} or
-{#action editor::OpenPermalinkToLine} from the [Command Palette](./getting-started.md#command-palette)
-(search for `permalink`), via [custom key bindings](./key-bindings.md#custom-key-bindings),
+{#action editor::OpenPermalinkToLine} from the [Command Palette](./command-palette.md)
+(search for `permalink`), via [custom key bindings](./key-bindings.md#keymap-editor),
 or by right-clicking and selecting **Copy Permalink to Line**.
 
 From a file tab or the Project Panel, you can also **Open File Permalink** or **Copy File Permalink**

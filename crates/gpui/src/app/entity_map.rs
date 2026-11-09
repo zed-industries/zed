@@ -125,7 +125,7 @@ impl EntityMap {
     where
         T: 'static,
     {
-        let mut accessed_entities = self.accessed_entities.get_mut();
+        let accessed_entities = self.accessed_entities.get_mut();
         accessed_entities.insert(slot.entity_id);
 
         let handle = slot.0;
@@ -188,9 +188,9 @@ impl EntityMap {
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
-        let mut ref_counts = &mut *self.ref_counts.write();
+        let ref_counts = &mut *self.ref_counts.write();
         let dropped_entity_ids = ref_counts.dropped_entity_ids.drain(..);
-        let mut accessed_entities = self.accessed_entities.get_mut();
+        let accessed_entities = self.accessed_entities.get_mut();
 
         dropped_entity_ids
             .filter_map(|entity_id| {

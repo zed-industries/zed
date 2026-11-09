@@ -50,6 +50,7 @@
 //! is a std implementation detail, not a guarantee; if it changes, the cost
 //! is added latency under contention, not incorrectness.)
 
+use crate::main_thread_marker;
 use anyhow::Result;
 use core_graphics::display::CGDirectDisplayID;
 use dispatch2::{
@@ -112,17 +113,11 @@ fn lock_registry() -> MutexGuard<'static, Registry> {
 }
 
 fn debug_assert_main_thread() {
-    #[cfg(debug_assertions)]
-    {
-        use objc::{class, msg_send, sel, sel_impl};
-        let is_main_thread: objc::runtime::BOOL =
-            unsafe { msg_send![class!(NSThread), isMainThread] };
-        debug_assert!(
-            is_main_thread == objc::runtime::YES,
-            "display link registry mutations must happen on the main thread; \
-             the registry's lock ordering and state consistency depend on it"
-        );
-    }
+    debug_assert!(
+        main_thread_marker().is_some(),
+        "display link registry mutations must happen on the main thread; \
+         the registry's lock ordering and state consistency depend on it"
+    );
 }
 
 unsafe extern "C" fn display_link_output_callback(

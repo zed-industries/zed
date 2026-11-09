@@ -35,7 +35,7 @@ For simple cases where you don't need any SSH arguments, you can run `zed ssh://
 
 The remote machine must be able to run Zed's server. The following platforms should work, though note that we have not exhaustively tested every Linux distribution:
 
-- macOS Catalina or later (Intel or Apple Silicon)
+- macOS 12.0 (Monterey) or later (Intel or Apple Silicon)
 - Linux (x86_64 or arm64, we do not yet support 32-bit platforms)
 - Windows (x86_64 or arm64)
 

@@ -56,6 +56,14 @@ pub struct Organization {
     pub id: OrganizationId,
     pub name: Arc<str>,
     pub is_personal: bool,
+    #[serde(default)]
+    pub ui_permissions: OrganizationUiPermissions,
+}
+
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct OrganizationUiPermissions {
+    #[serde(default)]
+    pub can_install_github_app: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -97,7 +105,7 @@ pub struct SystemSettings {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct SubmitAgentThreadFeedbackBody {
-    pub organization_id: Option<OrganizationId>,
+    pub organization_id: OrganizationId,
     pub agent: String,
     pub session_id: String,
     pub parent_session_id: Option<String>,
@@ -107,7 +115,7 @@ pub struct SubmitAgentThreadFeedbackBody {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct SubmitAgentThreadFeedbackCommentsBody {
-    pub organization_id: Option<OrganizationId>,
+    pub organization_id: OrganizationId,
     pub agent: String,
     pub session_id: String,
     pub comments: String,
@@ -116,7 +124,7 @@ pub struct SubmitAgentThreadFeedbackCommentsBody {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct SubmitEditPredictionFeedbackBody {
-    pub organization_id: Option<OrganizationId>,
+    pub organization_id: OrganizationId,
     pub request_id: String,
     pub rating: String,
     pub inputs: serde_json::Value,

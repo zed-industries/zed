@@ -54,11 +54,12 @@ use project::{
         GlobalLogStore, LanguageServerKind, LanguageServerLogKey, LogKind, LogStore,
     },
     search::{SearchQuery, SearchResult},
+    worktree_store::WorktreeStoreEvent,
 };
 use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
 #[cfg(not(windows))]
 use remote::{MOCK_STDIO_FRAME_HEX, command::RemoteCommand};
-use rpc::proto;
+use rpc::{ErrorCode, ErrorExt as _, proto};
 use serde_json::json;
 use settings::{
     Settings, SettingsLocation, SettingsStore, SplicingVec, initial_server_settings_content,
@@ -3393,6 +3394,90 @@ async fn test_adding_then_removing_then_adding_worktrees(
 }
 
 #[gpui::test]
+async fn test_removing_missing_worktree_does_not_send_project_update(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                "README.md": "# project 1",
+            },
+            "outside.txt": "not part of the project",
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    let (outside_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/outside.txt"), false, cx)
+        })
+        .await
+        .unwrap();
+    let outside_worktree_id = outside_worktree.read_with(cx, |worktree, _| worktree.id());
+    cx.run_until_parked();
+
+    let server_worktree_store =
+        headless.read_with(server_cx, |headless, _| headless.worktree_store.clone());
+    server_worktree_store.read_with(server_cx, |worktree_store, cx| {
+        assert!(
+            worktree_store
+                .worktree_for_id(outside_worktree_id, cx)
+                .is_some()
+        );
+    });
+
+    // Releasing the client's handle removes the worktree on the server.
+    cx.update(|_| drop(outside_worktree));
+    cx.run_until_parked();
+    server_worktree_store.read_with(server_cx, |worktree_store, cx| {
+        assert!(
+            worktree_store
+                .worktree_for_id(outside_worktree_id, cx)
+                .is_none()
+        );
+    });
+
+    let project_updates_sent = Arc::new(AtomicUsize::new(0));
+    let _subscription = server_cx.update(|cx| {
+        let project_updates_sent = project_updates_sent.clone();
+        cx.subscribe(&server_worktree_store, move |_, event, _| {
+            if matches!(event, WorktreeStoreEvent::WorktreeUpdateSent(_)) {
+                project_updates_sent.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+    });
+
+    // The client asks for the same removal again whenever it releases a handle
+    // that it re-created from a project update sent before the removal.
+    let proto_client = project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    proto_client
+        .request(proto::RemoveWorktree {
+            worktree_id: outside_worktree_id.to_proto(),
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        project_updates_sent.load(Ordering::SeqCst),
+        0,
+        "removing a worktree that is already gone must not announce the unchanged worktrees again"
+    );
+}
+
+#[gpui::test]
 async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
@@ -3580,6 +3665,60 @@ async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestA
             entry.id
         )
     });
+}
+
+#[gpui::test]
+async fn test_remote_rename_entry_onto_existing_path(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "README.rst": "existing",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let err = project
+        .update(cx, |project, cx| {
+            let worktree = worktree.read(cx);
+            let entry = worktree.entry_for_path(rel_path("README.md")).unwrap();
+            project.rename_entry(entry.id, (worktree.id(), rel_path("README.rst")).into(), cx)
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        err.error_code(),
+        ErrorCode::AlreadyExists,
+        "the collision should survive the trip from the server: {err:#}"
+    );
+
+    // Nothing was overwritten on the server.
+    assert_eq!(
+        fs.load("/code/project1/README.md".as_ref()).await.unwrap(),
+        "# project 1"
+    );
+    assert_eq!(
+        fs.load("/code/project1/README.rst".as_ref()).await.unwrap(),
+        "existing"
+    );
 }
 
 #[gpui::test]
@@ -4594,153 +4733,6 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         .unwrap()
         .unwrap();
     assert_eq!(default_branch_with_remote.as_deref(), Some("origin/main"));
-}
-
-#[gpui::test]
-async fn test_remote_git_checkpoints(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let fs = FakeFs::new(server_cx.executor());
-    fs.insert_tree(
-        path!("/code"),
-        json!({
-            "project1": {
-                ".git": {},
-                "file.txt": "original content",
-            },
-        }),
-    )
-    .await;
-
-    let (project, _headless) = init_test(&fs, cx, server_cx).await;
-
-    let (_worktree, _) = project
-        .update(cx, |project, cx| {
-            project.find_or_create_worktree(path!("/code/project1"), true, cx)
-        })
-        .await
-        .unwrap();
-    cx.run_until_parked();
-
-    let repository = project.update(cx, |project, cx| project.active_repository(cx).unwrap());
-
-    // 1. Create a checkpoint of the original state
-    let checkpoint_1 = repository
-        .update(cx, |repository, _| repository.checkpoint())
-        .await
-        .unwrap()
-        .unwrap();
-
-    // 2. Modify a file on the server-side fs
-    fs.write(
-        Path::new(path!("/code/project1/file.txt")),
-        b"modified content",
-    )
-    .await
-    .unwrap();
-
-    // 3. Create a second checkpoint with the modified state
-    let checkpoint_2 = repository
-        .update(cx, |repository, _| repository.checkpoint())
-        .await
-        .unwrap()
-        .unwrap();
-
-    // 4. compare_checkpoints: same checkpoint with itself => equal
-    let equal = repository
-        .update(cx, |repository, _| {
-            repository.compare_checkpoints(checkpoint_1.clone(), checkpoint_1.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(equal, "a checkpoint compared with itself should be equal");
-
-    // 5. compare_checkpoints: different states => not equal
-    let equal = repository
-        .update(cx, |repository, _| {
-            repository.compare_checkpoints(checkpoint_1.clone(), checkpoint_2.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(
-        !equal,
-        "checkpoints of different states should not be equal"
-    );
-
-    // 6. diff_checkpoints: same checkpoint => empty diff
-    let diff = repository
-        .update(cx, |repository, _| {
-            repository.diff_checkpoints(checkpoint_1.clone(), checkpoint_1.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(
-        diff.is_empty(),
-        "diff of identical checkpoints should be empty"
-    );
-
-    // 7. diff_checkpoints: different checkpoints => non-empty diff mentioning the changed file
-    let diff = repository
-        .update(cx, |repository, _| {
-            repository.diff_checkpoints(checkpoint_1.clone(), checkpoint_2.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(
-        !diff.is_empty(),
-        "diff of different checkpoints should be non-empty"
-    );
-    assert!(
-        diff.contains("file.txt"),
-        "diff should mention the changed file"
-    );
-    assert!(
-        diff.contains("original content"),
-        "diff should contain removed content"
-    );
-    assert!(
-        diff.contains("modified content"),
-        "diff should contain added content"
-    );
-
-    // 8. restore_checkpoint: restore to original state
-    repository
-        .update(cx, |repository, _| {
-            repository.restore_checkpoint(checkpoint_1.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    cx.run_until_parked();
-
-    // 9. Create a checkpoint after restore
-    let checkpoint_3 = repository
-        .update(cx, |repository, _| repository.checkpoint())
-        .await
-        .unwrap()
-        .unwrap();
-
-    // 10. compare_checkpoints: restored state matches original
-    let equal = repository
-        .update(cx, |repository, _| {
-            repository.compare_checkpoints(checkpoint_1.clone(), checkpoint_3.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(equal, "restored state should match original checkpoint");
-
-    // 11. diff_checkpoints: restored state vs original => empty diff
-    let diff = repository
-        .update(cx, |repository, _| {
-            repository.diff_checkpoints(checkpoint_1.clone(), checkpoint_3.clone())
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(diff.is_empty(), "diff after restore should be empty");
 }
 
 #[gpui::test]

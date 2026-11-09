@@ -31,7 +31,7 @@ line_comments = ["# "]
 - `line_comments` is an array of strings that are used to identify line comments in the language. This is used for the `editor::ToggleComments` keybind: {#kb editor::ToggleComments} for toggling lines of code.
 - `tab_size` defines the indentation/tab size used for this language (default is `4`).
 - `hard_tabs` whether to indent with tabs (`true`) or spaces (`false`, the default).
-- `first_line_pattern` is a regular expression that can be used alongside `path_suffixes` (above) or `file_types` in settings to match files that should use this language. For example, Zed uses this to identify Shell Scripts by matching [shebang lines](https://github.com/zed-industries/zed/blob/main/crates/languages/src/bash/config.toml) in the first line of a script.
+- `first_line_pattern` is a regular expression that can be used alongside `path_suffixes` (above) or `file_types` in settings to match files that should use this language. For example, Zed uses this to identify Shell Scripts by matching [shebang lines](https://github.com/zed-industries/zed/blob/main/crates/grammars/src/bash/config.toml) in the first line of a script.
 - `debuggers` is an array of strings that are used to identify debuggers in the language. When launching a debugger's `New Process Modal`, Zed will order available debuggers by the order of entries in this array.
 
 <!--
@@ -380,7 +380,7 @@ For languages with closures, these typically should not count as functions in Ze
 
 For languages with declarations like C, provide queries that match `@class.around` or `@function.around`. The `if` and `ic` text objects will default to these if there is no inside.
 
-If you are not sure what to put in textobjects.scm, both [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects), and the [Helix editor](https://github.com/helix-editor/helix) have queries for many languages. You can refer to the Zed [built-in languages](https://github.com/zed-industries/zed/tree/main/crates/languages/src) to see how to adapt these.
+If you are not sure what to put in textobjects.scm, both [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects), and the [Helix editor](https://github.com/helix-editor/helix) have queries for many languages. You can refer to the Zed [built-in languages](https://github.com/zed-industries/zed/tree/main/crates/grammars/src) to see how to adapt these.
 
 | Capture          | Description                                                             | Vim mode                                         |
 | ---------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |

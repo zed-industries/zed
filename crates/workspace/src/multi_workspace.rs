@@ -962,13 +962,19 @@ impl MultiWorkspace {
         }
 
         let workspaces = self.workspaces_for_project_group(group_key, cx);
+        if workspaces.is_empty() {
+            let previous_group_count = self.project_groups.len();
+            self.project_groups.retain(|group| group.key != *group_key);
+            if self.project_groups.len() != previous_group_count {
+                cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+                self.serialize(cx);
+                cx.notify();
+                return Task::ready(Ok(true));
+            }
+            return Task::ready(Ok(false));
+        }
 
-        let task = self.remove(workspaces, RemovalIntent::CloseProject, window, cx);
-
-        self.project_groups.retain(|group| group.key != *group_key);
-        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
-
-        task
+        self.remove(workspaces, RemovalIntent::CloseProject, window, cx)
     }
 
     /// Returns the nearest retained workspace outside the project group at
@@ -1819,6 +1825,18 @@ impl MultiWorkspace {
             let (removed_any, reopen_key) = this.update_in(cx, |this, window, cx| {
                 let mut removed_any = false;
                 let displayed_workspace = this.workspace().clone();
+
+                // wait for should_continue to be true before removing project groups
+                if intent == RemovalIntent::CloseProject {
+                    let workspace_to_delete_keys = workspaces
+                        .iter()
+                        .map(|workspace| workspace.read(cx).project_group_key(cx))
+                        .collect::<Vec<_>>();
+
+                    this.project_groups
+                        .retain(|group| !workspace_to_delete_keys.contains(&group.key));
+                    cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+                }
 
                 for workspace in &workspaces {
                     if *workspace == displayed_workspace {

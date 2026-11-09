@@ -1,3 +1,4 @@
+//! A seeded, mutable element tree for benchmarks and tests of GPUI rendering.
 use crate::{
     AnyElement, AppContext as _, Context, ElementId, Entity, Hsla, InteractiveElement, IntoElement,
     ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px,

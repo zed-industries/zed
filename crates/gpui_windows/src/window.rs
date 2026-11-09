@@ -1041,7 +1041,7 @@ impl PlatformWindow for WindowsWindow {
             .log_err();
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<image::RgbaImage> {
         self.state
             .renderer

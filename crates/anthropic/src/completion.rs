@@ -290,7 +290,10 @@ pub fn into_anthropic(
     cache_mode: AnthropicPromptCacheMode,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<crate::Request> {
-    let requires_adaptive_thinking = model == "claude-opus-5-5";
+    let requires_adaptive_thinking = matches!(
+        model.as_str(),
+        "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-haiku-5-5"
+    );
     let mode = if requires_adaptive_thinking {
         AnthropicModelMode::AdaptiveThinking
     } else {
@@ -422,21 +425,23 @@ pub fn into_anthropic(
             }),
             AnthropicModelMode::Default => None,
         }
+    } else if model == "claude-sonnet-5-5" {
+        Some(Thinking::BetweenTools)
     } else if crate::requires_explicit_thinking_opt_out(&model) {
-        // On Claude Opus 5, omitting the `thinking` field no longer means
+        // On Claude Opus 5 and Haiku 5.5, omitting the `thinking` field no longer means
         // "off": the model runs adaptive thinking by default, so features
         // that suppress thinking (e.g. inline assist) must opt out
         // explicitly. `disabled` is only accepted at effort `high` or below;
         // that holds here because `output_config` is never sent when thinking
-        // is disallowed, and the server-side default effort is `high`.
+        // is disallowed, and the server-side default effort is `high` or below.
         // <https://platform.claude.com/docs/en/about-claude/models/migration-guide#migrating-to-claude-opus-5>
         Some(Thinking::Disabled)
     } else {
         None
     };
 
-    // Opus 5.5 always uses adaptive thinking, which does not accept sampling controls.
-    // <https://platform.claude.com/docs/en/models/opus-5-5/overview>
+    // These models reject non-default sampling controls even when thinking is off.
+    // <https://platform.claude.com/docs/en/build-with-claude/thinking#sampling-parameters>
     let temperature = if requires_adaptive_thinking {
         None
     } else {
@@ -1269,6 +1274,59 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_thinking_disallowed_sends_between_tools_for_sonnet_5_5() {
+        // Claude Sonnet 5.5 thinks by default but rejects `disabled`, so
+        // suppressing thinking must send its lowest setting instead.
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hi".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            thread_id: None,
+            prompt_cache_key: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+            max_output_tokens: None,
+        };
+
+        let anthropic_request = into_anthropic(
+            request,
+            "claude-sonnet-5-5".to_string(),
+            1.0,
+            128_000,
+            AnthropicModelMode::AdaptiveThinking,
+            AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
+        )
+        .unwrap();
+
+        let request_json = serde_json::to_value(&anthropic_request).unwrap();
+        assert_eq!(
+            request_json["thinking"],
+            serde_json::json!({ "type": "between_tools" })
+        );
+        assert!(anthropic_request.output_config.is_none());
+        assert!(anthropic_request.temperature.is_none());
+
+        let count_tokens_json =
+            serde_json::to_value(anthropic_request.into_count_tokens_request()).unwrap();
+        assert_eq!(
+            count_tokens_json["thinking"],
+            serde_json::json!({ "type": "between_tools" })
+        );
     }
 
     #[test]

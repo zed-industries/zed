@@ -1023,7 +1023,9 @@ fn signature_label(item: &CallHierarchyItem, language: &Arc<Language>) -> Option
     let name_start = find_symbol_name(&signature, &item.name)?;
     let filter_range = name_start..name_start + item.name.len();
     let source = Rope::from_iter([signature.as_str(), " {}"]);
-    let runs = language.highlight_text(&source, 0..signature.len());
+    let runs = language
+        .highlight_text(&source, 0..signature.len())
+        .collect();
     Some(CodeLabel::new(signature, filter_range, runs))
 }
 

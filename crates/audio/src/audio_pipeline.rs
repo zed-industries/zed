@@ -168,15 +168,24 @@ pub fn resolve_device(device_id: Option<&DeviceId>, input: bool) -> anyhow::Resu
         }
         log::warn!("Selected audio device not found, falling back to default");
     }
-    if input {
-        default_host()
-            .default_input_device()
-            .context("no audio input device available")
+    let host = default_host();
+    let device = if input {
+        host.default_input_device()
+            .context("no audio input device available")?
     } else {
-        default_host()
-            .default_output_device()
-            .context("no audio output device available")
-    }
+        host.default_output_device()
+            .context("no audio output device available")?
+    };
+
+    // CPAL's virtual default devices use ActivateAudioInterfaceAsync, which can fail
+    // with RPC_E_CHANGED_MODE. Resolve a concrete WASAPI endpoint instead; the
+    // current default is selected again when the stream is reopened.
+    #[cfg(target_os = "windows")]
+    let device = host
+        .device_by_id(&device.id()?)
+        .context("default audio endpoint is no longer available")?;
+
+    Ok(device)
 }
 
 pub fn open_test_output(device_id: Option<DeviceId>) -> anyhow::Result<MixerDeviceSink> {

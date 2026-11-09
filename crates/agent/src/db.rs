@@ -18,7 +18,7 @@ use sqlez::{
 };
 use std::{io::ErrorKind, path::PathBuf, sync::Arc};
 use ui::{App, SharedString};
-use util::path_list::PathList;
+use util::{ResultExt, path_list::PathList};
 use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
@@ -402,6 +402,8 @@ pub(crate) struct ThreadsDatabase {
     save_count: std::sync::atomic::AtomicUsize,
 }
 
+const LIST_THREADS_QUERY: &str = "SELECT id, parent_id, folder_paths, folder_paths_order, summary, updated_at, created_at FROM threads ORDER BY updated_at DESC, created_at DESC";
+
 struct GlobalThreadsDatabase(Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>);
 
 impl Global for GlobalThreadsDatabase {}
@@ -485,6 +487,19 @@ impl ThreadsDatabase {
                 "})?()?;
             }
         }
+
+        // The columns added above are stored after the `data` blob, so reading
+        // them from the table walks every thread's overflow pages. This index
+        // covers `LIST_THREADS_QUERY`, so listing threads never touches the blobs.
+        connection
+            .exec(indoc! {"
+                CREATE INDEX IF NOT EXISTS threads_list_metadata ON threads (
+                    updated_at, created_at, id, parent_id, folder_paths, folder_paths_order, summary
+                )
+            "})
+            .and_then(|mut create_index| create_index())
+            .map_err(|e| e.context("Failed to create threads list index"))
+            .log_err();
 
         let db = Self {
             executor,
@@ -579,15 +594,29 @@ impl ThreadsDatabase {
         self.executor.spawn(async move {
             let connection = connection.lock();
 
-            let mut select = connection
-                .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, Option<String>)>(indoc! {"
-                SELECT id, parent_id, folder_paths, folder_paths_order, summary, updated_at, created_at FROM threads ORDER BY updated_at DESC, created_at DESC
-            "})?;
+            let mut select = connection.select_bound::<(), (
+                Arc<str>,
+                Option<Arc<str>>,
+                Option<String>,
+                Option<String>,
+                String,
+                String,
+                Option<String>,
+            )>(LIST_THREADS_QUERY)?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, created_at) in rows {
+            for (
+                id,
+                parent_id,
+                folder_paths,
+                folder_paths_order,
+                summary,
+                updated_at,
+                created_at,
+            ) in rows
+            {
                 let folder_paths = folder_paths
                     .map(|paths| {
                         PathList::deserialize(&util::path_list::SerializedPathList {
@@ -974,6 +1003,26 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].id, newer_id);
         assert_eq!(entries[1].id, older_id);
+    }
+
+    #[gpui::test]
+    async fn test_list_threads_reads_only_the_index(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let plan = database
+            .connection
+            .lock()
+            .select::<(i32, i32, i32, String)>(&format!("EXPLAIN QUERY PLAN {LIST_THREADS_QUERY}"))
+            .unwrap()()
+        .unwrap();
+        let details = plan
+            .into_iter()
+            .map(|(_, _, _, detail)| detail)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            details,
+            ["SCAN threads USING COVERING INDEX threads_list_metadata"]
+        );
     }
 
     #[gpui::test]

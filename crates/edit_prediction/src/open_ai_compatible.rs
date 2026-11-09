@@ -45,7 +45,7 @@ pub fn load_open_ai_compatible_api_token(
     let credentials_provider = zed_credentials_provider::global(cx);
     let api_url = open_ai_compatible_api_url(cx);
     open_ai_compatible_api_token(cx).update(cx, |key_state, cx| {
-        key_state.load_if_needed(api_url, |s| s, credentials_provider, cx)
+        key_state.load_cached(api_url, |key_state| key_state, credentials_provider, cx)
     })
 }
 
