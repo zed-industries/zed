@@ -516,7 +516,9 @@ impl MentionSet {
         // even if a worktree contains their path.
         if let Some(project) = self.project.upgrade()
             && let Some(buffer) = project.update(cx, |project, cx| {
-                if source == "global" && agent::global_skills_are_remote(project) {
+                if source == agent_skills::SkillSource::Global.display_label()
+                    && agent::global_skills_are_remote(project)
+                {
                     return Some(project.open_local_buffer(&skill_file_path, cx));
                 }
                 let project_path = project_path_for_skill(project, &source, &skill_file_path, cx)?;

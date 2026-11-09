@@ -523,7 +523,10 @@ message Envelope {
     GlobalSkillsChanged global_skills_changed = 498;
     CreateGlobalSkill create_global_skill = 499;
     CreateGlobalSkillResponse create_global_skill_response = 500;
-    TrashGlobalSkill trash_global_skill = 501; // current max
+    TrashGlobalSkill trash_global_skill = 501;
+    ResolveGlobalSkillPath resolve_global_skill_path = 502;
+    ResolveGlobalSkillPathResponse resolve_global_skill_path_response = 503;
+    ApplyGlobalSkillFileOperation apply_global_skill_file_operation = 504; // current max
   }
 
   reserved 87 to 88;

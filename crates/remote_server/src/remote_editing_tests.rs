@@ -3,9 +3,11 @@
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
 use agent::{
-    AgentTool, ListDirectoryTool, ListDirectoryToolInput, NativeAgent, NativeAgentConnection,
-    ReadFileTool, ReadFileToolInput, SkillTool, SkillToolInput, SkillToolOutput, Templates,
-    ThreadStore, ToolCallEventStream, ToolInput, skill_body_resolver_for_project,
+    AgentTool, CopyPathTool, CopyPathToolInput, CreateDirectoryTool, DeletePathTool,
+    DeletePathToolInput, ListDirectoryTool, ListDirectoryToolInput, MovePathTool,
+    MovePathToolInput, NativeAgent, NativeAgentConnection, ReadFileTool, ReadFileToolInput,
+    SkillTool, SkillToolInput, SkillToolOutput, Templates, ThreadStore, ToolCallEventStream,
+    ToolInput, WriteFileTool, WriteFileToolInput, skill_body_resolver_for_project,
     skills_resolver_for_project,
 };
 use agent_skills::SkillIndex;
@@ -5554,6 +5556,220 @@ async fn test_agent_file_tools_reach_remote_global_skill_files(
         ),
         "got: {listing}"
     );
+}
+
+/// Runs a tool that asks before touching agent skills, and allows it.
+async fn run_tool_allowing_skill_access<T: AgentTool>(
+    tool: Arc<T>,
+    input: T::Input,
+    cx: &mut TestAppContext,
+) -> Result<T::Output, T::Output> {
+    let (event_stream, mut events) = ToolCallEventStream::test();
+    let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+    if T::NAME == WriteFileTool::NAME {
+        events.expect_update_fields().await;
+    }
+    events
+        .expect_authorization()
+        .await
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            agent_client_protocol::v2::schema::PermissionOptionId::new("allow"),
+            agent_client_protocol::v2::schema::PermissionOptionKind::AllowOnce,
+        ))
+        .unwrap();
+    task.await
+}
+
+#[gpui::test]
+async fn test_agent_write_tools_reach_remote_global_skill_files(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let project_root = Path::new(path!("/project"));
+    let test = RemoteSkillsTest::new(project_root, &["remote-skill"], cx, server_cx).await;
+    let local_fs = test
+        .project
+        .read_with(cx, |project, _| project.fs().clone())
+        .as_fake();
+    let new_skill_dir = test.skills_dir.join("new-skill");
+
+    let create_directory = Arc::new(CreateDirectoryTool::new(test.project.clone()));
+    run_tool_allowing_skill_access(
+        create_directory,
+        serde_json::from_value(json!({ "path": "~/.agents/skills/new-skill" })).unwrap(),
+        cx,
+    )
+    .await
+    .unwrap();
+    assert!(test.server_fs.is_dir(&new_skill_dir).await);
+    assert!(
+        !local_fs.is_dir(&new_skill_dir).await,
+        "the skill must not be created on this machine"
+    );
+
+    let session_id = test
+        .acp_thread
+        .read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = cx
+        .update(|cx| test.connection.thread(&session_id, cx))
+        .unwrap();
+    let action_log = cx.new(|_| action_log::ActionLog::new(test.project.clone()));
+    let language_registry = test
+        .project
+        .read_with(cx, |project, _| project.languages().clone());
+    let write_file = Arc::new(WriteFileTool::new(
+        test.project.clone(),
+        thread.downgrade(),
+        action_log.clone(),
+        language_registry,
+    ));
+    run_tool_allowing_skill_access(
+        write_file,
+        WriteFileToolInput {
+            path: PathBuf::from("~/.agents/skills/new-skill/SKILL.md"),
+            content: "new skill\n".into(),
+        },
+        cx,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        test.server_fs
+            .load(&new_skill_dir.join("SKILL.md"))
+            .await
+            .unwrap(),
+        "new skill\n"
+    );
+
+    let copy_path = Arc::new(CopyPathTool::new(test.project.clone()));
+    run_tool_allowing_skill_access(
+        copy_path,
+        CopyPathToolInput {
+            source_path: "~/.agents/skills/new-skill".into(),
+            destination_path: project_root.join("copied").to_string_lossy().into_owned(),
+        },
+        cx,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        test.server_fs
+            .load(&project_root.join("copied").join("SKILL.md"))
+            .await
+            .unwrap(),
+        "new skill\n"
+    );
+
+    let move_path = Arc::new(MovePathTool::new(test.project.clone()));
+    run_tool_allowing_skill_access(
+        move_path,
+        MovePathToolInput {
+            source_path: "~/.agents/skills/new-skill".into(),
+            destination_path: "~/.agents/skills/renamed".into(),
+        },
+        cx,
+    )
+    .await
+    .unwrap();
+    assert!(!test.server_fs.is_dir(&new_skill_dir).await);
+    assert!(
+        test.server_fs
+            .is_file(&test.skills_dir.join("renamed").join("SKILL.md"))
+            .await
+    );
+
+    let delete_path = Arc::new(DeletePathTool::new(test.project.clone(), action_log));
+    run_tool_allowing_skill_access(
+        delete_path.clone(),
+        DeletePathToolInput {
+            path: "~/.agents/skills/renamed".into(),
+        },
+        cx,
+    )
+    .await
+    .unwrap();
+    assert!(
+        !test
+            .server_fs
+            .is_dir(&test.skills_dir.join("renamed"))
+            .await
+    );
+
+    let (event_stream, _) = ToolCallEventStream::test();
+    cx.update(|cx| {
+        delete_path.run(
+            ToolInput::resolved(DeletePathToolInput {
+                path: "~/.agents/skills".into(),
+            }),
+            event_stream,
+            cx,
+        )
+    })
+    .await
+    .expect_err("the skills directory itself can't be deleted");
+    assert!(
+        test.server_fs
+            .is_dir(&test.skills_dir.join("remote-skill"))
+            .await
+    );
+}
+
+#[gpui::test]
+async fn test_remote_global_skill_symlinks_cant_reach_outside_the_skill(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(
+        Path::new(path!("/project")),
+        &["remote-skill"],
+        cx,
+        server_cx,
+    )
+    .await;
+    test.server_fs
+        .insert_tree(path!("/secrets"), json!({ "key": "secret" }))
+        .await;
+    test.server_fs
+        .create_symlink(
+            &test.skills_dir.join("remote-skill").join("escape"),
+            PathBuf::from(path!("/secrets")),
+        )
+        .await
+        .unwrap();
+    // A whole skill directory may be a link, and its files are then readable.
+    test.server_fs
+        .insert_tree(path!("/linked-skill"), skill_dir("linked-skill"))
+        .await;
+    test.server_fs
+        .create_symlink(
+            &test.skills_dir.join("linked-skill"),
+            PathBuf::from(path!("/linked-skill")),
+        )
+        .await
+        .unwrap();
+
+    let action_log = cx.new(|_| action_log::ActionLog::new(test.project.clone()));
+    let read_tool = Arc::new(ReadFileTool::new(test.project.clone(), action_log, false));
+    let read = |path: &str, cx: &mut TestAppContext| {
+        let (event_stream, _) = ToolCallEventStream::test();
+        let input = ReadFileToolInput {
+            path: path.to_string(),
+            start_line: None,
+            end_line: None,
+        };
+        cx.update(|cx| {
+            read_tool
+                .clone()
+                .run(ToolInput::resolved(input), event_stream, cx)
+        })
+    };
+    read("~/.agents/skills/remote-skill/escape/key", cx)
+        .await
+        .expect_err("a link inside a skill must not reach outside it");
+    read("~/.agents/skills/linked-skill/SKILL.md", cx)
+        .await
+        .expect("a linked skill directory is readable");
 }
 
 #[gpui::test]

@@ -1,7 +1,10 @@
+mod global_skill_paths;
+
 use anyhow::{Context as _, Result, anyhow};
 use const_format::{concatcp, formatcp};
 use fs::Fs;
 use futures::StreamExt;
+pub use global_skill_paths::*;
 use gpui::{App, EntityId, Global, SharedString};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

@@ -1,8 +1,8 @@
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use agent_skills::{Skill, SkillLoadWarning, SkillSource};
-use anyhow::{Result, anyhow};
+use agent_skills::{GlobalSkillFileOperation, Skill, SkillLoadWarning, SkillSource};
+use anyhow::{Context as _, Result, anyhow};
 use fs::Fs;
 use gpui::{AppContext as _, AsyncApp, Context, Entity, Task};
 use rpc::{
@@ -31,6 +31,11 @@ impl GlobalSkills {
         session.add_request_handler(this.downgrade(), Self::handle_get_global_skills);
         session.add_request_handler(this.downgrade(), Self::handle_create_global_skill);
         session.add_request_handler(this.downgrade(), Self::handle_trash_global_skill);
+        session.add_request_handler(this.downgrade(), Self::handle_resolve_global_skill_path);
+        session.add_request_handler(
+            this.downgrade(),
+            Self::handle_apply_global_skill_file_operation,
+        );
     }
 
     async fn handle_get_global_skills(
@@ -129,6 +134,57 @@ impl GlobalSkills {
             },
         )
         .await?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_resolve_global_skill_path(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ResolveGlobalSkillPath>,
+        cx: AsyncApp,
+    ) -> Result<proto::ResolveGlobalSkillPathResponse> {
+        let fs = cx.read_entity(&this, |this, _| this.fs.clone());
+        let payload = envelope.payload;
+        let located = agent_skills::locate_global_skill_path(
+            Path::new(&payload.path),
+            fs.as_ref(),
+            payload.may_not_exist,
+        )
+        .await;
+        Ok(match located {
+            Some(located) => proto::ResolveGlobalSkillPathResponse {
+                path: Some(located.path.to_string_lossy().into_owned()),
+                is_skills_dir: located.is_skills_dir,
+                is_linked: located.is_linked,
+            },
+            None => proto::ResolveGlobalSkillPathResponse::default(),
+        })
+    }
+
+    async fn handle_apply_global_skill_file_operation(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ApplyGlobalSkillFileOperation>,
+        cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        use proto::apply_global_skill_file_operation::Operation;
+
+        let fs = cx.read_entity(&this, |this, _| this.fs.clone());
+        let operation = match envelope.payload.operation.context("missing operation")? {
+            Operation::CreateDirectory(create) => GlobalSkillFileOperation::CreateDirectory {
+                path: PathBuf::from(create.path),
+            },
+            Operation::Delete(delete) => GlobalSkillFileOperation::Delete {
+                path: PathBuf::from(delete.path),
+            },
+            Operation::Copy(copy) => GlobalSkillFileOperation::Copy {
+                source: PathBuf::from(copy.source),
+                destination: PathBuf::from(copy.destination),
+            },
+            Operation::Rename(rename) => GlobalSkillFileOperation::Move {
+                source: PathBuf::from(rename.source),
+                destination: PathBuf::from(rename.destination),
+            },
+        };
+        agent_skills::apply_global_skill_file_operation(fs.as_ref(), operation).await?;
         Ok(proto::Ack {})
     }
 }

@@ -1,21 +1,24 @@
 use super::tool_permissions::{
     authorize_symlink_escapes, canonicalize_worktree_roots, collect_symlink_escapes,
-    resolve_creatable_global_skill_descendant_path, resolve_global_skill_descendant_path,
-    resolves_to_global_skills_dir, sensitive_settings_kind,
+    sensitive_settings_kind,
 };
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     authorize_with_sensitive_settings, decide_permission_for_paths,
 };
 use agent_client_protocol::v2::schema as acp;
 use agent_settings::AgentSettings;
+use agent_skills::GlobalSkillFileOperation;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::markdown::MarkdownInlineCode;
 
 /// Moves or rename a file or directory in the project, and returns confirmation that the move succeeded.
@@ -118,12 +121,13 @@ impl AgentTool for MovePathTool {
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
-            if resolves_to_global_skills_dir(Path::new(&input.source_path), fs.as_ref()).await
-                || resolves_to_global_skills_dir(
-                    Path::new(&input.destination_path),
-                    fs.as_ref(),
-                )
+            let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&project, cx));
+            if global_skill_files
+                .is_skills_dir(Path::new(&input.source_path), cx)
                 .await
+                || global_skill_files
+                    .is_skills_dir(Path::new(&input.destination_path), cx)
+                    .await
             {
                 return Err(
                     "Cannot move the global agent skills directory itself. Move a skill directory or file beneath it instead."
@@ -131,14 +135,12 @@ impl AgentTool for MovePathTool {
                 );
             }
 
-            let global_source_path =
-                resolve_global_skill_descendant_path(Path::new(&input.source_path), fs.as_ref())
-                    .await;
-            let global_destination_path = resolve_creatable_global_skill_descendant_path(
-                Path::new(&input.destination_path),
-                fs.as_ref(),
-            )
-            .await;
+            let global_source_path = global_skill_files
+                .resolve_descendant(Path::new(&input.source_path), cx)
+                .await;
+            let global_destination_path = global_skill_files
+                .resolve_creatable_descendant(Path::new(&input.destination_path), cx)
+                .await;
 
             let symlink_escapes: Vec<(&str, std::path::PathBuf)> =
                 project.read_with(cx, |project, cx| {
@@ -201,8 +203,10 @@ impl AgentTool for MovePathTool {
             }
 
             if global_source_path.is_some() || global_destination_path.is_some() {
-                let source_path = if let Some(global_source_path) = global_source_path {
-                    global_source_path
+                // A global skill path is resolved again where the operation is
+                // applied, so it's passed as the agent wrote it.
+                let source = if global_source_path.is_some() {
+                    PathBuf::from(&input.source_path)
                 } else {
                     project.read_with(cx, |project, cx| {
                         let project_path = project.find_project_path(&input.source_path, cx).ok_or_else(|| {
@@ -217,9 +221,8 @@ impl AgentTool for MovePathTool {
                     })?
                 };
 
-                let destination_path = if let Some(global_destination_path) = global_destination_path
-                {
-                    global_destination_path
+                let destination = if global_destination_path.is_some() {
+                    PathBuf::from(&input.destination_path)
                 } else {
                     project.read_with(cx, |project, cx| {
                         let project_path = project.find_project_path(&input.destination_path, cx).ok_or_else(|| {
@@ -237,15 +240,12 @@ impl AgentTool for MovePathTool {
                     })?
                 };
 
+                let operation = GlobalSkillFileOperation::Move {
+                    source,
+                    destination,
+                };
                 futures::select! {
-                    result = fs.rename(
-                        &source_path,
-                        &destination_path,
-                        fs::RenameOptions {
-                            create_parents: true,
-                            ..fs::RenameOptions::default()
-                        },
-                    ).fuse() => {
+                    result = global_skill_files.apply(operation, cx).fuse() => {
                         result.map_err(|e| format!("Moving {} to {}: {e}", input.source_path, input.destination_path))?;
                     }
                     _ = event_stream.cancelled_by_user().fuse() => {

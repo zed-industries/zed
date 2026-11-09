@@ -1,10 +1,16 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use agent_skills::{Skill, SkillLoadError, SkillLoadWarning, SkillSource};
+use agent_skills::{
+    GlobalSkillFileOperation, GlobalSkillPath, Skill, SkillLoadError, SkillLoadWarning, SkillSource,
+};
 use anyhow::{Context as _, Result, anyhow};
 use client::{AnyProtoClient, proto};
-use gpui::{App, AppContext as _, Entity, Task};
+use fs::Fs;
+use futures::StreamExt as _;
+use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use project::Project;
+use util::{ResultExt as _, paths::PathStyle};
 
 /// In a remote project, global skills come from the remote machine's
 /// `~/.agents/skills`, not the local one. The remote server loads and watches
@@ -13,7 +19,7 @@ pub fn global_skills_are_remote(project: &Project) -> bool {
     project.is_via_remote_server()
 }
 
-pub(crate) fn remote_server_client(project: &Entity<Project>, cx: &App) -> Result<AnyProtoClient> {
+fn remote_server_client(project: &Entity<Project>, cx: &App) -> Result<AnyProtoClient> {
     let remote_client = project
         .read(cx)
         .remote_client()
@@ -128,4 +134,282 @@ pub fn trash_remote_global_skill(
         request.await?;
         Ok(())
     })
+}
+
+/// The files of a project's global skills, on whichever machine they're on.
+/// Agent tools reach `~/.agents/skills` through this, since it's outside any
+/// worktree.
+#[derive(Clone)]
+pub enum GlobalSkillFiles {
+    Local(Arc<dyn Fs>),
+    Remote(Entity<Project>),
+}
+
+/// An entry of a directory in the global skills directory.
+pub struct GlobalSkillDirectoryEntry {
+    pub path: PathBuf,
+    pub is_dir: bool,
+}
+
+impl GlobalSkillFiles {
+    pub fn for_project(project: &Entity<Project>, cx: &App) -> Self {
+        let project_ref = project.read(cx);
+        if global_skills_are_remote(project_ref) {
+            Self::Remote(project.clone())
+        } else {
+            Self::Local(project_ref.fs().clone())
+        }
+    }
+
+    /// The canonical path of `path`, if it names an existing file or directory
+    /// in the global skills directory, or the directory itself.
+    pub async fn resolve(&self, path: &Path, cx: &mut AsyncApp) -> Option<PathBuf> {
+        Some(self.locate(path, false, cx).await?.path)
+    }
+
+    /// Like [`Self::resolve`], for a path that may not exist yet.
+    pub async fn resolve_creatable(&self, path: &Path, cx: &mut AsyncApp) -> Option<PathBuf> {
+        Some(self.locate(path, true, cx).await?.path)
+    }
+
+    /// Like [`Self::resolve`], but only for a path strictly inside the global
+    /// skills directory on disk: not the directory itself, nor a path in a
+    /// skill directory that links elsewhere.
+    pub async fn resolve_descendant(&self, path: &Path, cx: &mut AsyncApp) -> Option<PathBuf> {
+        self.locate(path, false, cx).await?.into_descendant()
+    }
+
+    /// Like [`Self::resolve_descendant`], for a path that may not exist yet.
+    pub async fn resolve_creatable_descendant(
+        &self,
+        path: &Path,
+        cx: &mut AsyncApp,
+    ) -> Option<PathBuf> {
+        self.locate(path, true, cx).await?.into_descendant()
+    }
+
+    /// Whether `path` names the global skills directory itself, which
+    /// destructive tools refuse to act on.
+    pub async fn is_skills_dir(&self, path: &Path, cx: &mut AsyncApp) -> bool {
+        self.locate(path, true, cx)
+            .await
+            .is_some_and(|located| located.is_skills_dir)
+    }
+
+    async fn locate(
+        &self,
+        path: &Path,
+        may_not_exist: bool,
+        cx: &mut AsyncApp,
+    ) -> Option<GlobalSkillPath> {
+        match self {
+            Self::Local(fs) => {
+                agent_skills::locate_global_skill_path(path, fs.as_ref(), may_not_exist).await
+            }
+            Self::Remote(project) => {
+                let path_style = project.read_with(cx, |project, cx| project.path_style(cx));
+                // Most tool calls name project files, so skip the round trip
+                // for paths that can't be under any home's skills dir.
+                if !mentions_skills_dir(path, path_style) {
+                    return None;
+                }
+                let client = cx
+                    .update(|cx| remote_server_client(project, cx))
+                    .log_err()?;
+                let response = client
+                    .request(proto::ResolveGlobalSkillPath {
+                        project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                        path: path.to_string_lossy().into_owned(),
+                        may_not_exist,
+                    })
+                    .await
+                    .log_err()?;
+                Some(GlobalSkillPath {
+                    path: PathBuf::from(response.path?),
+                    is_skills_dir: response.is_skills_dir,
+                    is_linked: response.is_linked,
+                })
+            }
+        }
+    }
+
+    /// Whether `path` is a directory, or `None` if nothing is there.
+    pub async fn is_dir(&self, path: &Path, cx: &mut AsyncApp) -> Result<Option<bool>> {
+        match self {
+            Self::Local(fs) => Ok(fs.metadata(path).await?.map(|metadata| metadata.is_dir)),
+            Self::Remote(project) => {
+                let client = cx.update(|cx| remote_server_client(project, cx))?;
+                let response = client
+                    .request(proto::GetPathMetadata {
+                        project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                        path: path.to_string_lossy().into_owned(),
+                        canonicalize: false,
+                    })
+                    .await?;
+                Ok(response.exists.then_some(response.is_dir))
+            }
+        }
+    }
+
+    pub async fn load(&self, path: &Path, cx: &mut AsyncApp) -> Result<String> {
+        match self {
+            Self::Local(fs) => fs.load(path).await,
+            Self::Remote(project) => {
+                let buffer = project
+                    .update(cx, |project, cx| project.open_local_buffer(path, cx))
+                    .await?;
+                Ok(buffer.read_with(cx, |buffer, _| buffer.text()))
+            }
+        }
+    }
+
+    pub async fn list_directory(
+        &self,
+        path: &Path,
+        cx: &mut AsyncApp,
+    ) -> Result<Vec<GlobalSkillDirectoryEntry>> {
+        match self {
+            Self::Local(fs) => {
+                let mut paths = fs.read_dir(path).await?;
+                let mut entries = Vec::new();
+                while let Some(path) = paths.next().await {
+                    let Ok(path) = path else {
+                        continue;
+                    };
+                    // A dangling symlink has no metadata, so it's skipped.
+                    let Ok(Some(metadata)) = fs.metadata(&path).await else {
+                        continue;
+                    };
+                    entries.push(GlobalSkillDirectoryEntry {
+                        path,
+                        is_dir: metadata.is_dir,
+                    });
+                }
+                Ok(entries)
+            }
+            Self::Remote(project) => {
+                let (items, path_style) = project.update(cx, |project, cx| {
+                    (
+                        project.list_directory(path.to_string_lossy().into_owned(), cx),
+                        project.path_style(cx),
+                    )
+                });
+                Ok(items
+                    .await?
+                    .into_iter()
+                    .map(|item| GlobalSkillDirectoryEntry {
+                        path: path_style.join(path, item.path),
+                        is_dir: item.is_dir,
+                    })
+                    .collect())
+            }
+        }
+    }
+
+    pub async fn apply(
+        &self,
+        operation: GlobalSkillFileOperation,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        use proto::apply_global_skill_file_operation as operation_proto;
+
+        match self {
+            Self::Local(fs) => {
+                agent_skills::apply_global_skill_file_operation(fs.as_ref(), operation).await
+            }
+            Self::Remote(project) => {
+                let client = cx.update(|cx| remote_server_client(project, cx))?;
+                let path = |path: PathBuf| path.to_string_lossy().into_owned();
+                let operation = match operation {
+                    GlobalSkillFileOperation::CreateDirectory { path: directory } => {
+                        operation_proto::Operation::CreateDirectory(
+                            operation_proto::CreateDirectory {
+                                path: path(directory),
+                            },
+                        )
+                    }
+                    GlobalSkillFileOperation::Delete { path: deleted } => {
+                        operation_proto::Operation::Delete(operation_proto::Delete {
+                            path: path(deleted),
+                        })
+                    }
+                    GlobalSkillFileOperation::Copy {
+                        source,
+                        destination,
+                    } => operation_proto::Operation::Copy(operation_proto::Copy {
+                        source: path(source),
+                        destination: path(destination),
+                    }),
+                    GlobalSkillFileOperation::Move {
+                        source,
+                        destination,
+                    } => operation_proto::Operation::Rename(operation_proto::Rename {
+                        source: path(source),
+                        destination: path(destination),
+                    }),
+                };
+                client
+                    .request(proto::ApplyGlobalSkillFileOperation {
+                        project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                        operation: Some(operation),
+                    })
+                    .await?;
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Whether `path`, after resolving `..`, contains `.agents/skills`, which any
+/// path under `<home>/.agents/skills` does, whatever the home dir is.
+fn mentions_skills_dir(path: &Path, path_style: PathStyle) -> bool {
+    let path_text = path.to_string_lossy();
+    let mut names = Vec::new();
+    for name in path_text.split(path_style.separators_ch()) {
+        match name {
+            "" | "." => {}
+            ".." => {
+                names.pop();
+            }
+            name => names.push(name),
+        }
+    }
+    names.windows(2).any(|pair| {
+        pair[0] == agent_skills::AGENTS_DIR_NAME && pair[1] == agent_skills::SKILLS_DIR_NAME
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mentions_skills_dir() {
+        for (path, path_style) in [
+            ("~/.agents/skills", PathStyle::Unix),
+            ("~/.agents/skills/my-skill/SKILL.md", PathStyle::Unix),
+            (
+                "/home/user/.agents/skills/my-skill/scripts/run.sh",
+                PathStyle::Unix,
+            ),
+            ("~/.agents/other/../skills/my-skill", PathStyle::Unix),
+            ("~/../user/.agents/skills", PathStyle::Unix),
+            (r"C:\Users\user\.agents\skills\my-skill", PathStyle::Windows),
+            ("~/.agents\\skills", PathStyle::Windows),
+        ] {
+            assert!(mentions_skills_dir(Path::new(path), path_style), "{path}");
+        }
+        for (path, path_style) in [
+            ("project/src/main.rs", PathStyle::Unix),
+            ("/home/user/project/src/main.rs", PathStyle::Unix),
+            ("~/.agents", PathStyle::Unix),
+            ("~/.agents/skills/../other", PathStyle::Unix),
+            ("~/skills/.agents", PathStyle::Unix),
+            // A backslash is part of a file name on Unix.
+            (r"~/.agents\skills", PathStyle::Unix),
+            (r"C:\Users\user\project\main.rs", PathStyle::Windows),
+        ] {
+            assert!(!mentions_skills_dir(Path::new(path), path_style), "{path}");
+        }
+    }
 }

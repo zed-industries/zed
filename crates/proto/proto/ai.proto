@@ -79,6 +79,46 @@ message TrashGlobalSkill {
   string directory_name = 2;
 }
 
+message ResolveGlobalSkillPath {
+  uint64 project_id = 1;
+  string path = 2;
+  bool may_not_exist = 3;
+}
+
+message ResolveGlobalSkillPathResponse {
+  optional string path = 1;
+  bool is_skills_dir = 2;
+  bool is_linked = 3;
+}
+
+message ApplyGlobalSkillFileOperation {
+  message CreateDirectory {
+    string path = 1;
+  }
+
+  message Delete {
+    string path = 1;
+  }
+
+  message Copy {
+    string source = 1;
+    string destination = 2;
+  }
+
+  message Rename {
+    string source = 1;
+    string destination = 2;
+  }
+
+  uint64 project_id = 1;
+  oneof operation {
+    CreateDirectory create_directory = 2;
+    Delete delete = 3;
+    Copy copy = 4;
+    Rename rename = 5;
+  }
+}
+
 message ExternalAgentsUpdated {
   uint64 project_id = 1;
   repeated string names = 2;
