@@ -22,7 +22,9 @@ pub use remote_connection::{RemoteConnectionModal, connect, connect_with_modal};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
-use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
+use fuzzy_nucleo::{
+    MaxResults, StringMatch, StringMatchCandidate, StringMatchOptions, match_strings,
+};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, TaskExt, WeakEntity, Window, actions, px,
@@ -968,7 +970,10 @@ impl PickerDelegate for RecentProjectsDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
         let query = query.trim_start();
-        let case = fuzzy_nucleo::Case::smart_if_uppercase_in(query);
+        let match_options = StringMatchOptions {
+            max_results: MaxResults::limit::<100>(),
+            ..Default::default()
+        };
         let is_empty_query = query.is_empty();
 
         let folder_matches = if self.open_folders.is_empty() {
@@ -981,13 +986,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .map(|(id, folder)| StringMatchCandidate::new(id, folder.name.as_ref()))
                 .collect();
 
-            match_strings(
-                &candidates,
-                query,
-                case,
-                fuzzy_nucleo::LengthPenalty::On,
-                100,
-            )
+            match_strings(&candidates, query, match_options)
         };
 
         let project_group_candidates: Vec<_> = self
@@ -1005,13 +1004,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .collect();
 
-        let project_group_matches = match_strings(
-            &project_group_candidates,
-            query,
-            case,
-            fuzzy_nucleo::LengthPenalty::On,
-            100,
-        );
+        let project_group_matches = match_strings(&project_group_candidates, query, match_options);
 
         // Build candidates for recent projects (not current, not sibling, not open folder)
         let recent_candidates: Vec<_> = self
@@ -1030,13 +1023,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .collect();
 
-        let recent_matches = match_strings(
-            &recent_candidates,
-            query,
-            case,
-            fuzzy_nucleo::LengthPenalty::On,
-            100,
-        );
+        let recent_matches = match_strings(&recent_candidates, query, match_options);
 
         let mut entries = Vec::new();
 

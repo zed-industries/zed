@@ -1,7 +1,7 @@
 use std::{cmp::Reverse, fmt, sync::Arc, time::Duration};
 
 use collections::HashSet;
-use fuzzy_nucleo::{Case, LengthPenalty, StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{Case, StringMatch, StringMatchCandidate, StringMatchOptions};
 use gpui::{BenchAppContext, SharedString};
 use ordered_float::OrderedFloat;
 
@@ -118,20 +118,12 @@ fn expected_values(options: &[OptionValue], query: &str) -> Vec<SharedString> {
         .enumerate()
         .map(|(index, option)| candidates(index, option))
         .unzip();
-    let mut names = fuzzy_nucleo::match_strings(
-        &names,
-        query,
-        Case::Ignore,
-        LengthPenalty::On,
-        options.len(),
-    );
-    let mut metadata = fuzzy_nucleo::match_strings(
-        &metadata,
-        query,
-        Case::Ignore,
-        LengthPenalty::On,
-        options.len(),
-    );
+    let match_options = StringMatchOptions {
+        case: Case::Ignore,
+        ..Default::default()
+    };
+    let mut names = fuzzy_nucleo::match_strings(&names, query, match_options);
+    let mut metadata = fuzzy_nucleo::match_strings(&metadata, query, match_options);
     let sorting_key =
         |matched: &StringMatch| (Reverse(OrderedFloat(matched.score)), matched.candidate_id);
     names.sort_unstable_by_key(sorting_key);
