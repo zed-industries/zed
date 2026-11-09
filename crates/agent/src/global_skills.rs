@@ -161,6 +161,16 @@ impl GlobalSkillFiles {
         }
     }
 
+    /// The path style of the machine the skills are on. A collab guest's
+    /// skills are local while its project has the host's path style, so this
+    /// isn't always the project's.
+    pub fn path_style(&self, cx: &App) -> PathStyle {
+        match self {
+            Self::Local(_) => PathStyle::local(),
+            Self::Remote(project) => project.read(cx).path_style(cx),
+        }
+    }
+
     /// The canonical path of `path`, if it names an existing file or directory
     /// in the global skills directory, or the directory itself.
     pub async fn resolve(&self, path: &Path, cx: &mut AsyncApp) -> Option<PathBuf> {
@@ -382,6 +392,13 @@ fn mentions_skills_dir(path: &Path, path_style: PathStyle) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn test_local_global_skill_files_use_the_local_path_style(cx: &mut TestAppContext) {
+        let global_skill_files = GlobalSkillFiles::Local(fs::FakeFs::new(cx.executor()));
+        cx.update(|cx| assert_eq!(global_skill_files.path_style(cx), PathStyle::local()));
+    }
 
     #[test]
     fn test_mentions_skills_dir() {
