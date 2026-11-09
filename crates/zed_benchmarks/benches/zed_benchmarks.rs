@@ -898,7 +898,9 @@ fn agent_panel_long_thread(cx: &mut BenchAppContext) {
     });
     wait_for_task(cx, save).expect("failed to save the generated thread");
 
-    zed.update_window(cx, |window, cx| keystroke(window, cx, "cmd-?"));
+    zed.update(cx, |workspace, window, cx| {
+        workspace.focus_panel::<agent_ui::AgentPanel>(window, cx);
+    });
     cx.run_until_idle();
     let panel = zed.workspace.read_with(cx, |workspace, cx| {
         workspace
@@ -942,6 +944,9 @@ fn agent_panel_long_thread(cx: &mut BenchAppContext) {
         "every edit_file call should show a diff"
     );
     let list_state = thread_view.read_with(cx, |thread_view, _| thread_view.list_state.clone());
+    wait_until(cx, "the thread list layout", |_| {
+        list_state.viewport_bounds().size.height > px(0.)
+    });
     let viewport = list_state.viewport_bounds();
     assert!(
         viewport.size.height > px(200.),
