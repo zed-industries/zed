@@ -575,7 +575,7 @@ impl MarkdownPreviewView {
                         this.update_markdown_from_active_editor(false, false, window, cx);
                         cx.emit(MarkdownPreviewEvent::SourceFileHandleChanged);
                     }
-                    EditorEvent::SelectionsChanged { .. } => {
+                    EditorEvent::SelectionsChanged { local } => {
                         let (selection_start, editor_is_focused) =
                             editor.update(cx, |editor, cx| {
                                 let index = Self::selected_source_index(editor, cx);
@@ -583,7 +583,17 @@ impl MarkdownPreviewView {
                                 (index, focused)
                             });
                         if let Some(selection_start) = selection_start {
-                            let reveal = editor_is_focused || this.focus_handle.is_focused(window);
+                            // Outline navigation leaves focus in the panel while its item stays active.
+                            let navigating_active_item = *local
+                                && this.workspace.upgrade().is_some_and(|workspace| {
+                                    workspace.read(cx).active_item(cx).is_some_and(|item| {
+                                        item.item_id() == cx.entity_id()
+                                            || item.item_id() == editor.entity_id()
+                                    })
+                                });
+                            let reveal = editor_is_focused
+                                || this.focus_handle.is_focused(window)
+                                || navigating_active_item;
                             this.sync_preview_to_source_index(selection_start, reveal, cx);
                             cx.notify();
                         }
@@ -2382,6 +2392,7 @@ mod tests {
     use util::rel_path::{RelPath, rel_path};
     use util::test::TempTree;
     use workspace::SplitDirection;
+    use workspace::dock::{DockPosition, test::TestPanel};
     use workspace::item::{Item, ItemHandle, SerializableItem};
     use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
     use workspace::{
@@ -2879,6 +2890,93 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(cx.opened_url().as_deref(), Some("tel:123"));
+    }
+
+    #[gpui::test]
+    async fn preview_follows_outline_navigation_while_panel_has_focus(cx: &mut TestAppContext) {
+        let mut contents = String::from("# First\n\n");
+        contents.push_str(&"paragraph\n\n".repeat(100));
+        let target = contents.len();
+        contents.push_str("## Target\n\nlast paragraph\n");
+        let (window, editor) = open_markdown_file(cx, "outline.md", &contents).await;
+        let preview = open_preview_for_active_editor(cx, &window);
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        let panel_focus = cx.update(|window, cx| {
+            let workspace = preview.read(cx).workspace.upgrade().unwrap();
+            let panel = workspace.update(cx, |workspace, cx| {
+                let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
+                workspace.add_panel(panel.clone(), window, cx);
+                workspace.toggle_panel_focus::<TestPanel>(window, cx);
+                panel
+            });
+            let focus = panel.focus_handle(cx);
+            assert!(!editor.focus_handle(cx).is_focused(window));
+            assert!(!preview.focus_handle(cx).is_focused(window));
+            focus
+        });
+        cx.update(|window, cx| {
+            MarkdownPreviewView::change_selection_to_source_index(
+                &editor, target, false, window, cx,
+            );
+        });
+        cx.run_until_parked();
+
+        preview.read_with(cx, |preview, _| {
+            assert_eq!(preview.active_source_index, Some(target));
+            assert!(
+                preview.scroll_handle.offset().y < px(0.),
+                "outline navigation must scroll the preview even while the panel has focus"
+            );
+        });
+        cx.update(|window, cx| {
+            assert!(panel_focus.is_focused(window));
+            let workspace = preview.read(cx).workspace.upgrade().unwrap();
+            assert_eq!(
+                workspace.read(cx).active_item(cx).unwrap().item_id(),
+                preview.entity_id(),
+                "outline navigation must keep the Preview tab active"
+            );
+            MarkdownPreviewView::change_selection_to_source_index(&editor, 0, false, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            preview.read_with(cx, |preview, _| preview.scroll_handle.offset().y),
+            px(0.),
+            "a second outline click must be able to navigate back to the first heading"
+        );
+        cx.update(|window, cx| {
+            let workspace = preview.read(cx).workspace.upgrade().unwrap();
+            workspace.update(cx, |workspace, cx| {
+                let buffer = cx.new(|cx| Buffer::local("unrelated document", cx));
+                let other_editor = cx.new(|cx| {
+                    Editor::for_buffer(buffer, Some(workspace.project().clone()), window, cx)
+                });
+                let pane = workspace.split_pane(
+                    workspace.active_pane().clone(),
+                    SplitDirection::Right,
+                    window,
+                    cx,
+                );
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(other_editor), true, true, None, window, cx);
+                });
+            });
+            panel_focus.focus(window, cx);
+            MarkdownPreviewView::change_selection_to_source_index(
+                &editor, target, false, window, cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            preview.read_with(cx, |preview, _| preview.scroll_handle.offset().y),
+            px(0.),
+            "background selection changes must not scroll an inactive document's preview"
+        );
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.buffer().read(cx).snapshot(cx).text(), contents);
+        });
     }
 
     #[gpui::test]
