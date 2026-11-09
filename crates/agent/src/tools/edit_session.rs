@@ -2,8 +2,7 @@ mod reindent;
 mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
-use super::tool_permissions::resolve_creatable_global_skill_path;
-use crate::{Thread, ToolCallEventStream};
+use crate::{GlobalSkillFiles, Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
 use agent_client_protocol::v2::schema as acp;
@@ -1176,45 +1175,48 @@ async fn resolve_global_skill_path_for_edit_session(
     context: &EditSessionContext,
     cx: &mut AsyncApp,
 ) -> Result<Option<PathBuf>, String> {
-    let fs = context
-        .project
-        .read_with(cx, |project, _cx| project.fs().clone());
-    let Some(abs_path) = resolve_creatable_global_skill_path(path, fs.as_ref()).await else {
+    let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&context.project, cx));
+    let Some(abs_path) = global_skill_files.resolve_creatable(path, cx).await else {
         return Ok(None);
     };
 
     match mode {
         EditSessionMode::Edit => {
-            let metadata = fs
-                .metadata(&abs_path)
+            let is_dir = global_skill_files
+                .is_dir(&abs_path, cx)
                 .await
                 .map_err(|e| format!("Can't edit file: {e}"))?
                 .ok_or_else(|| "Can't edit file: path not found".to_string())?;
-            if metadata.is_dir {
+            if is_dir {
                 return Err("Can't edit file: path is a directory".to_string());
             }
         }
         EditSessionMode::Write => {
-            if let Some(metadata) = fs
-                .metadata(&abs_path)
+            if let Some(is_dir) = global_skill_files
+                .is_dir(&abs_path, cx)
                 .await
                 .map_err(|e| format!("Can't write to file: {e}"))?
             {
-                if metadata.is_dir {
+                if is_dir {
                     return Err("Can't write to file: path is a directory".to_string());
                 }
             } else {
-                let parent_path = abs_path
-                    .parent()
+                // The skills are on a machine whose path style may differ
+                // from this one's, so the parent isn't `Path::parent`.
+                let path_style = context
+                    .project
+                    .read_with(cx, |project, cx| project.path_style(cx));
+                let parent_path = path_style
+                    .parent(&abs_path)
                     .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
-                let parent_metadata = fs
-                    .metadata(parent_path)
+                let parent_is_dir = global_skill_files
+                    .is_dir(parent_path, cx)
                     .await
                     .map_err(|e| format!("Can't create file: {e}"))?
                     .ok_or_else(|| {
                         "Can't create file: parent directory doesn't exist".to_string()
                     })?;
-                if !parent_metadata.is_dir {
+                if !parent_is_dir {
                     return Err("Can't create file: parent is not a directory".to_string());
                 }
             }

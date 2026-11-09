@@ -1,21 +1,22 @@
 use super::tool_permissions::{
     authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
-    resolve_global_skill_descendant_path, resolves_to_global_skills_dir, sensitive_settings_kind,
+    sensitive_settings_kind,
 };
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     authorize_with_sensitive_settings, decide_permission_for_path,
 };
 use action_log::ActionLog;
 use agent_client_protocol::v2::schema as acp;
 use agent_settings::AgentSettings;
+use agent_skills::GlobalSkillFileOperation;
 use futures::{FutureExt as _, SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -97,15 +98,20 @@ impl AgentTool for DeletePathTool {
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
-            if resolves_to_global_skills_dir(Path::new(&path), fs.as_ref()).await {
+            let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&project, cx));
+            if global_skill_files
+                .is_skills_dir(Path::new(&path), cx)
+                .await
+            {
                 return Err(
                     "Cannot delete the global agent skills directory itself. Delete a skill directory or file beneath it instead."
                         .to_string(),
                 );
             }
 
-            let global_skill_path =
-                resolve_global_skill_descendant_path(Path::new(&path), fs.as_ref()).await;
+            let global_skill_path = global_skill_files
+                .resolve_descendant(Path::new(&path), cx)
+                .await;
 
             let symlink_escape_target = project.read_with(cx, |project, cx| {
                 detect_symlink_escape(project, &path, &canonical_roots, cx)
@@ -159,28 +165,12 @@ impl AgentTool for DeletePathTool {
                 authorize.await.map_err(|e| e.to_string())?;
             }
 
-            if let Some(global_skill_path) = global_skill_path {
-                let metadata = fs
-                    .metadata(&global_skill_path)
-                    .await
-                    .map_err(|e| format!("Deleting {path}: {e}"))?
-                    .ok_or_else(|| format!("Deleting {path}: path not found"))?;
-
+            if global_skill_path.is_some() {
+                let delete = GlobalSkillFileOperation::Delete {
+                    path: PathBuf::from(&path),
+                };
                 futures::select! {
-                    result = async {
-                        if metadata.is_dir {
-                            fs.remove_dir(
-                                &global_skill_path,
-                                fs::RemoveOptions {
-                                    recursive: true,
-                                    ..fs::RemoveOptions::default()
-                                },
-                            )
-                            .await
-                        } else {
-                            fs.remove_file(&global_skill_path, fs::RemoveOptions::default()).await
-                        }
-                    }.fuse() => {
+                    result = global_skill_files.apply(delete, cx).fuse() => {
                         result.map_err(|e| format!("Deleting {path}: {e}"))?;
                     }
                     _ = event_stream.cancelled_by_user().fuse() => {

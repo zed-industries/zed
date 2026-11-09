@@ -1,9 +1,9 @@
 mod db;
+mod global_skills;
 mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
-mod remote_global_skills;
 mod sandboxing;
 mod templates;
 #[cfg(test)]
@@ -15,11 +15,11 @@ mod tools;
 
 use context_server::ContextServerId;
 pub use db::*;
+pub use global_skills::*;
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 use parking_lot::Mutex;
 pub use pattern_extraction::*;
-pub use remote_global_skills::*;
 pub use sandboxing::{
     ThreadSandbox, sandbox_worktree_writable_paths, settings_sandbox_policy,
     settings_thread_sandbox,
@@ -1637,26 +1637,20 @@ impl NativeAgent {
         let mut has_local_project = false;
 
         for (project_id, state) in &self.projects {
-            let is_remote = global_skills_are_remote(state.project.read(cx));
-            if is_remote {
-                remote_global_skills.insert(*project_id, Vec::new());
-            } else {
-                has_local_project = true;
-            }
+            let mut project_remote_global_skills =
+                global_skills_are_remote(state.project.read(cx)).then(Vec::new);
+            has_local_project |= project_remote_global_skills.is_none();
             for skill in state.skills.iter() {
                 match &skill.source {
                     SkillSource::BuiltIn => {}
-                    SkillSource::Global if is_remote => {
-                        remote_global_skills
-                            .entry(*project_id)
-                            .or_insert_with(Vec::new)
-                            .push(skill.clone());
-                    }
-                    SkillSource::Global => {
-                        if !seen_global {
-                            global_skills.push(skill.clone());
+                    SkillSource::Global => match &mut project_remote_global_skills {
+                        Some(remote_skills) => remote_skills.push(skill.clone()),
+                        None => {
+                            if !seen_global {
+                                global_skills.push(skill.clone());
+                            }
                         }
-                    }
+                    },
                     SkillSource::ProjectLocal {
                         worktree_id,
                         worktree_root_name,
@@ -1678,6 +1672,9 @@ impl NativeAgent {
             }
             if !global_skills.is_empty() {
                 seen_global = true;
+            }
+            if let Some(remote_skills) = project_remote_global_skills {
+                remote_global_skills.insert(*project_id, remote_skills);
             }
         }
 
@@ -4317,15 +4314,9 @@ pub fn skill_body_resolver_for_project(
         SkillSource::Global
             if project.read_with(cx, |project, _| global_skills_are_remote(project)) =>
         {
-            let project = project.clone();
+            let global_skill_files = GlobalSkillFiles::Remote(project.clone());
             cx.spawn(async move |cx| {
-                let buffer = project
-                    .update(cx, |project, cx| {
-                        project.open_local_buffer(&skill.skill_file_path, cx)
-                    })
-                    .await?;
-                let content =
-                    cx.update(|cx| buffer.read(cx).as_text_snapshot().as_rope().to_string());
+                let content = global_skill_files.load(&skill.skill_file_path, cx).await?;
                 read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
             })
         }
@@ -8153,9 +8144,7 @@ mod internal_tests {
     }
 
     #[gpui::test]
-    async fn test_project_context_keeps_worktree_readded_during_rebuild(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_project_context_keeps_worktree_readded_during_rebuild(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/a", json!({})).await;
@@ -8203,8 +8192,9 @@ mod internal_tests {
             .await;
         let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
         let (_agent, _acp_thread) = agent_with_project_session(fs.clone(), &project, cx).await;
-        let worktree_count =
-            |cx: &mut TestAppContext| project.read_with(cx, |project, cx| project.worktrees(cx).count());
+        let worktree_count = |cx: &mut TestAppContext| {
+            project.read_with(cx, |project, cx| project.worktrees(cx).count())
+        };
         let read_dir_count = fs.read_dir_call_count();
 
         let buffer = project
