@@ -145,6 +145,12 @@ def parse(log):
             value = float(match[2]) * (1e-3 if match[3] else 1)
             results.setdefault(report, {})[f"{section} {match[1]}"] = value
             continue
+        match = re.match(r"^  foreground instructions per iteration: median ([\d.]+) ([KMG]?) ?instructions",
+                         line)
+        if match and report:
+            scale = {"": 1, "K": 1e3, "M": 1e6, "G": 1e9}[match[2]]
+            results.setdefault(report, {})["foreground instructions"] = float(match[1]) * scale
+            continue
         match = re.match(r"^zed bench frames: (\S+): (\d+) sessions, (\d+) draws", line)
         if match:
             name = match[1]
@@ -164,6 +170,10 @@ def main():
                         help="hard timeout for each suite run, at most 300 seconds")
     parser.add_argument("--build-timeout", type=int, default=3600)
     parser.add_argument("--cache", type=Path)
+    parser.add_argument("--baseline-env", action="append", default=[], metavar="NAME=VALUE",
+                        help="environment for baseline runs, e.g. GPUI_LAYOUT_CACHE=0")
+    parser.add_argument("--candidate-env", action="append", default=[], metavar="NAME=VALUE",
+                        help="environment for candidate runs")
     parser.add_argument("--binaries", nargs=2, type=Path, metavar=("BASELINE", "CANDIDATE"),
                         help="prebuilt zed_benchmarks binaries; skips building")
     args = parser.parse_args()
@@ -187,14 +197,18 @@ def main():
     # Criterion binaries run in test mode unless given --bench.
     command_tail = ["--bench", "--noplot", *filter_arguments]
     for index, (_, binary) in enumerate(revisions):
+        extra = args.baseline_env if index == 0 else args.candidate_env
         run([str(binary), "--test", *filter_arguments], cwd=output,
-            log=output / f"smoke-{index}.log", timeout=args.timeout)
+            log=output / f"smoke-{index}.log", timeout=args.timeout,
+            environment=dict(os.environ, **dict(item.split("=", 1) for item in extra)))
 
     samples = [[], []]
     for repetition in range(args.runs):
         for index in ([0, 1] if repetition % 2 == 0 else [1, 0]):
             log = output / f"run-{repetition}-{index}.log"
-            environment = dict(os.environ, CRITERION_HOME=str(output / f"criterion-{index}"))
+            extra = args.baseline_env if index == 0 else args.candidate_env
+            environment = dict(os.environ, CRITERION_HOME=str(output / f"criterion-{index}"),
+                               **dict(item.split("=", 1) for item in extra))
             elapsed = run([str(revisions[index][1]), *command_tail], cwd=output, log=log,
                           timeout=args.timeout, environment=environment)
             print(f"run {repetition} {'baseline' if index == 0 else 'candidate'}: {elapsed:.1f}s",
@@ -207,8 +221,8 @@ def main():
         return statistics.median(values) if values else None
 
     benchmarks = sorted(set().union(*(run.keys() for side in samples for run in side)))
-    metrics = ["criterion", "window draw p50", "window draw p95", "window dirty-to-draw p95",
-               "foreground executor work total", "draws/session"]
+    metrics = ["criterion", "foreground instructions", "window draw p50", "window draw p95",
+               "window dirty-to-draw p95", "foreground executor work total", "draws/session"]
     summary = {}
     print(f"\nbaseline {revisions[0][0][:12]} vs candidate {revisions[1][0][:12]}, "
           f"median of {args.runs} runs each")
@@ -219,13 +233,15 @@ def main():
             if baseline is None or candidate is None:
                 continue
             change = (candidate / baseline - 1) * 100 if baseline else float("nan")
-            scale, unit = (1, "") if metric == "draws/session" else (1e3, "ms")
+            scale, unit = {"draws/session": (1, ""), "foreground instructions": (1e-6, "M")}.get(
+                metric, (1e3, "ms"))
             print(f"  {metric:32} {baseline * scale:10.3f}{unit:2} {candidate * scale:10.3f}{unit:2} "
                   f"{change:+7.1f}%")
             summary.setdefault(benchmark, {})[metric] = [baseline, candidate]
     (output / "summary.json").write_text(json.dumps({
         "revisions": [commit for commit, _ in revisions],
         "runs": args.runs,
+        "environments": [args.baseline_env, args.candidate_env],
         "results": summary,
         "samples": samples,
     }, indent=2) + "\n")
