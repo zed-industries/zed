@@ -1,6 +1,6 @@
 use crate::{
-    AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
-    Style, Window, size,
+    AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Rems,
+    Size, Style, Window, size,
     util::{
         ceil_to_device_pixel, round_half_toward_zero, round_stroke_to_device_pixel,
         round_to_device_pixel,
@@ -851,71 +851,270 @@ trait ToTaffy<Output> {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> Output;
 }
 
-// Conversion reads the copied fields, not `Style`, so a field can't affect layout
-// without also being compared to decide whether to convert again.
-macro_rules! layout_style {
-    ($($field:ident: $field_type:ty),* $(,)?) => {
-        /// The fields of a [`Style`] that affect layout, and what their lengths are
-        /// resolved against.
-        #[derive(Clone, Debug)]
-        struct LayoutStyle {
-            rem_size: Pixels,
-            scale_factor: f32,
-            $($field: $field_type,)*
-        }
-
-        impl LayoutStyle {
-            fn new(style: &Style, rem_size: Pixels, scale_factor: f32) -> Self {
-                Self {
-                    rem_size,
-                    scale_factor,
-                    $($field: Clone::clone(&style.$field),)*
-                }
-            }
-
-            fn matches(&self, style: &Style, rem_size: Pixels, scale_factor: f32) -> bool {
-                self.rem_size == rem_size
-                    && self.scale_factor == scale_factor
-                    $(&& self.$field == style.$field)*
-            }
-        }
-    };
+/// How a packed length's value is interpreted.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[repr(u8)]
+enum LengthUnit {
+    #[default]
+    Auto,
+    Pixels,
+    Rems,
+    Fraction,
 }
 
-layout_style! {
+/// A length type that can be split into a unit and the bits of its value.
+trait PackLength: Copy {
+    fn pack(self) -> (LengthUnit, u32);
+    fn unpack(unit: LengthUnit, bits: u32) -> Self;
+}
+
+impl PackLength for AbsoluteLength {
+    fn pack(self) -> (LengthUnit, u32) {
+        match self {
+            AbsoluteLength::Pixels(pixels) => (LengthUnit::Pixels, pixels.0.to_bits()),
+            AbsoluteLength::Rems(rems) => (LengthUnit::Rems, rems.0.to_bits()),
+        }
+    }
+
+    fn unpack(unit: LengthUnit, bits: u32) -> Self {
+        let value = f32::from_bits(bits);
+        match unit {
+            LengthUnit::Rems => AbsoluteLength::Rems(Rems(value)),
+            // Only pixels remain, as absolute lengths are never packed with other units.
+            LengthUnit::Pixels | LengthUnit::Fraction | LengthUnit::Auto => {
+                AbsoluteLength::Pixels(Pixels(value))
+            }
+        }
+    }
+}
+
+impl PackLength for DefiniteLength {
+    fn pack(self) -> (LengthUnit, u32) {
+        match self {
+            DefiniteLength::Absolute(length) => length.pack(),
+            DefiniteLength::Fraction(fraction) => (LengthUnit::Fraction, fraction.to_bits()),
+        }
+    }
+
+    fn unpack(unit: LengthUnit, bits: u32) -> Self {
+        match unit {
+            LengthUnit::Fraction => DefiniteLength::Fraction(f32::from_bits(bits)),
+            _ => DefiniteLength::Absolute(AbsoluteLength::unpack(unit, bits)),
+        }
+    }
+}
+
+impl PackLength for Length {
+    fn pack(self) -> (LengthUnit, u32) {
+        match self {
+            Length::Definite(length) => length.pack(),
+            Length::Auto => (LengthUnit::Auto, 0),
+        }
+    }
+
+    fn unpack(unit: LengthUnit, bits: u32) -> Self {
+        match unit {
+            LengthUnit::Auto => Length::Auto,
+            _ => Length::Definite(DefiniteLength::unpack(unit, bits)),
+        }
+    }
+}
+
+fn edges_array<T: Clone + Debug + Default + PartialEq>(edges: &Edges<T>) -> [T; 4] {
+    [
+        edges.top.clone(),
+        edges.right.clone(),
+        edges.bottom.clone(),
+        edges.left.clone(),
+    ]
+}
+
+fn size_array<T: Clone + Debug + Default + PartialEq>(size: &Size<T>) -> [T; 2] {
+    [size.width.clone(), size.height.clone()]
+}
+
+fn pack_lengths<T: PackLength, const N: usize>(lengths: [T; N]) -> ([LengthUnit; N], [u32; N]) {
+    let mut units = [LengthUnit::Auto; N];
+    let mut bits = [0; N];
+    for (index, length) in lengths.into_iter().enumerate() {
+        (units[index], bits[index]) = length.pack();
+    }
+    (units, bits)
+}
+
+fn lengths_match<T: PackLength, const N: usize>(
+    units: &[LengthUnit; N],
+    bits: &[u32; N],
+    lengths: [T; N],
+) -> bool {
+    lengths
+        .into_iter()
+        .enumerate()
+        .all(|(index, length)| length.pack() == (units[index], bits[index]))
+}
+
+fn unpack_lengths<T: PackLength, const N: usize>(units: [LengthUnit; N], bits: [u32; N]) -> [T; N] {
+    std::array::from_fn(|index| T::unpack(units[index], bits[index]))
+}
+
+fn unpack_size<T: PackLength + Clone + Debug + Default + PartialEq>(
+    units: [LengthUnit; 2],
+    bits: [u32; 2],
+) -> Size<T> {
+    let [width, height] = unpack_lengths(units, bits);
+    Size { width, height }
+}
+
+fn unpack_edges<T: PackLength + Clone + Debug + Default + PartialEq>(
+    units: [LengthUnit; 4],
+    bits: [u32; 4],
+) -> Edges<T> {
+    let [top, right, bottom, left] = unpack_lengths(units, bits);
+    Edges {
+        top,
+        right,
+        bottom,
+        left,
+    }
+}
+
+/// The lengths of a [`LayoutStyle`], instantiated once for their units and once for their
+/// values, as a length enum would pad each one to twice the size of its value.
+#[derive(Clone, Copy, Debug, Default)]
+struct LayoutLengths<T> {
+    inset: [T; 4],
+    margin: [T; 4],
+    padding: [T; 4],
+    border_widths: [T; 4],
+    size: [T; 2],
+    min_size: [T; 2],
+    max_size: [T; 2],
+    gap: [T; 2],
+    scrollbar_width: [T; 1],
+    flex_basis: [T; 1],
+}
+
+/// The fields of a [`Style`] that affect layout, and what their lengths are resolved
+/// against, packed to keep the copy stored for every layout node small.
+///
+/// Floats are compared by their bits, so styles are equal only if they convert to identical
+/// Taffy styles. Conversion reads only these fields, not `Style`, so a field can't affect
+/// layout without also being compared to decide whether to convert again.
+#[derive(Clone, Debug)]
+struct LayoutStyle {
+    rem_size: u32,
+    scale_factor: u32,
+    aspect_ratio: u32,
+    flex_grow: u32,
+    flex_shrink: u32,
+    length_bits: LayoutLengths<u32>,
+    grid_location: Option<crate::GridLocation>,
+    grid_rows: Option<GridTemplate>,
+    grid_cols: Option<GridTemplate>,
+    length_units: LayoutLengths<LengthUnit>,
+    has_aspect_ratio: bool,
     display: crate::Display,
     overflow: Point<crate::Overflow>,
-    scrollbar_width: AbsoluteLength,
     position: crate::Position,
-    inset: Edges<Length>,
-    size: Size<Length>,
-    min_size: Size<Length>,
-    max_size: Size<Length>,
-    aspect_ratio: Option<f32>,
-    margin: Edges<Length>,
-    padding: Edges<DefiniteLength>,
-    border_widths: Edges<AbsoluteLength>,
     align_items: Option<crate::AlignItems>,
     align_self: Option<crate::AlignSelf>,
     align_content: Option<crate::AlignContent>,
     justify_content: Option<crate::JustifyContent>,
-    gap: Size<DefiniteLength>,
     flex_direction: crate::FlexDirection,
     flex_wrap: crate::FlexWrap,
-    flex_basis: Length,
-    flex_grow: f32,
-    flex_shrink: f32,
-    grid_rows: Option<GridTemplate>,
-    grid_cols: Option<GridTemplate>,
-    grid_location: Option<crate::GridLocation>,
 }
 
 impl LayoutStyle {
+    fn new(style: &Style, rem_size: Pixels, scale_factor: f32) -> Self {
+        let mut units = LayoutLengths::default();
+        let mut bits = LayoutLengths::default();
+        (units.inset, bits.inset) = pack_lengths(edges_array(&style.inset));
+        (units.margin, bits.margin) = pack_lengths(edges_array(&style.margin));
+        (units.padding, bits.padding) = pack_lengths(edges_array(&style.padding));
+        (units.border_widths, bits.border_widths) = pack_lengths(edges_array(&style.border_widths));
+        (units.size, bits.size) = pack_lengths(size_array(&style.size));
+        (units.min_size, bits.min_size) = pack_lengths(size_array(&style.min_size));
+        (units.max_size, bits.max_size) = pack_lengths(size_array(&style.max_size));
+        (units.gap, bits.gap) = pack_lengths(size_array(&style.gap));
+        (units.scrollbar_width, bits.scrollbar_width) = pack_lengths([style.scrollbar_width]);
+        (units.flex_basis, bits.flex_basis) = pack_lengths([style.flex_basis]);
+
+        Self {
+            rem_size: rem_size.0.to_bits(),
+            scale_factor: scale_factor.to_bits(),
+            aspect_ratio: style.aspect_ratio.map_or(0, f32::to_bits),
+            has_aspect_ratio: style.aspect_ratio.is_some(),
+            flex_grow: style.flex_grow.to_bits(),
+            flex_shrink: style.flex_shrink.to_bits(),
+            length_bits: bits,
+            length_units: units,
+            grid_location: style.grid_location.clone(),
+            grid_rows: style.grid_rows,
+            grid_cols: style.grid_cols,
+            display: style.display,
+            overflow: style.overflow,
+            position: style.position,
+            align_items: style.align_items,
+            align_self: style.align_self,
+            align_content: style.align_content,
+            justify_content: style.justify_content,
+            flex_direction: style.flex_direction,
+            flex_wrap: style.flex_wrap,
+        }
+    }
+
+    /// Whether the style would pack to this one, checked without packing it.
+    fn matches(&self, style: &Style, rem_size: Pixels, scale_factor: f32) -> bool {
+        let units = &self.length_units;
+        let bits = &self.length_bits;
+        self.rem_size == rem_size.0.to_bits()
+            && self.scale_factor == scale_factor.to_bits()
+            && self.display == style.display
+            && self.overflow == style.overflow
+            && self.position == style.position
+            && self.align_items == style.align_items
+            && self.align_self == style.align_self
+            && self.align_content == style.align_content
+            && self.justify_content == style.justify_content
+            && self.flex_direction == style.flex_direction
+            && self.flex_wrap == style.flex_wrap
+            && self.has_aspect_ratio == style.aspect_ratio.is_some()
+            && self.aspect_ratio == style.aspect_ratio.map_or(0, f32::to_bits)
+            && self.flex_grow == style.flex_grow.to_bits()
+            && self.flex_shrink == style.flex_shrink.to_bits()
+            && lengths_match(&units.size, &bits.size, size_array(&style.size))
+            && lengths_match(&units.min_size, &bits.min_size, size_array(&style.min_size))
+            && lengths_match(&units.max_size, &bits.max_size, size_array(&style.max_size))
+            && lengths_match(&units.flex_basis, &bits.flex_basis, [style.flex_basis])
+            && lengths_match(&units.padding, &bits.padding, edges_array(&style.padding))
+            && lengths_match(&units.margin, &bits.margin, edges_array(&style.margin))
+            && lengths_match(&units.gap, &bits.gap, size_array(&style.gap))
+            && lengths_match(&units.inset, &bits.inset, edges_array(&style.inset))
+            && lengths_match(
+                &units.border_widths,
+                &bits.border_widths,
+                edges_array(&style.border_widths),
+            )
+            && lengths_match(
+                &units.scrollbar_width,
+                &bits.scrollbar_width,
+                [style.scrollbar_width],
+            )
+            && self.grid_rows == style.grid_rows
+            && self.grid_cols == style.grid_cols
+            && self.grid_location == style.grid_location
+    }
+
     fn to_taffy(&self) -> taffy::style::Style {
         use taffy::style_helpers::{fr, length, minmax, repeat};
 
-        let rem_size = self.rem_size;
-        let scale_factor = self.scale_factor;
+        let rem_size = Pixels(f32::from_bits(self.rem_size));
+        let scale_factor = f32::from_bits(self.scale_factor);
+        let units = &self.length_units;
+        let bits = &self.length_bits;
+        let [scrollbar_width] =
+            unpack_lengths::<AbsoluteLength, 1>(units.scrollbar_width, bits.scrollbar_width);
+        let [flex_basis] = unpack_lengths::<Length, 1>(units.flex_basis, bits.flex_basis);
 
         fn to_grid_line(
             placement: &Range<crate::GridPlacement>,
@@ -960,26 +1159,37 @@ impl LayoutStyle {
         taffy::style::Style {
             display: self.display.into(),
             overflow: self.overflow.into(),
-            scrollbar_width: self.scrollbar_width.to_taffy(rem_size, scale_factor),
+            scrollbar_width: scrollbar_width.to_taffy(rem_size, scale_factor),
             position: self.position.into(),
-            inset: self.inset.to_taffy(rem_size, scale_factor),
-            size: self.size.to_taffy(rem_size, scale_factor),
-            min_size: self.min_size.to_taffy(rem_size, scale_factor),
-            max_size: self.max_size.to_taffy(rem_size, scale_factor),
-            aspect_ratio: self.aspect_ratio,
-            margin: self.margin.to_taffy(rem_size, scale_factor),
-            padding: self.padding.to_taffy(rem_size, scale_factor),
-            border: border_widths_to_taffy(&self.border_widths, rem_size, scale_factor),
+            inset: unpack_edges::<Length>(units.inset, bits.inset).to_taffy(rem_size, scale_factor),
+            size: unpack_size::<Length>(units.size, bits.size).to_taffy(rem_size, scale_factor),
+            min_size: unpack_size::<Length>(units.min_size, bits.min_size)
+                .to_taffy(rem_size, scale_factor),
+            max_size: unpack_size::<Length>(units.max_size, bits.max_size)
+                .to_taffy(rem_size, scale_factor),
+            aspect_ratio: self
+                .has_aspect_ratio
+                .then(|| f32::from_bits(self.aspect_ratio)),
+            margin: unpack_edges::<Length>(units.margin, bits.margin)
+                .to_taffy(rem_size, scale_factor),
+            padding: unpack_edges::<DefiniteLength>(units.padding, bits.padding)
+                .to_taffy(rem_size, scale_factor),
+            border: border_widths_to_taffy(
+                &unpack_edges::<AbsoluteLength>(units.border_widths, bits.border_widths),
+                rem_size,
+                scale_factor,
+            ),
             align_items: self.align_items.map(Into::into).unwrap_or_default(),
             align_self: self.align_self.map(|x| x.into()),
             align_content: self.align_content.map(Into::into).unwrap_or_default(),
             justify_content: self.justify_content.map(Into::into).unwrap_or_default(),
-            gap: self.gap.to_taffy(rem_size, scale_factor),
+            gap: unpack_size::<DefiniteLength>(units.gap, bits.gap)
+                .to_taffy(rem_size, scale_factor),
             flex_direction: self.flex_direction.into(),
             flex_wrap: self.flex_wrap.into(),
-            flex_basis: self.flex_basis.to_taffy(rem_size, scale_factor),
-            flex_grow: self.flex_grow,
-            flex_shrink: self.flex_shrink,
+            flex_basis: flex_basis.to_taffy(rem_size, scale_factor),
+            flex_grow: f32::from_bits(self.flex_grow),
+            flex_shrink: f32::from_bits(self.flex_shrink),
             grid_template_rows: to_grid_repeat(&self.grid_rows),
             grid_template_columns: to_grid_repeat(&self.grid_cols),
             grid_row: self
