@@ -1,5 +1,5 @@
 use crate::{
-    Thread, ToolCallEventStream, ToolPermissionContext, ToolPermissionDecision,
+    GlobalSkillFiles, Thread, ToolCallEventStream, ToolPermissionContext, ToolPermissionDecision,
     decide_permission_for_path,
 };
 use agent_client_protocol::v2::schema as acp;
@@ -512,6 +512,19 @@ pub fn authorize_file_edit(
             Some(SensitiveSettingsKind::AgentSkills)
         } else {
             sensitive_settings_kind(&path_owned, &canonical_roots, fs.as_ref()).await
+        };
+        // Only the machine the skills are on can resolve a path into them, so
+        // this machine's checks alone can miss a remote one.
+        let settings_kind = match settings_kind {
+            Some(settings_kind) => Some(settings_kind),
+            None => {
+                let global_skill_files =
+                    cx.update(|cx| GlobalSkillFiles::for_project(&project_entity, cx));
+                global_skill_files
+                    .resolve_creatable(&path_owned, cx)
+                    .await
+                    .map(|_| SensitiveSettingsKind::AgentSkills)
+            }
         };
 
         let is_sensitive = settings_kind.is_some();

@@ -712,6 +712,14 @@ impl NativeAgent {
                 // Flush thread content on quit so an in-flight async save
                 // can't leave a thread orphaned ("no thread found with ID").
                 cx.on_app_quit(Self::flush_threads_on_quit),
+                // A project can be here without a session, so closing sessions
+                // doesn't remove every project's skills from the index.
+                cx.on_release(|this, cx| {
+                    let index = cx.default_global::<SkillIndex>();
+                    for project_id in this.projects.keys() {
+                        index.remote_global_skills.remove(project_id);
+                    }
+                }),
             ];
 
             if !cx.has_global::<SkillIndex>() {

@@ -5716,6 +5716,194 @@ async fn test_agent_write_tools_reach_remote_global_skill_files(
 }
 
 #[gpui::test]
+async fn test_always_allowed_tools_still_ask_before_touching_remote_global_skills(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let project_root = Path::new(path!("/project"));
+    let test = RemoteSkillsTest::new(project_root, &["remote-skill"], cx, server_cx).await;
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{ "agent": { "tool_permissions": { "default": "allow" } } }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+    });
+    // Only the remote, which resolves `..`, can tell these are in a skill.
+    let indirect_skills_dir = test
+        .skills_dir
+        .parent()
+        .unwrap()
+        .join("other")
+        .join("..")
+        .join("skills");
+    let indirect_path = |path: &str| {
+        indirect_skills_dir
+            .join(path)
+            .to_string_lossy()
+            .into_owned()
+    };
+    let skill_dir = indirect_skills_dir.join("remote-skill");
+
+    let create_directory = Arc::new(CreateDirectoryTool::new(test.project.clone()));
+    run_tool_allowing_skill_access(
+        create_directory,
+        serde_json::from_value(json!({ "path": indirect_path("new-skill") })).unwrap(),
+        cx,
+    )
+    .await
+    .unwrap();
+
+    let session_id = test
+        .acp_thread
+        .read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = cx
+        .update(|cx| test.connection.thread(&session_id, cx))
+        .unwrap();
+    let action_log = cx.new(|_| action_log::ActionLog::new(test.project.clone()));
+    let language_registry = test
+        .project
+        .read_with(cx, |project, _| project.languages().clone());
+    let write_file = Arc::new(WriteFileTool::new(
+        test.project.clone(),
+        thread.downgrade(),
+        action_log.clone(),
+        language_registry,
+    ));
+    run_tool_allowing_skill_access(
+        write_file,
+        WriteFileToolInput {
+            path: PathBuf::from(indirect_path("new-skill/SKILL.md")),
+            content: "new skill\n".into(),
+        },
+        cx,
+    )
+    .await
+    .unwrap();
+
+    let copy_path = Arc::new(CopyPathTool::new(test.project.clone()));
+    run_tool_allowing_skill_access(
+        copy_path,
+        CopyPathToolInput {
+            source_path: project_root.to_string_lossy().into_owned(),
+            destination_path: indirect_path("new-skill/copied"),
+        },
+        cx,
+    )
+    .await
+    .unwrap();
+
+    let move_path = Arc::new(MovePathTool::new(test.project.clone()));
+    run_tool_allowing_skill_access(
+        move_path,
+        MovePathToolInput {
+            source_path: indirect_path("new-skill"),
+            destination_path: indirect_path("renamed"),
+        },
+        cx,
+    )
+    .await
+    .unwrap();
+    assert!(
+        test.server_fs
+            .is_file(&test.skills_dir.join("renamed").join("SKILL.md"))
+            .await
+    );
+
+    let delete_path = Arc::new(DeletePathTool::new(test.project.clone(), action_log));
+    let (event_stream, mut events) = ToolCallEventStream::test();
+    let task = cx.update(|cx| {
+        delete_path.run(
+            ToolInput::resolved(DeletePathToolInput {
+                path: skill_dir.to_string_lossy().into_owned(),
+            }),
+            event_stream,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert!(
+        test.server_fs
+            .is_dir(&test.skills_dir.join("remote-skill"))
+            .await,
+        "the skill must not be deleted before the user allows it"
+    );
+    events
+        .expect_authorization()
+        .await
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            agent_client_protocol::v2::schema::PermissionOptionId::new("allow"),
+            agent_client_protocol::v2::schema::PermissionOptionKind::AllowOnce,
+        ))
+        .unwrap();
+    task.await.unwrap();
+    assert!(
+        !test
+            .server_fs
+            .is_dir(&test.skills_dir.join("remote-skill"))
+            .await
+    );
+}
+
+#[gpui::test]
+async fn test_remote_global_skills_leave_the_index_when_their_agent_is_dropped(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let project_root = Path::new(path!("/project"));
+    let test = RemoteSkillsTest::new(project_root, &["remote-skill"], cx, server_cx).await;
+    let project_id = test.project.entity_id();
+
+    // A second agent that lists the project's skills without a session, as
+    // the settings page's refresh does while an external agent is selected.
+    let local_fs = test
+        .project
+        .read_with(cx, |project, _| project.fs().clone());
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), local_fs, cx));
+    let connection = NativeAgentConnection(agent.clone());
+    let RemoteSkillsTest {
+        project,
+        agent: session_agent,
+        connection: session_connection,
+        acp_thread,
+        ..
+    } = test;
+    drop((session_agent, session_connection, acp_thread));
+    cx.update(|cx| {
+        cx.default_global::<SkillIndex>()
+            .remote_global_skills
+            .clear()
+    });
+    cx.update(|cx| connection.refresh_skills_for_project(project.clone(), cx));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(
+            cx.global::<SkillIndex>()
+                .remote_global_skills
+                .contains_key(&project_id)
+        );
+    });
+
+    drop((agent, connection));
+    // Dropped entities are only freed when effects are next flushed.
+    cx.update(|_| {});
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(
+            !cx.global::<SkillIndex>()
+                .remote_global_skills
+                .contains_key(&project_id),
+            "a dropped agent's remote skills must leave the index"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_remote_global_skill_symlinks_cant_reach_outside_the_skill(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
