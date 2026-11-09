@@ -976,7 +976,7 @@ actions!(
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct GoToNextDocumentHighlight {
-    /// Whether to wrap to the first highlight after the last highlight. Defaults to true.
+    /// Whether to wrap to the first highlight after the last highlight. Defaults to `true`.
     #[serde(default = "default_true")]
     pub wrap: bool,
 }
@@ -992,7 +992,7 @@ impl Default for GoToNextDocumentHighlight {
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct GoToPreviousDocumentHighlight {
-    /// Whether to wrap to the last highlight before the first highlight. Defaults to true.
+    /// Whether to wrap to the last highlight before the first highlight. Defaults to `true`.
     #[serde(default = "default_true")]
     pub wrap: bool,
 }
