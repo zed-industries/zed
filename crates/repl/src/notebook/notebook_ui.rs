@@ -1944,9 +1944,9 @@ impl Item for NotebookEditor {
             }
             let file_content = serde_json::to_string(&json)?;
 
-            let notebook = upgrade_notebook(
-                nbformat::parse_notebook(&file_content).context("Failed to parse notebook")?,
-            )?;
+            let notebook = nbformat::parse_notebook(&file_content)
+                .context("Failed to parse notebook")
+                .and_then(upgrade_notebook)?;
 
             this.update_in(cx, |this, window, cx| {
                 let mut cell_order = vec![];
