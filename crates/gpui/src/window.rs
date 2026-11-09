@@ -5519,10 +5519,13 @@ impl Window {
         let rem_size = self.rem_size();
         let scale_factor = self.scale_factor();
         let scope = self.element_id_stack.hash();
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .request_measure(scope, style, rem_size, scale_factor, measure)
+        self.layout_engine.as_mut().unwrap().request_measure(
+            scope,
+            style,
+            rem_size,
+            scale_factor,
+            measure,
+        )
     }
 
     /// Lays out a `.cached()` view's contents in `f`, keeping their layout nodes apart from
@@ -5530,10 +5533,7 @@ impl Window {
     /// frame. The view's element ID must be on the stack.
     pub(crate) fn with_cached_view_layout<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         let key = self.element_id_stack.hash();
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .begin_layout_owner(key);
+        self.layout_engine.as_mut().unwrap().begin_layout_owner(key);
         let result = f(self);
         self.layout_engine.as_mut().unwrap().end_layout_owner();
         result
@@ -5549,12 +5549,11 @@ impl Window {
             .retain_layout_owner(key);
     }
 
+    /// Drops the layout nodes kept from earlier frames, so the next frame builds its
+    /// layout tree from scratch.
     #[cfg(test)]
-    pub(crate) fn set_layout_cache_enabled(&mut self, enabled: bool) {
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .set_cache_enabled(enabled);
+    pub(crate) fn clear_layout_cache(&mut self) {
+        self.layout_engine.as_mut().unwrap().clear_layout_cache();
     }
 
     #[cfg(test)]

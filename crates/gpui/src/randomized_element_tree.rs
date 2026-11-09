@@ -2077,9 +2077,8 @@ mod tests {
             .with_entity_density(rng.random_range(0.0..0.5))
             .with_handler_density(0.2)
             .with_cached_views(rng.random_bool(0.3));
-        let [cached, uncached] = [true, false].map(|layout_cache| {
-            let window = cx.open_window(WINDOW_SIZE, move |window, cx| {
-                window.set_layout_cache_enabled(layout_cache);
+        let [cached, uncached] = [(); 2].map(|()| {
+            let window = cx.open_window(WINDOW_SIZE, move |_, cx| {
                 RandomizedElementTree::new_with_config(config, cx)
             });
             let root = window
@@ -2128,6 +2127,8 @@ mod tests {
                     _ => root.update(cx, |_, cx| cx.notify()),
                 }
             }
+            cx.update_window(uncached.0, |_, window, _| window.clear_layout_cache())
+                .expect("window should remain open");
             let [cached_frame, uncached_frame] =
                 [&cached, &uncached].map(|(window, _)| draw_window_with_hitboxes(*window, cx));
             assert_eq!(

@@ -9,7 +9,7 @@ use crate::{
 use collections::{FxHashMap, FxHashSet};
 use slotmap::{DefaultKey, KeyData, SecondaryMap, SlotMap};
 use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, ops::Range, sync::LazyLock};
+use std::{any::Any, fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
@@ -85,9 +85,8 @@ pub struct TaffyLayoutEngine {
     /// whenever its context is replaced.
     contexts: SecondaryMap<DefaultKey, NodeContext>,
     /// Keeps layout nodes alive from one frame to the next, so Taffy's layout cache can
-    /// skip subtrees whose styles and children didn't change. Without it, the tree is
-    /// rebuilt every frame.
-    cache: Option<LayoutCache>,
+    /// skip subtrees whose styles and children didn't change.
+    cache: LayoutCache,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
     absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
@@ -170,9 +169,6 @@ fn node_key(id: NodeId) -> DefaultKey {
     KeyData::from_ffi(id.into()).into()
 }
 
-static LAYOUT_CACHE_ENABLED: LazyLock<bool> =
-    LazyLock::new(|| std::env::var("GPUI_LAYOUT_CACHE").map_or(true, |value| value != "0"));
-
 #[cfg(test)]
 thread_local! {
     static MEASUREMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -187,7 +183,7 @@ impl TaffyLayoutEngine {
         TaffyLayoutEngine {
             taffy,
             contexts: SecondaryMap::new(),
-            cache: LAYOUT_CACHE_ENABLED.then(LayoutCache::default),
+            cache: LayoutCache::default(),
             absolute_layout_bounds: FxHashMap::default(),
             absolute_outer_origins: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
@@ -195,11 +191,13 @@ impl TaffyLayoutEngine {
         }
     }
 
+    /// Drops every layout node kept from earlier frames, so the next frame builds its
+    /// tree from scratch.
     #[cfg(test)]
-    pub(crate) fn set_cache_enabled(&mut self, enabled: bool) {
+    pub(crate) fn clear_layout_cache(&mut self) {
         self.taffy.clear();
         self.contexts.clear();
-        self.cache = enabled.then(LayoutCache::default);
+        self.cache = LayoutCache::default();
     }
 
     #[cfg(test)]
@@ -209,12 +207,8 @@ impl TaffyLayoutEngine {
 
     /// Ends the frame: nodes that weren't requested during it are evicted.
     pub fn clear(&mut self) {
-        if let Some(cache) = self.cache.as_mut() {
-            cache.evict_unrequested(&mut self.taffy, &mut self.contexts);
-        } else {
-            self.taffy.clear();
-            self.contexts.clear();
-        }
+        self.cache
+            .evict_unrequested(&mut self.taffy, &mut self.contexts);
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
         self.computed_layouts.clear();
@@ -223,23 +217,17 @@ impl TaffyLayoutEngine {
     /// Requests the layout nodes of a `.cached()` view's contents, identified by `key`,
     /// until [`Self::end_layout_owner`].
     pub(crate) fn begin_layout_owner(&mut self, key: u64) {
-        if let Some(cache) = self.cache.as_mut() {
-            cache.begin_owner(key);
-        }
+        self.cache.begin_owner(key);
     }
 
     pub(crate) fn end_layout_owner(&mut self) {
-        if let Some(cache) = self.cache.as_mut() {
-            cache.end_owner();
-        }
+        self.cache.end_owner();
     }
 
     /// Keeps the layout nodes of a `.cached()` view that replays its last frame, as
     /// they were, until it is laid out again.
     pub(crate) fn retain_layout_owner(&mut self, key: u64) {
-        if let Some(cache) = self.cache.as_mut() {
-            cache.retain_owner(key);
-        }
+        self.cache.retain_owner(key);
     }
 
     pub fn request_layout(
@@ -302,19 +290,7 @@ impl TaffyLayoutEngine {
         let children = LayoutId::to_taffy_slice(children);
         let taffy = &mut self.taffy;
         let contexts = &mut self.contexts;
-        let Some(cache) = self.cache.as_mut() else {
-            let style = LayoutStyle::new(style, rem_size, scale_factor).to_taffy();
-            let id = if children.is_empty() {
-                taffy.new_leaf(style)
-            } else {
-                taffy.new_with_children(style, children)
-            }
-            .expect(EXPECT_MESSAGE);
-            if let Some(context) = context {
-                contexts.insert(node_key(id), context);
-            }
-            return id.into();
-        };
+        let cache = &mut self.cache;
 
         let frame = cache.frame;
         let scope = cache.owners[cache.current_owner]
@@ -417,11 +393,7 @@ impl TaffyLayoutEngine {
         }
         // The next request for this node must restore its style, unless it is stretched
         // again; it may not be a root by then.
-        if let Some(node) = self
-            .cache
-            .as_mut()
-            .and_then(|cache| cache.nodes.get_mut(node_key(id.0)))
-        {
+        if let Some(node) = self.cache.nodes.get_mut(node_key(id.0)) {
             node.stretched = true;
         }
         let mut style = style.clone();
@@ -505,8 +477,8 @@ impl TaffyLayoutEngine {
         // A node computed as a root may still be attached to a parent from an earlier
         // frame that no element requested in this one. Its layout must not be relative to
         // that parent.
-        if let Some(cache) = self.cache.as_ref()
-            && let Some(parent) = self.taffy.parent(id.0)
+        let cache = &self.cache;
+        if let Some(parent) = self.taffy.parent(id.0)
             && cache
                 .nodes
                 .get(node_key(parent))
@@ -712,10 +684,12 @@ impl TaffyLayoutEngine {
 impl LayoutCache {
     fn begin_owner(&mut self, key: u64) {
         let owners = &mut self.owners;
-        let owner = *self
-            .owner_keys
-            .entry(key)
-            .or_insert_with(|| owners.insert(LayoutOwner { key, ..Default::default() }));
+        let owner = *self.owner_keys.entry(key).or_insert_with(|| {
+            owners.insert(LayoutOwner {
+                key,
+                ..Default::default()
+            })
+        });
         let parent = std::mem::replace(&mut self.current_owner, owner);
         self.owner_stack.push(parent);
         self.owners[parent].nested.push(owner);
@@ -1263,19 +1237,23 @@ mod tests {
     fn assert_frames_match_uncached(cx: &mut TestAppContext, frames: Vec<Frame>) -> Vec<usize> {
         let frames = Rc::new(frames);
         let frame = Rc::new(Cell::new(0));
-        let windows = [true, false].map(|layout_cache| {
+        let windows = [false, true].map(|rebuild| {
             let frames = frames.clone();
             let frame = frame.clone();
-            AnyWindowHandle::from(cx.open_window(size(px(800.), px(600.)), move |window, _| {
-                window.set_layout_cache_enabled(layout_cache);
-                FrameView { frame, frames }
-            }))
+            let window = cx.open_window(size(px(800.), px(600.)), move |_, _| FrameView {
+                frame,
+                frames,
+            });
+            (AnyWindowHandle::from(window), rebuild)
         });
         let mut text_measurements = Vec::new();
         for index in 0..frames.len() {
             frame.set(index);
-            let [cached, uncached] = windows.map(|window| {
+            let [cached, uncached] = windows.map(|(window, rebuild)| {
                 cx.update_window(window, |_, window, cx| {
+                    if rebuild {
+                        window.clear_layout_cache();
+                    }
                     let measured_before = MEASUREMENTS.get();
                     window.refresh();
                     window.draw(cx).clear(cx);
@@ -1336,11 +1314,10 @@ mod tests {
             _: &mut App,
         ) -> (LayoutId, ()) {
             let measured = self.0;
-            let layout_id = window.request_measured_layout(
-                Style::default(),
-                measured,
-                move |_, _, _, _| measured,
-            );
+            let layout_id =
+                window.request_measured_layout(Style::default(), measured, move |_, _, _, _| {
+                    measured
+                });
             (layout_id, ())
         }
 
@@ -1567,8 +1544,7 @@ mod tests {
 
     #[crate::test]
     fn evicted_nodes_do_not_accumulate_when_ids_change_every_frame(cx: &mut TestAppContext) {
-        let window = cx.open_window(size(px(800.), px(600.)), |window, cx| {
-            window.set_layout_cache_enabled(true);
+        let window = cx.open_window(size(px(800.), px(600.)), |_, cx| {
             RandomizedElementTree::new_with_config(RandomizedElementTreeConfig::new(3, 64), cx)
         });
         let root = window.root(cx).expect("window should have a root");
@@ -1605,20 +1581,18 @@ mod tests {
 
     impl Render for CachedViewParent {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div()
-                .flex()
-                .child(div().size(px(10.)))
-                .child(self.child.clone().cached(crate::StyleRefinement::default().size_full()))
+            div().flex().child(div().size(px(10.))).child(
+                self.child
+                    .clone()
+                    .cached(crate::StyleRefinement::default().size_full()),
+            )
         }
     }
 
     #[crate::test]
     fn cached_views_keep_their_layout_while_replaying(cx: &mut TestAppContext) {
-        let window = cx.open_window(size(px(800.), px(600.)), |window, cx| {
-            window.set_layout_cache_enabled(true);
-            CachedViewParent {
-                child: cx.new(|_| CachedText),
-            }
+        let window = cx.open_window(size(px(800.), px(600.)), |_, cx| CachedViewParent {
+            child: cx.new(|_| CachedText),
         });
         let parent = window.root(cx).expect("window should have a root");
         let child = parent.read_with(cx, |parent, _| parent.child.clone());
