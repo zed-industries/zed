@@ -1,9 +1,9 @@
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
-    LineLayoutIndex, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString,
-    Size, TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window,
-    WrappedLine, WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
+    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
+    WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
 use gpui_util::ResultExt;
@@ -628,10 +628,6 @@ struct TextLayoutInner {
     truncate_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
-    /// The line layouts measuring this text used, in the frame it was measured in.
-    line_layouts: LineLayoutRanges,
-    /// Whether these lines were measured in an earlier frame.
-    carried: bool,
 }
 
 /// What a text element's size depends on, and where its measurement is stored for
@@ -645,11 +641,7 @@ pub(crate) struct TextMeasure {
     scale_factor: f32,
     font_generation: usize,
     element_state: TextLayout,
-    /// The line layouts each shaping of the text used in this frame.
-    shaped_line_layouts: RefCell<LineLayoutRanges>,
 }
-
-type LineLayoutRanges = SmallVec<[Range<LineLayoutIndex>; 2]>;
 
 impl crate::taffy::Measure for TextMeasure {
     fn measure(
@@ -709,24 +701,17 @@ impl TextMeasure {
             return false;
         };
         measured.bounds = None;
-        measured.carried = true;
         *self.element_state.0.borrow_mut() = Some(measured);
         true
     }
 
-    fn is_carried(element_state: &TextLayout) -> bool {
-        element_state
-            .0
-            .borrow()
-            .as_ref()
-            .is_some_and(|measured| measured.carried)
-    }
-
-    /// Measures the text, keeping the lines for painting. Lines taken over from an earlier
-    /// frame are only replaced by the final measurement (`final_layout`, which Taffy makes
-    /// after any sizing probes): Taffy may serve that measurement from its cache while
-    /// measuring a probe again, and the probe's lines would be painted in bounds that
-    /// weren't computed from them.
+    /// Measures the text. The size only depends on the measure's inputs and the space
+    /// given, never on what was measured before.
+    ///
+    /// The final measurement's lines (`final_layout`, made after any sizing probes) are
+    /// kept for painting, since Taffy may serve that measurement from its cache instead
+    /// of measuring again, and a probe's lines would be painted in bounds that weren't
+    /// computed from them.
     fn measure(
         &self,
         known_dimensions: Size<Option<Pixels>>,
@@ -774,27 +759,14 @@ impl TextMeasure {
                 (None, "".into(), TruncateFrom::End)
             };
 
-        // Only use cached layout if:
-        // 1. We have a cached size
-        // 2. wrap_width matches (or both are None)
-        // 3. truncate_width is None (if truncate_width is Some, we need to re-layout
-        //    because the previous layout may have been computed without truncation)
-        // 4. the cached layout was not truncated (a truncated layout answers an
-        //    unconstrained probe with the truncated size, which poisons intrinsic
-        //    sizing with whatever width some earlier measure pass happened to use)
-        // 5. a layout taken over from an earlier frame matches exactly, since in this
-        //    frame an unconstrained probe would find no cached layout, not that one
         if let Some(text_layout) = element_state.0.borrow().as_ref()
             && let Some(size) = text_layout.size
-            && (wrap_width == text_layout.wrap_width
-                || (wrap_width.is_none() && !text_layout.carried))
-            && truncate_width.is_none()
-            && text_layout.truncate_width.is_none()
+            && wrap_width == text_layout.wrap_width
+            && truncate_width == text_layout.truncate_width
         {
             return size;
         }
 
-        let line_layouts_start = window.text_system().layout_index();
         let (text, runs) = if let Some(truncate_width) = truncate_width {
             // Taking a wrapper from the pool locks it twice and moves its
             // character width cache around, so only do it when truncating.
@@ -850,23 +822,17 @@ impl TextMeasure {
             )
             .log_err()
         else {
-            self.shaped_line_layouts
-                .borrow_mut()
-                .push(line_layouts_start..window.text_system().layout_index());
-            if !final_layout && Self::is_carried(element_state) {
-                return Size::default();
+            if final_layout || element_state.0.borrow().is_none() {
+                element_state.0.borrow_mut().replace(TextLayoutInner {
+                    lines: Default::default(),
+                    len: 0,
+                    line_height,
+                    wrap_width,
+                    truncate_width,
+                    size: Some(Size::default()),
+                    bounds: None,
+                });
             }
-            element_state.0.borrow_mut().replace(TextLayoutInner {
-                lines: Default::default(),
-                len: 0,
-                line_height,
-                wrap_width,
-                truncate_width,
-                size: Some(Size::default()),
-                bounds: None,
-                line_layouts: self.shaped_line_layouts.borrow().clone(),
-                carried: false,
-            });
             return Size::default();
         };
 
@@ -876,25 +842,17 @@ impl TextMeasure {
             size.height += line_size.height;
             size.width = size.width.max(line_size.width).ceil();
         }
-        self.shaped_line_layouts
-            .borrow_mut()
-            .push(line_layouts_start..window.text_system().layout_index());
-        if !final_layout && Self::is_carried(element_state) {
-            return size;
+        if final_layout || element_state.0.borrow().is_none() {
+            element_state.0.borrow_mut().replace(TextLayoutInner {
+                lines,
+                len,
+                line_height,
+                wrap_width,
+                truncate_width,
+                size: Some(size),
+                bounds: None,
+            });
         }
-
-        element_state.0.borrow_mut().replace(TextLayoutInner {
-            lines,
-            len,
-            line_height,
-            wrap_width,
-            truncate_width,
-            size: Some(size),
-            bounds: None,
-            line_layouts: self.shaped_line_layouts.borrow().clone(),
-            carried: false,
-        });
-
         size
     }
 }
@@ -917,8 +875,6 @@ impl TextLayoutInner {
             truncate_width: self.truncate_width,
             size: self.size,
             bounds: None,
-            line_layouts: self.line_layouts.clone(),
-            carried: self.carried,
         }
     }
 }
@@ -931,25 +887,10 @@ impl TextLayout {
         window: &mut Window,
         _: &mut App,
     ) -> LayoutId {
-        let measured_before = self.0.borrow().is_some();
-        let layout_id = window.request_measure(
+        window.request_measure(
             &crate::Style::default(),
             Box::new(self.measurement(text, runs, window)),
-        );
-        // Text whose measurement was taken over from the last frame isn't shaped in this
-        // one, so its line layouts would leave the cache, and shaping the same text again
-        // (as when list rows move between elements) would miss it.
-        if !measured_before && let Some(measured) = self.0.borrow_mut().as_mut() {
-            let text_system = window.text_system();
-            let start = text_system.layout_index();
-            for range in measured.line_layouts.drain(..) {
-                text_system.reuse_layouts(range);
-            }
-            measured
-                .line_layouts
-                .push(start..text_system.layout_index());
-        }
-        layout_id
+        )
     }
 
     fn measurement(
@@ -980,7 +921,6 @@ impl TextLayout {
             scale_factor: window.scale_factor(),
             font_generation: window.text_system().font_generation(),
             element_state: self.clone(),
-            shaped_line_layouts: RefCell::default(),
         }
     }
 
@@ -1515,7 +1455,7 @@ mod tests {
     use super::*;
 
     #[crate::test]
-    fn carried_lines_are_only_replaced_by_the_final_measurement(cx: &mut crate::TestAppContext) {
+    fn text_measurement_depends_only_on_its_inputs(cx: &mut crate::TestAppContext) {
         let cx = cx.add_empty_window();
         cx.update(|window, cx| {
             let text = SharedString::from("Several words that wrap in a narrow parent");
@@ -1525,6 +1465,10 @@ mod tests {
             };
             let wide = Size {
                 width: crate::AvailableSpace::Definite(crate::px(2000.)),
+                ..narrow
+            };
+            let unconstrained = Size {
+                width: crate::AvailableSpace::MaxContent,
                 ..narrow
             };
             // The height of the lines a layout would paint.
@@ -1537,42 +1481,47 @@ mod tests {
                         .sum::<Pixels>()
                 })
             };
-
-            // Without lines from an earlier frame, any measurement is kept, as before.
-            let previous_layout = TextLayout::default();
-            let previous = previous_layout.measurement(text.clone(), None, window);
-            let narrow_height = previous
-                .measure(Size::default(), narrow, false, window, cx)
-                .height;
-            assert_eq!(painted_height(&previous_layout), Some(narrow_height));
+            let fresh_size =
+                |space: Size<crate::AvailableSpace>, window: &mut Window, cx: &mut App| {
+                    TextLayout::default()
+                        .measurement(text.clone(), None, window)
+                        .measure(Size::default(), space, false, window, cx)
+                };
 
             let layout = TextLayout::default();
             let measure = layout.measurement(text.clone(), None, window);
-            assert!(measure.reuse_measurement(&previous));
-            assert_eq!(painted_height(&layout), Some(narrow_height));
-            // Taken-over lines don't answer an unconstrained probe, which this frame
-            // would otherwise have measured from scratch.
-            let unconstrained = Size {
-                width: crate::AvailableSpace::MaxContent,
-                ..narrow
-            };
-            let fresh = TextLayout::default().measurement(text, None, window);
-            assert_eq!(
-                measure.measure(Size::default(), unconstrained, false, window, cx),
-                fresh.measure(Size::default(), unconstrained, false, window, cx)
-            );
-            // A probe can't replace lines taken over from the last frame, since Taffy may
-            // not measure the text for its final size again.
-            let wide_height = measure
-                .measure(Size::default(), wide, false, window, cx)
-                .height;
-            assert!(wide_height < narrow_height);
-            assert_eq!(painted_height(&layout), Some(narrow_height));
+            let narrow_size = measure.measure(Size::default(), narrow, true, window, cx);
+            // An unconstrained probe measures the unwrapped text, rather than answering
+            // with the size of whatever was measured before it.
+            let unconstrained_size =
+                measure.measure(Size::default(), unconstrained, false, window, cx);
+            assert_eq!(unconstrained_size, fresh_size(unconstrained, window, cx));
+            assert!(unconstrained_size.width > narrow_size.width);
+            assert!(unconstrained_size.height < narrow_size.height);
+
+            // Probes don't replace the lines kept for painting; the final measurement does.
+            assert_eq!(painted_height(&layout), Some(narrow_size.height));
+            let wide_size = measure.measure(Size::default(), wide, false, window, cx);
+            assert!(wide_size.height < narrow_size.height);
+            assert_eq!(painted_height(&layout), Some(narrow_size.height));
             measure.measure(Size::default(), wide, true, window, cx);
-            assert_eq!(painted_height(&layout), Some(wide_height));
+            assert_eq!(painted_height(&layout), Some(wide_size.height));
+
+            // A measure with the same inputs takes over the lines, and measures the same
+            // as one measuring from scratch.
+            let next_layout = TextLayout::default();
+            let next = next_layout.measurement(text.clone(), None, window);
+            assert!(next.reuse_measurement(&measure));
+            assert_eq!(painted_height(&next_layout), Some(wide_size.height));
+            for space in [narrow, wide, unconstrained] {
+                assert_eq!(
+                    next.measure(Size::default(), space, false, window, cx),
+                    fresh_size(space, window, cx)
+                );
+            }
 
             let changed = TextLayout::default().measurement("Other text".into(), None, window);
-            assert!(!changed.reuse_measurement(&measure));
+            assert!(!changed.reuse_measurement(&next));
         });
     }
 
