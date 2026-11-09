@@ -8,7 +8,7 @@ mod blame_ui;
 pub mod clone;
 
 use git::{
-    Oid,
+    Oid, normalize_branch_name,
     repository::{Branch, CommitDetails, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
