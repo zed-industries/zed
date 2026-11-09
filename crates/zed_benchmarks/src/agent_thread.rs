@@ -10,16 +10,19 @@ use crate::{MARKDOWN_FILE, PYTHON_FILE, RUST_FILE, TYPESCRIPT_FILE, pinned_conte
 pub const AGENT_THREAD_TURNS: usize = 125;
 pub const AGENT_THREAD_ENTRIES_PER_TURN: usize = 8;
 
-fn lines(path: &str, start: usize, count: usize) -> String {
-    let contents = pinned_contents(path);
-    let line_count = contents.lines().count();
-    let start = start % line_count.saturating_sub(count).max(1);
-    contents
-        .lines()
-        .skip(start)
-        .take(count)
-        .collect::<Vec<_>>()
-        .join("\n")
+fn lines(path: &'static str, start: usize, count: usize) -> String {
+    thread_local! {
+        static LINES: std::cell::RefCell<std::collections::HashMap<&'static str, Vec<&'static str>>> =
+            std::cell::RefCell::default();
+    }
+    LINES.with(|lines| {
+        let mut lines = lines.borrow_mut();
+        let lines = lines
+            .entry(path)
+            .or_insert_with(|| pinned_contents(path).lines().collect());
+        let start = start % lines.len().saturating_sub(count).max(1);
+        lines[start..(start + count).min(lines.len())].join("\n")
+    })
 }
 
 fn fenced(language: &str, code: &str) -> String {
