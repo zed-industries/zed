@@ -27,7 +27,7 @@ The [documented wrap behaviors](https://docs.emmet.io/actions/wrap-with-abbrevia
 - Wrapping individual lines: mark the repeating element with `*` (without a number), for example `ul>li*`, and each selected line is wrapped in its own element. `$` numbering works too: `ul>li.item$*>a`.
 - Removing list markers: append the trim filter `|t`, for example `ul>li*|t`, to strip list markers such as `*`, `-`, or `1.` from the wrapped lines.
 - Controlling output position: use the `$#` placeholder inside attribute values or text nodes, for example `ul>li[title=$#]*>{$#}`.
-- The [comment filter](https://docs.emmet.io/filters/comment/) `|c` and the [BEM filter](https://docs.emmet.io/filters/bem/) `|bem` are also supported and can be combined, for example `div#page>p.intro|c|bem`.
+- The [comment filter](https://docs.emmet.io/filters/#comment-tags-c) `|c` and the [BEM filter](https://docs.emmet.io/filters/bem/) `|bem` are also supported and can be combined, for example `div#page>p.intro|c|bem`.
 
 Selections that partially cover an opening or closing tag are expanded to the whole element before wrapping. Wrapping is a markup action: it is not offered in stylesheets, where Emmet provides completions instead.
 

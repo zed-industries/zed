@@ -5,13 +5,14 @@ pub mod responses;
 #[cfg(test)]
 mod chat_completion_transport_tests;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
     StatusCode,
     http::{HeaderMap, HeaderValue},
 };
+use language_model_core::LanguageModelCompletionError;
 pub use language_model_core::ReasoningEffort;
 pub use language_model_core::chat_completion::{
     ChoiceDelta, FunctionChunk, PromptTokensDetails, ResponseMessageDelta, ResponseStreamError,
@@ -106,6 +107,8 @@ pub enum Model {
     SixSol,
     #[serde(rename = "gpt-6-luna")]
     SixLuna,
+    #[serde(rename = "gpt-6.1-sol")]
+    SixPointOneSol,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -158,6 +161,7 @@ impl Model {
             "gpt-6-astra" => Ok(Self::SixAstra),
             "gpt-6-sol" => Ok(Self::SixSol),
             "gpt-6-luna" => Ok(Self::SixLuna),
+            "gpt-6.1-sol" => Ok(Self::SixPointOneSol),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -185,6 +189,7 @@ impl Model {
             Self::SixAstra => "gpt-6-astra",
             Self::SixSol => "gpt-6-sol",
             Self::SixLuna => "gpt-6-luna",
+            Self::SixPointOneSol => "gpt-6.1-sol",
             Self::Custom { name, .. } => name,
         }
     }
@@ -212,6 +217,7 @@ impl Model {
             Self::SixAstra => "GPT-6 Astra",
             Self::SixSol => "GPT-6 Sol",
             Self::SixLuna => "GPT-6 Luna",
+            Self::SixPointOneSol => "GPT-6.1 Sol",
             Self::Custom { display_name, .. } => display_name.as_deref().unwrap_or(&self.id()),
         }
     }
@@ -239,6 +245,7 @@ impl Model {
             Self::SixAstra => 1_050_000,
             Self::SixSol => 1_050_000,
             Self::SixLuna => 1_050_000,
+            Self::SixPointOneSol => 1_050_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -269,6 +276,7 @@ impl Model {
             Self::SixAstra => Some(128_000),
             Self::SixSol => Some(128_000),
             Self::SixLuna => Some(128_000),
+            Self::SixPointOneSol => Some(128_000),
         }
     }
 
@@ -295,7 +303,8 @@ impl Model {
             | Self::FivePointSixLuna
             | Self::SixAstra
             | Self::SixSol
-            | Self::SixLuna => Some(ReasoningEffort::Medium),
+            | Self::SixLuna
+            | Self::SixPointOneSol => Some(ReasoningEffort::Medium),
             _ => None,
         }
     }
@@ -354,7 +363,7 @@ impl Model {
                 ReasoningEffort::XHigh,
                 ReasoningEffort::Max,
             ],
-            Self::SixAstra => &[
+            Self::SixAstra | Self::SixPointOneSol => &[
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
@@ -410,6 +419,7 @@ impl Model {
             | Self::SixAstra
             | Self::SixSol
             | Self::SixLuna
+            | Self::SixPointOneSol
             | Self::FiveNano => true,
             Self::O3 | Model::Custom { .. } => false,
         }
@@ -443,7 +453,8 @@ impl Model {
             | Self::FivePointSixLuna
             | Self::SixAstra
             | Self::SixSol
-            | Self::SixLuna => true,
+            | Self::SixLuna
+            | Self::SixPointOneSol => true,
             Self::Four
             | Self::FourOmniMini
             | Self::O3
@@ -476,7 +487,8 @@ impl Model {
             | Self::FivePointSixLuna
             | Self::SixAstra
             | Self::SixSol
-            | Self::SixLuna => true,
+            | Self::SixLuna
+            | Self::SixPointOneSol => true,
             Self::Four
             | Self::FiveNano
             | Self::FivePointFourNano
@@ -1129,7 +1141,10 @@ pub async fn stream_completion(
     api_key: &str,
     request: Request,
     extra_headers: &CustomHeaders,
-) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
+) -> Result<
+    BoxStream<'static, Result<ResponseStreamEvent, LanguageModelCompletionError>>,
+    RequestError,
+> {
     let events = stream_chat_completion(
         client,
         provider_name,
@@ -1148,7 +1163,7 @@ pub async fn stream_completion(
                 let value = match event {
                     Ok(ChatCompletionStreamEvent::Data(value)) => value,
                     Ok(ChatCompletionStreamEvent::Done) => return None,
-                    Err(error) => return Some(Err(anyhow!(error))),
+                    Err(error) => return Some(Err(error.into())),
                 };
                 match serde_json::from_str::<ResponseStreamResult>(value.get()) {
                     Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
@@ -1159,15 +1174,13 @@ pub async fn stream_completion(
                             None,
                             &error.message,
                         );
-                        Some(Err(anyhow!(
-                            language_model_core::LanguageModelCompletionError::from_provider_response(
-                                provider_name,
-                                None,
-                                error.code.or(error.error_type),
-                                error.message,
-                                None,
-                                category,
-                            )
+                        Some(Err(LanguageModelCompletionError::from_provider_response(
+                            provider_name,
+                            None,
+                            error.code.or(error.error_type),
+                            error.message,
+                            None,
+                            category,
                         )))
                     }
                     Err(error) => {
@@ -1177,7 +1190,10 @@ pub async fn stream_completion(
                             error,
                             value,
                         );
-                        Some(Err(anyhow!(error)))
+                        Some(Err(LanguageModelCompletionError::DeserializeResponse {
+                            provider: provider_name,
+                            error,
+                        }))
                     }
                 }
             }

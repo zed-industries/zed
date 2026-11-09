@@ -2,6 +2,7 @@
 
 pub mod crate_graph;
 pub mod publish_plan;
+pub mod validation;
 
 use std::io::{self, Write};
 use std::process::{Command, Output, Stdio};
@@ -15,7 +16,7 @@ use crate::tasks::workflows::GitSha;
 #[derive(Subcommand)]
 pub enum GpuiCommand {
     /// Print the publish plan in dependency-first order
-    List(GpuiArgs),
+    Plan(GpuiArgs),
     /// Show the dependency paths that put a crate in the publish list
     Why {
         /// Original Cargo package name
@@ -45,8 +46,9 @@ struct PublishGpuiArgs {
 pub fn run_gpui(command: GpuiCommand) -> Result<()> {
     let graph = crate_graph::load_workspace_graph()?;
     match command {
-        GpuiCommand::List(args) => {
+        GpuiCommand::Plan(args) => {
             let plan = publish_plan::build_publish_plan(&graph)?;
+            validation::validate(&plan)?;
             println!(
                 "GPUI publish plan ({} crates, dependencies first):",
                 plan.len()
@@ -408,23 +410,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gpui_list_accepts_an_explicit_workspace_sha() -> Result<()> {
+    fn gpui_plan_accepts_an_explicit_workspace_sha() -> Result<()> {
         let sha = "0123456789abcdef0123456789abcdef01234567";
-        let args = crate::Args::try_parse_from(["xtask", "gpui", "list", "--sha", sha])?;
-        let crate::CliCommand::Gpui(GpuiCommand::List(args)) = args.command else {
-            bail!("expected the GPUI list command");
+        let args = crate::Args::try_parse_from(["xtask", "gpui", "plan", "--sha", sha])?;
+        let crate::CliCommand::Gpui(GpuiCommand::Plan(args)) = args.command else {
+            bail!("expected the GPUI plan command");
         };
         assert_eq!(args.sha.as_ref(), sha);
         Ok(())
     }
 
     #[test]
-    fn gpui_list_requires_a_full_workspace_sha() {
+    fn gpui_plan_requires_a_full_workspace_sha() {
         assert!(crate::Args::try_parse_from(["xtask", "gpui"]).is_err());
-        assert!(crate::Args::try_parse_from(["xtask", "gpui", "list"]).is_err());
+        assert!(crate::Args::try_parse_from(["xtask", "gpui", "plan"]).is_err());
         for sha in ["HEAD", "abc", "g123456789abcdef0123456789abcdef01234567"] {
             assert!(
-                crate::Args::try_parse_from(["xtask", "gpui", "list", "--sha", sha]).is_err(),
+                crate::Args::try_parse_from(["xtask", "gpui", "plan", "--sha", sha]).is_err(),
                 "{sha}"
             );
         }

@@ -19,17 +19,26 @@ use gpui::{
     AppContext as _, BackgroundExecutor, Entity, IntoElement as _, SharedString, TestAppContext,
     VisualContext as _, VisualTestContext, point, px, size,
 };
+use parking_lot::Mutex;
 use project::{
     ProjectPath,
-    git_store::{CommitDataState, MAX_CONCURRENT_BLOB_READS, Repository},
+    git_store::{CommitDataState, MAX_CONCURRENT_OBJECT_READS, Repository},
 };
 use rand::{SeedableRng, rngs::StdRng};
+use rpc::proto;
 use serde_json::json;
 
 use util::{path, rel_path::rel_path};
 use workspace::{MultiWorkspace, Workspace};
 
 use crate::TestServer;
+use extension::ExtensionHostProxy;
+use fs::FakeFs;
+use http_client::BlockedHttpClient;
+use language::LanguageRegistry;
+use node_runtime::NodeRuntime;
+use remote::{MockConnection, RemoteClient};
+use remote_server::{HeadlessAppState, HeadlessProject};
 
 #[gpui::test]
 async fn test_root_repo_common_dir_sync(
@@ -465,7 +474,7 @@ async fn test_blob_read_rpcs_are_bounded_on_host(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
-    const FILE_COUNT: usize = MAX_CONCURRENT_BLOB_READS + 4;
+    const FILE_COUNT: usize = MAX_CONCURRENT_OBJECT_READS + 4;
     let names = (0..FILE_COUNT)
         .map(|index| format!("f{index:02}.txt"))
         .collect::<Vec<_>>();
@@ -521,13 +530,75 @@ async fn test_blob_read_rpcs_are_bounded_on_host(
     }
     executor.run_until_parked();
 
-    assert_eq!(gate.peak_concurrent(), MAX_CONCURRENT_BLOB_READS);
+    assert_eq!(gate.peak_concurrent(), MAX_CONCURRENT_OBJECT_READS);
 
     gate.open();
     executor.run_until_parked();
     for diff in diffs {
         diff.await.unwrap();
     }
+}
+
+#[gpui::test]
+async fn test_show_rpcs_are_routed_by_revision_kind_on_host(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    use futures::FutureExt as _;
+
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(path!("/dir"), json!({ ".git": {} }))
+        .await;
+    let head_sha = "1".repeat(40);
+    client_a
+        .fs()
+        .set_head_for_repo(Path::new(path!("/dir/.git")), &[], head_sha.clone());
+
+    let (project_a, _) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let repo_a = project_a.read_with(cx_a, |project, cx| project.active_repository(cx).unwrap());
+    let repo_b = project_b.read_with(cx_b, |project, cx| project.active_repository(cx).unwrap());
+
+    let (release_tx, release_rx) = futures::channel::oneshot::channel::<()>();
+    let held = repo_a.update(cx_a, |repo, _| {
+        repo.send_job("hold", None, move |_, _| async move {
+            release_rx.await.ok();
+        })
+    });
+
+    let mut by_sha = repo_b.update(cx_b, |repo, cx| repo.show_commit(head_sha.clone(), cx));
+    let mut by_ref = repo_b.update(cx_b, |repo, _| repo.show("HEAD".into()));
+    executor.run_until_parked();
+    let details = (&mut by_sha)
+        .now_or_never()
+        .expect("show_commit waited on the host job queue")
+        .unwrap();
+    assert_eq!(details.sha.as_ref(), head_sha);
+    assert!(
+        (&mut by_ref).now_or_never().is_none(),
+        "show by ref skipped the host job queue"
+    );
+
+    release_tx.send(()).ok();
+    held.await.unwrap();
+    executor.run_until_parked();
+    assert_eq!(by_ref.await.unwrap().unwrap().sha.as_ref(), head_sha);
 }
 
 #[gpui::test]
@@ -1603,4 +1674,159 @@ async fn test_load_commit_template_over_collab(
         .expect("Guest should be able to load the host's commit template");
 
     assert_eq!(commit_template.template, "feat: add awesome feature");
+}
+
+#[gpui::test]
+async fn test_ssh_branch_switch_does_not_fetch_history(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    cx_a.update(|cx| git_ui::init(cx));
+    server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+
+    let (opts, server_ssh, _) = RemoteClient::fake_server(cx_a, server_cx);
+    let history_sources = Arc::new(Mutex::new(Vec::new()));
+    let delayed_updates = Arc::new(Mutex::new(None::<Vec<proto::UpdateRepository>>));
+    cx_a.update(|cx| {
+        MockConnection::intercept_messages(
+            &opts,
+            cx,
+            {
+                let history_sources = history_sources.clone();
+                move |envelope| {
+                    if let Some(proto::envelope::Payload::GetInitialGraphData(request)) =
+                        &envelope.payload
+                    {
+                        history_sources.lock().push(request.log_source.clone());
+                    }
+                }
+            },
+            {
+                let delayed_updates = delayed_updates.clone();
+                move |envelope| {
+                    if let Some(proto::envelope::Payload::UpdateRepository(update)) =
+                        envelope.payload.as_mut()
+                        && update.is_last_update
+                        && let Some(updates) = delayed_updates.lock().as_mut()
+                    {
+                        updates.push(update.clone());
+                        update.is_last_update = false;
+                        update.branch_list.clear();
+                        update.branch_list_error = None;
+                    }
+                }
+            },
+        );
+    });
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+    let dot_git = Path::new(path!("/project/.git"));
+    remote_fs.set_branch_name(dot_git, Some("main"));
+    remote_fs.set_head_for_repo(dot_git, &[("file.txt", "content".into())], "sha1");
+    let mut rng = StdRng::seed_from_u64(7);
+    let commits = git_ui::git_graph::generate_random_commit_dag(&mut rng, 12, false);
+    remote_fs.set_graph_commits(dot_git, commits.clone());
+
+    server_cx.update(HeadlessProject::init);
+    let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    let _headless_project = server_cx.new(|cx| {
+        HeadlessProject::new(
+            HeadlessAppState {
+                session: server_ssh.clone(),
+                fs: remote_fs.clone(),
+                http_client: Arc::new(BlockedHttpClient),
+                node_runtime: NodeRuntime::unavailable(),
+                languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+    let client_ssh = RemoteClient::connect_mock(opts, cx_a).await;
+    let (project_a, _) = client_a
+        .build_ssh_project(path!("/project"), client_ssh, false, cx_a)
+        .await;
+    executor.run_until_parked();
+    server_cx.run_until_parked();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let panel = workspace_a.update_in(cx_a, GitPanel::new_test);
+    workspace_a.update_in(cx_a, |workspace, window, cx| {
+        workspace.add_panel(panel.clone(), window, cx);
+    });
+    executor.run_until_parked();
+    server_cx.run_until_parked();
+    let repository =
+        project_a.read_with(cx_a, |project, cx| project.active_repository(cx).unwrap());
+    assert_eq!(
+        history_sources.lock().len(),
+        0,
+        "opening the project with Changes selected should not fetch history"
+    );
+
+    *delayed_updates.lock() = Some(Vec::new());
+    remote_fs.set_branch_name(dot_git, Some("feature"));
+    remote_fs.set_head_for_repo(dot_git, &[("file.txt", "changed".into())], "sha2");
+    executor.run_until_parked();
+    server_cx.run_until_parked();
+    let branch = repository.read_with(cx_a, |repository, _| {
+        repository
+            .branch
+            .as_ref()
+            .map(|branch| branch.name().to_string())
+    });
+    assert_eq!(branch.as_deref(), Some("feature"));
+    let branch_list_head = |cx: &mut VisualTestContext| {
+        repository.read_with(cx, |repository, _| {
+            repository
+                .branch_list
+                .iter()
+                .find(|branch| branch.is_head)
+                .map(|branch| branch.name().to_string())
+        })
+    };
+    assert_eq!(branch_list_head(cx_a).as_deref(), Some("main"));
+    assert_eq!(
+        history_sources.lock().len(),
+        0,
+        "switching branches with Changes selected should not fetch history"
+    );
+
+    let updates = delayed_updates.lock().take().expect("branch updates held");
+    assert!(!updates.is_empty());
+    for update in updates {
+        server_ssh.send(update).unwrap();
+    }
+    executor.run_until_parked();
+    server_cx.run_until_parked();
+    assert_eq!(branch_list_head(cx_a).as_deref(), Some("feature"));
+    assert_eq!(history_sources.lock().len(), 0);
+
+    workspace_a.update_in(cx_a, |workspace, window, cx| {
+        workspace.focus_panel::<GitPanel>(window, cx);
+    });
+    cx_a.dispatch_action(git_ui::git_panel::ActivateHistoryTab);
+    executor.run_until_parked();
+    server_cx.run_until_parked();
+    assert_eq!(
+        *history_sources.lock(),
+        vec![Some(proto::GitLogSource {
+            source: Some(proto::git_log_source::Source::Branch("feature".to_string())),
+        })]
+    );
+    assert_eq!(
+        panel.read_with(cx_a, |panel, _| panel.commit_history_shas()),
+        commits.iter().map(|commit| commit.sha).collect::<Vec<_>>(),
+        "opening History loads the host's commits"
+    );
 }

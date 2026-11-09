@@ -21,6 +21,8 @@ use onboarding::show_onboarding_view;
 use recent_projects::{RemoteSettings, navigate_to_positions, open_remote_project};
 use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
+#[cfg(target_os = "windows")]
+use std::path::{Component, Prefix};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -162,9 +164,9 @@ impl OpenRequest {
                     index: action_index.parse()?,
                 });
             } else if let Some(file) = url.strip_prefix("file://") {
-                this.parse_file_path(file)
+                this.parse_local_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
-                this.parse_file_path(file)
+                this.parse_local_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://ssh") {
                 let ssh_url = "ssh:/".to_string() + file;
                 this.parse_ssh_file_path(&ssh_url, cx)?
@@ -216,6 +218,23 @@ impl OpenRequest {
 
     fn parse_file_path(&mut self, file: &str) {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
+            self.open_paths.push(decoded.into_owned())
+        }
+    }
+
+    fn parse_local_file_path(&mut self, file: &str) {
+        if let Some(decoded) = urlencoding::decode(file).log_err() {
+            // URL paths keep a `/` before a Windows drive letter (`/C:/x`), which Windows cannot open.
+            #[cfg(target_os = "windows")]
+            if let Some(path) = decoded.strip_prefix('/')
+                && matches!(
+                    Path::new(path).components().next(),
+                    Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_))
+                )
+            {
+                self.open_paths.push(path.to_owned());
+                return;
+            }
             self.open_paths.push(decoded.into_owned())
         }
     }
@@ -298,8 +317,9 @@ impl OpenRequest {
             Some(urlencoding::decode(url.username())?.into_owned())
         };
         let port = url.port();
+        // Refuse earlier local paths; earlier ssh paths are left to the connection check below.
         anyhow::ensure!(
-            self.open_paths.is_empty(),
+            self.open_paths.is_empty() || self.remote_connection.is_some(),
             "cannot open both local and ssh paths"
         );
         let mut connection_options =
@@ -800,9 +820,7 @@ pub(crate) fn open_options_for_behavior(
 
     // If reuse flag is passed, open a new workspace in an existing window.
     let requesting_window = if open_behavior == cli::OpenBehavior::Reuse {
-        workspace::workspace_windows_for_location(location, cx)
-            .into_iter()
-            .next()
+        workspace::workspace_windows_for_location(location, cx).next()
     } else {
         None
     };
@@ -1367,6 +1385,32 @@ mod tests {
         );
     }
 
+    // The path part of `file://` and `zed://file` URLs starts with `/` before the drive letter,
+    // `/C:/root/test.txt` should be parsed as `C:/root/test.txt`
+    #[cfg(target_os = "windows")]
+    #[gpui::test]
+    fn test_parse_file_urls_with_drive_letter_on_windows(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        for (input, expected) in [
+            ("zed://file/C:/root/test.txt:10", "C:/root/test.txt:10"),
+            ("zed://file/C%3A/root/test.txt", "C:/root/test.txt"),
+            ("file:///C:/root/test.txt", "C:/root/test.txt"),
+        ] {
+            let request = cx.update(|cx| {
+                OpenRequest::parse(
+                    RawOpenRequest {
+                        urls: vec![input.into()],
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .unwrap()
+            });
+            assert_eq!(request.open_paths, vec![expected], "{input}");
+        }
+    }
+
     #[gpui::test]
     fn test_parse_ssh_url_preserves_open_behavior(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
@@ -1406,6 +1450,76 @@ mod tests {
                 )
             });
             assert!(result.is_err(), "{input} should be rejected");
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_ssh_urls_of_one_connection(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "ssh://me@host/project".into(),
+                        "ssh://me@host/project/README.md".into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+        assert_eq!(
+            request.remote_connection.unwrap(),
+            RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "host".into(),
+                username: Some("me".into()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(request.open_paths, vec!["/project", "/project/README.md"]);
+    }
+
+    #[gpui::test]
+    fn test_reject_ssh_urls_with_other_paths(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        for (wsl, urls, expected) in [
+            (
+                None,
+                ["file:///tmp/local", "ssh://me@host/project"],
+                "cannot open both local and ssh paths",
+            ),
+            (
+                None,
+                ["ssh://me@host/project", "ssh://me@other/project"],
+                "cannot open multiple different remote connections",
+            ),
+            (
+                None,
+                ["ssh://me@host/project", "ssh://you@host/project"],
+                "cannot open multiple different remote connections",
+            ),
+            (
+                Some("Ubuntu"),
+                ["file:///home/me/project", "ssh://me@host/project"],
+                "cannot open multiple different remote connections",
+            ),
+        ] {
+            let error = cx
+                .update(|cx| {
+                    OpenRequest::parse(
+                        RawOpenRequest {
+                            urls: urls.iter().map(|url| url.to_string()).collect(),
+                            wsl: wsl.map(str::to_string),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                })
+                .unwrap_err();
+            assert_eq!(error.to_string(), expected, "{urls:?}");
         }
     }
 
@@ -2044,13 +2158,11 @@ mod tests {
         let window_to_replace = workspace::find_existing_workspace(
             &paths,
             &workspace::OpenOptions::default(),
-            &workspace::SerializedWorkspaceLocation::Local,
+            &project::ProjectHost::Local,
             &mut cx.to_async(),
         )
-        .await
-        .0
         .unwrap()
-        .0;
+        .window;
 
         let errored_reuse = cx
             .spawn({

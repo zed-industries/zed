@@ -33,9 +33,9 @@ use git_ui_core::notifications::show_error_toast;
 actions!(
     branch_picker,
     [
-        /// Deletes the selected git branch or remote.
+        /// Deletes the selected git branch. For a remote-tracking branch, this only removes the local tracking ref.
         DeleteBranch,
-        /// Force deletes the selected git branch or remote.
+        /// Force deletes the selected git branch. For a remote-tracking branch, this only removes the local tracking ref.
         ForceDeleteBranch,
         /// Show all branches.
         ShowAllBranches,
@@ -123,6 +123,7 @@ pub fn select_popover(
             repository,
             BranchListStyle::Popover,
             rems(20.),
+            false,
             selected_branch,
             on_select,
             window,
@@ -146,12 +147,44 @@ pub fn select_modal(
         repository,
         BranchListStyle::Modal,
         rems(34.),
+        false,
         selected_branch,
         on_select,
         window,
         cx,
     );
     list.focus_handle(cx).focus(window, cx);
+    list
+}
+
+/// A branch selector for hosts that draw their own surface and handle
+/// dismissal, such as a context menu's submenu.
+pub fn select_embedded(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    selected_branch: Option<SharedString>,
+    on_select: SelectBranchCallback,
+    window: &mut Window,
+    cx: &mut Context<BranchList>,
+) -> BranchList {
+    let list = BranchList::new_select(
+        workspace,
+        repository,
+        BranchListStyle::Popover,
+        rems(20.),
+        true,
+        selected_branch,
+        on_select,
+        window,
+        cx,
+    );
+    // A popover opened from a submenu draws beneath it, so the filter gets no
+    // menu here. Without one, a saved filter couldn't be seen or changed.
+    list.picker.update(cx, |picker, cx| {
+        picker.delegate.has_filter_menu = false;
+        picker.delegate.branch_filter = BranchFilter::All;
+        picker.refresh(window, cx);
+    });
     list
 }
 
@@ -226,6 +259,7 @@ impl BranchList {
         repository: Option<Entity<Repository>>,
         style: BranchListStyle,
         width: Rems,
+        embedded: bool,
         selected_branch: Option<SharedString>,
         on_select: SelectBranchCallback,
         window: &mut Window,
@@ -236,7 +270,7 @@ impl BranchList {
             repository,
             style,
             width,
-            false,
+            embedded,
             BranchSelectionBehavior::Select {
                 selected_branch,
                 on_select,
@@ -518,12 +552,11 @@ impl Render for BranchList {
             )
             .on_action(
                 cx.listener(|this, _: &branch_picker::ToggleFilterMenu, window, cx| {
-                    let menu_handle = this
-                        .picker
-                        .read(cx)
-                        .delegate
-                        .branch_filter_menu_handle
-                        .clone();
+                    let delegate = &this.picker.read(cx).delegate;
+                    if !delegate.has_filter_menu {
+                        return;
+                    }
+                    let menu_handle = delegate.branch_filter_menu_handle.clone();
                     menu_handle.toggle(window, cx);
                 }),
             )
@@ -669,6 +702,7 @@ pub struct BranchListDelegate {
     modifiers: Modifiers,
     branch_filter: BranchFilter,
     branch_filter_menu_handle: PopoverMenuHandle<ContextMenu>,
+    has_filter_menu: bool,
     state: PickerState,
     branch_selection_behavior: BranchSelectionBehavior,
     focus_handle: FocusHandle,
@@ -841,6 +875,7 @@ struct DeleteBranchTooltip {
     picker: WeakEntity<Picker<BranchListDelegate>>,
     focus_handle: FocusHandle,
     delete_index: usize,
+    is_remote: bool,
     _subscription: Subscription,
 }
 
@@ -849,6 +884,7 @@ impl DeleteBranchTooltip {
         picker: Entity<Picker<BranchListDelegate>>,
         focus_handle: FocusHandle,
         delete_index: usize,
+        is_remote: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscription = cx.observe(&picker, |_, _, cx| cx.notify());
@@ -856,6 +892,7 @@ impl DeleteBranchTooltip {
             picker: picker.downgrade(),
             focus_handle,
             delete_index,
+            is_remote,
             _subscription: subscription,
         }
     }
@@ -863,6 +900,19 @@ impl DeleteBranchTooltip {
 
 impl Render for DeleteBranchTooltip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Git always force-deletes remote-tracking refs (`git branch -dr` skips the
+        // merged check), so there is no separate force delete to offer for them.
+        if self.is_remote {
+            return Tooltip::with_meta_in(
+                "Delete Local Tracking Branch",
+                Some(&branch_picker::DeleteBranch),
+                "Does not delete the branch on the remote",
+                &self.focus_handle,
+                cx,
+            )
+            .into_any_element();
+        }
+
         let force_delete = self
             .picker
             .read_with(cx, |picker, _| {
@@ -1007,6 +1057,7 @@ impl BranchListDelegate {
             modifiers: Default::default(),
             branch_filter,
             branch_filter_menu_handle: PopoverMenuHandle::default(),
+            has_filter_menu: true,
             state: PickerState::List,
             branch_selection_behavior,
             focus_handle: cx.focus_handle(),
@@ -1241,6 +1292,7 @@ impl PickerDelegate for BranchListDelegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         match self.state {
+            PickerState::List if self.is_select_only() => "Select a branch…",
             PickerState::List | PickerState::NewRemote | PickerState::NewBranch => {
                 "Switch or type to create a branch…"
             }
@@ -1294,7 +1346,7 @@ impl PickerDelegate for BranchListDelegate {
                         .flex_none()
                         .overflow_hidden()
                         .child(editor.clone())
-                        .map(|this| {
+                        .when(self.has_filter_menu, |this| {
                             let branch_filter = self.branch_filter;
                             let focus_handle = self.focus_handle.clone();
 
@@ -1631,19 +1683,15 @@ impl PickerDelegate for BranchListDelegate {
                     let subject = commit.subject.clone();
                     let commit_time = OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
                         .unwrap_or_else(|_| OffsetDateTime::now_utc());
-                    let local_offset =
-                        time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-                    let formatted_time = time_format::format_localized_timestamp(
+                    let formatted_time = crate::git_timestamp::format_git_date(
                         commit_time,
-                        OffsetDateTime::now_utc(),
-                        local_offset,
-                        time_format::TimestampFormat::Relative,
+                        ProjectSettings::get_global(cx).git.branch_picker.date_style,
+                        cx,
                     );
-                    let absolute_time = time_format::format_localized_timestamp(
+                    let absolute_time = crate::git_timestamp::format_git_timestamp(
                         commit_time,
-                        OffsetDateTime::now_utc(),
-                        local_offset,
                         time_format::TimestampFormat::EnhancedAbsolute,
+                        cx,
                     );
                     let author = commit.author_name.clone();
                     (
@@ -1714,10 +1762,10 @@ impl PickerDelegate for BranchListDelegate {
             Entry::NewUrl { .. } | Entry::NewBranch { .. } | Entry::NewRemoteName { .. }
         );
 
-        let deleted_branch_icon = |entry_ix: usize| {
+        let deleted_branch_icon = |entry_ix: usize, is_remote: bool| {
             let picker = picker.clone();
             let focus_handle = focus_handle.clone();
-            let force_delete = self.is_force_delete_hovering_index(entry_ix);
+            let force_delete = !is_remote && self.is_force_delete_hovering_index(entry_ix);
 
             div()
                 .id(("delete-hover", entry_ix))
@@ -1739,6 +1787,7 @@ impl PickerDelegate for BranchListDelegate {
                                     picker.clone(),
                                     focus_handle.clone(),
                                     entry_ix,
+                                    is_remote,
                                     cx,
                                 )
                             })
@@ -1922,7 +1971,8 @@ impl PickerDelegate for BranchListDelegate {
             .when(
                 !self.is_select_only() && !is_new_items && !is_head_branch,
                 |this| {
-                    this.end_slot(deleted_branch_icon(ix))
+                    let is_remote = entry.as_branch().is_some_and(|branch| branch.is_remote());
+                    this.end_slot(deleted_branch_icon(ix, is_remote))
                         .show_end_slot_on_hover()
                 },
             )
@@ -2016,15 +2066,20 @@ impl PickerDelegate for BranchListDelegate {
                             }))
                     });
 
+                let selected_branch = selected_entry.and_then(|entry| entry.as_branch());
+                let delete_label = if selected_branch.is_some_and(|branch| branch.is_remote()) {
+                    "Delete Local Tracking Branch"
+                } else {
+                    "Delete"
+                };
+
                 let delete_and_select_btns = h_flex()
                     .gap_1()
                     .when(
-                        !selected_entry
-                            .and_then(|entry| entry.as_branch())
-                            .is_some_and(|branch| branch.is_head),
+                        !selected_branch.is_some_and(|branch| branch.is_head),
                         |this| {
                             this.child(
-                                Button::new("delete-branch", "Delete")
+                                Button::new("delete-branch", delete_label)
                                     .key_binding(
                                         KeyBinding::for_action_in(
                                             &branch_picker::DeleteBranch,
@@ -3112,6 +3167,7 @@ mod tests {
                         Some(repository.clone()),
                         BranchListStyle::Modal,
                         rems(34.),
+                        false,
                         Some("main".into()),
                         Arc::new(|_: Branch, _: &mut Window, _: &mut App| {}),
                         window,

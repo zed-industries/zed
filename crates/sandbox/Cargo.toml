@@ -13,7 +13,7 @@ path = "src/sandbox.rs"
 doctest = false
 
 [features]
-# Builds `bwrap_test_helper`, the behavior helper driven by the NixOS sandbox
+# Builds `bwrap-test-helper`, the behavior helper driven by the NixOS sandbox
 # VM tests in `nix/tests/sandboxing`. Off by default so normal builds don't
 # produce the test binary. Pulls in serde only when enabled (the helper parses
 # its check list as JSON), and enables the matching `http_proxy` escape hatch so
@@ -24,7 +24,7 @@ nixos-test = [
     "http_proxy/nixos-integration-tests",
 ]
 
-# Builds `wsl_sandbox_test_helper`, the Windows analog of `bwrap_test_helper`.
+# Builds `wsl-sandbox-test-helper`, the Windows analog of `bwrap-test-helper`.
 # It drives the real WSL/Bubblewrap sandbox end-to-end (see
 # `script/test-wsl-sandbox.ps1` / `cargo xtask wsl-sandbox-tests`). Off by
 # default so normal builds and the workspace test run don't produce it.
@@ -33,14 +33,14 @@ wsl-test = []
 # Behavior test helper for the Linux Bubblewrap sandbox. Only built when the
 # `nixos-test` feature is enabled (and only meaningful on Linux).
 [[bin]]
-name = "bwrap_test_helper"
+name = "bwrap-test-helper"
 path = "src/bwrap_test_helper.rs"
 required-features = ["nixos-test"]
 
 # Behavior test helper for the Windows WSL/Bubblewrap sandbox. Only built when
 # the `wsl-test` feature is enabled (and only meaningful on Windows).
 [[bin]]
-name = "wsl_sandbox_test_helper"
+name = "wsl-sandbox-test-helper"
 path = "src/wsl_sandbox_test_helper.rs"
 required-features = ["wsl-test"]
 
@@ -51,7 +51,7 @@ http_proxy.workspace = true
 log.workspace = true
 # Used only by the `nixos-test` helper binary to parse its check list; gated
 # behind the `nixos-test` feature so normal builds don't pull it in.
-serde = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
 serde_json = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -74,7 +74,7 @@ gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-smol.workspace = true
 # Structural WSL-installed check (registered distros under HKCU\...\Lxss)
 # without spawning `wsl.exe`.
+smol.workspace = true
 windows-registry.workspace = true

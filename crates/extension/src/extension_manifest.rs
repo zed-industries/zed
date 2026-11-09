@@ -8,8 +8,10 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use cloud_api_types::ExtensionProvides;
 use collections::{BTreeMap, BTreeSet, HashMap};
 use fs::Fs;
-use language::LanguageName;
+use futures::StreamExt as _;
+use language::{LanguageConfig, LanguageName};
 use lsp::LanguageServerName;
+use path::PathExt as _;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use util::paths::PathStyle;
@@ -50,6 +52,8 @@ impl fmt::Display for SchemaVersion {
 
 impl SchemaVersion {
     pub const ZERO: Self = Self(0);
+    /// The latest schema version supported by Zed.
+    pub const CURRENT: Self = Self(1);
 
     pub fn is_v0(&self) -> bool {
         self == &Self::ZERO
@@ -229,91 +233,6 @@ pub struct LibManifestEntry {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct AgentServerManifestEntry {
-    /// Display name for the agent (shown in menus).
-    pub name: String,
-    /// Environment variables to set when launching the agent server.
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-    /// Optional icon path (relative to extension root, e.g., "ai.svg").
-    /// Should be a small SVG icon for display in menus.
-    #[serde(default)]
-    pub icon: Option<String>,
-    /// Per-target configuration for archive-based installation.
-    /// The key format is "{os}-{arch}" where:
-    /// - os: "darwin" (macOS), "linux", "windows"
-    /// - arch: "aarch64" (arm64), "x86_64"
-    ///
-    /// Example:
-    /// ```toml
-    /// [agent_servers.myagent.targets.darwin-aarch64]
-    /// archive = "https://example.com/myagent-darwin-arm64.zip"
-    /// cmd = "./myagent"
-    /// args = ["--serve"]
-    /// sha256 = "abc123..."  # optional
-    /// ```
-    ///
-    /// For Node.js-based agents, you can use "node" as the cmd to automatically
-    /// use Zed's managed Node.js runtime instead of relying on the user's PATH:
-    /// ```toml
-    /// [agent_servers.nodeagent.targets.darwin-aarch64]
-    /// archive = "https://example.com/nodeagent.zip"
-    /// cmd = "node"
-    /// args = ["index.js", "--port", "3000"]
-    /// ```
-    ///
-    /// Note: All commands are executed with the archive extraction directory as the
-    /// working directory, so relative paths in args (like "index.js") will resolve
-    /// relative to the extracted archive contents.
-    pub targets: HashMap<String, TargetConfig>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct TargetConfig {
-    /// URL to download the archive from (e.g., "https://github.com/owner/repo/releases/download/v1.0.0/myagent-darwin-arm64.zip")
-    pub archive: String,
-    /// Command to run (e.g., "./myagent" or "./myagent.exe")
-    pub cmd: String,
-    /// Command-line arguments to pass to the agent server.
-    #[serde(default)]
-    pub args: Vec<String>,
-    /// Optional SHA-256 hash of the archive for verification.
-    /// If not provided and the URL is a GitHub release, we'll attempt to fetch it from GitHub.
-    #[serde(default)]
-    pub sha256: Option<String>,
-    /// Environment variables to set when launching the agent server.
-    /// These target-specific env vars will override any env vars set at the agent level.
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-}
-
-impl TargetConfig {
-    pub fn from_proto(proto: proto::ExternalExtensionAgentTarget) -> Self {
-        Self {
-            archive: proto.archive,
-            cmd: proto.cmd,
-            args: proto.args,
-            sha256: proto.sha256,
-            env: proto.env.into_iter().collect(),
-        }
-    }
-
-    pub fn to_proto(&self) -> proto::ExternalExtensionAgentTarget {
-        proto::ExternalExtensionAgentTarget {
-            archive: self.archive.clone(),
-            cmd: self.cmd.clone(),
-            args: self.args.clone(),
-            sha256: self.sha256.clone(),
-            env: self
-                .env
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub enum ExtensionLibraryKind {
     Rust,
 }
@@ -339,6 +258,10 @@ pub struct LanguageServerManifestEntry {
     pub language_ids: HashMap<LanguageName, String>,
     #[serde(default)]
     pub code_action_kinds: Option<Vec<lsp::CodeActionKind>>,
+    /// Languages (from `languages`) for which this language server is not started
+    /// unless the user explicitly lists it in their `language_servers` setting.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    opt_in_languages: BTreeSet<LanguageName>,
 }
 
 impl LanguageServerManifestEntry {
@@ -356,6 +279,17 @@ impl LanguageServerManifestEntry {
             None
         };
         self.languages.iter().cloned().chain(language)
+    }
+
+    /// Returns the languages for which the language server is disabled by default.
+    pub fn opt_in_languages(&self) -> &BTreeSet<LanguageName> {
+        &self.opt_in_languages
+    }
+
+    /// Returns whether the language server should only be started for the given
+    /// language when the user explicitly enables it.
+    pub fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.opt_in_languages.contains(language)
     }
 }
 
@@ -414,6 +348,138 @@ impl ExtensionManifest {
         } else {
             anyhow::bail!("No extension manifest found for extension {extension_name}")
         }
+    }
+
+    /// Fills in the parts of the manifest that are derived from the extension's
+    /// directory layout (languages, themes, icon themes, snippets, library kind).
+    pub async fn populate_defaults(
+        &mut self,
+        extension_path: &Path,
+        fs: Arc<dyn Fs>,
+    ) -> Result<()> {
+        // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
+        // contents of the computed fields, since we don't care what the existing values are.
+        if self.schema_version.is_v0() {
+            self.languages.clear();
+            self.grammars.clear();
+            self.themes.clear();
+        }
+
+        let cargo_toml_path = extension_path.join("Cargo.toml");
+        if cargo_toml_path.exists() {
+            self.lib.kind = Some(ExtensionLibraryKind::Rust);
+        }
+
+        let languages_dir = extension_path.join("languages");
+        if fs.is_dir(&languages_dir).await {
+            let mut language_dir_entries = fs
+                .read_dir(&languages_dir)
+                .await
+                .context("listing languages directory")?;
+
+            while let Some(language_dir) = language_dir_entries.next().await {
+                let language_dir = language_dir?;
+                let config_path = language_dir.join(LanguageConfig::FILE_NAME);
+                if fs.is_file(config_path.as_path()).await {
+                    let relative_language_dir = language_dir
+                        .strip_prefix(extension_path)?
+                        .to_rel_path_buf()?;
+                    if !self.languages.contains(&relative_language_dir) {
+                        self.languages.push(relative_language_dir);
+                    }
+                }
+            }
+        }
+
+        let themes_dir = extension_path.join("themes");
+        if fs.is_dir(&themes_dir).await {
+            let mut theme_dir_entries = fs
+                .read_dir(&themes_dir)
+                .await
+                .context("listing themes directory")?;
+
+            while let Some(theme_path) = theme_dir_entries.next().await {
+                let theme_path = theme_path?;
+                if theme_path.extension() == Some("json".as_ref()) {
+                    let relative_theme_path =
+                        theme_path.strip_prefix(extension_path)?.to_rel_path_buf()?;
+                    if !self.themes.contains(&relative_theme_path) {
+                        self.themes.push(relative_theme_path);
+                    }
+                }
+            }
+        }
+
+        let icon_themes_dir = extension_path.join("icon_themes");
+        if fs.is_dir(&icon_themes_dir).await {
+            let mut icon_theme_dir_entries = fs
+                .read_dir(&icon_themes_dir)
+                .await
+                .context("listing icon themes directory")?;
+
+            while let Some(icon_theme_path) = icon_theme_dir_entries.next().await {
+                let icon_theme_path = icon_theme_path?;
+                if icon_theme_path.extension() == Some("json".as_ref()) {
+                    let relative_icon_theme_path = icon_theme_path
+                        .strip_prefix(extension_path)?
+                        .to_rel_path_buf()?;
+                    if !self.icon_themes.contains(&relative_icon_theme_path) {
+                        self.icon_themes.push(relative_icon_theme_path);
+                    }
+                }
+            }
+        };
+        if self.snippets.is_none()
+            && let snippets_json_path = extension_path.join("snippets.json")
+            && fs.is_file(&snippets_json_path).await
+        {
+            self.snippets = Some("snippets.json".into());
+        }
+
+        // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
+        // the manifest using the contents of the `grammars` directory.
+        if self.schema_version.is_v0() {
+            let grammars_dir = extension_path.join("grammars");
+            if fs.is_dir(&grammars_dir).await {
+                let mut grammar_dir_entries = fs
+                    .read_dir(&grammars_dir)
+                    .await
+                    .context("listing grammars directory")?;
+
+                while let Some(grammar_path) = grammar_dir_entries.next().await {
+                    let grammar_path = grammar_path?;
+                    if grammar_path.extension() == Some("toml".as_ref()) {
+                        #[derive(Deserialize)]
+                        struct GrammarConfigToml {
+                            pub repository: String,
+                            pub commit: String,
+                            #[serde(default)]
+                            pub path: Option<String>,
+                        }
+
+                        let grammar_config = fs.load(&grammar_path).await?;
+                        let grammar_config: GrammarConfigToml = toml::from_str(&grammar_config)?;
+
+                        let grammar_name = grammar_path
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .context("no grammar name")?;
+                        if !self.grammars.contains_key(grammar_name) {
+                            self.grammars.insert(
+                                grammar_name.into(),
+                                GrammarManifestEntry {
+                                    repository: grammar_config.repository,
+                                    rev: grammar_config.commit,
+                                    path: grammar_config.path,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -590,6 +656,41 @@ mod tests {
     }
 
     #[test]
+    fn test_deserialize_opt_in_languages() {
+        let manifest: ExtensionManifest = toml::from_str(indoc::indoc! {r#"
+            id = "test-manifest"
+            name = "Test Manifest"
+            version = "0.0.1"
+            schema_version = 1
+
+            [language_servers.default-server]
+            languages = ["Julia"]
+
+            [language_servers.opt-in-server]
+            languages = ["Julia", "Markdown"]
+            opt_in_languages = ["Julia"]
+        "#})
+        .expect("manifest should parse");
+
+        let julia = LanguageName::new("Julia");
+        let markdown = LanguageName::new("Markdown");
+
+        let default_server =
+            &manifest.language_servers[&LanguageServerName::new_static("default-server")];
+        assert!(default_server.opt_in_languages().is_empty());
+        assert!(!default_server.is_opt_in_for(&julia));
+
+        let opt_in_server =
+            &manifest.language_servers[&LanguageServerName::new_static("opt-in-server")];
+        assert_eq!(
+            opt_in_server.languages().into_iter().collect::<Vec<_>>(),
+            vec![julia.clone(), markdown.clone()]
+        );
+        assert!(opt_in_server.is_opt_in_for(&julia));
+        assert!(!opt_in_server.is_opt_in_for(&markdown));
+    }
+
+    #[test]
     #[cfg(target_os = "windows")]
     fn test_deserialize_manifest_with_windows_separators() {
         use indoc::indoc;
@@ -603,5 +704,89 @@ mod tests {
         "#};
         let manifest: ExtensionManifest = toml::from_str(&content).expect("manifest should parse");
         assert_eq!(manifest.languages, vec![rel_path_buf("foo/bar")]);
+    }
+}
+
+/// Requirements for the manifest format of the next schema version.
+///
+/// These are skipped while [`SchemaVersion::CURRENT`] is below
+/// `NEXT_SCHEMA_VERSION` and fail once it is bumped, until the manifest
+/// format has been migrated.
+#[cfg(test)]
+mod next_schema_version_tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const NEXT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
+
+    fn is_next_schema_version_supported() -> bool {
+        SchemaVersion::CURRENT >= NEXT_SCHEMA_VERSION
+    }
+
+    fn parse_manifest(language_server: &str) -> Result<ExtensionManifest, toml::de::Error> {
+        toml::from_str(&format!(
+            indoc::indoc! {r#"
+                id = "test-manifest"
+                name = "Test Manifest"
+                version = "0.0.1"
+                schema_version = {}
+
+                [language_servers.my-server]
+                {}
+            "#},
+            NEXT_SCHEMA_VERSION, language_server
+        ))
+    }
+
+    #[test]
+    fn test_language_server_languages_must_not_be_a_list() {
+        if !is_next_schema_version_supported() {
+            return;
+        }
+
+        assert!(
+            parse_manifest(indoc::indoc! {r#"
+                languages = ["Julia", "Markdown"]
+                language_ids = { Julia = "julia" }
+                opt_in_languages = ["Julia"]
+            "#})
+            .is_err(),
+            "`languages`, `language_ids` and `opt_in_languages` must be folded \
+            into a single `languages` map on schema version {NEXT_SCHEMA_VERSION}",
+        );
+    }
+
+    #[test]
+    fn test_language_server_languages_are_a_map() {
+        if !is_next_schema_version_supported() {
+            return;
+        }
+
+        let manifest = parse_manifest(indoc::indoc! {r#"
+            [language_servers.my-server.languages]
+            Julia = { language_id = "julia", enabled_by_default = false }
+            Markdown = {}
+        "#})
+        .unwrap_or_else(|error| {
+            panic!(
+                "language server languages must be a map keyed by language name \
+                on schema version {NEXT_SCHEMA_VERSION}: {error}"
+            )
+        });
+
+        let julia = LanguageName::new("Julia");
+        let markdown = LanguageName::new("Markdown");
+        let entry = &manifest.language_servers[&LanguageServerName::new_static("my-server")];
+        assert_eq!(
+            entry.languages().into_iter().collect::<Vec<_>>(),
+            vec![julia.clone(), markdown.clone()]
+        );
+        assert_eq!(
+            entry.language_ids.get(&julia).map(String::as_str),
+            Some("julia")
+        );
+        assert!(entry.is_opt_in_for(&julia));
+        assert!(!entry.is_opt_in_for(&markdown));
     }
 }
