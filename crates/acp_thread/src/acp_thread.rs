@@ -7313,10 +7313,15 @@ impl AcpThread {
         if self.plans.remove(&identity).is_none() {
             return;
         }
-        // A user dismissal (no visible plan) stays in effect; only an agent removing the
-        // plan on screen moves the panel to the next most recently changed plan. Empty plans
-        // are skipped because the panel hides them, which would mask a non-empty one.
-        if self.visible_plan.as_ref() == Some(&identity) {
+        self.fall_back_from_visible_plan(&identity, cx);
+        cx.notify();
+    }
+
+    /// A user dismissal (no visible plan) stays in effect; only an agent removing or emptying
+    /// the plan on screen moves the panel to the next most recently changed plan. Empty plans
+    /// are skipped because the panel hides them, which would mask a non-empty one.
+    fn fall_back_from_visible_plan(&mut self, identity: &PlanIdentity, cx: &App) {
+        if self.visible_plan.as_ref() == Some(identity) {
             self.visible_plan = self
                 .plans
                 .iter()
@@ -7324,7 +7329,6 @@ impl AcpThread {
                 .max_by_key(|(_, plan)| plan.last_changed)
                 .map(|(identity, _)| identity.clone());
         }
-        cx.notify();
     }
 
     fn replace_plan(
@@ -7341,7 +7345,11 @@ impl AcpThread {
         if is_new || changed || identity == PlanIdentity::Legacy {
             self.plan_change_count += 1;
             plan.last_changed = self.plan_change_count;
-            self.visible_plan = Some(identity);
+            if plan.is_empty(cx) {
+                self.fall_back_from_visible_plan(&identity, cx);
+            } else {
+                self.visible_plan = Some(identity);
+            }
         }
         cx.notify();
     }
@@ -7355,6 +7363,9 @@ impl AcpThread {
         {
             entries
                 .retain(|entry| !matches!(entry.source.status, acp_v2::PlanEntryStatus::Completed));
+            if entries.is_empty() {
+                self.fall_back_from_visible_plan(&PlanIdentity::Legacy, cx);
+            }
         }
         cx.notify();
     }
@@ -9107,7 +9118,6 @@ mod tests {
                 reordered,
                 appended,
                 vec![original[0].clone()],
-                vec![],
             ] {
                 thread.upsert_plan_items(
                     acp_v2::PlanItems::new("plan", original.clone()),
@@ -9129,6 +9139,20 @@ mod tests {
                     assert_eq!(first.content, markdown);
                 }
             }
+
+            thread.clear_plan(cx);
+            thread.upsert_plan_items(acp_v2::PlanItems::new("plan", vec![]), None, cx);
+            assert!(
+                thread.plan().is_none(),
+                "emptying a plan does not reopen it"
+            );
+            assert!(
+                thread
+                    .plan_by_id(&"plan".into())
+                    .expect("plan")
+                    .entries()
+                    .is_empty()
+            );
         });
     }
 
@@ -9162,19 +9186,14 @@ mod tests {
             );
             assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("b".into())));
             thread.upsert_plan_items(acp_v2::PlanItems::new("empty", vec![]), None, cx);
-            assert!(
-                thread
-                    .plan()
-                    .expect("selected empty plan")
-                    .entries()
-                    .is_empty()
-            );
-            thread.upsert_plan_items(acp_v2::PlanItems::new("a", entries.clone()), None, cx);
             assert_eq!(
                 thread.visible_plan,
-                Some(PlanIdentity::Keyed("empty".into()))
+                Some(PlanIdentity::Keyed("b".into())),
+                "a new empty plan does not hide the visible one"
             );
-            let mut changed = entries;
+            thread.upsert_plan_items(acp_v2::PlanItems::new("a", entries.clone()), None, cx);
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("b".into())));
+            let mut changed = entries.clone();
             changed[0].content = "Changed".into();
             thread.upsert_plan_items(acp_v2::PlanItems::new("a", changed), None, cx);
             assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("a".into())));
@@ -9183,11 +9202,38 @@ mod tests {
                 first_markdown
             );
             thread.upsert_plan_items(acp_v2::PlanItems::new("b", vec![]), None, cx);
-            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("b".into())));
+            assert_eq!(
+                thread.visible_plan,
+                Some(PlanIdentity::Keyed("a".into())),
+                "emptying a hidden plan does not select it"
+            );
+            thread.upsert_plan_items(acp_v2::PlanItems::new("c", entries.clone()), None, cx);
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("c".into())));
+            thread.upsert_plan_items(acp_v2::PlanItems::new("c", vec![]), None, cx);
+            assert_eq!(
+                thread.visible_plan,
+                Some(PlanIdentity::Keyed("a".into())),
+                "emptying the visible plan falls back to the most recently changed non-empty plan"
+            );
             assert!(
                 thread
-                    .plan()
-                    .expect("clearing older B selects empty B")
+                    .plan_by_id(&"c".into())
+                    .expect("empty C retained")
+                    .entries()
+                    .is_empty(),
+                "the empty update still replaces C's content"
+            );
+            thread.upsert_plan_items(acp_v2::PlanItems::new("c", entries), None, cx);
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("c".into())));
+            assert_eq!(thread.plan().expect("C refilled").entries().len(), 1);
+            thread.clear_plan(cx);
+            thread.upsert_plan_items(acp_v2::PlanItems::new("b", vec![]), None, cx);
+            thread.upsert_plan_items(acp_v2::PlanItems::new("d", vec![]), None, cx);
+            assert!(thread.plan().is_none(), "empty plans do not undo dismissal");
+            assert!(
+                thread
+                    .plan_by_id(&"b".into())
+                    .expect("empty B retained")
                     .entries()
                     .is_empty()
             );
