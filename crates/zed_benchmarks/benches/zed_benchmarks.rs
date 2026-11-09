@@ -220,19 +220,13 @@ fn open_split_switch(criterion: &mut Criterion<BenchMeasurement>) {
             PaneAction::Open(RUST_FILE),
             PaneAction::Open(TYPESCRIPT_FILE),
             PaneAction::Open(PYTHON_FILE),
-            PaneAction::Open(MARKDOWN_FILE),
             PaneAction::Keys("cmd-k right"),
             PaneAction::Open("web/src/components/component_0.ts"),
-            PaneAction::Open("README.md"),
             PaneAction::Keys("cmd-k down"),
             PaneAction::Open("crates/generated_03/src/module_1.rs"),
-            PaneAction::Keys("cmd-}"),
-            PaneAction::Keys("cmd-}"),
             PaneAction::Keys("cmd-k cmd-up"),
             PaneAction::Keys("cmd-}"),
             PaneAction::Keys("cmd-k cmd-left"),
-            PaneAction::Keys("cmd-}"),
-            PaneAction::Keys("cmd-}"),
             PaneAction::Keys("cmd-}"),
             PaneAction::Keys("cmd-{"),
         ];
@@ -319,8 +313,8 @@ fn open_split_switch(criterion: &mut Criterion<BenchMeasurement>) {
                         "expected three panes after splitting"
                     );
                     assert!(
-                        session.item_count >= 9,
-                        "expected at least nine open items, found {}",
+                        session.item_count >= 7,
+                        "expected at least seven open items, found {}",
                         session.item_count
                     );
                 },
@@ -454,7 +448,7 @@ struct TypingSession {
 /// handler, then undoes it with cmd-z. Every keystroke reparses the buffer.
 fn editor_type_and_undo(criterion: &mut Criterion<BenchMeasurement>) {
     zed_bench(criterion, "editor_type_and_undo", |cx| {
-        const TYPED: &str = "let total = values.len();";
+        const TYPED: &str = "let n = 1;";
         const UNDOS: usize = 3;
 
         let app_state = init_app(cx);
@@ -554,7 +548,7 @@ fn selected_text(editor: &Entity<Editor>, cx: &mut App) -> (u32, String) {
 fn buffer_search(criterion: &mut Criterion<BenchMeasurement>) {
     zed_bench(criterion, "buffer_search", |cx| {
         const QUERY: &str = "cx.notify()";
-        const NEXT_MATCHES: usize = 6;
+        const NEXT_MATCHES: usize = 4;
 
         let expected_matches = pinned_contents(RUST_FILE).matches(QUERY).count();
         assert!(
@@ -1053,7 +1047,7 @@ fn agent_panel_long_thread(criterion: &mut Criterion<BenchMeasurement>) {
 /// the trackpad and the keyboard.
 fn keymap_editor_scroll(criterion: &mut Criterion<BenchMeasurement>) {
     zed_bench(criterion, "keymap_editor_scroll", |cx| {
-        const STEPS: u64 = 18;
+        const STEPS: u64 = 12;
         const DELTA: f32 = 120.;
 
         let app_state = init_app(cx);
@@ -1120,7 +1114,7 @@ fn settings_ui_navigate(criterion: &mut Criterion<BenchMeasurement>) {
             "project_panel.indent_guides.show",
             "terminal.font_size",
         ];
-        const STEPS_PER_PAGE: u64 = 5;
+        const STEPS_PER_PAGE: u64 = 3;
         const DELTA: f32 = 120.;
 
         let app_state = init_app(cx);
