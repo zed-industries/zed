@@ -67,6 +67,13 @@ unsafe fn build_classes() {
             let mut decl = ClassBuilder::new(c"GPUIApplication", class!(NSApplication))
                 .expect("failed to register GPUIApplication");
             decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
+            // AppKit's Dock "New Window" sends this to NSApplication when the
+            // Window menu is registered. Route it through workspace::NewWindow
+            // so on_new_window applies; File > New stays workspace::NewFile.
+            decl.add_method(
+                sel!(newWindowForTab:),
+                new_window_for_tab as extern "C-unwind" fn(_, Sel, *mut AnyObject),
+            );
             decl.register()
         }
     };
@@ -1571,6 +1578,31 @@ extern "C-unwind" fn menu_will_open(this: &AnyObject, _: Sel, _: *mut AnyObject)
             callback();
             platform.0.lock().will_open_menu.get_or_insert(callback);
         }
+    }
+}
+
+extern "C-unwind" fn new_window_for_tab(this: &AnyObject, _: Sel, _: *mut AnyObject) {
+    dispatch_menu_action_named(this, "workspace::NewWindow");
+}
+
+fn dispatch_menu_action_named(this: &AnyObject, name: &str) {
+    unsafe {
+        let platform = get_mac_platform(this);
+        let mut lock = platform.0.lock();
+        let Some(mut callback) = lock.menu_command.take() else {
+            return;
+        };
+        let action = lock
+            .menu_actions
+            .iter()
+            .rev()
+            .find(|action| action.name() == name)
+            .map(|action| action.boxed_clone());
+        drop(lock);
+        if let Some(action) = action {
+            callback(action.as_ref());
+        }
+        platform.0.lock().menu_command.get_or_insert(callback);
     }
 }
 
