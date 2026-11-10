@@ -54,10 +54,14 @@ async fn inline_review_submits_selected_lines_and_keeps_reply_through_edits(
             input.insert("Explain these lines", window, cx)
         });
         editor.submit_diff_review_comment(window, cx);
+        input.update(cx, |input, cx| input.insert("Why?", window, cx));
+        editor.submit_diff_review_comment(window, cx);
     });
     cx.run_until_parked();
     let submissions = submitted.borrow();
-    assert_eq!(submissions.len(), 1);
+    assert_eq!(submissions.len(), 2);
+    assert_eq!(submissions[0].discussion_id, submissions[1].discussion_id);
+    assert_ne!(submissions[0].id, submissions[1].id);
     let comment = &submissions[0];
     assert_eq!(
         comment.path,
@@ -67,13 +71,15 @@ async fn inline_review_submits_selected_lines_and_keeps_reply_through_edits(
     assert_eq!(comment.excerpt, "first\nsecond");
     assert_eq!(comment.comment, "Explain these lines");
     editor.update_in(cx, |editor, window, cx| {
-        editor.set_inline_review_reply(comment.id, "The final reply".into(), window, cx);
+        editor.set_inline_review_reply(comment.id, "Pi".into(), "The final reply".into(), cx);
         let buffer = editor.buffer.read(cx).as_singleton().unwrap();
         buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "before\n")], None, cx));
         let snapshot = editor.buffer.read(cx).snapshot(cx);
         let stored = &editor.stored_review_comments[0].1[0];
         assert!(!stored.is_outdated(&snapshot));
-        assert_eq!(stored.agent_reply.as_deref(), Some("The final reply"));
+        let (author, reply) = stored.agent_reply.as_ref().unwrap();
+        assert_eq!(author.as_ref(), "Pi");
+        assert_eq!(reply.read(cx).source().as_ref(), "The final reply");
         buffer.update(cx, |buffer, cx| buffer.edit([(7..12, "changed")], None, cx));
         let snapshot = editor.buffer.read(cx).snapshot(cx);
         assert!(editor.stored_review_comments[0].1[0].is_outdated(&snapshot));

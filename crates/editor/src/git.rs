@@ -179,12 +179,16 @@ pub(super) struct StoredReviewComment {
     pub(super) range: Range<Anchor>,
     /// Whether this comment is currently being edited inline.
     pub(super) is_editing: bool,
-    agent_reply: Option<String>,
+    agent_reply: Option<(SharedString, Entity<Markdown>)>,
     original_excerpt: Option<String>,
+    discussion_id: Option<String>,
+    submission_status: Option<String>,
+    on_cancel: Option<Rc<dyn Fn(&mut App)>>,
 }
 
 pub struct InlineReviewComment {
     pub id: usize,
+    pub discussion_id: String,
     pub path: std::path::PathBuf,
     pub lines: Range<u32>,
     pub excerpt: String,
@@ -249,6 +253,9 @@ impl StoredReviewComment {
             is_editing: false,
             agent_reply: None,
             original_excerpt: None,
+            discussion_id: None,
+            submission_status: None,
+            on_cancel: None,
         }
     }
 }
@@ -630,23 +637,42 @@ impl Editor {
         Ok(())
     }
 
+    pub fn set_inline_review_status(
+        &mut self,
+        id: usize,
+        status: String,
+        on_cancel: Option<Rc<dyn Fn(&mut App)>>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(comment) = self
+            .stored_review_comments
+            .iter_mut()
+            .flat_map(|(_, comments)| comments)
+            .find(|comment| comment.id == id)
+        {
+            comment.submission_status = Some(status);
+            comment.on_cancel = on_cancel;
+            cx.notify();
+        }
+    }
+
     pub fn set_inline_review_reply(
         &mut self,
         id: usize,
+        author: SharedString,
         reply: String,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let hunk_key = self
+        let markdown = cx.new(|cx| Markdown::new(reply.into(), None, None, cx));
+        if let Some(comment) = self
             .stored_review_comments
             .iter_mut()
-            .find_map(|(key, comments)| {
-                let comment = comments.iter_mut().find(|comment| comment.id == id)?;
-                comment.agent_reply = Some(reply.clone());
-                Some(key.clone())
-            });
-        if let Some(key) = hunk_key {
-            self.refresh_diff_review_overlay_height(&key, window, cx);
+            .flat_map(|(_, comments)| comments)
+            .find(|comment| comment.id == id)
+        {
+            comment.agent_reply = Some((author, markdown));
+            comment.submission_status = Some("Answered".into());
+            comment.on_cancel = None;
             cx.notify();
         }
     }
@@ -841,28 +867,39 @@ impl Editor {
                     .collect::<String>(),
             ))
         });
+        let discussion_id = self
+            .comments_for_hunk(&hunk_key, &snapshot)
+            .iter()
+            .find(|comment| {
+                comment.range.to_point(&snapshot) == anchor_range.to_point(&snapshot)
+                    && comment.discussion_id.is_some()
+            })
+            .and_then(|comment| comment.discussion_id.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let id = self.add_review_comment(hunk_key.clone(), comment_text.clone(), anchor_range, cx);
         if let Some(on_submit) = on_submit {
             if let Some((path, lines, excerpt)) = source {
                 for (_, comments) in &mut self.stored_review_comments {
                     if let Some(comment) = comments.iter_mut().find(|comment| comment.id == id) {
                         comment.original_excerpt = Some(excerpt.clone());
-                        comment.agent_reply = Some("Waiting for agent…".into());
+                        comment.discussion_id = Some(discussion_id.clone());
+                        comment.submission_status = Some("Queued".into());
                     }
                 }
                 let request = InlineReviewComment {
                     id,
+                    discussion_id,
                     path,
                     lines,
                     excerpt,
                     comment: comment_text,
                 };
-                cx.defer_in(window, move |_, window, cx| on_submit(request, window, cx));
+                window.defer(cx, move |window, cx| on_submit(request, window, cx));
             } else {
-                self.set_inline_review_reply(
+                self.set_inline_review_status(
                     id,
                     "Not sent: the source file is no longer available.".into(),
-                    window,
+                    None,
                     cx,
                 );
             }
@@ -2696,16 +2733,11 @@ impl Editor {
                 .map(|editor| {
                     let editor = editor.read(cx);
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    let mut comments = editor.comments_for_hunk(hunk_key, &snapshot).to_vec();
-                    for comment in &mut comments {
-                        if comment.is_outdated(&snapshot) {
-                            comment.agent_reply = Some(format!(
-                                "Outdated — selected code changed.\nOriginal excerpt:\n{}\n\n{}",
-                                comment.original_excerpt.as_deref().unwrap_or_default(),
-                                comment.agent_reply.as_deref().unwrap_or_default()
-                            ));
-                        }
-                    }
+                    let comments = editor
+                        .comments_for_hunk(hunk_key, &snapshot)
+                        .iter()
+                        .map(|comment| (comment.clone(), comment.is_outdated(&snapshot)))
+                        .collect::<Vec<_>>();
                     let (expanded, editors, avatar_uri, line_ranges) = editor
                         .diff_review_overlays
                         .iter()
@@ -2844,21 +2876,26 @@ impl Editor {
                     avatar_size,
                     action_icon_size,
                     colors,
+                    crate::hover_popover::hover_markdown_style(cx.window, cx.app),
                 ))
             })
             .into_any_element()
     }
 
     fn render_comments_section(
-        comments: Vec<StoredReviewComment>,
+        comments: Vec<(StoredReviewComment, bool)>,
         expanded: bool,
         inline_editors: HashMap<usize, Entity<Editor>>,
         user_avatar_uri: Option<SharedUri>,
         avatar_size: Pixels,
         action_icon_size: IconSize,
         colors: &theme::ThemeColors,
+        markdown_style: markdown::MarkdownStyle,
     ) -> impl IntoElement {
-        let comment_count = comments.len();
+        let comment_count: usize = comments
+            .iter()
+            .map(|(comment, _)| 1 + usize::from(comment.agent_reply.is_some()))
+            .sum();
 
         v_flex()
             .w_full()
@@ -2902,16 +2939,68 @@ impl Editor {
             )
             // Comments list (when expanded)
             .when(expanded, |el| {
-                el.children(comments.into_iter().map(|comment| {
+                el.children(comments.into_iter().map(|(comment, outdated)| {
                     let inline_editor = inline_editors.get(&comment.id).cloned();
-                    Self::render_comment_row(
-                        comment,
-                        inline_editor,
-                        user_avatar_uri.clone(),
-                        avatar_size,
-                        action_icon_size,
-                        colors,
-                    )
+                    let reply = comment.agent_reply.clone();
+                    let original = comment.original_excerpt.clone();
+                    let id = comment.id;
+                    v_flex()
+                        .w_full()
+                        .gap_1()
+                        .child(Self::render_comment_row(
+                            comment,
+                            inline_editor,
+                            user_avatar_uri.clone(),
+                            avatar_size,
+                            action_icon_size,
+                            colors,
+                        ))
+                        .when(outdated, |this| {
+                            this.child(div().px_2().text_sm().text_color(colors.text_muted).child(
+                                format!(
+                                    "Outdated — selected code changed.\nOriginal excerpt:\n{}",
+                                    original.unwrap_or_default()
+                                ),
+                            ))
+                        })
+                        .when_some(reply, |this, (author, markdown)| {
+                            this.child(
+                                h_flex()
+                                    .w_full()
+                                    .items_start()
+                                    .gap_2()
+                                    .px_2()
+                                    .py_1p5()
+                                    .rounded_md()
+                                    .bg(colors.surface_background)
+                                    .child(
+                                        Icon::new(IconName::Sparkle)
+                                            .size(IconSize::Small)
+                                            .color(Color::Accent),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .gap_1()
+                                            .child(
+                                                Label::new(author)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Accent),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id(("inline-review-reply", id))
+                                                    .max_h(rems(24.))
+                                                    .overflow_y_scroll()
+                                                    .child(markdown::MarkdownElement::new(
+                                                        markdown,
+                                                        markdown_style.clone(),
+                                                    )),
+                                            ),
+                                    ),
+                            )
+                        })
                 }))
             })
     }
@@ -2929,7 +3018,7 @@ impl Editor {
 
         h_flex()
             .w_full()
-            .items_center()
+            .items_start()
             .gap_2()
             .px_2()
             .py_1p5()
@@ -2972,14 +3061,21 @@ impl Editor {
                     .gap_2()
                     .text_sm()
                     .text_color(colors.text)
+                    .when(comment.discussion_id.is_some(), |this| {
+                        this.child(Label::new("You").size(LabelSize::Small).color(Color::Muted))
+                    })
                     .child(comment.comment)
-                    .when_some(comment.agent_reply, |this, reply| {
+                    .when_some(comment.submission_status, |this, status| {
                         this.child(
-                            div()
-                                .id(("inline-review-reply", comment_id))
-                                .max_h(rems(16.))
-                                .overflow_y_scroll()
-                                .child(reply),
+                            Label::new(status)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    })
+                    .when_some(comment.on_cancel, |this, cancel| {
+                        this.child(
+                            Button::new(("cancel-review", comment_id), "Cancel queued comment")
+                                .on_click(move |_, _, cx| cancel(cx)),
                         )
                     })
                     .into_any_element()
