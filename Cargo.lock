@@ -10529,10 +10529,13 @@ name = "managed_resources"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "fs",
  "futures 0.3.34",
  "gpui",
+ "paths",
  "serde",
  "serde_json",
+ "settings",
  "thiserror 2.0.17",
 ]
 

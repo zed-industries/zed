@@ -1,5 +1,9 @@
 {
   "$schema": "zed://schemas/settings",
+  "experimental.permissions": {
+    "default": "allowed",
+    "resources": {},
+  },
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:

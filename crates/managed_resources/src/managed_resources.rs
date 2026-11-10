@@ -10,43 +10,68 @@
 //! In order to interact with a resource, you ought to implement [ManagedResourceCommand].
 //! One example of a resource is a language server binary. Zed may need to install it on user's behalf. The user may also want us to use the binary available on their system.
 //! But then, whenever we want to invoke said binary, we should let the user know as well, as running arbitrary processes on their PC might affect their machine state.
-use futures::{FutureExt, future::Shared};
-use gpui::{App, AsyncApp, Context, Task, WeakEntity};
+use futures::{
+    FutureExt,
+    future::{LocalBoxFuture, Shared},
+};
+use gpui::{App, AsyncApp, Context, Subscription, Task, WeakEntity};
 use serde::{Deserialize, Serialize};
+pub use settings::{CommandPermissionRule, ResourcePermission};
+use settings::{ResourcePermissionsContent, Settings, SettingsContent, SettingsStore};
 use std::{
     any::{Any, TypeId},
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     future::Future,
     rc::Rc,
     sync::Arc,
 };
 
-enum ExecutionBillRoot {
+pub enum ExecutionBillRoot {
     Extension,
     Debugger,
     LanguageServer,
 }
 
-struct ResourceExecutionBill {
-    root: ExecutionBillRoot,
-    reasoning: Vec<()>,
+pub struct ResourceExecutionBill {
+    pub root: ExecutionBillRoot,
+    pub reasoning: Vec<()>,
+}
+
+pub type ResourceAction<Resource> =
+    Box<dyn FnOnce() -> LocalBoxFuture<'static, anyhow::Result<Resource>>>;
+
+pub enum ResourceAcquisition<Resource> {
+    Ready {
+        resource: Resource,
+        action: Option<ResourceAction<Resource>>,
+    },
+    RequiresAction(ResourceAction<Resource>),
 }
 
 pub trait ManagedResource: Sized + Send + Sync + 'static {
     type Key: 'static;
     type Context: ?Sized + 'static;
     type Command: ManagedResourceCommand<Self>;
+    type CommandKind: Serialize + PartialEq;
 
     /// Must be stable across restarts and unique to this resource type and key.
     /// Include configuration that changes what is authorized; context is not part of the cache key.
     fn id(key: &Self::Key) -> ResourceId;
 
     #[expect(async_fn_in_trait)]
-    async fn obtain(key: &Self::Key, context: &Self::Context) -> anyhow::Result<Self>;
+    async fn obtain(
+        key: &Self::Key,
+        context: &Self::Context,
+    ) -> anyhow::Result<ResourceAcquisition<Self>>;
 }
 
 pub trait ManagedResourceCommand<Resource: ManagedResource>: Sized + 'static {
     type Output: 'static;
+    type PermissionSettings: serde::de::DeserializeOwned + Default;
+
+    fn command_kind(&self) -> Resource::CommandKind;
+
+    fn permission(&self, settings: &Self::PermissionSettings) -> Option<ResourcePermission>;
 
     /// Describe the specific operation for approval without performing it.
     fn permission_description(&self, resource: &Resource) -> String;
@@ -66,32 +91,56 @@ pub enum ResourcePermissionRequest {
     ExecuteCommand {
         resource: ResourceId,
         description: String,
+        payload: serde_json::Value,
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResourcePermission {
-    Allowed,
-    Denied,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, settings::RegisterSetting,
+)]
 #[serde(transparent)]
 pub struct ResourcePermissions {
-    entries: BTreeMap<String, BTreeMap<String, ResourcePermission>>,
+    content: ResourcePermissionsContent,
+}
+
+impl Settings for ResourcePermissions {
+    fn from_settings(content: &SettingsContent) -> Self {
+        Self {
+            content: content
+                .experimental_permissions
+                .clone()
+                .expect("missing default resource permissions"),
+        }
+    }
 }
 
 impl ResourcePermissions {
     fn permission(&self, id: &ResourceId) -> Option<ResourcePermission> {
-        self.entries.get(&id.kind)?.get(&id.key).copied()
+        self.content
+            .resources
+            .get(&id.kind)
+            .and_then(|resource| resource.obtain)
+            .or(self.content.default)
+    }
+
+    fn command_permission<Resource: ManagedResource>(
+        &self,
+        id: &ResourceId,
+        command: &Resource::Command,
+    ) -> Result<Option<ResourcePermission>, ResourceAccessError> {
+        let settings = if let Some(resource) = self.content.resources.get(&id.kind) {
+            serde_json::from_value(serde_json::Value::Object(
+                resource.settings.clone().into_iter().collect(),
+            ))
+            .map_err(|error| ResourceAccessError::CommandSettings(Arc::new(error)))?
+        } else {
+            Default::default()
+        };
+        Ok(command.permission(&settings).or(self.content.default))
     }
 
     fn set_permission(&mut self, id: ResourceId, permission: ResourcePermission) {
-        self.entries
-            .entry(id.kind)
-            .or_default()
-            .insert(id.key, permission);
+        self.content.resources.entry(id.kind).or_default().obtain = Some(permission);
     }
 }
 
@@ -101,6 +150,10 @@ pub enum ResourceAccessError {
     Denied,
     #[error("permission to execute the managed resource command was denied")]
     CommandDenied,
+    #[error("failed to identify the managed resource command: {0}")]
+    CommandPayload(#[source] Arc<serde_json::Error>),
+    #[error("invalid managed resource command settings: {0}")]
+    CommandSettings(#[source] Arc<serde_json::Error>),
     #[error("failed to obtain the managed resource: {0}")]
     Obtain(#[source] Arc<anyhow::Error>),
     #[error("the managed resource identity is already in use by another resource type")]
@@ -116,6 +169,8 @@ pub struct ManagedResourceStore {
     permissions: ResourcePermissions,
     resources: HashMap<ResourceId, ResourceEntry>,
     request_approval: Rc<RequestApproval>,
+    fs: Option<Arc<dyn fs::Fs>>,
+    _settings_subscription: Option<Subscription>,
 }
 
 struct ResourceEntry {
@@ -135,7 +190,33 @@ impl ManagedResourceStore {
             permissions,
             resources: HashMap::new(),
             request_approval: Rc::new(request_approval),
+            fs: None,
+            _settings_subscription: None,
         }
+    }
+
+    pub fn from_settings(
+        fs: Arc<dyn fs::Fs>,
+        request_approval: impl Fn(ResourcePermissionRequest, &mut App) -> Task<ResourcePermission>
+        + 'static,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut store = Self::new(
+            ResourcePermissions::get_global(cx).clone(),
+            request_approval,
+        );
+        store.fs = Some(fs);
+        store._settings_subscription = Some(cx.observe_global::<SettingsStore>(|this, cx| {
+            let permissions = ResourcePermissions::get_global(cx);
+            if this.permissions != *permissions {
+                this.permissions = permissions.clone();
+                for resource in this.resources.values_mut() {
+                    resource.permission_revision = resource.permission_revision.wrapping_add(1);
+                }
+                cx.notify();
+            }
+        }));
+        store
     }
 
     pub fn permissions(&self) -> ResourcePermissions {
@@ -152,28 +233,50 @@ impl ManagedResourceStore {
         permission: ResourcePermission,
         cx: &mut Context<Self>,
     ) {
-        if let Some(resource) = self.resources.get_mut(&id) {
-            resource.permission_revision = resource.permission_revision.wrapping_add(1);
+        for (resource_id, resource) in &mut self.resources {
+            if resource_id.kind == id.kind {
+                resource.permission_revision = resource.permission_revision.wrapping_add(1);
+            }
         }
-        self.permissions.set_permission(id, permission);
+        self.permissions.set_permission(id.clone(), permission);
+        self.persist_permission(id, Some(permission), cx);
         cx.notify();
     }
 
     pub fn clear_permission(&mut self, id: &ResourceId, cx: &mut Context<Self>) {
-        if let Some(resource) = self.resources.get_mut(id) {
-            resource.permission_revision = resource.permission_revision.wrapping_add(1);
-        }
-        if let Some(permissions) = self.permissions.entries.get_mut(&id.kind) {
-            permissions.remove(&id.key);
-            if permissions.is_empty() {
-                self.permissions.entries.remove(&id.kind);
+        for (resource_id, resource) in &mut self.resources {
+            if resource_id.kind == id.kind {
+                resource.permission_revision = resource.permission_revision.wrapping_add(1);
             }
         }
+        if let Some(resource) = self.permissions.content.resources.get_mut(&id.kind) {
+            resource.obtain = None;
+            if resource.settings.is_empty() {
+                self.permissions.content.resources.remove(&id.kind);
+            }
+        }
+        self.persist_permission(id.clone(), None, cx);
         cx.notify();
     }
 
+    fn persist_permission(&self, id: ResourceId, permission: Option<ResourcePermission>, cx: &App) {
+        let Some(fs) = &self.fs else { return };
+        cx.global::<SettingsStore>()
+            .update_settings_file(fs.clone(), move |settings, _| {
+                let permissions = settings.experimental_permissions.get_or_insert_default();
+                if let Some(permission) = permission {
+                    permissions.resources.entry(id.kind).or_default().obtain = Some(permission);
+                } else if let Some(resource) = permissions.resources.get_mut(&id.kind) {
+                    resource.obtain = None;
+                    if resource.settings.is_empty() {
+                        permissions.resources.remove(&id.kind);
+                    }
+                }
+            });
+    }
+
     /// Resource approval and acquisition are shared; commands may run concurrently.
-    /// Each invocation requires separate command approval, which is not persisted.
+    /// Commands without a configured permission require separate approval, which is not persisted.
     /// Dropping the returned task cancels that command, not shared acquisition.
     /// Resource permission is rechecked after command approval; revocation cannot
     /// cancel commands that have already started running.
@@ -181,7 +284,7 @@ impl ManagedResourceStore {
         &mut self,
         key: Resource::Key,
         context: Rc<Resource::Context>,
-        reason: ResourceExecutionBill,
+        _reason: ResourceExecutionBill,
         command: Resource::Command,
         cx: &mut Context<Self>,
     ) -> Task<
@@ -220,10 +323,23 @@ impl ManagedResourceStore {
                             if let Some(value) = value {
                                 return Ok(value);
                             }
-                            Resource::obtain(&key, &context)
+                            let acquisition = Resource::obtain(&key, &context)
                                 .await
-                                .map(|resource| Arc::new(resource) as Arc<dyn Any + Send + Sync>)
-                                .map_err(|error| ResourceAccessError::Obtain(Arc::new(error)))
+                                .map_err(|error| ResourceAccessError::Obtain(Arc::new(error)))?;
+                            let resource = match acquisition {
+                                // An available update is not a request to perform it.
+                                ResourceAcquisition::Ready { resource, .. } => resource,
+                                ResourceAcquisition::RequiresAction(action) => {
+                                    this.read_with(cx, |this, _| {
+                                        Self::check_permission(&this.permissions, &id)
+                                    })
+                                    .map_err(|_| ResourceAccessError::StoreDropped)??;
+                                    action().await.map_err(|error| {
+                                        ResourceAccessError::Obtain(Arc::new(error))
+                                    })?
+                                }
+                            };
+                            Ok(Arc::new(resource) as Arc<dyn Any + Send + Sync>)
                         }
                         .await;
                         this.update(cx, |this, _| {
@@ -245,6 +361,8 @@ impl ManagedResourceStore {
 
         cx.spawn(async move |this, cx| {
             let resource = resource.await?;
+            let payload = serde_json::to_value(command.command_kind())
+                .map_err(|error| ResourceAccessError::CommandPayload(Arc::new(error)))?;
             let request_approval = this
                 .read_with(cx, |this, _| {
                     Self::check_permission(&this.permissions, &id)?;
@@ -257,11 +375,35 @@ impl ManagedResourceStore {
             let request = ResourcePermissionRequest::ExecuteCommand {
                 resource: id.clone(),
                 description: command.permission_description(&resource),
+                payload: payload.clone(),
             };
-            let permission = cx.update(|cx| request_approval(request, cx)).await;
+            let permission = this
+                .read_with(cx, |this, _| {
+                    this.permissions
+                        .command_permission::<Resource>(&id, &command)
+                })
+                .map_err(|_| ResourceAccessError::StoreDropped)??;
+            let permission = match permission {
+                Some(ResourcePermission::Allowed) => ResourcePermission::Allowed,
+                Some(ResourcePermission::Denied) => ResourcePermission::Denied,
+                Some(ResourcePermission::Prompt) | None => {
+                    cx.update(|cx| request_approval(request, cx)).await
+                }
+            };
             this.read_with(cx, |this, _| Self::check_permission(&this.permissions, &id))
                 .map_err(|_| ResourceAccessError::StoreDropped)??;
-            if permission == ResourcePermission::Denied {
+            let current_permission = this
+                .read_with(cx, |this, _| {
+                    this.permissions
+                        .command_permission::<Resource>(&id, &command)
+                })
+                .map_err(|_| ResourceAccessError::StoreDropped)??;
+            let permission = match current_permission {
+                Some(ResourcePermission::Allowed) => ResourcePermission::Allowed,
+                Some(ResourcePermission::Denied) => ResourcePermission::Denied,
+                Some(ResourcePermission::Prompt) | None => permission,
+            };
+            if permission != ResourcePermission::Allowed {
                 return Err(ResourceAccessError::CommandDenied);
             }
             Ok(command.run(resource).await)
@@ -277,18 +419,43 @@ impl ManagedResourceStore {
             .read_with(cx, |this, _| match this.permission(id) {
                 Some(ResourcePermission::Allowed) => Ok(None),
                 Some(ResourcePermission::Denied) => Err(ResourceAccessError::Denied),
-                None => Ok(Some((
+                Some(ResourcePermission::Prompt) | None => Ok(Some((
                     this.resources
                         .get(id)
                         .map(|resource| resource.permission_revision),
                     this.request_approval.clone(),
+                    this.permission(id).is_none(),
                 ))),
             })
             .map_err(|_| ResourceAccessError::StoreDropped)??;
-        if let Some((revision, request_approval)) = approval {
+        if let Some((revision, request_approval, remember)) = approval {
             let permission = cx
                 .update(|cx| request_approval(ResourcePermissionRequest::Obtain(id.clone()), cx))
                 .await;
+            if permission == ResourcePermission::Prompt {
+                return Err(ResourceAccessError::Denied);
+            }
+            if !remember {
+                if permission != ResourcePermission::Allowed {
+                    return Err(ResourceAccessError::Denied);
+                }
+                return this
+                    .read_with(cx, |this, _| {
+                        if this
+                            .resources
+                            .get(id)
+                            .map(|resource| resource.permission_revision)
+                            == revision
+                        {
+                            Self::check_permission(&this.permissions, id)
+                        } else if this.permission(id) == Some(ResourcePermission::Allowed) {
+                            Ok(())
+                        } else {
+                            Err(ResourceAccessError::Denied)
+                        }
+                    })
+                    .map_err(|_| ResourceAccessError::StoreDropped)?;
+            }
             this.update(cx, |this, cx| {
                 if this
                     .resources
@@ -312,7 +479,7 @@ impl ManagedResourceStore {
         id: &ResourceId,
     ) -> Result<(), ResourceAccessError> {
         match permissions.permission(id) {
-            Some(ResourcePermission::Allowed) => Ok(()),
+            Some(ResourcePermission::Allowed | ResourcePermission::Prompt) => Ok(()),
             Some(ResourcePermission::Denied) | None => Err(ResourceAccessError::Denied),
         }
     }
@@ -323,6 +490,7 @@ mod tests {
     use super::*;
     use futures::{channel::oneshot, poll};
     use gpui::{AppContext as _, Entity, TestAppContext};
+    use settings::RootUserSettings as _;
     use std::{
         cell::{Cell, RefCell},
         collections::VecDeque,
@@ -356,7 +524,16 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> Task<Result<Result<usize, TestError>, ResourceAccessError>> {
         store.update(cx, |store, cx| {
-            store.execute_command::<Counter<KIND>>(key, context.clone(), command, cx)
+            store.execute_command::<Counter<KIND>>(
+                key,
+                context.clone(),
+                ResourceExecutionBill {
+                    root: ExecutionBillRoot::LanguageServer,
+                    reasoning: Vec::new(),
+                },
+                command,
+                cx,
+            )
         })
     }
 
@@ -412,11 +589,13 @@ mod tests {
         value: AtomicUsize,
     }
 
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     struct TestContext {
-        obtain_count: Cell<usize>,
-        fail_next_obtain: Cell<bool>,
-        obtain_ready: Cell<Option<oneshot::Receiver<()>>>,
+        obtain_count: Rc<Cell<usize>>,
+        fail_next_obtain: Rc<Cell<bool>>,
+        obtain_ready: Rc<Cell<Option<oneshot::Receiver<()>>>>,
+        available_value: Option<usize>,
+        update_value: Option<usize>,
     }
 
     #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -433,24 +612,47 @@ mod tests {
         type Key = &'static str;
         type Context = TestContext;
         type Command = TestCommand;
+        type CommandKind = TestCommandKind;
 
         fn id(key: &Self::Key) -> ResourceId {
             ResourceId {
-                kind: format!("counter-{KIND}"),
+                kind: format!("counter-{KIND}-{key}"),
                 key: key.to_string(),
             }
         }
 
-        async fn obtain(key: &Self::Key, context: &Self::Context) -> anyhow::Result<Self> {
-            context.obtain_count.set(context.obtain_count.get() + 1);
-            if let Some(obtain_ready) = context.obtain_ready.take() {
-                obtain_ready.await.map_err(|_| TestError::Cancelled)?;
-            }
-            if context.fail_next_obtain.replace(false) {
-                return Err(TestError::Obtain.into());
-            }
-            Ok(Self {
-                value: AtomicUsize::new(key.len()),
+        async fn obtain(
+            key: &Self::Key,
+            context: &Self::Context,
+        ) -> anyhow::Result<ResourceAcquisition<Self>> {
+            let value = context.update_value.unwrap_or(key.len());
+            let action: ResourceAction<Self> = Box::new({
+                let context = context.clone();
+                move || {
+                    async move {
+                        context.obtain_count.set(context.obtain_count.get() + 1);
+                        if let Some(obtain_ready) = context.obtain_ready.take() {
+                            obtain_ready.await.map_err(|_| TestError::Cancelled)?;
+                        }
+                        if context.fail_next_obtain.replace(false) {
+                            return Err(TestError::Obtain.into());
+                        }
+                        Ok(Self {
+                            value: AtomicUsize::new(value),
+                        })
+                    }
+                    .boxed_local()
+                }
+            });
+            Ok(if let Some(value) = context.available_value {
+                ResourceAcquisition::Ready {
+                    resource: Self {
+                        value: AtomicUsize::new(value),
+                    },
+                    action: context.update_value.map(|_| action),
+                }
+            } else {
+                ResourceAcquisition::RequiresAction(action)
             })
         }
     }
@@ -467,8 +669,44 @@ mod tests {
         Unexpected,
     }
 
+    #[derive(Serialize, Deserialize, PartialEq)]
+    #[serde(rename_all = "snake_case")]
+    enum TestCommandKind {
+        Read,
+        Add,
+        Wait,
+        Fail,
+        Unexpected,
+    }
+
+    #[derive(Default, Deserialize)]
+    #[serde(default)]
+    struct TestPermissionSettings {
+        commands: Vec<CommandPermissionRule<TestCommandKind>>,
+    }
+
     impl<const KIND: u8> ManagedResourceCommand<Counter<KIND>> for TestCommand {
         type Output = Result<usize, TestError>;
+        type PermissionSettings = TestPermissionSettings;
+
+        fn command_kind(&self) -> TestCommandKind {
+            match self {
+                Self::Read => TestCommandKind::Read,
+                Self::Add(_) => TestCommandKind::Add,
+                Self::Wait { .. } => TestCommandKind::Wait,
+                Self::Fail => TestCommandKind::Fail,
+                Self::Unexpected => TestCommandKind::Unexpected,
+            }
+        }
+
+        fn permission(&self, settings: &Self::PermissionSettings) -> Option<ResourcePermission> {
+            let command = <Self as ManagedResourceCommand<Counter<KIND>>>::command_kind(self);
+            settings
+                .commands
+                .iter()
+                .find(|rule| rule.command == command)
+                .map(|rule| rule.permission)
+        }
 
         fn permission_description(&self, resource: &Counter<KIND>) -> String {
             let operation = match self {
@@ -501,6 +739,355 @@ mod tests {
                 Self::Unexpected => panic!("this command must not run"),
             }
         }
+    }
+
+    #[gpui::test]
+    async fn acquisition_actions_are_lazy_and_return_resources(_cx: &mut TestAppContext) {
+        for available_value in [None, Some(17)] {
+            let context = TestContext {
+                available_value,
+                update_value: Some(41),
+                ..Default::default()
+            };
+            let acquisition = TestResource::obtain(&"first", &context)
+                .await
+                .expect("discovery");
+            assert_eq!(context.obtain_count.get(), 0);
+            let action = match acquisition {
+                ResourceAcquisition::Ready { resource, action } => {
+                    assert_eq!(TestCommand::Read.run(Arc::new(resource)).await, Ok(17));
+                    action.expect("optional update")
+                }
+                ResourceAcquisition::RequiresAction(action) => action,
+            };
+            let resource = action().await.expect("acquisition action");
+            assert_eq!(TestCommand::Read.run(Arc::new(resource)).await, Ok(41));
+            assert_eq!(context.obtain_count.get(), 1);
+        }
+    }
+
+    #[gpui::test]
+    async fn ready_resources_are_cached_without_running_optional_actions(cx: &mut TestAppContext) {
+        for update_value in [None, Some(41)] {
+            let context = Rc::new(TestContext {
+                available_value: Some(17),
+                update_value,
+                ..Default::default()
+            });
+            let store = new_store(cx);
+            store.update(cx, |store, cx| {
+                store.set_permission(TestResource::id(&"first"), ResourcePermission::Allowed, cx)
+            });
+            assert_eq!(
+                execute::<0>(&store, "first", &context, TestCommand::Add(7), cx)
+                    .await
+                    .expect("available resource"),
+                Ok(24)
+            );
+            assert_eq!(
+                execute::<0>(&store, "first", &context, TestCommand::Read, cx)
+                    .await
+                    .expect("cached resource"),
+                Ok(24)
+            );
+            assert_eq!(context.obtain_count.get(), 0);
+        }
+    }
+
+    #[gpui::test]
+    async fn settings_defaults_and_action_overrides(cx: &mut TestAppContext) {
+        let context = Rc::new(TestContext::default());
+        for (settings, allowed, acquired) in [
+            (r#"{}"#, true, true),
+            (
+                r#"{"experimental.permissions":{"default":"denied"}}"#,
+                false,
+                false,
+            ),
+            (
+                r#"{"experimental.permissions":{
+                "default":"denied",
+                "resources":{"counter-0-first":{"obtain":"allowed","commands":[{"permission":"allowed","command":"add"}]}}
+            }}"#,
+                true,
+                true,
+            ),
+            (
+                r#"{"experimental.permissions":{
+                "default":"allowed",
+                "resources":{"counter-0-first":{"obtain":"denied"}}
+            }}"#,
+                false,
+                false,
+            ),
+            (
+                r#"{"experimental.permissions":{
+                "default":"allowed",
+                "resources":{"counter-0-first":{"commands":[{"permission":"denied","command":"add"}]}}
+            }}"#,
+                false,
+                true,
+            ),
+        ] {
+            let mut content = SettingsContent::parse_json_with_comments(include_str!(
+                "../../../assets/settings/default.json"
+            ))
+            .expect("default settings");
+            settings::MergeFromTrait::merge_from(
+                &mut content,
+                &SettingsContent::parse_json_with_comments(settings).expect("user settings"),
+            );
+            let store = cx.new(|_| {
+                ManagedResourceStore::new(ResourcePermissions::from_settings(&content), |_, _| {
+                    panic!("configured permissions must not prompt")
+                })
+            });
+            let obtains_before = context.obtain_count.get();
+            let result = execute::<0>(&store, "first", &context, TestCommand::Add(7), cx).await;
+            assert_eq!(
+                context.obtain_count.get() - obtains_before,
+                usize::from(acquired)
+            );
+            if allowed {
+                assert_eq!(result.expect("allowed by settings"), Ok(12));
+            } else if acquired {
+                assert!(matches!(result, Err(ResourceAccessError::CommandDenied)));
+            } else {
+                assert!(matches!(result, Err(ResourceAccessError::Denied)));
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn command_rules_match_kinds_and_prompt_each_time(cx: &mut TestAppContext) {
+        let content = SettingsContent::parse_json_with_comments(
+            r#"{
+            "experimental.permissions": {
+                "default": "denied",
+                "resources": {"counter-0-first": {
+                    "obtain": "allowed",
+                    "commands": [
+                        {"permission":"prompt","command":"add"},
+                        {"permission":"allowed","command":"add"},
+                        {"permission":"allowed","command":"read"}
+                    ]
+                }}
+            }
+        }"#,
+        )
+        .expect("settings");
+        let next_permission = Rc::new(Cell::new(ResourcePermission::Allowed));
+        let prompts = Rc::new(Cell::new(0));
+        let store = cx.new(|_| {
+            ManagedResourceStore::new(ResourcePermissions::from_settings(&content), {
+                let next_permission = next_permission.clone();
+                let prompts = prompts.clone();
+                move |request, _| {
+                    assert!(matches!(
+                        request,
+                        ResourcePermissionRequest::ExecuteCommand { .. }
+                    ));
+                    prompts.set(prompts.get() + 1);
+                    Task::ready(next_permission.get())
+                }
+            })
+        });
+        let context = Rc::new(TestContext::default());
+        let permissions = store.read_with(cx, |store, _| store.permissions());
+        assert_eq!(
+            execute::<0>(&store, "first", &context, TestCommand::Add(7), cx)
+                .await
+                .expect("approved"),
+            Ok(12)
+        );
+        next_permission.set(ResourcePermission::Denied);
+        assert!(matches!(
+            execute::<0>(&store, "first", &context, TestCommand::Add(7), cx).await,
+            Err(ResourceAccessError::CommandDenied)
+        ));
+        assert!(matches!(
+            execute::<0>(&store, "first", &context, TestCommand::Add(11), cx).await,
+            Err(ResourceAccessError::CommandDenied)
+        ));
+        assert_eq!(
+            execute::<0>(&store, "first", &context, TestCommand::Read, cx)
+                .await
+                .expect("read allowed"),
+            Ok(12)
+        );
+        assert_eq!(prompts.get(), 3);
+        assert_eq!(
+            store.read_with(cx, |store, _| store.permissions()),
+            permissions
+        );
+    }
+
+    #[gpui::test]
+    async fn acquisition_prompt_is_not_remembered(cx: &mut TestAppContext) {
+        let content = SettingsContent::parse_json_with_comments(
+            r#"{
+            "experimental.permissions": {
+                "default":"allowed",
+                "resources":{"counter-0-first":{"obtain":"prompt"}}
+            }
+        }"#,
+        )
+        .expect("settings");
+        let prompts = Rc::new(Cell::new(0));
+        let store = cx.new(|_| {
+            ManagedResourceStore::new(ResourcePermissions::from_settings(&content), {
+                let prompts = prompts.clone();
+                move |request, _| {
+                    assert!(matches!(request, ResourcePermissionRequest::Obtain(_)));
+                    prompts.set(prompts.get() + 1);
+                    Task::ready(ResourcePermission::Allowed)
+                }
+            })
+        });
+        let context = Rc::new(TestContext::default());
+        for _ in 0..2 {
+            assert_eq!(
+                execute::<0>(&store, "first", &context, TestCommand::Read, cx)
+                    .await
+                    .expect("approved"),
+                Ok(5)
+            );
+        }
+        assert_eq!(prompts.get(), 2);
+        assert_eq!(context.obtain_count.get(), 1);
+        assert_eq!(
+            store.read_with(cx, |store, _| store.permission(&TestResource::id(&"first"))),
+            Some(ResourcePermission::Prompt)
+        );
+    }
+
+    #[gpui::test]
+    async fn settings_permissions_persist_and_update_live(cx: &mut TestAppContext) {
+        use fs::Fs as _;
+
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        fs.create_dir(paths::settings_file().parent().expect("settings directory"))
+            .await
+            .expect("create settings directory");
+        let initial_settings = r#"{
+            "proxy":"http://localhost:1234",
+            "experimental.permissions":{
+                "resources":{"counter-0-first":{"commands":[{"permission":"allowed","command":"add"}]}}
+            }
+        }"#;
+        fs.insert_file(paths::settings_file(), initial_settings.as_bytes().to_vec())
+            .await;
+        cx.update(|cx| {
+            let mut store =
+                SettingsStore::new(cx, include_str!("../../../assets/settings/default.json"));
+            store
+                .set_user_settings(initial_settings, cx)
+                .result()
+                .expect("initial settings");
+            cx.set_global(store);
+        });
+        let store = cx.new(|cx| {
+            ManagedResourceStore::from_settings(
+                fs.clone(),
+                |_, _| panic!("configured permissions must not prompt"),
+                cx,
+            )
+        });
+        let context = Rc::new(TestContext::default());
+        assert_eq!(
+            execute::<0>(&store, "first", &context, TestCommand::Add(7), cx)
+                .await
+                .expect("allowed by default"),
+            Ok(12)
+        );
+
+        store.update(cx, |store, cx| {
+            store.set_permission(TestResource::id(&"first"), ResourcePermission::Denied, cx)
+        });
+        cx.run_until_parked();
+        let persisted = fs
+            .load(paths::settings_file())
+            .await
+            .expect("persisted settings");
+        let persisted =
+            SettingsContent::parse_json_with_comments(&persisted).expect("valid settings");
+        assert_eq!(persisted.proxy.as_deref(), Some("http://localhost:1234"));
+        assert_eq!(
+            ResourcePermissions::from_settings(&persisted).permission(&TestResource::id(&"first")),
+            Some(ResourcePermission::Denied)
+        );
+        assert_eq!(
+            ResourcePermissions::from_settings(&persisted)
+                .command_permission::<TestResource>(
+                    &TestResource::id(&"first"),
+                    &TestCommand::Add(7)
+                )
+                .expect("valid settings"),
+            Some(ResourcePermission::Allowed)
+        );
+        let restored = cx.new(|cx| {
+            ManagedResourceStore::from_settings(fs.clone(), |_, _| panic!("must not prompt"), cx)
+        });
+        assert!(matches!(
+            execute::<0>(&restored, "first", &context, TestCommand::Unexpected, cx).await,
+            Err(ResourceAccessError::Denied)
+        ));
+
+        let updated = cx.update(|cx| {
+            cx.global::<SettingsStore>()
+                .update_settings_file_with_completion(fs.clone(), |settings, _| {
+                    let permissions = settings.experimental_permissions.get_or_insert_default();
+                    permissions.default = Some(ResourcePermission::Denied);
+                    let resource = permissions
+                        .resources
+                        .entry("counter-0-first".into())
+                        .or_default();
+                    resource.obtain = Some(ResourcePermission::Allowed);
+                    resource.settings.insert(
+                        "commands".into(),
+                        serde_json::json!([
+                            {"permission":"denied","command":"unexpected"}
+                        ]),
+                    );
+                })
+        });
+        updated
+            .await
+            .expect("settings update completed")
+            .expect("settings written");
+        assert!(matches!(
+            execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx).await,
+            Err(ResourceAccessError::CommandDenied)
+        ));
+        assert!(matches!(
+            execute::<0>(&store, "second", &context, TestCommand::Unexpected, cx).await,
+            Err(ResourceAccessError::Denied)
+        ));
+
+        store.update(cx, |store, cx| {
+            store.clear_permission(&TestResource::id(&"first"), cx)
+        });
+        cx.run_until_parked();
+        let persisted = fs
+            .load(paths::settings_file())
+            .await
+            .expect("persisted settings");
+        let persisted =
+            SettingsContent::parse_json_with_comments(&persisted).expect("valid settings");
+        let resource = persisted
+            .experimental_permissions
+            .as_ref()
+            .and_then(|permissions| permissions.resources.get("counter-0-first"))
+            .expect("command permissions retained");
+        assert_eq!(resource.obtain, None);
+        assert_eq!(
+            resource.settings.get("commands"),
+            Some(&serde_json::json!([{"permission":"denied","command":"unexpected"}]))
+        );
+        assert!(matches!(
+            execute::<0>(&store, "first", &context, TestCommand::Unexpected, cx).await,
+            Err(ResourceAccessError::Denied)
+        ));
     }
 
     #[gpui::test]
@@ -586,8 +1173,12 @@ mod tests {
         assert_eq!(
             serialized,
             serde_json::json!({
-                "counter-0": { "first": "allowed", "second": "denied" },
-                "counter-1": { "first": "denied" },
+                "default": null,
+                "resources": {
+                    "counter-0-first": {"obtain": "allowed"},
+                    "counter-0-second": {"obtain": "denied"},
+                    "counter-1-first": {"obtain": "denied"},
+                },
             })
         );
         let restored = cx.new(|_| {
@@ -820,18 +1411,28 @@ mod tests {
             type Key = ();
             type Context = ();
             type Command = Self;
+            type CommandKind = TestCommandKind;
 
             fn id(_: &()) -> ResourceId {
                 TestResource::id(&"first")
             }
 
-            async fn obtain(_: &(), _: &()) -> anyhow::Result<Self> {
+            async fn obtain(_: &(), _: &()) -> anyhow::Result<ResourceAcquisition<Self>> {
                 panic!("a conflicting identity must not be acquired")
             }
         }
 
         impl ManagedResourceCommand<Self> for ConflictingResource {
             type Output = ();
+            type PermissionSettings = TestPermissionSettings;
+
+            fn command_kind(&self) -> TestCommandKind {
+                TestCommandKind::Unexpected
+            }
+
+            fn permission(&self, _: &Self::PermissionSettings) -> Option<ResourcePermission> {
+                panic!("a conflicting resource must not check command permissions")
+            }
 
             fn permission_description(&self, _: &Self) -> String {
                 panic!("a conflicting resource must not request command approval")
@@ -853,6 +1454,10 @@ mod tests {
                 store.execute_command::<ConflictingResource>(
                     (),
                     Rc::new(()),
+                    ResourceExecutionBill {
+                        root: ExecutionBillRoot::LanguageServer,
+                        reasoning: Vec::new(),
+                    },
                     ConflictingResource,
                     cx,
                 )
@@ -905,6 +1510,7 @@ mod tests {
                     assert!(matches!(second.await, Err(ResourceAccessError::Denied)));
                     assert_eq!(context.obtain_count.get(), 1);
                 }
+                ResourcePermission::Prompt => panic!("approval requires a decision"),
             }
             assert_eq!(
                 store.read_with(cx, |store, _| store.permission(&TestResource::id(&"first"))),
@@ -1076,6 +1682,7 @@ mod tests {
                     ResourcePermissionRequest::ExecuteCommand {
                         resource: TestResource::id(&"first"),
                         description: "Add 7 (current value: 5)".into(),
+                        payload: serde_json::json!("add"),
                     },
                 ]
             );
@@ -1093,6 +1700,7 @@ mod tests {
                     ));
                     5
                 }
+                ResourcePermission::Prompt => panic!("approval requires a decision"),
             };
 
             for value in [7, 11] {

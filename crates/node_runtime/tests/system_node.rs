@@ -10,7 +10,7 @@ use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipEncoder;
 use futures::AsyncReadExt as _;
 use http_client::{FakeHttpClient, Response};
-use managed_resources::{ManagedResource, ManagedResourceCommand};
+use managed_resources::{ManagedResource, ManagedResourceCommand, ResourceAcquisition};
 use node_runtime::{
     InstallNpmPackages, NodeBinaryOptions, NodeDiscoveryError, NodeRuntime, Npm, NpmContext,
     SystemNode,
@@ -100,7 +100,13 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
                 "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\npwd -P > \"$0.cwd\"\n",
             )?;
             fs::set_permissions(&npm_path, fs::Permissions::from_mode(0o755))?;
-            let npm = Arc::new(Npm::obtain(&key, &context).await?);
+            let ResourceAcquisition::Ready { resource, action } =
+                Npm::obtain(&key, &context).await?
+            else {
+                anyhow::bail!("configured NPM must be ready");
+            };
+            assert!(action.is_none());
+            let npm = Arc::new(resource);
             let arguments = fs::read_to_string(directory.join("npm.args"))?;
             assert!(arguments.lines().any(|argument| argument == "--version"));
 
@@ -236,7 +242,13 @@ fn managed_npm_downloads_only_when_allowed() -> Result<()> {
                 allow_binary_download: true,
                 ..Default::default()
             };
-            let npm = Arc::new(Npm::obtain(&key, &context).await?);
+            let ResourceAcquisition::RequiresAction(action) = Npm::obtain(&key, &context).await?
+            else {
+                anyhow::bail!("missing NPM must require an acquisition action");
+            };
+            assert_eq!(downloads.load(SeqCst), 0);
+            assert!(!data_directory.join("node").exists());
+            let npm = Arc::new(action().await?);
             let installation = fs::read_dir(data_directory.join("node"))?
                 .next()
                 .transpose()?
@@ -260,7 +272,10 @@ fn managed_npm_downloads_only_when_allowed() -> Result<()> {
                     .any(|argument| argument == "@example/server@1.2.3")
             );
 
-            Npm::obtain(&key, &context).await?;
+            assert!(matches!(
+                Npm::obtain(&key, &context).await?,
+                ResourceAcquisition::Ready { action: None, .. }
+            ));
             assert_eq!(downloads.load(SeqCst), 1);
             context.options = NodeBinaryOptions::default();
             assert!(Npm::obtain(&key, &context).await.is_err());
