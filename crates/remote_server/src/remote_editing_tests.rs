@@ -5739,7 +5739,8 @@ async fn run_write_tools_on_remote_global_skills(
         test.server_fs
             .load(&new_skill_dir.join("SKILL.md"))
             .await
-            .unwrap(),
+            .unwrap()
+            .replace("\r\n", "\n"),
         "new skill\n"
     );
 
@@ -5759,7 +5760,8 @@ async fn run_write_tools_on_remote_global_skills(
         test.server_fs
             .load(&copied_dir.join("SKILL.md"))
             .await
-            .unwrap(),
+            .unwrap()
+            .replace("\r\n", "\n"),
         "new skill\n"
     );
 

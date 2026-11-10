@@ -178,7 +178,7 @@ Each skill is a direct child of the skills root. Nesting skills inside subfolder
 
 In a remote project (SSH, WSL, or a dev container), global skills come from `~/.agents/skills/` on the remote machine, not your local one. The **User** tab of the skills page lists, creates, and deletes skills on the remote machine. The agent also reads, creates, and edits global skills there.
 
-Skills [migrated from Rules](./rules.md#migrating-to-skills) live on your local machine, so they aren't available in remote projects. Copy them to the remote's `~/.agents/skills/` to use them there.
+Skills [migrated from Rules](./instructions.md#migrating-from-rules) live on your local machine, so they aren't available in remote projects. Copy them to the remote's `~/.agents/skills/` to use them there.
 
 ### Project-local Skills and Trust {#project-local-trust}
 
