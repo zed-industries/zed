@@ -209,7 +209,7 @@ impl ActivityGuard {
 #[inline]
 pub fn guess_compositor() -> &'static str {
     if std::env::var_os("ZED_HEADLESS").is_some() {
-        return "Headless";
+        return "headless";
     }
     GraphicalEnvironment::detect().guess_compositor()
 }
@@ -369,7 +369,7 @@ impl GraphicalEnvironment {
         } else if cfg!(feature = "x11") && is_set(&self.x11_display) {
             "X11"
         } else {
-            "Headless"
+            "headless"
         }
     }
 }
