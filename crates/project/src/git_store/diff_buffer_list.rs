@@ -473,6 +473,41 @@ impl DiffBufferList {
     }
 }
 
+impl GitStore {
+    pub fn source_for_diff(
+        &self,
+        diff: &Entity<BufferDiff>,
+        cx: &App,
+    ) -> Option<(Entity<Buffer>, DiffBase)> {
+        for (buffer_id, state) in &self.diffs {
+            let state = state.read(cx);
+            let base = if state.unstaged_diff().as_ref() == Some(diff) {
+                DiffBase::Index
+            } else if state
+                .staged_diff
+                .as_ref()
+                .and_then(|(diff, _)| diff.upgrade())
+                .as_ref()
+                == Some(diff)
+            {
+                DiffBase::Staged
+            } else if state
+                .uncommitted_diff
+                .as_ref()
+                .and_then(|diff| diff.upgrade())
+                .as_ref()
+                == Some(diff)
+            {
+                DiffBase::Head
+            } else {
+                continue;
+            };
+            return Some((self.buffer_store.read(cx).get(*buffer_id)?, base));
+        }
+        None
+    }
+}
+
 fn build_statuses(
     snapshot: &RepositorySnapshot,
     committed_tree_diff: &TreeDiff,

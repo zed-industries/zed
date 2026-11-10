@@ -394,6 +394,7 @@ async fn saved_reviews_restore_in_a_fresh_editor_and_keep_discussion_identity(
         start_line: 1,
         end_line: 2,
         excerpt: "second".into(),
+        diff: None,
         before: "first\n".into(),
         after: "\nthird\n".into(),
         comment: "Explain".into(),
@@ -485,6 +486,442 @@ async fn saved_reviews_restore_in_a_fresh_editor_and_keep_discussion_identity(
                 .contains("ambiguous")
         );
         assert_eq!(editor.total_review_comment_count(), 2);
+    });
+}
+
+#[gpui::test]
+async fn diff_reviews_capture_and_restore_exact_sides_and_comparisons(cx: &mut TestAppContext) {
+    use super::review_source::{ReviewComparison, ReviewSide};
+    init_test(cx, |_| {});
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        serde_json::json!({
+            ".git": {}, "file.txt": "header\nworking version\nfooter\n",
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.txt", "header\nhead version\nfooter\n".into())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.txt", "header\nindex version\nfooter\n".into())],
+    );
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    for comparison in [
+        ReviewComparison::Unstaged,
+        ReviewComparison::Staged,
+        ReviewComparison::Uncommitted,
+    ] {
+        let (diff, display_buffer, old, new) = match comparison {
+            ReviewComparison::Unstaged => (
+                project
+                    .update(cx, |project, cx| {
+                        project.open_unstaged_diff(buffer.clone(), cx)
+                    })
+                    .await
+                    .unwrap(),
+                buffer.clone(),
+                "index version",
+                "working version",
+            ),
+            ReviewComparison::Uncommitted => (
+                project
+                    .update(cx, |project, cx| {
+                        project.open_uncommitted_diff(buffer.clone(), cx)
+                    })
+                    .await
+                    .unwrap(),
+                buffer.clone(),
+                "head version",
+                "working version",
+            ),
+            ReviewComparison::Staged => {
+                let (diff, index) = project
+                    .update(cx, |project, cx| {
+                        project.open_staged_diff(buffer.clone(), cx)
+                    })
+                    .await
+                    .unwrap();
+                (diff, index, "head version", "index version")
+            }
+        };
+        for left in [false, true] {
+            let multibuffer = cx.new(|cx| {
+                let mut multibuffer = MultiBuffer::new(if left {
+                    language::Capability::ReadOnly
+                } else {
+                    language::Capability::ReadWrite
+                });
+                let displayed = if left {
+                    diff.read(cx).base_text_buffer().clone()
+                } else {
+                    display_buffer.clone()
+                };
+                multibuffer.set_excerpts_for_path(
+                    multi_buffer::PathKey::sorted(0),
+                    displayed.clone(),
+                    [Point::zero()..displayed.read(cx).max_point()],
+                    0,
+                    cx,
+                );
+                if left {
+                    multibuffer.add_inverted_diff(diff.clone(), display_buffer.clone(), cx);
+                } else {
+                    multibuffer.add_diff(diff.clone(), cx);
+                }
+                multibuffer.set_all_diff_hunks_expanded(cx);
+                if left {
+                    multibuffer.set_show_deleted_hunks(false, cx);
+                }
+                multibuffer
+            });
+            let window = cx.add_window(|window, cx| {
+                let mut editor =
+                    Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
+                editor.set_diff_hunk_renderer(Some(Arc::new(DefaultDiffHunkRenderer)), cx);
+                editor.set_read_only(left);
+                editor
+            });
+            let editor = window.root(cx).unwrap();
+            let visual = &mut VisualTestContext::from_window(*window, cx);
+            let submitted = Rc::new(RefCell::new(Vec::new()));
+            for (side, text) in [(ReviewSide::Old, old), (ReviewSide::New, new)] {
+                if left && side == ReviewSide::New {
+                    continue;
+                }
+                editor.update_in(visual, |editor, window, cx| {
+                    let snapshot = editor.buffer.read(cx).snapshot(cx);
+                    let all_text = snapshot.text();
+                    let offset = all_text
+                        .find(text)
+                        .unwrap_or_else(|| panic!("Missing {text} in {all_text}"));
+                    editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            selections
+                                .select_ranges([MultiBufferOffset(offset)
+                                    ..MultiBufferOffset(offset + text.len())]);
+                        },
+                    );
+                    editor
+                        .show_inline_review(
+                            {
+                                let submitted = submitted.clone();
+                                Rc::new(move |comment, _, _| submitted.borrow_mut().push(comment))
+                            },
+                            window,
+                            cx,
+                        )
+                        .unwrap();
+                    let input = editor
+                        .diff_review_overlays
+                        .last()
+                        .unwrap()
+                        .prompt_editor
+                        .clone();
+                    input.update(cx, |input, cx| {
+                        input.insert("Explain this side", window, cx)
+                    });
+                    editor.submit_diff_review_comment(window, cx);
+                });
+                visual.run_until_parked();
+                let submissions = submitted.borrow();
+                let comment = submissions.last().expect("The diff comment was submitted");
+                assert_eq!(
+                    comment.path,
+                    std::path::PathBuf::from(path!("/project/file.txt"))
+                );
+                assert_eq!(comment.lines, 1..2);
+                assert_eq!(comment.excerpt, text);
+                assert_eq!(comment.before, "header\n");
+                assert_eq!(comment.after, "\nfooter\n");
+                assert_eq!(comment.diff.as_ref().unwrap().side, side);
+                assert_eq!(comment.diff.as_ref().unwrap().comparison, comparison);
+                let saved = SavedInlineReview {
+                    version: 2,
+                    discussion_id: comment.discussion_id.clone(),
+                    submission_id: comment.submission_id.clone(),
+                    path: comment.path.clone(),
+                    start_line: 1,
+                    end_line: 2,
+                    excerpt: comment.excerpt.clone(),
+                    diff: comment.diff.clone(),
+                    before: comment.before.clone(),
+                    after: comment.after.clone(),
+                    comment: comment.comment.clone(),
+                    created_at: 1,
+                    outcome: "answered".into(),
+                    reply: Some("The saved reply".into()),
+                    error: None,
+                };
+                let restored = visual.add_window(|window, cx| {
+                    let mut editor = Editor::for_multibuffer(
+                        multibuffer.clone(),
+                        Some(project.clone()),
+                        window,
+                        cx,
+                    );
+                    editor.set_diff_hunk_renderer(Some(Arc::new(DefaultDiffHunkRenderer)), cx);
+                    editor.set_read_only(left);
+                    editor
+                });
+                let followups = Rc::new(RefCell::new(Vec::new()));
+                restored
+                    .update(visual, |editor, window, cx| {
+                        editor
+                            .restore_inline_review(saved.clone(), Rc::new(|_, _, _| {}), window, cx)
+                            .unwrap_or_else(|error| {
+                                panic!("{comparison:?} {side:?} left={left}: {error:#}")
+                            });
+                        assert_eq!(editor.total_review_comment_count(), 1);
+                        let stored = &editor.stored_review_comments[0].1[0];
+                        assert_eq!(stored.diff, saved.diff);
+                        assert_eq!(stored.discussion_id.as_ref(), Some(&saved.discussion_id));
+                        assert_eq!(
+                            stored
+                                .agent_reply
+                                .as_ref()
+                                .unwrap()
+                                .1
+                                .read(cx)
+                                .source()
+                                .as_ref(),
+                            "The saved reply"
+                        );
+                        let source = editor
+                            .inline_review_source(stored.range.clone(), cx)
+                            .unwrap();
+                        assert_eq!(source.excerpt, text);
+                        assert_eq!(source.diff, saved.diff);
+                        let mut changed_base = saved.clone();
+                        changed_base.submission_id = uuid::Uuid::new_v4().to_string();
+                        changed_base.diff.as_mut().unwrap().base_sha256 = "0".repeat(64);
+                        assert!(
+                            editor
+                                .restore_inline_review(
+                                    changed_base,
+                                    Rc::new(|_, _, _| {}),
+                                    window,
+                                    cx
+                                )
+                                .is_err()
+                        );
+                        assert_eq!(editor.total_review_comment_count(), 1);
+                        let range = editor.stored_review_comments[0].1[0].range.clone();
+                        editor.change_selections(
+                            SelectionEffects::no_scroll(),
+                            window,
+                            cx,
+                            |selections| selections.select_ranges([range]),
+                        );
+                        editor
+                            .show_inline_review(
+                                {
+                                    let followups = followups.clone();
+                                    Rc::new(move |comment, _, _| {
+                                        followups.borrow_mut().push(comment)
+                                    })
+                                },
+                                window,
+                                cx,
+                            )
+                            .unwrap();
+                        let input = editor.diff_review_overlays[0].prompt_editor.clone();
+                        input.update(cx, |input, cx| {
+                            input.insert("Follow-up on this side", window, cx)
+                        });
+                        editor.submit_diff_review_comment(window, cx);
+                    })
+                    .unwrap();
+                visual.run_until_parked();
+                let followups = followups.borrow();
+                assert_eq!(followups.len(), 1);
+                assert_eq!(followups[0].discussion_id, saved.discussion_id);
+                assert_eq!(followups[0].diff, saved.diff);
+                assert_ne!(followups[0].submission_id, saved.submission_id);
+            }
+            if !left {
+                editor.update_in(visual, |editor, window, cx| {
+                    let text = editor.buffer.read(cx).snapshot(cx).text();
+                    let start = text.find(old).unwrap();
+                    let end = text.find(new).unwrap() + new.len();
+                    editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            selections
+                                .select_ranges([MultiBufferOffset(start)..MultiBufferOffset(end)]);
+                        },
+                    );
+                    assert!(
+                        editor
+                            .show_inline_review(
+                                Rc::new(|_, _, _| panic!("mixed sides must not submit")),
+                                window,
+                                cx
+                            )
+                            .is_err()
+                    );
+                });
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn diff_reviews_support_deleted_files_and_reject_cross_file_selections(
+    cx: &mut TestAppContext,
+) {
+    use super::review_source::ReviewSide;
+    init_test(cx, |_| {});
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        serde_json::json!({ ".git": {}, "added.txt": "new file without newline" }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("gone.txt", "first\nremoved final line".into())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("gone.txt", "first\nremoved final line".into())],
+    );
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let multibuffer = cx.new(|_| MultiBuffer::new(language::Capability::ReadWrite));
+    for (index, name) in ["gone.txt", "added.txt"].into_iter().enumerate() {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(std::path::Path::new(path!("/project")).join(name), cx)
+            })
+            .await
+            .unwrap();
+        let diff = project
+            .update(cx, |project, cx| {
+                project.open_unstaged_diff(buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                multi_buffer::PathKey::sorted(index as u64),
+                buffer.clone(),
+                [Point::zero()..buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+            multibuffer.add_diff(diff, cx);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+        });
+    }
+    let window = cx.add_window(|window, cx| {
+        let mut editor = Editor::for_multibuffer(multibuffer, Some(project), window, cx);
+        editor.set_diff_hunk_renderer(Some(Arc::new(DefaultDiffHunkRenderer)), cx);
+        editor
+    });
+    let editor = window.root(cx).unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    for (name, text, side, lines) in [
+        ("gone.txt", "removed final line", ReviewSide::Old, 1..2),
+        (
+            "added.txt",
+            "new file without newline",
+            ReviewSide::New,
+            0..1,
+        ),
+    ] {
+        let submitted = Rc::new(RefCell::new(Vec::new()));
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.buffer.read(cx).snapshot(cx);
+            let offset = snapshot.text().find(text).unwrap();
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([
+                    MultiBufferOffset(offset)..MultiBufferOffset(offset + text.len())
+                ])
+            });
+            editor
+                .show_inline_review(
+                    {
+                        let submitted = submitted.clone();
+                        Rc::new(move |comment, _, _| submitted.borrow_mut().push(comment))
+                    },
+                    window,
+                    cx,
+                )
+                .unwrap();
+            let input = editor
+                .diff_review_overlays
+                .last()
+                .unwrap()
+                .prompt_editor
+                .clone();
+            input.update(cx, |input, cx| input.insert("Review this", window, cx));
+            editor.submit_diff_review_comment(window, cx);
+        });
+        cx.run_until_parked();
+        let submissions = submitted.borrow();
+        let comment = &submissions[0];
+        assert_eq!(comment.excerpt, text);
+        assert_eq!(comment.lines, lines);
+        assert_eq!(
+            comment.path,
+            std::path::Path::new(path!("/project")).join(name)
+        );
+        assert_eq!(comment.diff.as_ref().unwrap().side, side);
+        editor.update_in(cx, |editor, _, cx| {
+            let saved = SavedInlineReview {
+                version: 2,
+                discussion_id: comment.discussion_id.clone(),
+                submission_id: comment.submission_id.clone(),
+                path: comment.path.clone(),
+                start_line: comment.lines.start,
+                end_line: comment.lines.end,
+                excerpt: comment.excerpt.clone(),
+                diff: comment.diff.clone(),
+                before: comment.before.clone(),
+                after: comment.after.clone(),
+                comment: comment.comment.clone(),
+                created_at: 1,
+                outcome: "pending".into(),
+                reply: None,
+                error: None,
+            };
+            let range = editor.saved_review_range(&saved, cx).unwrap();
+            assert_eq!(
+                editor.inline_review_source(range, cx).unwrap().excerpt,
+                text
+            );
+        });
+    }
+    editor.update_in(cx, |editor, window, cx| {
+        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([MultiBufferOffset(0)..snapshot.len()])
+        });
+        assert!(
+            editor
+                .show_inline_review(
+                    Rc::new(|_, _, _| panic!("must not submit across files")),
+                    window,
+                    cx
+                )
+                .is_err()
+        );
     });
 }
 

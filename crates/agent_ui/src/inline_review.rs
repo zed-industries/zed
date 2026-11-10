@@ -3,7 +3,7 @@ use crate::AgentPanel;
 use acp_thread::{AcpThread, AcpThreadEvent, SubmissionResponse, ThreadStatus};
 use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
 use anyhow::{Context as _, Result, bail, ensure};
-use editor::{Editor, InlineReviewComment, SavedInlineReview};
+use editor::{Editor, InlineReviewComment, SavedInlineReview, SplittableEditor};
 use futures::{
     FutureExt as _,
     future::{LocalBoxFuture, Shared},
@@ -25,7 +25,7 @@ const REVIEW_META_KEY: &str = "zed-pi-live/review";
 actions!(
     agent,
     [
-        /// Comment on selected file lines and queue it for the active pi-live session.
+        /// Comment on selected file or diff-side lines and queue it for the active pi-live session.
         CommentWithPiLive,
         /// Restore saved pi discussions for the current file without submitting prompts.
         RestorePiReviews,
@@ -72,10 +72,9 @@ pub fn init(cx: &mut App) {
                         .is_some_and(|thread| {
                             thread.read(cx).connection().agent_id().as_ref() == "pi-live"
                         });
-                    let regular_file = workspace
-                        .active_item_as::<Editor>(cx)
+                    let reviewable_file = active_review_editor(workspace, cx)
                         .is_some_and(|editor| editor.read(cx).inline_review_file_path(cx).is_ok());
-                    if has_bridge && regular_file {
+                    if has_bridge && reviewable_file {
                         if let Err(error) = load_reviews(workspace, false, window, cx) {
                             workspace.show_toast(
                                 Toast::new(
@@ -120,6 +119,13 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+fn active_review_editor(workspace: &Workspace, cx: &App) -> Option<Entity<Editor>> {
+    workspace
+        .active_item_as::<SplittableEditor>(cx)
+        .map(|editor| editor.read(cx).focused_editor().clone())
+        .or_else(|| workspace.active_item_as::<Editor>(cx))
+}
+
 fn show_comment(
     workspace: &mut Workspace,
     window: &mut Window,
@@ -134,9 +140,8 @@ fn load_reviews(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Result<()> {
-    let editor = workspace
-        .active_item_as::<Editor>(cx)
-        .context("Open a regular file and select the lines to review")?;
+    let editor = active_review_editor(workspace, cx)
+        .context("Open a file or Git diff and select the lines to review")?;
     let panel = workspace
         .panel::<AgentPanel>(cx)
         .context("Open the Agent Panel and attach pi-live first")?;
@@ -160,22 +165,16 @@ fn load_reviews(
     let target_workspace = cx.entity().downgrade();
     let on_submit = Rc::new(
         move |comment: InlineReviewComment, _: &mut Window, cx: &mut App| {
-            let text = format!(
-                "Review comment on {}:{}-{}\n\nSelected code (editor snapshot):\n{}\n\nComment:\n{}",
-                comment.path.display(),
-                comment.lines.start + 1,
-                comment.lines.end,
-                comment.excerpt,
-                comment.comment
-            );
+            let text = review_prompt(&comment);
             let record = SavedInlineReview {
-                version: 1,
+                version: if comment.diff.is_some() { 2 } else { 1 },
                 discussion_id: comment.discussion_id.clone(),
                 submission_id: comment.submission_id.clone(),
                 path: comment.path,
                 start_line: comment.lines.start,
                 end_line: comment.lines.end,
                 excerpt: comment.excerpt,
+                diff: comment.diff,
                 before: comment.before,
                 after: comment.after,
                 comment: comment.comment,
@@ -214,7 +213,7 @@ fn load_reviews(
                     let reviews = loaded?;
                     let editor = editor.upgrade().context("Review editor was closed")?;
                     ensure!(
-                        workspace.active_item_as::<Editor>(cx).as_ref() == Some(&editor),
+                        active_review_editor(workspace, cx).as_ref() == Some(&editor),
                         "Active file changed while loading reviews; run the action again"
                     );
                     if open_comment {
@@ -275,6 +274,21 @@ fn load_reviews(
     })
     .detach();
     Ok(())
+}
+
+fn review_prompt(comment: &InlineReviewComment) -> String {
+    let source = comment.diff.as_ref().map(|diff| format!(
+        "{}; base content SHA-256 {}. Line numbers refer to the selected side, not necessarily the current file. Historical code may no longer exist on disk.",
+        diff.description(), diff.base_sha256,
+    )).unwrap_or_else(|| "current file (editor snapshot)".into());
+    format!(
+        "Review comment on {}:{}-{}\nSource: {source}\n\nSelected code:\n{}\n\nComment:\n{}",
+        comment.path.display(),
+        comment.lines.start + 1,
+        comment.lines.end,
+        comment.excerpt,
+        comment.comment
+    )
 }
 
 fn enqueue(thread: Entity<AcpThread>, job: ReviewJob, cx: &mut App) {
@@ -751,6 +765,33 @@ mod tests {
             content.meta.unwrap()[REVIEW_META_KEY],
             json!({"version": 1, "threadId": "discussion-a", "submissionId": "submission-b"})
         );
+    }
+
+    #[test]
+    fn diff_review_prompt_preserves_side_comparison_and_historical_line_numbers() {
+        let comment = InlineReviewComment {
+            id: 0,
+            discussion_id: "discussion".into(),
+            submission_id: "submission".into(),
+            path: "/project/deleted.txt".into(),
+            lines: 7..9,
+            excerpt: "old first\nold second".into(),
+            before: String::new(),
+            after: String::new(),
+            comment: "Why was this removed?".into(),
+            diff: Some(
+                serde_json::from_value(
+                    json!({"comparison": "staged", "side": "old", "baseSha256": "a".repeat(64)}),
+                )
+                .unwrap(),
+            ),
+        };
+        let prompt = review_prompt(&comment);
+        assert!(prompt.contains("/project/deleted.txt:8-9"));
+        assert!(prompt.contains("Source: staged diff (HEAD → index), old side"));
+        assert!(prompt.contains("Historical code may no longer exist on disk"));
+        assert!(prompt.contains("old first\nold second"));
+        assert!(prompt.contains(&"a".repeat(64)));
     }
 
     #[test]

@@ -12,6 +12,8 @@ pub struct SavedInlineReview {
     pub start_line: u32,
     pub end_line: u32,
     pub excerpt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff: Option<InlineReviewDiff>,
     pub before: String,
     pub after: String,
     pub comment: String,
@@ -41,7 +43,7 @@ impl SavedInlineReview {
     }
 }
 
-fn locate_excerpt(text: &str, review: &SavedInlineReview) -> Option<Range<usize>> {
+pub(super) fn locate_excerpt(text: &str, review: &SavedInlineReview) -> Option<Range<usize>> {
     let context = format!("{}{}{}", review.before, review.excerpt, review.after);
     let mut found = None;
     let mut offset = 0;
@@ -70,17 +72,9 @@ fn locate_excerpt(text: &str, review: &SavedInlineReview) -> Option<Range<usize>
 
 impl Editor {
     pub fn inline_review_file_path(&self, cx: &App) -> Result<std::path::PathBuf> {
-        ensure!(
-            self.buffer.read(cx).is_singleton() && !self.has_any_expanded_diff_hunks(cx),
-            "Open a regular file, not a diff or multibuffer"
-        );
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let file = snapshot
-            .file_at(Point::zero())
-            .context("Open a saved file")?;
-        ensure!(file.disk_state().exists(), "Open a saved current file");
-        file.file_system_abs_path(cx)
-            .context("File has no host path")
+        Ok(self
+            .inline_review_source(self.inline_review_selection(cx)?, cx)?
+            .path)
     }
 
     pub fn restore_inline_review(
@@ -91,7 +85,9 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         ensure!(
-            review.version == 1 && self.inline_review_file_path(cx)? == review.path,
+            ((review.version == 1 && review.diff.is_none())
+                || (review.version == 2 && review.diff.is_some()))
+                && self.inline_review_file_path(cx)? == review.path,
             "Saved review belongs to another file or storage version"
         );
         ensure!(
@@ -102,6 +98,17 @@ impl Editor {
             (review.outcome == "answered") == review.reply.is_some(),
             "Invalid saved reply outcome"
         );
+        let current_source = self.inline_review_source(self.inline_review_selection(cx)?, cx)?;
+        if current_source.diff.as_ref().map(|diff| diff.comparison)
+            != review.diff.as_ref().map(|diff| diff.comparison)
+        {
+            return Ok(());
+        }
+        if let Some(diff) = &review.diff {
+            if !self.inline_review_side_visible(diff.side, cx)? {
+                return Ok(());
+            }
+        }
         let status = review.status();
         uuid::Uuid::parse_str(&review.submission_id)?;
         uuid::Uuid::parse_str(&review.discussion_id)?;
@@ -123,22 +130,13 @@ impl Editor {
             return self.show_saved_review_overlay(id, on_submit, window, cx);
         }
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let range = locate_excerpt(&snapshot.text(), &review).with_context(|| format!("Outdated or ambiguous discussion at original line {} — preserved in remote storage, not attached to another line", review.start_line + 1))?;
-        let start = snapshot.offset_to_point(MultiBufferOffset(range.start));
-        let end = snapshot.offset_to_point(MultiBufferOffset(range.end));
+        let anchors = self.saved_review_range(&review, cx)?;
+        let Range { start, end } = anchors.to_point(&snapshot);
         ensure!(
             start.column == 0 && end.column == snapshot.line_len(MultiBufferRow(end.row)),
             "Saved review does not cover complete current lines"
         );
-        let file_path = snapshot
-            .file_at(start)
-            .context("Review file is unavailable")?
-            .path()
-            .clone();
-        let key = DiffHunkKey {
-            file_path,
-            hunk_start_anchor: snapshot.anchor_before(start),
-        };
+        let key = Self::review_hunk_key(&snapshot, start);
         ensure!(
             self.comments_for_hunk(&key, &snapshot)
                 .iter()
@@ -153,12 +151,7 @@ impl Editor {
                     && overlay.anchor_range.to_point(&snapshot) == (start..end)),
             "Another review range occupies this line; saved discussion remains in remote storage"
         );
-        let id = self.add_review_comment(
-            key.clone(),
-            review.comment,
-            snapshot.anchor_after(start)..snapshot.anchor_before(end),
-            cx,
-        );
+        let id = self.add_review_comment(key.clone(), review.comment, anchors, cx);
         if let Some(comment) = self
             .stored_review_comments
             .iter_mut()
@@ -166,6 +159,7 @@ impl Editor {
             .find(|comment| comment.id == id)
         {
             comment.original_excerpt = Some(review.excerpt);
+            comment.diff = review.diff;
             comment.discussion_id = Some(review.discussion_id);
             comment.submission_id = Some(review.submission_id);
             comment.submission_status = Some(status);
@@ -225,6 +219,7 @@ mod tests {
             start_line: 1,
             end_line: 2,
             excerpt: "target".into(),
+            diff: None,
             before: "before\n".into(),
             after: "\nafter\n".into(),
             comment: "Why?".into(),

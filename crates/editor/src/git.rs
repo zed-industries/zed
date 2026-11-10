@@ -1,6 +1,8 @@
 pub(super) mod blame;
 mod review_persistence;
+mod review_source;
 pub use review_persistence::SavedInlineReview;
+pub use review_source::InlineReviewDiff;
 #[cfg(test)]
 mod inline_review_tests;
 
@@ -183,6 +185,7 @@ pub(super) struct StoredReviewComment {
     pub(super) is_editing: bool,
     agent_reply: Option<(SharedString, Entity<Markdown>)>,
     original_excerpt: Option<String>,
+    diff: Option<InlineReviewDiff>,
     discussion_id: Option<String>,
     submission_id: Option<String>,
     restored_pending: bool,
@@ -199,6 +202,7 @@ pub struct InlineReviewComment {
     pub path: std::path::PathBuf,
     pub lines: Range<u32>,
     pub excerpt: String,
+    pub diff: Option<InlineReviewDiff>,
     pub comment: String,
 }
 
@@ -246,6 +250,7 @@ impl StoredReviewComment {
         self.original_excerpt.as_ref().is_some_and(|original| {
             !self.range.start.is_valid(snapshot)
                 || !self.range.end.is_valid(snapshot)
+                || self.range.start.cmp(&self.range.end, snapshot).is_gt()
                 || snapshot
                     .text_for_range(self.range.clone())
                     .collect::<String>()
@@ -261,6 +266,7 @@ impl StoredReviewComment {
             is_editing: false,
             agent_reply: None,
             original_excerpt: None,
+            diff: None,
             discussion_id: None,
             submission_id: None,
             restored_pending: false,
@@ -605,31 +611,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        anyhow::ensure!(
-            self.buffer.read(cx).is_singleton() && !self.has_any_expanded_diff_hunks(cx),
-            "Select lines in a regular file, not a diff or multibuffer"
-        );
-        anyhow::ensure!(self.selections.count() == 1, "Select one contiguous range");
+        let anchor_range = self.inline_review_selection(cx)?;
+        self.inline_review_source(anchor_range.clone(), cx)?;
         let snapshot = self.snapshot(window, cx);
-        let selection = self.selections.newest::<Point>(&snapshot.display_snapshot);
-        let range = selection.range();
-        anyhow::ensure!(
-            snapshot
-                .buffer_snapshot()
-                .file_at(range.start)
-                .is_some_and(|file| file.disk_state().exists()),
-            "Open a saved current file, not an unsaved buffer or historical diff file"
-        );
-        let end_row = if range.end.column == 0 && range.end.row > range.start.row {
-            range.end.row - 1
-        } else {
-            range.end.row
-        };
-        let start = Point::new(range.start.row, 0);
-        let end = Point::new(
-            end_row,
-            snapshot.buffer_snapshot().line_len(MultiBufferRow(end_row)),
-        );
+        let range = anchor_range.to_point(snapshot.buffer_snapshot());
+        let end_row = range.end.row;
         for overlay in &self.diff_review_overlays {
             let existing = overlay.anchor_range.to_point(snapshot.buffer_snapshot());
             if existing.start.row == range.start.row {
@@ -639,13 +625,7 @@ impl Editor {
                 );
             }
         }
-        self.show_review_overlay_for_anchor_range(
-            snapshot.buffer_snapshot().anchor_after(start)
-                ..snapshot.buffer_snapshot().anchor_before(end),
-            Some(on_submit),
-            window,
-            cx,
-        );
+        self.show_review_overlay_for_anchor_range(anchor_range, Some(on_submit), window, cx);
         Ok(())
     }
 
@@ -741,15 +721,7 @@ impl Editor {
         let points = anchor_range.to_point(&buffer_snapshot);
         let start_point = points.start;
         let end_multi_buffer_row = MultiBufferRow(points.end.row);
-        let file_path = buffer_snapshot
-            .file_at(start_point)
-            .map(|file: &Arc<dyn language::File>| file.path().clone())
-            .unwrap_or_else(|| Arc::from(util::rel_path::RelPath::empty()));
-        let hunk_start_anchor = buffer_snapshot.anchor_before(start_point);
-        let new_hunk_key = DiffHunkKey {
-            file_path,
-            hunk_start_anchor,
-        };
+        let new_hunk_key = Self::review_hunk_key(&buffer_snapshot, start_point);
 
         // Check if we already have an overlay for this hunk
         if let Some(existing_overlay) = self.diff_review_overlays.iter_mut().find(|overlay| {
@@ -885,16 +857,13 @@ impl Editor {
 
         let on_submit = overlay.on_submit.clone();
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let source = on_submit.as_ref().and_then(|_| {
-            let range = anchor_range.to_point(&snapshot);
-            let file = snapshot.file_at(range.start)?;
-            Some((
-                file.file_system_abs_path(cx)?,
-                range.start.row..range.end.row + 1,
-                snapshot
-                    .text_for_range(anchor_range.clone())
-                    .collect::<String>(),
-            ))
+        let source = on_submit.as_ref().map(|_| {
+            let source = self.inline_review_source(anchor_range.clone(), cx)?;
+            anyhow::ensure!(self.comments_for_hunk(&hunk_key, &snapshot).iter()
+                .filter(|comment| comment.discussion_id.is_some())
+                .all(|comment| comment.diff == source.diff),
+                "The diff comparison or base changed; this discussion is retained but the follow-up was not sent");
+            Ok::<_, anyhow::Error>(source)
         });
         let discussion_id = self
             .comments_for_hunk(&hunk_key, &snapshot)
@@ -905,23 +874,14 @@ impl Editor {
             })
             .and_then(|comment| comment.discussion_id.clone())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let points = anchor_range.to_point(&snapshot);
-        let before = snapshot
-            .text_for_range(Point::new(points.start.row.saturating_sub(2), 0)..points.start)
-            .collect::<String>();
-        let after = snapshot
-            .text_for_range(
-                points.end
-                    ..Point::new(points.end.row.saturating_add(3), 0).min(snapshot.max_point()),
-            )
-            .collect::<String>();
         let submission_id = uuid::Uuid::new_v4().to_string();
         let id = self.add_review_comment(hunk_key.clone(), comment_text.clone(), anchor_range, cx);
         if let Some(on_submit) = on_submit {
-            if let Some((path, lines, excerpt)) = source {
+            if let Some(Ok(source)) = source {
                 for (_, comments) in &mut self.stored_review_comments {
                     if let Some(comment) = comments.iter_mut().find(|comment| comment.id == id) {
-                        comment.original_excerpt = Some(excerpt.clone());
+                        comment.original_excerpt = Some(source.excerpt.clone());
+                        comment.diff = source.diff.clone();
                         comment.discussion_id = Some(discussion_id.clone());
                         comment.submission_id = Some(submission_id.clone());
                         comment.submission_status = Some("Queued".into());
@@ -931,18 +891,25 @@ impl Editor {
                     id,
                     discussion_id,
                     submission_id,
-                    before,
-                    after,
-                    path,
-                    lines,
-                    excerpt,
+                    before: source.before,
+                    after: source.after,
+                    path: source.path,
+                    lines: source.lines,
+                    excerpt: source.excerpt,
+                    diff: source.diff,
                     comment: comment_text,
                 };
                 window.defer(cx, move |window, cx| on_submit(request, window, cx));
             } else {
                 self.set_inline_review_status(
                     id,
-                    "Not sent: the source file is no longer available.".into(),
+                    format!(
+                        "Not sent: {}",
+                        source
+                            .and_then(Result::err)
+                            .map(|error| error.to_string())
+                            .unwrap_or_else(|| "The review source is unavailable".into())
+                    ),
                     None,
                     cx,
                 );
@@ -2772,6 +2739,16 @@ impl Editor {
         self.replace_blocks(renderers, None, cx);
     }
 
+    fn review_hunk_key(snapshot: &MultiBufferSnapshot, start: Point) -> DiffHunkKey {
+        DiffHunkKey {
+            file_path: snapshot
+                .file_at(start)
+                .map(|file| file.path().clone())
+                .unwrap_or_else(|| Arc::from(util::rel_path::RelPath::empty())),
+            hunk_start_anchor: snapshot.anchor_before(start),
+        }
+    }
+
     /// Compares two DiffHunkKeys for equality by resolving their anchors.
     fn hunk_keys_match(a: &DiffHunkKey, b: &DiffHunkKey, snapshot: &MultiBufferSnapshot) -> bool {
         a.file_path == b.file_path
@@ -2831,13 +2808,18 @@ impl Editor {
                             let start_point = o.anchor_range.start.to_point(&snapshot);
                             let end_point = o.anchor_range.end.to_point(&snapshot);
                             // Get line ranges per excerpt to detect discontinuities
-                            let buffer_ranges =
-                                snapshot.range_to_buffer_ranges(start_point..end_point);
+                            let buffer_ranges = snapshot
+                                .range_to_buffer_ranges_with_deleted_hunks(start_point..end_point)
+                                .collect::<Vec<_>>();
                             let ranges: Vec<(u32, u32)> = buffer_ranges
                                 .iter()
                                 .map(|(buffer_snapshot, range, _)| {
-                                    let start = buffer_snapshot.offset_to_point(range.start.0).row;
-                                    let end = buffer_snapshot.offset_to_point(range.end.0).row;
+                                    let start = buffer_snapshot
+                                        .offset_to_point(range.start.0.min(buffer_snapshot.len()))
+                                        .row;
+                                    let end = buffer_snapshot
+                                        .offset_to_point(range.end.0.min(buffer_snapshot.len()))
+                                        .row;
                                     (start, end)
                                 })
                                 .collect();
@@ -3210,6 +3192,13 @@ impl Editor {
                     .text_color(colors.text)
                     .when(comment.discussion_id.is_some(), |this| {
                         this.child(Label::new("You").size(LabelSize::Small).color(Color::Muted))
+                    })
+                    .when_some(comment.diff, |this, diff| {
+                        this.child(
+                            Label::new(diff.description())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
                     })
                     .child(comment.comment)
                     .when_some(comment.submission_status, |this, status| {
