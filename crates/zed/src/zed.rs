@@ -99,8 +99,8 @@ use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 
 use workspace::{
-    AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
-    WorkspaceSettings, create_and_open_local_file,
+    AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, OpenPathPromptMode, Panel, Toast,
+    Workspace, WorkspaceSettings, create_and_open_local_file,
     notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace};
@@ -1088,12 +1088,14 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
-                action.create_new_window.unwrap_or_else(|| {
-                    matches!(
-                        WorkspaceSettings::get_global(cx).default_open_behavior,
-                        DefaultOpenBehavior::NewWindow
-                    )
-                }),
+                if action.create_new_window.unwrap_or_else(|| {
+                    WorkspaceSettings::get_global(cx).default_open_behavior
+                        == DefaultOpenBehavior::NewWindow
+                }) {
+                    OpenPathPromptMode::NewWindow
+                } else {
+                    OpenPathPromptMode::CurrentWindow
+                },
                 window,
                 cx,
             );
@@ -1109,7 +1111,13 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
-                true,
+                if WorkspaceSettings::get_global(cx).default_open_behavior
+                    == DefaultOpenBehavior::NewWindow
+                {
+                    OpenPathPromptMode::NewWindow
+                } else {
+                    OpenPathPromptMode::CurrentWindow
+                },
                 window,
                 cx,
             );
@@ -1138,19 +1146,24 @@ fn register_actions(
                     prompt: None,
                 },
                 DirectoryLister::Project(workspace.project().clone()),
+                if create_new_window {
+                    OpenPathPromptMode::NewWindow
+                } else {
+                    OpenPathPromptMode::CurrentWindow
+                },
                 window,
                 cx,
             );
             cx.spawn_in(window, async move |this, cx| {
-                let Some(paths) = paths.await.log_err().flatten() else {
+                let Some(result) = paths.await.log_err().flatten() else {
                     return;
                 };
                 if let Some(task) = this
                     .update_in(cx, |this, window, cx| {
                         open_new_ssh_project_from_project(
                             this,
-                            paths,
-                            create_new_window,
+                            result.paths,
+                            result.open_in_new_window,
                             window,
                             cx,
                         )
@@ -2420,7 +2433,7 @@ fn initialize_new_window(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    if WorkspaceSettings::get_global(cx).on_new_window == settings::OnNewWindow::Launchpad {
+    if WorkspaceSettings::get_global(cx).on_new_window != settings::OnNewWindow::EmptyTab {
         return;
     }
     // Create buffer synchronously to avoid flicker
@@ -2446,7 +2459,7 @@ pub fn open_new_ssh_project_from_project(
     let Some(ssh_client) = workspace.project().read(cx).remote_client() else {
         return Task::ready(Err(anyhow::anyhow!("Not an ssh project")));
     };
-    let connection_options = ssh_client.read(cx).connection_options();
+    let connection_options = ssh_client.read(cx).connection_options().clone();
     let requesting_window = if create_new_window {
         None
     } else {
@@ -2909,8 +2922,8 @@ mod tests {
     };
     use workspace::MultiWorkspace;
     use workspace::{
-        NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
-        WorkspaceHandle,
+        NewFile, OpenOptions, OpenPathPromptResult, OpenVisible, SERIALIZATION_THROTTLE_TIME,
+        SaveIntent, SplitDirection, WorkspaceHandle,
         item::SaveOptions,
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
@@ -3137,10 +3150,13 @@ mod tests {
         window
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, _cx| {
-                    workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+                    workspace.set_prompt_for_open_path(Box::new(|_, _, mode, _, _| {
                         let (sender, receiver) = futures::channel::oneshot::channel();
                         sender
-                            .send(Some(vec![PathBuf::from(path!("/other-project"))]))
+                            .send(Some(OpenPathPromptResult {
+                                paths: vec![PathBuf::from(path!("/other-project"))],
+                                open_in_new_window: mode == OpenPathPromptMode::NewWindow,
+                            }))
                             .expect("path prompt receiver should be open");
                         receiver
                     }));
@@ -3163,6 +3179,38 @@ mod tests {
         );
         cx.simulate_prompt_answer("Cancel");
         executor.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_open_from_no_windows(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({ "file.txt": "" }))
+            .await;
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.use_system_path_prompts = Some(true);
+                settings.workspace.default_open_behavior = Some(DefaultOpenBehavior::NewWindow);
+            });
+        });
+        assert_eq!(cx.windows().len(), 0);
+        cx.update(|cx| cx.dispatch_action(&workspace::Open::default()));
+        cx.run_until_parked();
+        cx.simulate_path_prompt_response(|_| Some(vec![PathBuf::from(path!("/root/file.txt"))]));
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        cx.windows()[0]
+            .downcast::<MultiWorkspace>()
+            .unwrap()
+            .update(cx, |multi_workspace, _, cx| {
+                assert_eq!(
+                    multi_workspace.workspace().read(cx).open_item_abs_paths(cx),
+                    vec![PathBuf::from(path!("/root/file.txt"))]
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]
@@ -3802,47 +3850,353 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_new_window_launchpad_opens_without_items(cx: &mut TestAppContext) {
+    async fn test_new_window_initial_items(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.workspace.on_new_window = Some(settings::OnNewWindow::Launchpad);
-                });
-            });
-        });
-
-        cx.update(|cx| {
-            open_new(
-                Default::default(),
-                app_state.clone(),
-                cx,
-                |workspace, window, cx| initialize_new_window(workspace, window, cx),
-            )
-        })
-        .await
-        .unwrap();
-        cx.run_until_parked();
-
-        let multi_workspace = cx
-            .update(|cx| cx.windows().first().unwrap().downcast::<MultiWorkspace>())
-            .unwrap();
-
-        multi_workspace
-            .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.workspace().update(cx, |workspace, cx| {
-                    assert!(
-                        workspace.active_item(cx).is_none(),
-                        "launchpad window should not open any items"
-                    );
-                    assert_eq!(
-                        workspace.active_pane().read(cx).items_len(),
-                        0,
-                        "launchpad window should have an empty pane so the launchpad is shown"
-                    );
-                });
+        for on_new_window in [
+            settings::OnNewWindow::Launchpad,
+            settings::OnNewWindow::Readme,
+            settings::OnNewWindow::EmptyTab,
+        ] {
+            set_on_new_window(Some(on_new_window), cx);
+            cx.update(|cx| {
+                open_new(
+                    OpenOptions::default(),
+                    app_state.clone(),
+                    cx,
+                    initialize_new_window,
+                )
             })
-            .unwrap();
+            .await
+            .expect("open blank window");
+            cx.run_until_parked();
+
+            let window = cx
+                .windows()
+                .first()
+                .expect("blank window")
+                .downcast::<MultiWorkspace>()
+                .expect("workspace window");
+            window
+                .update(cx, |multi_workspace, window, cx| {
+                    let workspace = multi_workspace.workspace().read(cx);
+                    let expected_items =
+                        usize::from(on_new_window == settings::OnNewWindow::EmptyTab);
+                    assert_eq!(workspace.items(cx).count(), expected_items);
+                    assert_eq!(workspace.active_pane().read(cx).items_len(), expected_items);
+                    if expected_items == 1 {
+                        let editor = workspace
+                            .active_item_as::<Editor>(cx)
+                            .expect("empty editor");
+                        assert_eq!(editor.read(cx).text(cx), "");
+                    }
+                    window.remove_window();
+                })
+                .expect("read blank window");
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_open_paths_readme_selection(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "default": {"README.md": ""},
+                    "empty_tab": {"README.md": ""},
+                    "markdown": {"README": "", "README.txt": "", "readme.md": ""},
+                    "extensionless": {"Readme": ""},
+                    "fallback": {
+                        "README.md": {"file.md": ""},
+                        "Readme.txt": ""
+                    },
+                    "invalid": {
+                        "README.md": {"file.md": ""},
+                        "README": {},
+                        "README-extra.md": "",
+                        "readme.template.md": "",
+                        "rEaDmE.Md": "",
+                        "README.adoc": "",
+                        "prefix-readme.md": "",
+                        "docs": {"README.md": ""}
+                    },
+                    "first": {"README.txt": ""},
+                    "second": {"README.md": ""},
+                    "parent": {"README.md": "", "src": {"README.md": ""}},
+                    "local_settings": {
+                        "README.md": "",
+                        ".zed": {
+                            "settings.json": r#"{"on_new_window": "readme"}"#
+                        }
+                    },
+                    "none": {"code.rs": ""},
+                    "explicit": {"README.md": "", "code.rs": ""},
+                    "missing": {"README.md": ""}
+                }),
+            )
+            .await;
+
+        let readme = Some(settings::OnNewWindow::Readme);
+        for (on_new_window, paths, expected_path, preview) in [
+            (None, vec!["default"], None, false),
+            (
+                Some(settings::OnNewWindow::EmptyTab),
+                vec!["empty_tab"],
+                None,
+                false,
+            ),
+            (readme, vec!["markdown"], Some("markdown/readme.md"), true),
+            (
+                readme,
+                vec!["extensionless"],
+                Some("extensionless/Readme"),
+                true,
+            ),
+            (readme, vec!["fallback"], Some("fallback/Readme.txt"), true),
+            (readme, vec!["invalid"], None, false),
+            (
+                readme,
+                vec!["none", "first", "second"],
+                Some("first/README.txt"),
+                true,
+            ),
+            (
+                readme,
+                vec!["parent", "parent/src"],
+                Some("parent/README.md"),
+                true,
+            ),
+            (None, vec!["local_settings"], None, false),
+            (
+                readme,
+                vec!["explicit", "explicit/code.rs"],
+                Some("explicit/code.rs"),
+                false,
+            ),
+            (
+                readme,
+                vec!["missing/new.rs", "missing"],
+                Some("missing/new.rs"),
+                false,
+            ),
+        ] {
+            set_on_new_window(on_new_window, cx);
+            let paths = paths
+                .iter()
+                .map(|path| Path::new(path!("/root")).join(path))
+                .collect::<Vec<_>>();
+            let expected_paths = expected_path
+                .into_iter()
+                .map(|path| Path::new(path!("/root")).join(path))
+                .collect::<Vec<_>>();
+            let result = open_test_workspace_paths(paths, app_state.clone(), cx).await;
+            assert_workspace_item_paths(&result.workspace, &expected_paths, cx);
+            result.workspace.read_with(cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                let expected_preview = if preview {
+                    Some(pane.active_item().expect("README item").item_id())
+                } else {
+                    None
+                };
+                assert_eq!(pane.preview_item_id(), expected_preview);
+            });
+            result
+                .window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("close workspace");
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_open_remote_project_readme(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        set_on_new_window(Some(settings::OnNewWindow::Readme), cx);
+        server_cx.update(|cx| {
+            release_channel::init(Version::new(0, 0, 0), cx);
+            HeadlessProject::init(cx);
+        });
+        let remote_fs = FakeFs::new(server_cx.executor());
+        for (name, explicit_file, expected_file) in [
+            ("directory", None, Some("README.md")),
+            ("explicit", Some("code.rs"), Some("code.rs")),
+            ("failed", Some(path!("/missing-parent/code.rs")), None),
+        ] {
+            let root = Path::new(path!("/root")).join(name);
+            remote_fs
+                .insert_tree(&root, json!({"README.md": "", "code.rs": ""}))
+                .await;
+            let (connection_options, server_session, connect_guard) =
+                RemoteClient::fake_server(cx, server_cx);
+            let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+            let _headless = server_cx.new(|cx| {
+                HeadlessProject::new(
+                    HeadlessAppState {
+                        session: server_session,
+                        fs: remote_fs.clone(),
+                        http_client: Arc::new(BlockedHttpClient),
+                        node_runtime: NodeRuntime::unavailable(),
+                        languages,
+                        extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                        startup_time: std::time::Instant::now(),
+                    },
+                    false,
+                    cx,
+                )
+            });
+            drop(connect_guard);
+            let mut paths = vec![root.clone()];
+            if let Some(explicit_file) = explicit_file {
+                paths.push(root.join(explicit_file));
+            }
+            let window = open_remote_project(
+                connection_options,
+                paths,
+                app_state.clone(),
+                OpenOptions {
+                    workspace_matching: workspace::WorkspaceMatching::None,
+                    ..OpenOptions::default()
+                },
+                &mut cx.to_async(),
+            )
+            .await
+            .expect("open remote project");
+            cx.run_until_parked();
+            let workspace = window
+                .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+                .expect("remote workspace");
+            let expected_paths = expected_file
+                .into_iter()
+                .map(|path| root.join(path))
+                .collect::<Vec<_>>();
+            assert_workspace_item_paths(&workspace, &expected_paths, cx);
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("close remote workspace");
+            drop(workspace);
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_open_paths_readme_after_restoration(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        for restore_item in [false, true] {
+            set_on_new_window(Some(settings::OnNewWindow::Launchpad), cx);
+            let root = Path::new(path!("/root")).join(format!("restore-{restore_item}"));
+            app_state
+                .fs
+                .as_fake()
+                .insert_tree(&root, json!({"README.md": "", "code.rs": ""}))
+                .await;
+            let mut paths = vec![root.clone()];
+            if restore_item {
+                paths.push(root.join("code.rs"));
+            }
+            let result = open_test_workspace_paths(paths, app_state.clone(), cx).await;
+            let database_id = result
+                .workspace
+                .read_with(cx, |workspace, _| workspace.database_id())
+                .expect("persisted workspace id");
+            flush_workspace_serialization(&result.window, cx).await;
+            result
+                .window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("close workspace");
+            drop(result);
+            cx.run_until_parked();
+
+            set_on_new_window(Some(settings::OnNewWindow::Readme), cx);
+            let result = open_test_workspace_paths(vec![root.clone()], app_state.clone(), cx).await;
+            assert_eq!(
+                result
+                    .workspace
+                    .read_with(cx, |workspace, _| workspace.database_id()),
+                Some(database_id)
+            );
+            let expected_path = root.join(if restore_item { "code.rs" } else { "README.md" });
+            assert_workspace_item_paths(&result.workspace, &[expected_path], cx);
+            result
+                .window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("close workspace");
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_add_folder_does_not_open_readme(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        set_on_new_window(Some(settings::OnNewWindow::Readme), cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "existing": {"code.rs": ""},
+                    "added": {"README.md": ""}
+                }),
+            )
+            .await;
+        let root = Path::new(path!("/root"));
+        let result =
+            open_test_workspace_paths(vec![root.join("existing")], app_state.clone(), cx).await;
+        assert_workspace_item_paths(&result.workspace, &[], cx);
+        result
+            .window
+            .update(cx, |_, window, cx| {
+                result.workspace.update(cx, |workspace, cx| {
+                    workspace.open_paths(
+                        vec![root.join("added")],
+                        OpenOptions {
+                            visible: Some(workspace::OpenVisible::All),
+                            ..OpenOptions::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .expect("add folder")
+            .await;
+        cx.run_until_parked();
+        result.workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .root_paths(cx)
+                    .iter()
+                    .map(|path| path.to_path_buf())
+                    .collect::<Vec<_>>(),
+                vec![root.join("existing"), root.join("added")]
+            );
+        });
+        assert_workspace_item_paths(&result.workspace, &[], cx);
+    }
+
+    #[gpui::test]
+    async fn test_open_paths_readme_case_insensitive_fs(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        set_on_new_window(Some(settings::OnNewWindow::Readme), cx);
+        let fs = app_state.fs.as_fake();
+        fs.set_case_sensitive(false);
+        fs.insert_tree(path!("/root"), json!({"readme.md": ""}))
+            .await;
+        let result =
+            open_test_workspace_paths(vec![PathBuf::from(path!("/root"))], app_state.clone(), cx)
+                .await;
+        assert_workspace_item_paths(
+            &result.workspace,
+            &[PathBuf::from(path!("/root/readme.md"))],
+            cx,
+        );
     }
 
     #[gpui::test]
@@ -5199,7 +5553,6 @@ mod tests {
             (file3.clone(), DisplayPoint::new(DisplayRow(0), 0), 0.)
         );
 
-        // Go back to an item that has been closed and removed from disk
         workspace
             .update_in(cx, |_, window, cx| {
                 pane.update(cx, |pane, cx| {
@@ -5225,7 +5578,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
-            (file2.clone(), DisplayPoint::new(DisplayRow(0), 0), 0.)
+            (file1.clone(), DisplayPoint::new(DisplayRow(10), 0), 0.)
         );
         workspace
             .update_in(cx, |w, window, cx| {
@@ -5540,7 +5893,7 @@ mod tests {
 
             gpui::Keymap::new(bindings)
                 .bindings_for_input(
-                    &[gpui::Keystroke::parse(keystroke).unwrap()],
+                    &[gpui::Keystroke::parse_with_os(keystroke, cx.platform_info().os).unwrap()],
                     &[gpui::KeyContext::parse(context).unwrap()],
                 )
                 .0
@@ -5957,6 +6310,7 @@ mod tests {
                 "outline_panel",
                 "pane",
                 "picker",
+                "project_bookmarks",
                 "project_panel",
                 "project_search",
                 "project_symbols",
@@ -8304,6 +8658,55 @@ mod tests {
                 has_view_item(cx, "Diagnostics"),
                 "expected Diagnostics to remain in the View menu"
             );
+        });
+    }
+
+    fn set_on_new_window(on_new_window: Option<settings::OnNewWindow>, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.on_new_window = on_new_window;
+                });
+            });
+        });
+    }
+
+    async fn open_test_workspace_paths(
+        paths: Vec<PathBuf>,
+        app_state: Arc<AppState>,
+        cx: &mut TestAppContext,
+    ) -> workspace::OpenResult {
+        let result = cx
+            .update(|cx| {
+                open_paths(
+                    &paths,
+                    app_state,
+                    OpenOptions {
+                        workspace_matching: workspace::WorkspaceMatching::None,
+                        ..OpenOptions::default()
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("open workspace paths");
+        cx.run_until_parked();
+        result
+    }
+
+    fn assert_workspace_item_paths(
+        workspace: &Entity<Workspace>,
+        expected_paths: &[PathBuf],
+        cx: &TestAppContext,
+    ) {
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.open_item_abs_paths(cx), expected_paths);
+            assert_eq!(workspace.items(cx).count(), expected_paths.len());
+            let active_path = workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .and_then(|path| workspace.project().read(cx).absolute_path(&path, cx));
+            assert_eq!(active_path.as_ref(), expected_paths.last());
         });
     }
 

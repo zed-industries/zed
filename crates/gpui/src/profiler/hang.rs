@@ -664,7 +664,7 @@ mod tests {
     use crate::{
         self as gpui, AnyView, AppContext as _, Context, FocusHandle, InteractiveElement,
         IntoElement, Modifiers, MouseButton, ParentElement as _, Render, Styled, TestAppContext,
-        VisualTestContext, Window, WindowId, div, point, px,
+        VisualTestContext, Window, WindowId, actions, div, point, px,
     };
 
     use crate::profiler::{

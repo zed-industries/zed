@@ -1,7 +1,7 @@
 use super::*;
 use acp_thread::{AcpThread, PermissionOptions, StubAgentConnection};
 use agent::ThreadStore;
-use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::{v1::schema as acp_v1, v2::schema as acp_v2};
 use agent_settings::AgentSettings;
 use agent_ui::{
     ThreadId,
@@ -478,7 +478,7 @@ fn save_thread_metadata(
 ) {
     cx.update(|cx| {
         let worktree_paths = project.read(cx).worktree_paths(cx);
-        let remote_connection = project.read(cx).remote_connection_options(cx);
+        let remote_connection = project.read(cx).remote_connection_options(cx).cloned();
         let thread_id = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
@@ -4638,6 +4638,90 @@ async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
     });
 
     assert_eq!(parent_status, AgentThreadStatus::WaitingForConfirmation);
+}
+
+#[gpui::test]
+async fn test_elicitation_marks_sidebar_thread_waiting_until_responded(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    open_thread_with_connection(&panel, StubAgentConnection::new(), cx);
+    send_message(&panel, cx);
+    let session_id = active_session_id(&panel, cx);
+    save_test_thread_metadata(&session_id, &project, cx).await;
+    let thread = cx.update(|_, cx| panel.read(cx).active_agent_thread(cx).unwrap());
+    let thread_status = |cx: &mut VisualTestContext| {
+        sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar
+                .contents
+                .entries
+                .iter()
+                .find_map(|entry| match entry {
+                    ListEntry::Thread(thread)
+                        if thread.metadata.session_id.as_ref() == Some(&session_id) =>
+                    {
+                        Some(thread.status)
+                    }
+                    _ => None,
+                })
+                .expect("Expected thread entry in sidebar")
+        })
+    };
+    assert_eq!(thread_status(cx), AgentThreadStatus::Running);
+
+    for action in [
+        acp_v2::ElicitationAction::Accept(acp_v2::ElicitationAcceptAction::new().content(
+            std::collections::BTreeMap::from([(
+                "choice".to_string(),
+                acp_v2::ElicitationContentValue::from("first"),
+            )]),
+        )),
+        acp_v2::ElicitationAction::Decline,
+        acp_v2::ElicitationAction::Cancel,
+    ] {
+        let (elicitation_id, response_task) = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation_with_id(
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(session_id.clone()),
+                            serde_json::from_value(serde_json::json!({
+                                "type": "object",
+                                "required": ["choice"],
+                                "properties": {
+                                    "choice": {
+                                        "type": "string",
+                                        "oneOf": [
+                                            { "const": "first", "title": "First" },
+                                            { "const": "second", "title": "Second" }
+                                        ]
+                                    }
+                                }
+                            }))
+                            .expect("Valid single-select schema"),
+                        ),
+                        "Choose one",
+                    ),
+                    cx,
+                )
+                .expect("Elicitation should be accepted")
+        });
+        cx.run_until_parked();
+        assert_eq!(thread_status(cx), AgentThreadStatus::WaitingForConfirmation);
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp_v2::CreateElicitationResponse::new(action),
+                cx,
+            );
+        });
+        response_task.await;
+        cx.run_until_parked();
+        assert_eq!(thread_status(cx), AgentThreadStatus::Running);
+    }
 }
 
 #[gpui::test]
@@ -13428,7 +13512,7 @@ mod property_test {
                     let key = &keys[project_group_index];
                     let ws = mw
                         .workspaces_for_project_group(key, cx)
-                        .first()
+                        .next()
                         .cloned()
                         .unwrap_or_else(|| mw.workspace().clone());
                     let project = ws.read(cx).project().clone();
@@ -13444,8 +13528,7 @@ mod property_test {
                     let thread_id = active_thread_id(&panel, cx);
                     let session_id = active_session_id(&panel, cx);
                     // Make the thread non-draft without exercising the prompt
-                    // send path; these invariants are about sidebar state, not
-                    // git checkpointing during user prompts.
+                    // send path; these invariants are about sidebar state.
                     cx.update(|_, cx| {
                         connection.send_update(
                             session_id.clone(),
@@ -13475,7 +13558,7 @@ mod property_test {
                         interacted_at: None,
                         worktree_paths: project.read(cx).worktree_paths(cx),
                         archived: false,
-                        remote_connection: project.read(cx).remote_connection_options(cx),
+                        remote_connection: project.read(cx).remote_connection_options(cx).cloned(),
                     });
                     cx.update(|_, cx| {
                         ThreadMetadataStore::global(cx)
@@ -13582,7 +13665,7 @@ mod property_test {
                     let keys = mw.project_group_keys();
                     let key = &keys[index];
                     mw.workspaces_for_project_group(key, cx)
-                        .first()
+                        .next()
                         .cloned()
                         .unwrap_or_else(|| mw.workspace().clone())
                 });
@@ -13652,7 +13735,7 @@ mod property_test {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
                     mw.workspaces_for_project_group(key, cx)
-                        .first()
+                        .next()
                         .cloned()
                         .unwrap()
                 });
@@ -13672,7 +13755,7 @@ mod property_test {
                 let workspace = multi_workspace.read_with(cx, |mw, cx| {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
-                    mw.workspaces_for_project_group(key, cx).first().cloned()
+                    mw.workspaces_for_project_group(key, cx).next().cloned()
                 });
                 let Some(workspace) = workspace else { return };
                 let project = workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -13699,7 +13782,7 @@ mod property_test {
                 let workspace = multi_workspace.read_with(cx, |mw, cx| {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
-                    mw.workspaces_for_project_group(key, cx).first().cloned()
+                    mw.workspaces_for_project_group(key, cx).next().cloned()
                 });
                 let Some(workspace) = workspace else { return };
                 let project = workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -14324,7 +14407,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
     let (main_worktree_paths, remote_connection) = project.read_with(cx, |p, cx| {
         (
             p.project_group_key(cx).path_list().clone(),
-            p.remote_connection_options(cx),
+            p.remote_connection_options(cx).cloned(),
         )
     });
     cx.update(|_window, cx| {
@@ -15277,7 +15360,7 @@ async fn test_remote_archive_thread_with_active_connection(
     // the folder at the linked worktree checkout and the main at the
     // parent repo, so `build_root_plan` targets the linked worktree
     // specifically and knows which main repo owns it.
-    let remote_connection = project.read_with(cx, |p, cx| p.remote_connection_options(cx));
+    let remote_connection = project.read_with(cx, |p, cx| p.remote_connection_options(cx).cloned());
 
     // Record the worktree as Zed-created on the client, keyed by the remote
     // connection identity, with the creation time of the gitdir on the

@@ -586,7 +586,7 @@ impl DispatchTree {
     }
 
     pub fn view_path_reversed(&self, view_id: EntityId) -> impl Iterator<Item = EntityId> {
-        let mut current_node_id = self.view_node_ids.get(&view_id).copied();
+        let current_node_id = self.view_node_ids.get(&view_id).copied();
 
         std::iter::successors(
             current_node_id.map(|node_id| self.node(node_id)),
@@ -733,14 +733,6 @@ mod tests {
                     }
                 },
             );
-        }
-    }
-
-    impl IntoElement for PendingTextInputTestView {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
         }
     }
 
@@ -1117,7 +1109,7 @@ mod tests {
         fn dispatch(
             tree: &mut DispatchTree,
             pending: SmallVec<[Keystroke; 1]>,
-            key: &str,
+            key: &'static str,
             path: &DispatchPath,
         ) -> DispatchResult {
             tree.dispatch_key(pending, Keystroke::parse(key).unwrap(), path)
@@ -1211,14 +1203,6 @@ mod tests {
                 window.set_key_context(key_context);
                 window.handle_input(&self.focus_handle, self.clone(), cx);
                 window.on_action(std::any::TypeId::of::<TestAction>(), |_, _, _, _| {});
-            }
-        }
-
-        impl IntoElement for CustomElement {
-            type Element = Self;
-
-            fn into_element(self) -> Self::Element {
-                self
             }
         }
 
