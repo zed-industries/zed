@@ -1180,14 +1180,6 @@ mod tests {
     /// by it.
     struct MeasuredLeaf(Size<Pixels>);
 
-    impl IntoElement for MeasuredLeaf {
-        type Element = Self;
-
-        fn into_element(self) -> Self {
-            self
-        }
-    }
-
     impl Element for MeasuredLeaf {
         type RequestLayoutState = ();
         type PrepaintState = ();
