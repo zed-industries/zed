@@ -312,7 +312,7 @@ fn main() {
             app_version,
             app_commit_sha,
             *release_channel::RELEASE_CHANNEL,
-            client::telemetry::os_name(),
+            client::telemetry::guessed_os_name(),
             client::telemetry::os_version(),
         );
         println!("Zed System Specs (from CLI):\n{}", system_specs);
