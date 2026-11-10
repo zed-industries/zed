@@ -1,4 +1,6 @@
 pub(super) mod blame;
+#[cfg(test)]
+mod inline_review_tests;
 
 use super::*;
 use ::git::{
@@ -177,7 +179,19 @@ pub(super) struct StoredReviewComment {
     pub(super) range: Range<Anchor>,
     /// Whether this comment is currently being edited inline.
     pub(super) is_editing: bool,
+    agent_reply: Option<String>,
+    original_excerpt: Option<String>,
 }
+
+pub struct InlineReviewComment {
+    pub id: usize,
+    pub path: std::path::PathBuf,
+    pub lines: Range<u32>,
+    pub excerpt: String,
+    pub comment: String,
+}
+
+type ReviewSubmitHandler = Rc<dyn Fn(InlineReviewComment, &mut Window, &mut App)>;
 
 /// Represents an active diff review overlay that appears when clicking the "Add Review" button.
 pub(super) struct DiffReviewOverlay {
@@ -200,6 +214,7 @@ pub(super) struct DiffReviewOverlay {
     pub(super) user_avatar_uri: Option<SharedUri>,
     /// Subscription to keep the action handler alive.
     _subscription: Subscription,
+    on_submit: Option<ReviewSubmitHandler>,
 }
 
 impl DiffReviewDragState {
@@ -215,12 +230,25 @@ impl DiffReviewDragState {
 }
 
 impl StoredReviewComment {
+    fn is_outdated(&self, snapshot: &MultiBufferSnapshot) -> bool {
+        self.original_excerpt.as_ref().is_some_and(|original| {
+            !self.range.start.is_valid(snapshot)
+                || !self.range.end.is_valid(snapshot)
+                || snapshot
+                    .text_for_range(self.range.clone())
+                    .collect::<String>()
+                    != *original
+        })
+    }
+
     fn new(id: usize, comment: String, anchor_range: Range<Anchor>) -> Self {
         Self {
             id,
             comment,
             range: anchor_range,
             is_editing: false,
+            agent_reply: None,
+            original_excerpt: None,
         }
     }
 }
@@ -554,9 +582,88 @@ impl Editor {
         });
     }
 
+    pub fn show_inline_review(
+        &mut self,
+        on_submit: ReviewSubmitHandler,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            self.buffer.read(cx).is_singleton() && !self.has_any_expanded_diff_hunks(cx),
+            "Select lines in a regular file, not a diff or multibuffer"
+        );
+        anyhow::ensure!(self.selections.count() == 1, "Select one contiguous range");
+        let snapshot = self.snapshot(window, cx);
+        let selection = self.selections.newest::<Point>(&snapshot.display_snapshot);
+        let range = selection.range();
+        anyhow::ensure!(
+            snapshot
+                .buffer_snapshot()
+                .file_at(range.start)
+                .is_some_and(|file| file.disk_state().exists()),
+            "Open a saved current file, not an unsaved buffer or historical diff file"
+        );
+        let end_row = if range.end.column == 0 && range.end.row > range.start.row {
+            range.end.row - 1
+        } else {
+            range.end.row
+        };
+        let start = Point::new(range.start.row, 0)
+            .to_display_point(&snapshot.display_snapshot)
+            .row();
+        let end = Point::new(
+            end_row,
+            snapshot.buffer_snapshot().line_len(MultiBufferRow(end_row)),
+        )
+        .to_display_point(&snapshot.display_snapshot)
+        .row();
+        for overlay in &self.diff_review_overlays {
+            let existing = overlay.anchor_range.to_point(snapshot.buffer_snapshot());
+            if existing.start.row == range.start.row {
+                anyhow::ensure!(
+                    existing.end.row == end_row && overlay.on_submit.is_some(),
+                    "Close the existing review on this line before selecting a different range"
+                );
+            }
+        }
+        self.show_review_overlay(start..end, Some(on_submit), window, cx);
+        Ok(())
+    }
+
+    pub fn set_inline_review_reply(
+        &mut self,
+        id: usize,
+        reply: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hunk_key = self
+            .stored_review_comments
+            .iter_mut()
+            .find_map(|(key, comments)| {
+                let comment = comments.iter_mut().find(|comment| comment.id == id)?;
+                comment.agent_reply = Some(reply.clone());
+                Some(key.clone())
+            });
+        if let Some(key) = hunk_key {
+            self.refresh_diff_review_overlay_height(&key, window, cx);
+            cx.notify();
+        }
+    }
+
     pub fn show_diff_review_overlay(
         &mut self,
         display_range: Range<DisplayRow>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_review_overlay(display_range, None, window, cx);
+    }
+
+    fn show_review_overlay(
+        &mut self,
+        display_range: Range<DisplayRow>,
+        on_submit: Option<ReviewSubmitHandler>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -594,9 +701,12 @@ impl Editor {
         };
 
         // Check if we already have an overlay for this hunk
-        if let Some(existing_overlay) = self.diff_review_overlays.iter().find(|overlay| {
+        if let Some(existing_overlay) = self.diff_review_overlays.iter_mut().find(|overlay| {
             Self::hunk_keys_match(&overlay.hunk_key, &new_hunk_key, &buffer_snapshot)
         }) {
+            if on_submit.is_some() {
+                existing_overlay.on_submit = on_submit;
+            }
             // Just focus the existing overlay's prompt editor
             let focus_handle = existing_overlay.prompt_editor.focus_handle(cx);
             window.focus(&focus_handle, cx);
@@ -655,7 +765,11 @@ impl Editor {
         let block = BlockProperties {
             style: BlockStyle::Sticky,
             placement: BlockPlacement::Below(anchor),
-            height: Some(initial_height),
+            height: if on_submit.is_some() {
+                None
+            } else {
+                Some(initial_height)
+            },
             render: Arc::new(move |cx| {
                 Self::render_diff_review_overlay(
                     &prompt_editor_for_render,
@@ -683,6 +797,7 @@ impl Editor {
             inline_edit_subscriptions: HashMap::default(),
             user_avatar_uri,
             _subscription: subscription,
+            on_submit,
         });
 
         // Focus the prompt editor
@@ -713,7 +828,45 @@ impl Editor {
         let anchor_range = overlay.anchor_range.clone();
         let hunk_key = overlay.hunk_key.clone();
 
-        self.add_review_comment(hunk_key.clone(), comment_text, anchor_range, cx);
+        let on_submit = overlay.on_submit.clone();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let source = on_submit.as_ref().and_then(|_| {
+            let range = anchor_range.to_point(&snapshot);
+            let file = snapshot.file_at(range.start)?;
+            Some((
+                file.file_system_abs_path(cx)?,
+                range.start.row..range.end.row + 1,
+                snapshot
+                    .text_for_range(anchor_range.clone())
+                    .collect::<String>(),
+            ))
+        });
+        let id = self.add_review_comment(hunk_key.clone(), comment_text.clone(), anchor_range, cx);
+        if let Some(on_submit) = on_submit {
+            if let Some((path, lines, excerpt)) = source {
+                for (_, comments) in &mut self.stored_review_comments {
+                    if let Some(comment) = comments.iter_mut().find(|comment| comment.id == id) {
+                        comment.original_excerpt = Some(excerpt.clone());
+                        comment.agent_reply = Some("Waiting for agent…".into());
+                    }
+                }
+                let request = InlineReviewComment {
+                    id,
+                    path,
+                    lines,
+                    excerpt,
+                    comment: comment_text,
+                };
+                cx.defer_in(window, move |_, window, cx| on_submit(request, window, cx));
+            } else {
+                self.set_inline_review_reply(
+                    id,
+                    "Not sent: the source file is no longer available.".into(),
+                    window,
+                    cx,
+                );
+            }
+        }
 
         // Clear the prompt editor but keep the overlay open
         if let Some(overlay) = self.diff_review_overlays.get(overlay_index) {
@@ -1225,13 +1378,19 @@ impl Editor {
         let original_count = self.total_review_comment_count();
 
         // Remove comments with invalid hunk anchors
-        self.stored_review_comments
-            .retain(|(hunk_key, _)| hunk_key.hunk_start_anchor.is_valid(&snapshot));
+        self.stored_review_comments.retain(|(hunk_key, comments)| {
+            hunk_key.hunk_start_anchor.is_valid(&snapshot)
+                || comments
+                    .iter()
+                    .any(|comment| comment.original_excerpt.is_some())
+        });
 
         // Also clean up individual comments with invalid anchor ranges
         for (_, comments) in &mut self.stored_review_comments {
             comments.retain(|comment| {
-                comment.range.start.is_valid(&snapshot) && comment.range.end.is_valid(&snapshot)
+                comment.original_excerpt.is_some()
+                    || (comment.range.start.is_valid(&snapshot)
+                        && comment.range.end.is_valid(&snapshot))
             });
         }
 
@@ -2447,7 +2606,7 @@ impl Editor {
     ) {
         // Extract all needed data from overlay first to avoid borrow conflicts
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let (comments_expanded, block_id, prompt_editor) = {
+        let (comments_expanded, block_id, prompt_editor, automatic_height) = {
             let Some(overlay) = self
                 .diff_review_overlays
                 .iter()
@@ -2460,6 +2619,7 @@ impl Editor {
                 overlay.comments_expanded,
                 overlay.block_id,
                 overlay.prompt_editor.clone(),
+                overlay.on_submit.is_some(),
             )
         };
 
@@ -2470,7 +2630,9 @@ impl Editor {
         // Update the block height using resize_blocks (avoids flicker)
         let mut heights = HashMap::default();
         heights.insert(block_id, new_height);
-        self.resize_blocks(heights, None, cx);
+        if !automatic_height {
+            self.resize_blocks(heights, None, cx);
+        }
 
         // Update the render function using replace_blocks (avoids flicker)
         let hunk_key_for_render = hunk_key.clone();
@@ -2534,7 +2696,16 @@ impl Editor {
                 .map(|editor| {
                     let editor = editor.read(cx);
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    let comments = editor.comments_for_hunk(hunk_key, &snapshot).to_vec();
+                    let mut comments = editor.comments_for_hunk(hunk_key, &snapshot).to_vec();
+                    for comment in &mut comments {
+                        if comment.is_outdated(&snapshot) {
+                            comment.agent_reply = Some(format!(
+                                "Outdated — selected code changed.\nOriginal excerpt:\n{}\n\n{}",
+                                comment.original_excerpt.as_deref().unwrap_or_default(),
+                                comment.agent_reply.as_deref().unwrap_or_default()
+                            ));
+                        }
+                    }
                     let (expanded, editors, avatar_uri, line_ranges) = editor
                         .diff_review_overlays
                         .iter()
@@ -2795,11 +2966,22 @@ impl Editor {
                     .into_any_element()
             } else {
                 // Display mode: show the comment text
-                div()
+                v_flex()
                     .flex_1()
+                    .min_w_0()
+                    .gap_2()
                     .text_sm()
                     .text_color(colors.text)
                     .child(comment.comment)
+                    .when_some(comment.agent_reply, |this, reply| {
+                        this.child(
+                            div()
+                                .id(("inline-review-reply", comment_id))
+                                .max_h(rems(16.))
+                                .overflow_y_scroll()
+                                .child(reply),
+                        )
+                    })
                     .into_any_element()
             })
             .child(if is_editing {
