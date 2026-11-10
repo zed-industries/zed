@@ -1,6 +1,6 @@
 use super::*;
 use anyhow::{Context as _, ensure};
-use project::git_store::diff_buffer_list::DiffBase;
+pub(super) use project::git_store::diff_buffer_list::GitDiffComparison as ReviewComparison;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -10,14 +10,6 @@ pub struct InlineReviewDiff {
     pub comparison: ReviewComparison,
     pub side: ReviewSide,
     pub base_sha256: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReviewComparison {
-    Unstaged,
-    Staged,
-    Uncommitted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +26,9 @@ impl InlineReviewDiff {
             ReviewComparison::Staged => "staged diff (HEAD → index)",
             ReviewComparison::Uncommitted => {
                 "uncommitted diff (HEAD → working tree/editor snapshot)"
+            }
+            ReviewComparison::Branch => {
+                "branch diff (Git comparison base → working tree/editor snapshot, including committed changes)"
             }
         };
         let side = match self.side {
@@ -125,12 +120,12 @@ impl Editor {
                 .diff_for(excerpt_buffer.remote_id())
                 .context("This view has no supported Git comparison for the selected file")?;
             let project = self.project.as_ref().context("The diff has no project")?;
-            let (main_buffer, base) = project
+            let (main_buffer, comparison) = project
                 .read(cx)
                 .git_store()
                 .read(cx)
                 .source_for_diff(&diff, cx)
-                .context("Only staged, unstaged, and uncommitted Git comparisons are supported")?;
+                .context("The selected diff has no available Git comparison source")?;
             let path = main_buffer
                 .read(cx)
                 .file()
@@ -145,12 +140,6 @@ impl Editor {
                     "Selected lines do not belong to this comparison"
                 );
                 ReviewSide::New
-            };
-            let comparison = match base {
-                DiffBase::Index => ReviewComparison::Unstaged,
-                DiffBase::Staged => ReviewComparison::Staged,
-                DiffBase::Head => ReviewComparison::Uncommitted,
-                DiffBase::Merge { .. } => anyhow::bail!("Branch comparisons are not supported yet"),
             };
             (
                 path,

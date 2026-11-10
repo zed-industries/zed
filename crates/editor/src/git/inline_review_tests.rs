@@ -510,6 +510,10 @@ async fn diff_reviews_capture_and_restore_exact_sides_and_comparisons(cx: &mut T
         std::path::Path::new(path!("/project/.git")),
         &[("file.txt", "header\nindex version\nfooter\n".into())],
     );
+    let base_oid = fs.set_merge_base_content_for_repo(
+        path!("/project/.git").as_ref(),
+        &[("file.txt", "header\nbranch base version\nfooter\n".into())],
+    )[0];
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let buffer = project
         .update(cx, |project, cx| {
@@ -521,8 +525,29 @@ async fn diff_reviews_capture_and_restore_exact_sides_and_comparisons(cx: &mut T
         ReviewComparison::Unstaged,
         ReviewComparison::Staged,
         ReviewComparison::Uncommitted,
+        ReviewComparison::Branch,
     ] {
         let (diff, display_buffer, old, new) = match comparison {
+            ReviewComparison::Branch => {
+                project
+                    .update(cx, |project, cx| project.git_scans_complete(cx))
+                    .await;
+                let repository =
+                    project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+                let diff = project
+                    .read_with(cx, |project, _| project.git_store().clone())
+                    .update(cx, |store, cx| {
+                        store.open_diff_since(Some(base_oid), buffer.clone(), repository, cx)
+                    })
+                    .await
+                    .unwrap();
+                (
+                    diff,
+                    buffer.clone(),
+                    "branch base version",
+                    "working version",
+                )
+            }
             ReviewComparison::Unstaged => (
                 project
                     .update(cx, |project, cx| {
@@ -923,6 +948,152 @@ async fn diff_reviews_support_deleted_files_and_reject_cross_file_selections(
                 .is_err()
         );
     });
+}
+
+#[gpui::test]
+async fn branch_reviews_work_when_all_changes_are_already_committed(cx: &mut TestAppContext) {
+    use super::review_source::{ReviewComparison, ReviewSide};
+    init_test(cx, |_| {});
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), serde_json::json!({
+        ".git": {}, "changed.txt": "header\ncommitted change\nfooter\n", "added.txt": "committed addition",
+    })).await;
+    let head = [
+        (
+            "changed.txt",
+            "header\ncommitted change\nfooter\n".to_owned(),
+        ),
+        ("added.txt", "committed addition".to_owned()),
+    ];
+    fs.set_head_for_repo(path!("/project/.git").as_ref(), &head, "deadbeef");
+    fs.set_index_for_repo(path!("/project/.git").as_ref(), &head);
+    let base_oids = fs.set_merge_base_content_for_repo(
+        path!("/project/.git").as_ref(),
+        &[
+            ("changed.txt", "header\noriginal code\nfooter\n".into()),
+            ("deleted.txt", "committed removal".into()),
+        ],
+    );
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    let repository = project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+    let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+    for (name, base, old, new) in [
+        (
+            "changed.txt",
+            Some(base_oids[0]),
+            Some("original code"),
+            Some("committed change"),
+        ),
+        ("added.txt", None, None, Some("committed addition")),
+        (
+            "deleted.txt",
+            Some(base_oids[1]),
+            Some("committed removal"),
+            None,
+        ),
+    ] {
+        let path = std::path::Path::new(path!("/project")).join(name);
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let uncommitted = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let uncommitted = uncommitted.read_with(cx, |diff, cx| diff.snapshot(cx));
+        assert_eq!(
+            uncommitted.base_text().text(),
+            buffer.read_with(cx, |buffer, _| buffer.text())
+        );
+        if new.is_some() {
+            assert!(
+                uncommitted.is_empty(),
+                "Unexpected uncommitted changes in {name}"
+            );
+        }
+        let diff = git_store
+            .update(cx, |store, cx| {
+                store.open_diff_since(base, buffer.clone(), repository.clone(), cx)
+            })
+            .await
+            .unwrap();
+        assert!(
+            !diff.read_with(cx, |diff, cx| diff.snapshot(cx).is_empty()),
+            "Missing committed changes in {name}"
+        );
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+            multibuffer.set_excerpts_for_path(
+                multi_buffer::PathKey::sorted(0),
+                buffer.clone(),
+                [Point::zero()..buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+            multibuffer.add_diff(diff, cx);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+        let window = cx.add_window(|window, cx| {
+            let mut editor =
+                Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+            editor.set_diff_hunk_renderer(Some(Arc::new(DefaultDiffHunkRenderer)), cx);
+            editor
+        });
+        let editor = window.root(cx).unwrap();
+        let visual = &mut VisualTestContext::from_window(*window, cx);
+        for (side, text) in [(ReviewSide::Old, old), (ReviewSide::New, new)] {
+            let Some(text) = text else { continue };
+            let posted = Rc::new(RefCell::new(Vec::new()));
+            editor.update_in(visual, |editor, window, cx| {
+                let snapshot = editor.buffer.read(cx).snapshot(cx);
+                let offset = snapshot.text().find(text).unwrap();
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([
+                        MultiBufferOffset(offset)..MultiBufferOffset(offset + text.len())
+                    ])
+                });
+                editor
+                    .show_inline_review(
+                        {
+                            let posted = posted.clone();
+                            Rc::new(move |comment, _, _| posted.borrow_mut().push(comment))
+                        },
+                        window,
+                        cx,
+                    )
+                    .unwrap();
+                let input = editor
+                    .diff_review_overlays
+                    .last()
+                    .unwrap()
+                    .prompt_editor
+                    .clone();
+                input.update(cx, |input, cx| {
+                    input.insert("Review this committed change", window, cx)
+                });
+                editor.submit_diff_review_comment(window, cx);
+            });
+            visual.run_until_parked();
+            let posted = posted.borrow();
+            assert_eq!(posted.len(), 1);
+            assert_eq!(posted[0].path, path);
+            assert_eq!(posted[0].excerpt, text);
+            assert_eq!(
+                posted[0].diff.as_ref().unwrap().comparison,
+                ReviewComparison::Branch
+            );
+            assert_eq!(posted[0].diff.as_ref().unwrap().side, side);
+        }
+    }
 }
 
 #[gpui::test]

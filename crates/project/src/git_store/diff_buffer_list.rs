@@ -473,16 +473,25 @@ impl DiffBufferList {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitDiffComparison {
+    Unstaged,
+    Staged,
+    Uncommitted,
+    Branch,
+}
+
 impl GitStore {
     pub fn source_for_diff(
         &self,
         diff: &Entity<BufferDiff>,
         cx: &App,
-    ) -> Option<(Entity<Buffer>, DiffBase)> {
+    ) -> Option<(Entity<Buffer>, GitDiffComparison)> {
         for (buffer_id, state) in &self.diffs {
             let state = state.read(cx);
-            let base = if state.unstaged_diff().as_ref() == Some(diff) {
-                DiffBase::Index
+            let comparison = if state.unstaged_diff().as_ref() == Some(diff) {
+                GitDiffComparison::Unstaged
             } else if state
                 .staged_diff
                 .as_ref()
@@ -490,7 +499,7 @@ impl GitStore {
                 .as_ref()
                 == Some(diff)
             {
-                DiffBase::Staged
+                GitDiffComparison::Staged
             } else if state
                 .uncommitted_diff
                 .as_ref()
@@ -498,11 +507,17 @@ impl GitStore {
                 .as_ref()
                 == Some(diff)
             {
-                DiffBase::Head
+                GitDiffComparison::Uncommitted
+            } else if state
+                .oid_diffs
+                .values()
+                .any(|candidate| candidate.upgrade().as_ref() == Some(diff))
+            {
+                GitDiffComparison::Branch
             } else {
                 continue;
             };
-            return Some((self.buffer_store.read(cx).get(*buffer_id)?, base));
+            return Some((self.buffer_store.read(cx).get(*buffer_id)?, comparison));
         }
         None
     }

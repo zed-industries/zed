@@ -769,7 +769,7 @@ mod tests {
 
     #[test]
     fn diff_review_prompt_preserves_side_comparison_and_historical_line_numbers() {
-        let comment = InlineReviewComment {
+        let mut comment = InlineReviewComment {
             id: 0,
             discussion_id: "discussion".into(),
             submission_id: "submission".into(),
@@ -791,6 +791,14 @@ mod tests {
         assert!(prompt.contains("Source: staged diff (HEAD → index), old side"));
         assert!(prompt.contains("Historical code may no longer exist on disk"));
         assert!(prompt.contains("old first\nold second"));
+        assert!(prompt.contains(&"a".repeat(64)));
+        comment.diff.as_mut().unwrap().comparison =
+            serde_json::from_value(json!("branch")).unwrap();
+        let prompt = review_prompt(&comment);
+        assert!(prompt.contains("Source: branch diff"));
+        assert!(prompt.contains("including committed changes"));
+        assert!(prompt.contains("old side"));
+        assert!(prompt.contains("/project/deleted.txt:8-9"));
         assert!(prompt.contains(&"a".repeat(64)));
     }
 
