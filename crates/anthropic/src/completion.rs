@@ -292,7 +292,11 @@ pub fn into_anthropic(
 ) -> Result<crate::Request> {
     let requires_adaptive_thinking = matches!(
         model.as_str(),
-        "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-haiku-5-5"
+        "claude-fable-5-2"
+            | "claude-mythos-5-2"
+            | "claude-opus-5-5"
+            | "claude-sonnet-5-5"
+            | "claude-haiku-5-5"
     );
     let mode = if requires_adaptive_thinking {
         AnthropicModelMode::AdaptiveThinking
@@ -1139,6 +1143,8 @@ mod tests {
         // its requests opt into dropping invalidated blocks instead. Models
         // without the prefix-binding check must not receive the beta field.
         for (model, expects_block_binding) in [
+            ("claude-fable-5-2", true),
+            ("claude-mythos-5-2", true),
             ("claude-opus-5-5", true),
             ("claude-fable-5-1", true),
             ("claude-fable-5", false),
@@ -1213,6 +1219,8 @@ mod tests {
         // outright, so those models must keep omitting the field.
         for (model, expects_explicit_opt_out) in [
             ("claude-opus-5", true),
+            ("claude-fable-5-2", false),
+            ("claude-mythos-5-2", false),
             ("claude-opus-5-5", false),
             ("claude-opus-4-8", false),
             ("claude-fable-5", false),
@@ -1267,7 +1275,10 @@ mod tests {
                     "{model} should omit the thinking field entirely"
                 );
             }
-            if model == "claude-opus-5-5" {
+            if matches!(
+                model,
+                "claude-opus-5-5" | "claude-fable-5-2" | "claude-mythos-5-2"
+            ) {
                 assert!(
                     anthropic_request.temperature.is_none(),
                     "{model} must omit temperature because adaptive thinking is always on"

@@ -24,7 +24,11 @@ pub const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
 pub fn supports_fast_mode(model_id: &str) -> bool {
     matches!(
         model_id,
-        "claude-opus-5-5" | "claude-opus-5" | "claude-opus-4-8"
+        "claude-fable-5-2"
+            | "claude-mythos-5-2"
+            | "claude-opus-5-5"
+            | "claude-opus-5"
+            | "claude-opus-4-8"
     )
 }
 
@@ -50,14 +54,24 @@ pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-contro
 pub fn binds_thinking_blocks_to_prefix(model_id: &str) -> bool {
     matches!(
         model_id,
-        "claude-opus-5-5" | "claude-fable-5-1" | "claude-sonnet-5-5" | "claude-haiku-5-5"
+        "claude-fable-5-2"
+            | "claude-mythos-5-2"
+            | "claude-opus-5-5"
+            | "claude-fable-5-1"
+            | "claude-sonnet-5-5"
+            | "claude-haiku-5-5"
     )
 }
 
 pub fn supports_forced_tool_use(model_id: &str) -> bool {
     !matches!(
         model_id,
-        "claude-opus-5-5" | "claude-fable-5-1" | "claude-mythos-5-1" | "claude-sonnet-5-5"
+        "claude-fable-5-2"
+            | "claude-mythos-5-2"
+            | "claude-opus-5-5"
+            | "claude-fable-5-1"
+            | "claude-mythos-5-1"
+            | "claude-sonnet-5-5"
     )
 }
 
@@ -201,7 +215,9 @@ impl Model {
         // <https://platform.claude.com/docs/en/build-with-claude/compaction#supported-models>
         let supports_compaction = matches!(
             entry.id.as_str(),
-            "claude-opus-5-5"
+            "claude-fable-5-2"
+                | "claude-mythos-5-2"
+                | "claude-opus-5-5"
                 | "claude-fable-5-1"
                 | "claude-fable-5"
                 | "claude-mythos-5-1"
@@ -1885,6 +1901,26 @@ mod tests {
             .expect("model should have beta headers");
         assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
         assert!(!beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
+    }
+
+    #[test]
+    fn from_listed_enables_fast_mode_compaction_and_binding_controls_for_5_2_models() {
+        for model_id in ["claude-fable-5-2", "claude-mythos-5-2"] {
+            let model = Model::from_listed(listed_entry(model_id, ModelCapabilities::default()));
+
+            assert!(model.supports_speed, "{model_id} supports fast mode");
+            assert!(model.supports_compaction, "{model_id} supports compaction");
+            assert!(
+                !supports_forced_tool_use(model_id),
+                "{model_id} rejects forced tool use"
+            );
+            let beta_headers = model
+                .beta_headers()
+                .expect("model should have beta headers");
+            assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
+            assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+            assert!(beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
+        }
     }
 
     #[test]
