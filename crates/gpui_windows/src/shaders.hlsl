@@ -1219,12 +1219,16 @@ struct PolychromeSprite {
     Bounds bounds;
     Bounds content_mask;
     Corners corner_radii;
+    TransformationMatrix transformation;
 };
 
 struct PolychromeSpriteVertexOutput {
     nointerpolation uint sprite_id: TEXCOORD0;
     float4 position: SV_Position;
     float2 tile_position: POSITION;
+    // Untransformed position for the rounded-corner SDF. Declared before
+    // clip_distance so the pixel shader's input signature stays a prefix of this.
+    float2 local_position: TEXCOORD1;
     float4 clip_distance: SV_ClipDistance;
 };
 
@@ -1232,6 +1236,7 @@ struct PolychromeSpriteFragmentInput {
     nointerpolation uint sprite_id: TEXCOORD0;
     float4 position: SV_Position;
     float2 tile_position: POSITION;
+    float2 local_position: TEXCOORD1;
 };
 
 StructuredBuffer<PolychromeSprite> poly_sprites: register(t1);
@@ -1240,15 +1245,17 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint sprite_id = batch_start_index + instance_id;
     PolychromeSprite sprite = poly_sprites[sprite_id];
-    float4 device_position = to_device_position(unit_vertex, sprite.bounds);
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds,
-                                                    sprite.content_mask);
+    float4 device_position =
+        to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+    float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
+                                                    sprite.content_mask, sprite.transformation);
     float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
 
     PolychromeSpriteVertexOutput output;
     output.position = device_position;
     output.tile_position = tile_position;
     output.sprite_id = sprite_id;
+    output.local_position = unit_vertex * sprite.bounds.size + sprite.bounds.origin;
     output.clip_distance = clip_distance;
     return output;
 }
@@ -1256,7 +1263,7 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
 float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Target {
     PolychromeSprite sprite = poly_sprites[input.sprite_id];
     float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
-    float distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+    float distance = quad_sdf(input.local_position, sprite.bounds, sprite.corner_radii);
 
     float4 color = sample;
     if (sprite.grayscale != 0u) {

@@ -245,6 +245,7 @@ fn tile_scene(tile: AtlasTile) -> Scene {
             bounds,
             content_mask,
             corner_radii: Corners::default(),
+            transformation: TransformationMatrix::default(),
         }),
         AtlasTextureKind::Subpixel => unreachable!(),
     }
