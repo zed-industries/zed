@@ -492,21 +492,9 @@ impl GitStore {
             let state = state.read(cx);
             let comparison = if state.unstaged_diff().as_ref() == Some(diff) {
                 GitDiffComparison::Unstaged
-            } else if state
-                .staged_diff
-                .as_ref()
-                .and_then(|(diff, _)| diff.upgrade())
-                .as_ref()
-                == Some(diff)
-            {
+            } else if state.staged_diff().as_ref() == Some(diff) {
                 GitDiffComparison::Staged
-            } else if state
-                .uncommitted_diff
-                .as_ref()
-                .and_then(|diff| diff.upgrade())
-                .as_ref()
-                == Some(diff)
-            {
+            } else if state.uncommitted_diff().as_ref() == Some(diff) {
                 GitDiffComparison::Uncommitted
             } else if state
                 .oid_diffs

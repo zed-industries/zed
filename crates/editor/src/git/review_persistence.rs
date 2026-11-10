@@ -85,9 +85,13 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         ensure!(
-            ((review.version == 1 && review.diff.is_none())
-                || (review.version == 2 && review.diff.is_some()))
-                && self.inline_review_file_path(cx)? == review.path,
+            (review.version == 1 && review.diff.is_none())
+                || (review.version == 2 && review.diff.is_some()),
+            "Saved review belongs to another file or storage version"
+        );
+        let current_source = self.inline_review_source(self.inline_review_selection(cx)?, cx)?;
+        ensure!(
+            current_source.path == review.path,
             "Saved review belongs to another file or storage version"
         );
         ensure!(
@@ -98,7 +102,6 @@ impl Editor {
             (review.outcome == "answered") == review.reply.is_some(),
             "Invalid saved reply outcome"
         );
-        let current_source = self.inline_review_source(self.inline_review_selection(cx)?, cx)?;
         if current_source.diff.as_ref().map(|diff| diff.comparison)
             != review.diff.as_ref().map(|diff| diff.comparison)
         {

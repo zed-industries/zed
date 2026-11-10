@@ -104,7 +104,7 @@ pub fn init(cx: &mut App) {
         );
         workspace.register_action(
             |workspace: &mut Workspace, _: &CommentWithPiLive, window, cx| {
-                if let Err(error) = show_comment(workspace, window, cx) {
+                if let Err(error) = load_reviews(workspace, true, window, cx) {
                     workspace.show_toast(
                         Toast::new(
                             NotificationId::unique::<CommentWithPiLive>(),
@@ -124,14 +124,6 @@ fn active_review_editor(workspace: &Workspace, cx: &App) -> Option<Entity<Editor
         .active_item_as::<SplittableEditor>(cx)
         .map(|editor| editor.read(cx).focused_editor().clone())
         .or_else(|| workspace.active_item_as::<Editor>(cx))
-}
-
-fn show_comment(
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) -> Result<()> {
-    load_reviews(workspace, true, window, cx)
 }
 
 fn load_reviews(
