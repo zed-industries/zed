@@ -1,0 +1,21 @@
+[package]
+name = "sandbox_linux_gui"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sandbox_linux_gui"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+futures.workspace = true
+libc.workspace = true
+gpui.workspace = true
+gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
+sandbox_linux.workspace = true
+unicode-segmentation.workspace = true

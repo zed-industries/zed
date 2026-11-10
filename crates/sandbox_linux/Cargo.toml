@@ -23,7 +23,7 @@ harness = false
 anyhow.workspace = true
 libc.workspace = true
 log.workspace = true
-nix = { workspace = true, features = ["socket", "uio"] }
+nix = { workspace = true, features = ["net", "socket", "uio"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 

@@ -23,13 +23,14 @@ fn main() {
 mod imp {
     use std::path::Path;
     use std::process::{Output, Stdio};
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     use sandbox_linux::{
         Access::{self, Allow, Deny},
-        Decision, FsRule, Handler, RequestedAccess, Rule, Sandbox, SandboxContext, SandboxPolicy,
+        Decision, Denial, DomainPattern, FsRule, Handler, NetHost, NetRule, NetTarget, Permission,
+        PortSet, Protocol, RequestedAccess, Rule, Sandbox, SandboxContext, SandboxPolicy,
         UntrustedCommand,
     };
 
@@ -134,9 +135,11 @@ mod imp {
                 let names: Vec<String> = request
                     .items
                     .iter()
-                    .map(|item| {
-                        let RequestedAccess::Fs { path, .. } = item;
-                        path.file_name().unwrap().to_string_lossy().into_owned()
+                    .filter_map(|item| match item {
+                        RequestedAccess::Fs { path, .. } => {
+                            Some(path.file_name().unwrap().to_string_lossy().into_owned())
+                        }
+                        RequestedAccess::Net { .. } => None,
                     })
                     .collect();
                 let all = |prefix: &str| names.iter().all(|name| name.starts_with(prefix));
@@ -180,12 +183,24 @@ mod imp {
             rule("/**/*.env").read(Deny),
             rule(&path(&ask)).write(Access::Ask(handler)),
         ];
-        let policy = |rules: Vec<FsRule>| SandboxPolicy { fs: rules };
+        let policy = |rules: Vec<FsRule>| SandboxPolicy {
+            fs: rules,
+            net: Vec::new(),
+        };
 
         let context = SandboxContext::new().expect("starting supervisor");
         let sandbox = context
             .create_sandbox(policy(base_rules.clone()))
             .expect("creating sandbox");
+        let denials = Arc::new(Mutex::new(Vec::<Denial>::new()));
+        sandbox.on_denial({
+            let denials = denials.clone();
+            move |denial| {
+                if let Ok(mut denials) = denials.lock() {
+                    denials.push(denial);
+                }
+            }
+        });
 
         let probe = run(&sandbox, "true", &proj);
         if !probe.status.success() {
@@ -417,16 +432,357 @@ mod imp {
             prompts.load(Ordering::SeqCst) == 6,
             &mut failures,
         );
+        let reported = |permission: Permission, file: &Path| {
+            let request = RequestedAccess::Fs {
+                permission,
+                path: file.to_path_buf(),
+            };
+            denials.lock().is_ok_and(|denials| {
+                denials
+                    .iter()
+                    .any(|denial| denial.requests.contains(&request))
+            })
+        };
+        host_check(
+            "denials were reported",
+            reported(Permission::Read, &Path::new(&secret).join("key"))
+                && reported(Permission::Write, &proj.join(".git/config"))
+                && reported(Permission::Write, &Path::new(&ask).join("no.txt")),
+            &mut failures,
+        );
 
         check_policy_update(&sandbox, &proj, &base_rules, &policy, &mut failures);
-
+        check_stop(&sandbox, &proj, &mut failures);
         drop(sandbox);
+        check_network(&context, &work, &mut failures);
+
         drop(context);
         if !failures.is_empty() {
             eprintln!("\n{} failure(s):\n{}", failures.len(), failures.join("\n"));
             std::process::exit(1);
         }
         println!("\nall checks passed");
+    }
+
+    /// Client side of the network checks, run in the sandbox. Each command
+    /// exits 0 if what it checks happened.
+    const NET_CLIENT: &str = r#"
+import asyncio, errno, ipaddress, random, socket, struct, sys
+
+FAKE = ipaddress.ip_network("198.18.0.0/15")
+
+def echo(stream):
+    stream.sendall(b"ping")
+    return stream.recv(4) == b"ping"
+
+def dns(name, record_type=1):
+    query_id = random.randrange(65536)
+    query = struct.pack(">HHHHHH", query_id, 0x0100, 1, 0, 0, 0)
+    for label in name.split("."):
+        query += bytes([len(label)]) + label.encode()
+    query += b"\0" + struct.pack(">HH", record_type, 1)
+    # Any server: the sandbox answers every address.
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.settimeout(5)
+    udp.sendto(query, ("8.8.8.8", 53))
+    response, server = udp.recvfrom(4096)
+    assert server == ("8.8.8.8", 53), server
+    assert struct.unpack(">H", response[:2])[0] == query_id
+    code = response[3] & 0xf
+    answers = struct.unpack(">H", response[6:8])[0]
+    address = socket.inet_ntoa(response[-4:]) if answers and record_type == 1 else None
+    return code, address
+
+def main(command, *args):
+    if command == "tcp":
+        host, port = args[0], int(args[1])
+        stream = socket.create_connection((host, port), timeout=10)
+        return echo(stream) and stream.getpeername()[1] == port
+    if command == "tcp-error":
+        host, port, expected = args[0], int(args[1]), getattr(errno, args[2])
+        try:
+            socket.create_connection((host, port), timeout=10)
+        except OSError as error:
+            print(error, file=sys.stderr)
+            return error.errno == expected
+        return False
+    if command == "tcp-name":
+        code, address = dns(args[0])
+        stream = socket.create_connection((address, int(args[1])), timeout=10)
+        return echo(stream)
+    if command == "asyncio":
+        async def run():
+            reader, writer = await asyncio.open_connection(args[0], int(args[1]))
+            writer.write(b"ping")
+            return await reader.readexactly(4) == b"ping"
+        return asyncio.run(run())
+    if command == "local-server":
+        server = socket.create_server(("127.0.0.1", 0))
+        client = socket.create_connection(server.getsockname(), timeout=5)
+        connection, _ = server.accept()
+        client.sendall(b"hi")
+        return connection.recv(2) == b"hi"
+    if command == "udp":
+        host, port, mode = args[0], int(args[1]), args[2]
+        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp.settimeout(3)
+        if mode == "connect":
+            udp.connect((host, port))
+            udp.send(b"ping")
+            return udp.recv(4) == b"ping"
+        udp.sendto(b"ping", (host, port))
+        data, source = udp.recvfrom(4)
+        return data == b"ping" and source == (host, port)
+    if command == "dns-a":
+        code, address = dns(args[0])
+        return code == 0 and ipaddress.ip_address(address) in FAKE
+    if command == "dns-nxdomain":
+        return dns(args[0])[0] == 3
+    if command == "dns-aaaa-empty":
+        return dns(args[0], 28) == (0, None)
+    if command == "getaddrinfo":
+        return ipaddress.ip_address(socket.gethostbyname(args[0])) in FAKE
+    if command == "ping-socket":
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
+        return True
+    raise ValueError(command)
+
+sys.exit(0 if main(*sys.argv[1:]) else 1)
+"#;
+
+    fn tcp_echo_server() -> u16 {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("binding");
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                std::thread::spawn(move || {
+                    let mut buffer = [0; 1024];
+                    while let Ok(length @ 1..) = stream.read(&mut buffer) {
+                        if stream.write_all(&buffer[..length]).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    fn udp_echo_server() -> u16 {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("binding");
+        let port = socket.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut buffer = [0; 1024];
+            while let Ok((length, source)) = socket.recv_from(&mut buffer) {
+                socket.send_to(&buffer[..length], source).ok();
+            }
+        });
+        port
+    }
+
+    /// Connections to echo servers on the host's loopback, by address and by
+    /// name, through rules, a prompt, and DNS.
+    fn check_network(context: &SandboxContext, work: &Path, failures: &mut Vec<String>) {
+        let allowed = tcp_echo_server();
+        let rebinding = tcp_echo_server();
+        let asked = tcp_echo_server();
+        let unlisted = tcp_echo_server();
+        let udp_allowed = udp_echo_server();
+        let udp_unlisted = udp_echo_server();
+
+        let net_prompts = Arc::new(Mutex::new(Vec::<RequestedAccess>::new()));
+        let handler = Handler::new({
+            let net_prompts = net_prompts.clone();
+            move |request, responder| {
+                if let Ok(mut prompts) = net_prompts.lock() {
+                    prompts.extend(request.items.iter().cloned());
+                }
+                let allow = request.items.iter().all(
+                    |item| matches!(item, RequestedAccess::Net { port, .. } if *port == asked),
+                );
+                responder.respond(if allow {
+                    Decision::allow()
+                } else {
+                    Decision::deny()
+                });
+            }
+        });
+        let localhost = || NetTarget::Domain(DomainPattern::new("localhost").unwrap());
+        let host_loopback = || NetTarget::Ip("127.0.0.1".parse().unwrap());
+        let ports =
+            |ports: &[u16]| PortSet::Ranges(ports.iter().map(|port| *port..=*port).collect());
+        let policy = SandboxPolicy {
+            fs: vec![
+                FsRule::new("/").unwrap().read(Allow),
+                FsRule::new(work.to_str().unwrap()).unwrap().write(Allow),
+            ],
+            net: vec![
+                NetRule::new(host_loopback(), Allow)
+                    .ports(PortSet::single(allowed))
+                    .tcp_only(),
+                NetRule::new(host_loopback(), Allow)
+                    .ports(PortSet::single(udp_allowed))
+                    .udp_only(),
+                // Names resolving to loopback also need the address allowed;
+                // only `allowed` and `asked` have that.
+                NetRule::new(localhost(), Allow)
+                    .ports(ports(&[allowed, rebinding]))
+                    .tcp_only(),
+                NetRule::new(localhost(), Access::Ask(handler.clone()))
+                    .ports(PortSet::single(asked))
+                    .tcp_only(),
+                NetRule::new(NetTarget::Loopback, Allow)
+                    .ports(PortSet::single(asked))
+                    .tcp_only(),
+                NetRule::new(
+                    NetTarget::Domain(DomainPattern::new("ask.test").unwrap()),
+                    Access::Ask(handler),
+                ),
+            ],
+        };
+        let sandbox = context
+            .create_sandbox(policy)
+            .expect("creating network sandbox");
+        std::fs::write(work.join("net.py"), NET_CLIENT).unwrap();
+        let client = |arguments: &str| format!("python3 net.py {arguments}");
+        let cases = vec![
+            case(
+                "tcp to an allowed host port",
+                client(&format!("tcp 127.0.0.1 {allowed}")),
+                true,
+            ),
+            case(
+                "non-blocking tcp to an allowed host port",
+                client(&format!("asyncio 127.0.0.1 {allowed}")),
+                true,
+            ),
+            case(
+                "tcp to an unlisted host port is refused with EACCES",
+                client(&format!("tcp-error 127.0.0.1 {unlisted} EACCES")),
+                true,
+            ),
+            case(
+                "tcp to an unlisted public address is refused with EACCES",
+                client("tcp-error 1.1.1.1 80 EACCES"),
+                true,
+            ),
+            case(
+                "tcp to an unknown fake address is refused",
+                client("tcp-error 198.18.255.254 80 ECONNREFUSED"),
+                true,
+            ),
+            case(
+                "tcp within the sandbox needs no rule",
+                client("local-server"),
+                true,
+            ),
+            case(
+                "tcp to an allowed name",
+                client(&format!("tcp-name localhost {allowed}")),
+                true,
+            ),
+            case(
+                "tcp to an allowed name resolving to loopback (rebinding)",
+                client(&format!("tcp-name localhost {rebinding}")),
+                false,
+            ),
+            case(
+                "tcp to an asked name, allowed",
+                client(&format!("tcp-name localhost {asked}")),
+                true,
+            ),
+            case(
+                "udp to an allowed host port, connected",
+                client(&format!("udp 127.0.0.1 {udp_allowed} connect")),
+                true,
+            ),
+            case(
+                "udp to an allowed host port, sendto",
+                client(&format!("udp 127.0.0.1 {udp_allowed} sendto")),
+                true,
+            ),
+            case(
+                "udp to an unlisted host port",
+                client(&format!("udp 127.0.0.1 {udp_unlisted} connect")),
+                false,
+            ),
+            case("dns: allowed name", client("dns-a localhost"), true),
+            case("dns: asked name", client("dns-a ask.test"), true),
+            case(
+                "dns: unlisted name",
+                client("dns-nxdomain example.com"),
+                true,
+            ),
+            case("dns: no AAAA", client("dns-aaaa-empty localhost"), true),
+            case(
+                "getaddrinfo uses the sandbox's DNS",
+                client("getaddrinfo ask.test"),
+                true,
+            ),
+            case("no ping sockets", client("ping-socket"), false),
+        ];
+        check(&sandbox, work, &cases, failures);
+        let prompts = net_prompts
+            .lock()
+            .map(|prompts| prompts.clone())
+            .unwrap_or_default();
+        host_check(
+            "one prompt, for the asked connection",
+            prompts
+                == [RequestedAccess::Net {
+                    host: NetHost::Domain("localhost".to_string()),
+                    port: asked,
+                    protocol: Protocol::Tcp,
+                }],
+            failures,
+        );
+    }
+
+    /// `SIGTERM` to the helper stops the command and everything it spawned.
+    fn check_stop(sandbox: &Sandbox, proj: &Path, failures: &mut Vec<String>) {
+        let pid_file = sandbox.temp_dir().join("background.pid");
+        let script = format!("sleep 300 & echo $! > {}; wait", pid_file.display());
+        let mut prepared = sandbox
+            .prepare(&command(&script, proj))
+            .expect("preparing command");
+        prepared.command_mut().stdin(Stdio::null());
+        let mut helper = prepared.spawn().expect("spawning command");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let background = loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|pid| pid.trim().parse::<i32>().ok())
+            {
+                break Some(pid);
+            }
+            if Instant::now() > deadline {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        // SAFETY: plain kill of our own, not yet reaped, child.
+        unsafe { libc::kill(helper.id() as libc::pid_t, libc::SIGTERM) };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            match helper.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                _ => break None,
+            }
+        };
+        if status.is_none() {
+            helper.kill().ok();
+        }
+        // SAFETY: signal 0 only checks whether the process exists.
+        let background_gone = background.is_some_and(|pid| unsafe { libc::kill(pid, 0) } != 0);
+        host_check(
+            "stopping kills the command and its children",
+            status.and_then(|status| status.code()) == Some(128 + libc::SIGTERM) && background_gone,
+            failures,
+        );
     }
 
     /// Narrow the policy while a command holds a file open for writing: new

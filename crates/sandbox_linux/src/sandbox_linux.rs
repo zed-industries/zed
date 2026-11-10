@@ -11,8 +11,11 @@
 //!
 //! The sandbox sees the host filesystem at the same paths, mounted read-only.
 //! Every open and every write-intent syscall goes to the supervisor, which
-//! checks the policy and performs the operation itself. Network access is
-//! always blocked (empty network namespace) for now.
+//! checks the policy and performs the operation itself.
+//!
+//! Each command gets a network namespace from which nothing outside is
+//! reachable; the supervisor answers its DNS queries and relays the TCP
+//! connections and UDP flows the policy allows (see `net.rs`).
 //!
 //! The binary must call [`run_hidden_entrypoint_if_invoked`] first thing in
 //! `main`.
@@ -20,7 +23,9 @@
 #![cfg(target_os = "linux")]
 
 mod broker;
+mod dns;
 mod helper;
+mod net;
 mod policy;
 mod process;
 mod protocol;
@@ -43,10 +48,11 @@ use nix::sys::socket::{AddressFamily, SockFlag, SockType, socketpair};
 use serde::{Deserialize, Serialize};
 
 pub use policy::{
-    Access, AccessRequest, Decision, FsRule, Handler, PathPattern, Permission, RequestedAccess,
-    Rule, SandboxPolicy,
+    Access, AccessRequest, AddressClass, Decision, DomainPattern, FsRule, Handler, IpNet, NetHost,
+    NetRule, NetTarget, PathPattern, Permission, PortSet, Protocol, RequestedAccess, Rule,
+    SandboxPolicy,
 };
-pub use protocol::OpenFile;
+pub use protocol::{Denial, OpenFile};
 
 use policy::{HandlerId, WireAccess, WireFsRule, WirePolicy};
 use protocol::{
@@ -137,9 +143,12 @@ struct HandlerTable {
     state: Mutex<HandlerTableState>,
 }
 
+type DenialHandler = Arc<dyn Fn(Denial) + Send + Sync>;
+
 #[derive(Default)]
 struct HandlerTableState {
     handlers: HashMap<HandlerId, (SandboxId, Handler)>,
+    denial_handlers: HashMap<SandboxId, DenialHandler>,
     /// Unanswered prompts, so a cancellation can reach their responders.
     prompts: HashMap<PromptId, Arc<AtomicBool>>,
     next: HandlerId,
@@ -179,6 +188,10 @@ impl HandlerTable {
         self.state()
             .handlers
             .retain(|id, (owner, _)| *owner != sandbox || keep.contains(id));
+    }
+
+    fn denial_handler(&self, sandbox: SandboxId) -> Option<DenialHandler> {
+        self.state().denial_handlers.get(&sandbox).cloned()
     }
 
     fn track_prompt(&self, prompt: PromptId) -> Arc<AtomicBool> {
@@ -379,6 +392,15 @@ fn read_control(
                 }
             }
             SupervisorMessage::PromptCancelled { prompt } => handlers.cancel_prompt(prompt),
+            SupervisorMessage::Denied { sandbox, denial } => {
+                if let Some(handler) = handlers.denial_handler(sandbox) {
+                    let result =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler(denial)));
+                    if result.is_err() {
+                        eprintln!("zed sandbox: a denial handler panicked");
+                    }
+                }
+            }
         }
     }
     // Fail anyone still waiting for a response.
@@ -457,6 +479,19 @@ impl Sandbox {
         &self.temp_dir
     }
 
+    /// Call `handler` whenever the policy, or an [`Access::Ask`] handler,
+    /// denies an operation in this sandbox (after the syscall has failed).
+    /// Like handlers, it runs on a background thread shared by every
+    /// sandbox in the context and must return promptly. Replaces any
+    /// previous one.
+    pub fn on_denial(&self, handler: impl Fn(Denial) + Send + Sync + 'static) {
+        self.context
+            .handlers
+            .state()
+            .denial_handlers
+            .insert(self.id, Arc::new(handler));
+    }
+
     /// Replace the policy, including any rules handlers asked to remember.
     /// Applies to every operation from now on, including in commands already
     /// running; descriptors they already hold keep working, and are returned
@@ -499,8 +534,13 @@ impl Sandbox {
         }
         fs.extend(policy.fs.iter().map(|rule| rule.to_wire(&mut register)));
         fs.push(allow_all(PathPattern::literal(&self.temp_dir)?));
+        let net = policy
+            .net
+            .iter()
+            .map(|rule| rule.to_wire(&mut register))
+            .collect();
         handlers.retain(self.id, &used);
-        Ok(WirePolicy { fs })
+        Ok(WirePolicy { fs, net })
     }
 
     /// Spawn `command` in this sandbox with inherited stdio.
@@ -559,6 +599,14 @@ impl Drop for Sandbox {
         {
             eprintln!("zed sandbox: destroying sandbox failed: {error:#}");
         }
+        // Only now: the destroy round trip went through the control thread
+        // after every denial the supervisor sent before it, so all of them
+        // have been delivered.
+        self.context
+            .handlers
+            .state()
+            .denial_handlers
+            .remove(&self.id);
         if let Err(error) = std::fs::remove_dir_all(&self.temp_dir) {
             eprintln!(
                 "zed sandbox: removing {} failed: {error}",

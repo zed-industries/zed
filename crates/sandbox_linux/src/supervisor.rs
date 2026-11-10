@@ -24,11 +24,13 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result, bail};
 
 use crate::broker;
+use crate::dns;
+use crate::net::{self, Network};
 use crate::policy::{HandlerId, Permission, RequestedAccess, WireAccess, WirePolicy, WireRule};
 use crate::process::ProcessTree;
 use crate::protocol::{
-    AttachInfo, OpenFile, PromptId, PromptRequest, Request, Response, SandboxId, SupervisorMessage,
-    ZedMessage, receive_message, send_message,
+    AttachInfo, Denial, OpenFile, PromptId, PromptRequest, Request, Response, SandboxId,
+    SupervisorMessage, ZedMessage, receive_message, send_message,
 };
 use crate::sys;
 
@@ -41,6 +43,7 @@ const MAX_WORKERS: usize = 64;
 pub(crate) struct SandboxState {
     pub id: SandboxId,
     policy: RwLock<Arc<WirePolicy>>,
+    pub names: Mutex<dns::Names>,
 }
 
 impl SandboxState {
@@ -70,6 +73,7 @@ pub(crate) struct Execution {
     pub listener: OwnedFd,
     pub sandbox: Arc<SandboxState>,
     pub tree: ProcessTree,
+    pub network: Network,
 }
 
 /// What [`Shared::ask`] concluded.
@@ -237,6 +241,46 @@ impl Shared {
         reply.allow
     }
 
+    /// Whether `request` is allowed, asking its handler if the policy says
+    /// so. Denials are reported.
+    pub fn authorize(
+        &self,
+        sandbox: &SandboxState,
+        request: &RequestedAccess,
+        tid: i32,
+        still_valid: &dyn Fn() -> bool,
+    ) -> bool {
+        let allowed = loop {
+            match sandbox.policy().access(request) {
+                WireAccess::Allow => break true,
+                WireAccess::Deny => break false,
+                WireAccess::Ask(handler) => {
+                    match self.ask(sandbox, handler, vec![request.clone()], tid, still_valid) {
+                        AskOutcome::Decided(allowed) => break allowed,
+                        // Re-check the policy, which may now decide.
+                        AskOutcome::Retry => {}
+                    }
+                }
+            }
+        };
+        if !allowed {
+            self.report_denial(sandbox.id, vec![request.clone()], tid);
+        }
+        allowed
+    }
+
+    /// Tell Zed a policy rule (or a handler) denied an operation.
+    pub fn report_denial(&self, sandbox: SandboxId, requests: Vec<RequestedAccess>, tid: i32) {
+        self.send(&SupervisorMessage::Denied {
+            sandbox,
+            denial: Denial {
+                requests,
+                pid: tid,
+                executable: std::fs::read_link(format!("/proc/{tid}/exe")).ok(),
+            },
+        });
+    }
+
     fn reply(&self, prompt: PromptId, reply: PromptReply) {
         let sender = self
             .prompts
@@ -290,7 +334,7 @@ impl Pool {
     }
 }
 
-fn run_worker(shared: &Shared, receiver: &Mutex<mpsc::Receiver<Job>>, idle: &AtomicUsize) {
+fn run_worker(shared: &Arc<Shared>, receiver: &Mutex<mpsc::Receiver<Job>>, idle: &AtomicUsize) {
     loop {
         idle.fetch_add(1, Ordering::SeqCst);
         let job = match receiver.lock() {
@@ -306,6 +350,10 @@ fn run_worker(shared: &Shared, receiver: &Mutex<mpsc::Receiver<Job>>, idle: &Ato
 }
 
 pub(crate) fn run() -> ! {
+    // Relays write to sockets whose peer may be gone: that's an error to
+    // handle, not a reason to die.
+    // SAFETY: plain signal disposition change.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
     if let Err(error) = sys::set_parent_death_signal() {
         eprintln!("zed sandbox supervisor: {error}");
         std::process::exit(1);
@@ -380,7 +428,7 @@ impl Supervisor {
                     }
                 } else if entry.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
                     // Every task under this filter has exited.
-                    self.executions.swap_remove(index);
+                    self.executions.swap_remove(index).network.close();
                 }
             }
             for (index, entry) in pending_ready.iter().enumerate().rev() {
@@ -389,14 +437,20 @@ impl Supervisor {
                 }
                 let (socket, sandbox) = self.pending.swap_remove(index);
                 match receive_message::<AttachInfo>(socket.as_fd()) {
-                    Ok(Some((info, mut fds))) if fds.len() == 1 => {
-                        self.executions.push(Arc::new(Execution {
-                            listener: fds.remove(0),
+                    Ok(Some((info, mut fds))) if !fds.is_empty() => {
+                        let listener = fds.remove(0);
+                        let execution = Arc::new(Execution {
+                            listener,
                             sandbox,
                             tree: ProcessTree {
                                 helper: info.helper_pid,
                             },
-                        }));
+                            // From now on the helper serves socket requests
+                            // on the attach socket.
+                            network: Network::new(socket),
+                        });
+                        net::start(&self.shared, &execution, fds);
+                        self.executions.push(execution);
                     }
                     // The helper exited (or misbehaved) before attaching. Its
                     // command never ran, since it attaches before exec.
@@ -450,6 +504,7 @@ impl Supervisor {
                     Arc::new(SandboxState {
                         id: sandbox,
                         policy: RwLock::new(Arc::new(policy)),
+                        names: Mutex::default(),
                     }),
                 );
                 Ok(Response::Done)
@@ -462,6 +517,7 @@ impl Supervisor {
                 for execution in &self.executions {
                     if Arc::ptr_eq(&execution.sandbox, &state) {
                         still_open.extend(open_files_beyond(execution, &policy));
+                        net::ensure_udp_ports(&self.shared, execution);
                     }
                 }
                 Ok(Response::PolicyUpdated { still_open })

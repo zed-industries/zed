@@ -188,6 +188,7 @@ members = [
     "crates/rpc",
     "crates/sandbox",
     "crates/sandbox_linux",
+    "crates/sandbox_linux_gui",
     "crates/scheduler",
     "crates/schema_generator",
     "crates/search",

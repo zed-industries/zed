@@ -3,13 +3,18 @@
 //! ```sh
 //! cargo run -p sandbox_linux --example run -- \
 //!     --write /tmp/sandbox-escape-test-x/proj --protect /tmp/sandbox-escape-test-x/proj/.git \
-//!     --hide '/**/*.env' --ask /tmp/sandbox-escape-test-x/ask -- sh
+//!     --hide '/**/*.env' --ask /tmp/sandbox-escape-test-x/ask \
+//!     --allow-net '*.github.com:443' --ask-net '*' -- sh
 //! ```
 //!
-//! Everything is readable and nothing writable, except:
+//! Everything is readable and nothing writable, and nothing on the network
+//! is reachable, except:
 //! - `--write PATTERN` allows writes, `--protect PATTERN` denies them;
 //! - `--hide PATTERN` denies reads;
-//! - `--ask PATTERN` asks on the terminal before each write.
+//! - `--ask PATTERN` asks on the terminal before each write;
+//! - `--allow-net`, `--deny-net` and `--ask-net DESTINATION` for
+//!   connections, with destinations as `NetRule::parse` reads them, e.g.
+//!   `tcp/*.github.com:22,443`, `udp/10.0.0.0/8:53`, `loopback:5432`.
 //!
 //! Rules apply in the order given, last match wins.
 
@@ -26,14 +31,14 @@ fn main() -> anyhow::Result<()> {
 
     use anyhow::{Context as _, bail};
     use sandbox_linux::{
-        Access, Decision, FsRule, Handler, RequestedAccess, Rule, SandboxContext, SandboxPolicy,
-        UntrustedCommand,
+        Access, Decision, FsRule, Handler, NetRule, PortSet, RequestedAccess, Rule, SandboxContext,
+        SandboxPolicy, UntrustedCommand,
     };
 
     sandbox_linux::run_hidden_entrypoint_if_invoked();
 
-    // Asks on the terminal. `a` allows and remembers the exact path for the
-    // rest of the run.
+    // Asks on the terminal. `a` allows and remembers the exact path (or host
+    // and port) for the rest of the run.
     let ask = Handler::new(|request, responder| {
         // The handler must not block, so ask on another thread.
         std::thread::spawn(move || {
@@ -45,8 +50,16 @@ fn main() -> anyhow::Result<()> {
                 let mut writer = &tty;
                 writeln!(writer, "\n[sandbox] {:?} wants:", request.executable)?;
                 for item in &request.items {
-                    let RequestedAccess::Fs { permission, path } = item;
-                    writeln!(writer, "  {permission:?} {}", path.display())?;
+                    match item {
+                        RequestedAccess::Fs { permission, path } => {
+                            writeln!(writer, "  {permission:?} {}", path.display())?
+                        }
+                        RequestedAccess::Net {
+                            host,
+                            port,
+                            protocol,
+                        } => writeln!(writer, "  {protocol:?} connection to {host}:{port}")?,
+                    }
                 }
                 write!(writer, "allow? [y/a(lways)/N] ")?;
                 let mut answer = String::new();
@@ -61,13 +74,39 @@ fn main() -> anyhow::Result<()> {
                     remember: request
                         .items
                         .iter()
-                        .filter_map(|item| {
-                            let RequestedAccess::Fs { permission, path } = item;
-                            let rule = FsRule::new(path.to_str()?).ok()?;
-                            Some(Rule::Fs(match permission {
-                                sandbox_linux::Permission::Read => rule.read(Access::Allow),
-                                sandbox_linux::Permission::Write => rule.write(Access::Allow),
-                            }))
+                        .filter_map(|item| match item {
+                            RequestedAccess::Fs { permission, path } => {
+                                let rule = FsRule::new(path.to_str()?).ok()?;
+                                Some(Rule::Fs(match permission {
+                                    sandbox_linux::Permission::Read => rule.read(Access::Allow),
+                                    sandbox_linux::Permission::Write => rule.write(Access::Allow),
+                                }))
+                            }
+                            RequestedAccess::Net {
+                                host,
+                                port,
+                                protocol,
+                            } => {
+                                let target = match host {
+                                    sandbox_linux::NetHost::Domain(name) => {
+                                        sandbox_linux::NetTarget::Domain(
+                                            sandbox_linux::DomainPattern::new(name.as_str())
+                                                .ok()?,
+                                        )
+                                    }
+                                    sandbox_linux::NetHost::Ip(address) => {
+                                        sandbox_linux::NetTarget::Ip(
+                                            address.to_string().parse().ok()?,
+                                        )
+                                    }
+                                };
+                                let rule = NetRule::new(target, Access::Allow)
+                                    .ports(PortSet::single(*port));
+                                Some(Rule::Net(match protocol {
+                                    sandbox_linux::Protocol::Tcp => rule.tcp_only(),
+                                    sandbox_linux::Protocol::Udp => rule.udp_only(),
+                                }))
+                            }
                         })
                         .collect(),
                 },
@@ -78,25 +117,32 @@ fn main() -> anyhow::Result<()> {
     });
 
     let mut rules = vec![FsRule::new("/")?.read(Access::Allow)];
+    let mut net = Vec::new();
     let mut arguments = std::env::args().skip(1);
     let mut command = Vec::new();
     while let Some(argument) = arguments.next() {
-        let mut pattern = || arguments.next().context("flag needs a path pattern");
+        let mut value = || arguments.next().context("flag needs a value");
         match argument.as_str() {
-            "--write" => rules.push(FsRule::new(pattern()?)?.write(Access::Allow)),
-            "--protect" => rules.push(FsRule::new(pattern()?)?.write(Access::Deny)),
-            "--hide" => rules.push(FsRule::new(pattern()?)?.read(Access::Deny)),
-            "--ask" => rules.push(FsRule::new(pattern()?)?.write(Access::Ask(ask.clone()))),
+            "--write" => rules.push(FsRule::new(value()?)?.write(Access::Allow)),
+            "--protect" => rules.push(FsRule::new(value()?)?.write(Access::Deny)),
+            "--hide" => rules.push(FsRule::new(value()?)?.read(Access::Deny)),
+            "--ask" => rules.push(FsRule::new(value()?)?.write(Access::Ask(ask.clone()))),
+            "--allow-net" => net.push(NetRule::parse(&value()?, Access::Allow)?),
+            "--deny-net" => net.push(NetRule::parse(&value()?, Access::Deny)?),
+            "--ask-net" => net.push(NetRule::parse(&value()?, Access::Ask(ask.clone()))?),
             "--" => command.extend(arguments.by_ref()),
             other => bail!("unexpected argument {other}"),
         }
     }
     let Some((cmd, args)) = command.split_first() else {
-        bail!("usage: run [--write P] [--protect P] [--hide P] [--ask P] -- COMMAND...");
+        bail!(
+            "usage: run [--write P] [--protect P] [--hide P] [--ask P] [--allow-net D] \
+             [--deny-net D] [--ask-net D] -- COMMAND..."
+        );
     };
 
     let context = SandboxContext::new()?;
-    let sandbox = context.create_sandbox(SandboxPolicy { fs: rules })?;
+    let sandbox = context.create_sandbox(SandboxPolicy { fs: rules, net })?;
     let status = sandbox
         .execute(&UntrustedCommand {
             cmd: cmd.clone(),

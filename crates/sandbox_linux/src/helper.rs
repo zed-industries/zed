@@ -7,12 +7,16 @@
 //! 1. creates user, mount, network and IPC namespaces. The mount namespace
 //!    is a copy of the host's, made read-only: the kernel-enforced backstop
 //!    for any write syscall the supervisor doesn't handle. Paths are the
-//!    same inside and out.
+//!    same inside and out. In the network namespace every address routes
+//!    to loopback, and DNS sockets are created for the supervisor
+//!    ([`crate::net`]).
 //! 2. becomes a child subreaper, so every process the command spawns stays
 //!    its descendant (that's how the supervisor tells them apart);
 //! 3. forks the command, which drops all capabilities, installs the seccomp
-//!    filter, hands the listener to the supervisor and execs;
-//! 4. waits for the command, kills whatever it left running, and exits with
+//!    filter, hands the listener (and DNS sockets) to the supervisor and
+//!    execs;
+//! 4. serves the supervisor's requests for sockets in the namespace, while
+//!    it waits for the command; then kills whatever it left running, and exits with
 //!    its status.
 
 #![allow(
@@ -24,6 +28,7 @@ use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, FromRawFd as _, OwnedFd, 
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context as _, Result};
 
@@ -76,6 +81,9 @@ fn run_helper() -> Result<i32> {
     std::fs::write("/proc/self/setgroups", "deny").context("writing setgroups")?;
     std::fs::write("/proc/self/uid_map", format!("{uid} {uid} 1")).context("writing uid_map")?;
     std::fs::write("/proc/self/gid_map", format!("{gid} {gid} 1")).context("writing gid_map")?;
+    bring_up_loopback()?;
+    crate::net::configure_namespace()?;
+    let dns_sockets = crate::net::create_dns_sockets()?;
 
     // Nothing done here may propagate back to the host.
     sys::mount(
@@ -88,19 +96,51 @@ fn run_helper() -> Result<i32> {
     .context("making mounts private")?;
     sys::mount_setattr(Path::new("/"), sys::MOUNT_ATTR_RDONLY, true)
         .context("making the filesystem read-only")?;
-    bring_up_loopback()?;
     // SAFETY: plain prctl.
     cvt(unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) })
         .context("becoming a subreaper")?;
 
-    let command = spawn_command(&setup, attach_socket)?;
+    install_terminate_handler()?;
+    let command = spawn_command(&setup, &attach_socket, dns_sockets)?;
+    start_factory(attach_socket)?;
     let status = wait_for_command(command)?;
     kill_remaining();
     Ok(status)
 }
 
+static TERMINATE_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_terminate(_signal: libc::c_int) {
+    TERMINATE_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+/// `SIGTERM` stops the whole execution: the command and everything it
+/// spawned (which `SIGKILL`ing the helper alone would orphan). The handler
+/// is installed without `SA_RESTART`, so it interrupts `waitpid`. The
+/// command gets default dispositions back when it execs.
+fn install_terminate_handler() -> Result<()> {
+    // SAFETY: plain old data.
+    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+    action.sa_sigaction = on_terminate as extern "C" fn(libc::c_int) as libc::sighandler_t;
+    action.sa_flags = 0;
+    // SAFETY: valid pointers to a sigaction we own.
+    unsafe {
+        libc::sigemptyset(&mut action.sa_mask);
+        cvt(libc::sigaction(
+            libc::SIGTERM,
+            &action,
+            std::ptr::null_mut(),
+        ))
+        .context("installing the SIGTERM handler")?;
+    }
+    Ok(())
+}
+
 fn wait_for_command(command: libc::pid_t) -> Result<i32> {
     loop {
+        if TERMINATE_REQUESTED.load(Ordering::SeqCst) {
+            return Ok(128 + libc::SIGTERM);
+        }
         let mut status = 0;
         // SAFETY: plain waitpid.
         let pid = unsafe { libc::waitpid(-1, &mut status, 0) };
@@ -173,7 +213,32 @@ fn bring_up_loopback() -> Result<()> {
     Ok(())
 }
 
-fn spawn_command(setup: &HelperSetup, attach_socket: OwnedFd) -> Result<libc::pid_t> {
+/// Serve the supervisor's requests for sockets in our namespace, on a thread
+/// that leaves `SIGTERM` to the main one (where it interrupts `waitpid`).
+fn start_factory(attach_socket: OwnedFd) -> Result<()> {
+    // SAFETY: plain old data, initialized by sigemptyset.
+    let mut terminate: libc::sigset_t = unsafe { std::mem::zeroed() };
+    // SAFETY: valid signal set pointers.
+    unsafe {
+        libc::sigemptyset(&mut terminate);
+        libc::sigaddset(&mut terminate, libc::SIGTERM);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &terminate, std::ptr::null_mut());
+    }
+    // The new thread inherits the blocked mask.
+    let spawned = std::thread::Builder::new()
+        .name("zed-sandbox-factory".to_string())
+        .spawn(move || crate::net::serve_factory(attach_socket));
+    // SAFETY: as above.
+    unsafe { libc::pthread_sigmask(libc::SIG_UNBLOCK, &terminate, std::ptr::null_mut()) };
+    spawned.context("starting the socket factory")?;
+    Ok(())
+}
+
+fn spawn_command(
+    setup: &HelperSetup,
+    attach_socket: &OwnedFd,
+    dns_sockets: Vec<OwnedFd>,
+) -> Result<libc::pid_t> {
     let filter = crate::seccomp::build_filter();
     let mut command = Command::new(&setup.command.cmd);
     command
@@ -182,6 +247,10 @@ fn spawn_command(setup: &HelperSetup, attach_socket: OwnedFd) -> Result<libc::pi
         .envs(&setup.command.env)
         .current_dir(&setup.command.cwd);
     let attach = attach_socket.as_raw_fd();
+    let dns: Vec<RawFd> = dns_sockets
+        .iter()
+        .map(|socket| socket.as_raw_fd())
+        .collect();
     // SAFETY: runs in the forked child before exec. The helper is
     // single-threaded, so no lock can be held across the fork.
     unsafe {
@@ -194,7 +263,9 @@ fn spawn_command(setup: &HelperSetup, attach_socket: OwnedFd) -> Result<libc::pi
             // until it has the listener: send it before anything else.
             // SAFETY: `attach` stays open in the child until exec (CLOEXEC).
             let attach = BorrowedFd::borrow_raw(attach);
-            send_message(attach, &AttachInfo { helper_pid }, &[listener.as_raw_fd()])
+            let mut fds = vec![listener.as_raw_fd()];
+            fds.extend(&dns);
+            send_message(attach, &AttachInfo { helper_pid }, &fds)
                 .map_err(std::io::Error::other)?;
             Ok(())
         });
@@ -202,7 +273,8 @@ fn spawn_command(setup: &HelperSetup, attach_socket: OwnedFd) -> Result<libc::pi
     let child = command
         .spawn()
         .with_context(|| format!("running {}", setup.command.cmd))?;
-    drop(attach_socket);
+    // The supervisor has them now (they were close-on-exec in the command).
+    drop(dns_sockets);
     Ok(child.id() as libc::pid_t)
 }
 

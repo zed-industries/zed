@@ -9,6 +9,9 @@
 //! - Syscalls acting on another process by pid are checked (the pid is a
 //!   register, so it can't change under us) and then continued. A pid reused
 //!   between the check and the call is a remaining race.
+//! - `connect` on IP sockets is decided by [`crate::net`]. Continuing it is
+//!   always safe: nothing outside the sandbox's network namespace can be
+//!   reached by address from inside it.
 
 use std::collections::HashSet;
 use std::ffi::{CString, OsStr};
@@ -18,7 +21,9 @@ use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::FileExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use crate::net::{self, Caller, TcpOutcome};
 use crate::policy::{HandlerId, Permission, RequestedAccess, WireAccess, WirePolicy};
 use crate::process::{self, proc_path_pid};
 use crate::resolve::{Mode, Resolved, Resolver};
@@ -86,7 +91,11 @@ pub(crate) fn receive(listener: BorrowedFd<'_>) -> Option<libc::seccomp_notif> {
 }
 
 /// Handle and answer one notification (worker thread).
-pub(crate) fn handle(shared: &Shared, execution: &Execution, notification: libc::seccomp_notif) {
+pub(crate) fn handle(
+    shared: &Arc<Shared>,
+    execution: &Arc<Execution>,
+    notification: libc::seccomp_notif,
+) {
     let request = Request {
         listener: execution.listener.as_fd(),
         id: notification.id,
@@ -199,8 +208,8 @@ enum View {
 }
 
 struct Broker<'a> {
-    shared: &'a Shared,
-    execution: &'a Execution,
+    shared: &'a Arc<Shared>,
+    execution: &'a Arc<Execution>,
     request: &'a Request<'a>,
     policy: &'a WirePolicy,
 }
@@ -271,6 +280,64 @@ impl Broker<'_> {
             Brokered::IoprioSet => {
                 self.process_or_group(int(0), int(1), IOPRIO_WHO_PROCESS, IOPRIO_WHO_PGRP)
             }
+            Brokered::Connect => self.connect(int(0), arg(1), arg(2) as u32),
+        }
+    }
+
+    fn connect(&self, fd: i32, address: u64, length: u32) -> io::Result<Response> {
+        let socket = match sys::pidfd_getfd(self.tgid()?, fd) {
+            Ok(socket) => socket,
+            // Not open: the kernel reports it.
+            Err(error) if error.raw_os_error() == Some(libc::EBADF) => {
+                return Ok(Response::Continue);
+            }
+            Err(error) => return Err(error),
+        };
+        if !self.request.still_valid() {
+            return Err(errno(libc::ESRCH));
+        }
+        let socket = socket.as_fd();
+        let Ok(domain) = sys::socket_option(socket, libc::SOL_SOCKET, libc::SO_DOMAIN) else {
+            // Not a socket: the kernel reports it.
+            return Ok(Response::Continue);
+        };
+        match domain {
+            libc::AF_INET | libc::AF_INET6 => {}
+            // Only `socketpair` makes these, and only a datagram pair can be
+            // pointed elsewhere: at a host socket, by path. Not brokered yet.
+            libc::AF_UNIX => return Err(errno(libc::EACCES)),
+            // Netlink: within the namespace.
+            _ => return Ok(Response::Continue),
+        }
+        let length = (length as usize).min(size_of::<libc::sockaddr_storage>());
+        if address == 0 || length == 0 {
+            return Ok(Response::Continue);
+        }
+        let Some(destination) = net::decode_address(&self.request.read_bytes(address, length)?)
+        else {
+            // `AF_UNSPEC` (dissolving a UDP association), or nonsense the
+            // kernel rejects.
+            return Ok(Response::Continue);
+        };
+        let socket_type = sys::socket_option(socket, libc::SOL_SOCKET, libc::SO_TYPE)?;
+        let protocol = sys::socket_option(socket, libc::SOL_SOCKET, libc::SO_PROTOCOL)?;
+        match (socket_type, protocol) {
+            (libc::SOCK_STREAM, libc::IPPROTO_TCP | libc::IPPROTO_MPTCP) => {
+                let still_valid = || self.request.still_valid();
+                let caller = Caller {
+                    tid: self.request.tid,
+                    still_valid: &still_valid,
+                };
+                match net::connect_tcp(self.shared, self.execution, socket, destination, &caller)? {
+                    TcpOutcome::Continue => Ok(Response::Continue),
+                    TcpOutcome::Relayed => Ok(Response::Success),
+                }
+            }
+            (libc::SOCK_DGRAM, libc::IPPROTO_UDP) => {
+                net::connect_udp(self.shared, self.execution, destination);
+                Ok(Response::Continue)
+            }
+            _ => Ok(Response::Continue),
         }
     }
 
@@ -368,6 +435,7 @@ impl Broker<'_> {
             // `rm`), but give up on `EROFS`.
             Permission::Write => errno(libc::EROFS),
         };
+        let sandbox_id = self.execution.sandbox.id;
         // Granted once, for this syscall only.
         let mut granted: Vec<RequestedAccess> = Vec::new();
         // Re-evaluated after every prompt, against the live policy: a handler
@@ -387,7 +455,11 @@ impl Broker<'_> {
                 }
                 match policy.fs_access(path, permission) {
                     WireAccess::Allow => {}
-                    WireAccess::Deny => return Err(denied(permission)),
+                    WireAccess::Deny => {
+                        self.shared
+                            .report_denial(sandbox_id, vec![request], self.request.tid);
+                        return Err(denied(permission));
+                    }
                     WireAccess::Ask(handler) => {
                         match asks.iter_mut().find(|(id, _, _)| *id == handler) {
                             Some((_, _, requests)) => requests.push(request),
@@ -409,7 +481,11 @@ impl Broker<'_> {
                 still_valid,
             ) {
                 AskOutcome::Decided(true) => granted.extend(requests),
-                AskOutcome::Decided(false) => return Err(denied(first)),
+                AskOutcome::Decided(false) => {
+                    self.shared
+                        .report_denial(sandbox_id, requests, self.request.tid);
+                    return Err(denied(first));
+                }
                 AskOutcome::Retry => {}
             }
         }

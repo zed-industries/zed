@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 pub(crate) const MOUNT_ATTR_RDONLY: u64 = 0x1;
 
 // Syscalls added after the per-arch tables were unified share one number.
+const SYS_PIDFD_OPEN: libc::c_long = 434;
+const SYS_PIDFD_GETFD: libc::c_long = 438;
 const SYS_MOUNT_SETATTR: libc::c_long = 442;
 const AT_RECURSIVE: libc::c_uint = 0x8000;
 
@@ -140,6 +142,100 @@ pub(crate) fn duplicate_above(fd: BorrowedFd<'_>, minimum: RawFd) -> io::Result<
     let duplicate = cvt(unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, minimum) })?;
     // SAFETY: a freshly returned descriptor that nothing else owns.
     Ok(unsafe { OwnedFd::from_raw_fd(duplicate) })
+}
+
+fn own_syscall_fd(result: libc::c_long) -> io::Result<OwnedFd> {
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: a freshly returned descriptor that nothing else owns.
+    Ok(unsafe { OwnedFd::from_raw_fd(result as RawFd) })
+}
+
+/// A duplicate of descriptor `fd` of process `pid` (a thread group leader).
+pub(crate) fn pidfd_getfd(pid: i32, fd: RawFd) -> io::Result<OwnedFd> {
+    // SAFETY: plain syscalls; each returns a new descriptor or fails.
+    let pidfd = own_syscall_fd(unsafe { libc::syscall(SYS_PIDFD_OPEN, pid, 0) })?;
+    // SAFETY: as above.
+    own_syscall_fd(unsafe { libc::syscall(SYS_PIDFD_GETFD, pidfd.as_raw_fd(), fd, 0) })
+}
+
+/// `socket(2)`. `SOCK_CLOEXEC` is always added.
+pub(crate) fn socket(domain: i32, kind: i32, protocol: i32) -> io::Result<OwnedFd> {
+    // SAFETY: plain socket call.
+    let fd = cvt(unsafe { libc::socket(domain, kind | libc::SOCK_CLOEXEC, protocol) })?;
+    // SAFETY: a freshly returned descriptor that nothing else owns.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+pub(crate) fn socket_option(fd: BorrowedFd<'_>, level: i32, name: i32) -> io::Result<i32> {
+    let mut value: libc::c_int = 0;
+    let mut length = size_of::<libc::c_int>() as libc::socklen_t;
+    // SAFETY: an int-sized buffer with its length.
+    cvt(unsafe {
+        libc::getsockopt(
+            fd.as_raw_fd(),
+            level,
+            name,
+            (&mut value as *mut libc::c_int).cast(),
+            &mut length,
+        )
+    })?;
+    Ok(value)
+}
+
+pub(crate) fn set_socket_option(
+    fd: BorrowedFd<'_>,
+    level: i32,
+    name: i32,
+    value: i32,
+) -> io::Result<()> {
+    // SAFETY: an int-sized value with its length.
+    cvt(unsafe {
+        libc::setsockopt(
+            fd.as_raw_fd(),
+            level,
+            name,
+            (&value as *const libc::c_int).cast(),
+            size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    })?;
+    Ok(())
+}
+
+/// Wait until `fd` has one of `events`, giving up after `timeout` or as
+/// soon as `keep_waiting` returns false.
+pub(crate) fn wait_for(
+    fd: BorrowedFd<'_>,
+    events: libc::c_short,
+    timeout: std::time::Duration,
+    keep_waiting: &dyn Fn() -> bool,
+) -> io::Result<()> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let mut poll_fd = libc::pollfd {
+            fd: fd.as_raw_fd(),
+            events,
+            revents: 0,
+        };
+        // SAFETY: one valid pollfd.
+        let ready = unsafe { libc::poll(&mut poll_fd, 1, 250) };
+        if ready > 0 {
+            return Ok(());
+        }
+        if ready < 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::EINTR) {
+                return Err(error);
+            }
+        }
+        if !keep_waiting() {
+            return Err(errno(libc::ECONNABORTED));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(errno(libc::ETIMEDOUT));
+        }
+    }
 }
 
 pub(crate) fn set_parent_death_signal() -> io::Result<()> {

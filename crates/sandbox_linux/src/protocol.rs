@@ -9,9 +9,11 @@
 //! Zed    <--control-->  supervisor  ZedMessage / SupervisorMessage
 //! Zed    --setup----->  helper      HelperSetup (once)
 //! helper --attach---->  supervisor  AttachInfo + the seccomp listener (once)
+//! helper <-attach---->  supervisor  FactoryRequest / FactoryResponse (then)
 //! ```
 
 use std::io::{IoSlice, IoSliceMut};
+use std::net::SocketAddr;
 use std::os::fd::{AsRawFd as _, BorrowedFd, FromRawFd as _, OwnedFd, RawFd};
 use std::path::PathBuf;
 
@@ -20,6 +22,7 @@ use nix::sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, recvmsg, s
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::UntrustedCommand;
+use crate::net::SocketKind;
 use crate::policy::{HandlerId, RequestedAccess, WirePolicy, WireRule};
 
 const MAX_FDS: usize = 8;
@@ -81,6 +84,10 @@ pub(crate) enum SupervisorMessage {
     PromptCancelled {
         prompt: PromptId,
     },
+    Denied {
+        sandbox: SandboxId,
+        denial: Denial,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -101,6 +108,19 @@ pub(crate) struct PromptRequest {
     pub executable: Option<PathBuf>,
 }
 
+/// An operation the policy, or a handler answering an [`Access::Ask`],
+/// denied.
+///
+/// [`Access::Ask`]: crate::Access::Ask
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Denial {
+    /// What the denied syscall needed that wasn't granted.
+    pub requests: Vec<RequestedAccess>,
+    /// The thread that made the syscall.
+    pub pid: i32,
+    pub executable: Option<PathBuf>,
+}
+
 /// A file a sandboxed process still has open with access the current policy
 /// no longer grants. Revoking a grant never affects open descriptors.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,12 +131,28 @@ pub struct OpenFile {
     pub write: bool,
 }
 
-/// Sent by the helper's command (before it execs) with its seccomp listener.
+/// Sent by the helper's command (before it execs) with its seccomp listener,
+/// followed by the sandbox's DNS sockets.
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct AttachInfo {
     /// Every process of the execution descends from the helper, which is a
     /// child subreaper.
     pub helper_pid: i32,
+}
+
+/// Asks the helper for a socket in the sandbox's network namespace, where
+/// only it can create them. Answered with a [`FactoryResponse`], carrying
+/// the socket if it was created.
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct FactoryRequest {
+    pub kind: SocketKind,
+    pub address: SocketAddr,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) enum FactoryResponse {
+    Created,
+    Failed { errno: i32 },
 }
 
 /// Everything the helper needs to set up the sandbox and run the command.
