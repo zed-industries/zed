@@ -237,7 +237,9 @@ impl Telemetry {
 
             os_version: None,
             os_name: os_name(cx),
-            desktop_environment: gpui::desktop_environment(),
+            desktop_environment: cx
+                .graphical_environment()
+                .and_then(|environment| environment.desktop_environment()),
             app_version: release_channel::AppVersion::global(cx).to_string(),
             subscribers: Vec::new(),
         }));
