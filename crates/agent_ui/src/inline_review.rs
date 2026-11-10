@@ -73,15 +73,10 @@ pub fn init(cx: &mut App) {
                     if !matches!(event, workspace::Event::ActiveItemChanged) {
                         return;
                     }
-                    let has_bridge = workspace
-                        .panel::<AgentPanel>(cx)
-                        .and_then(|panel| panel.read(cx).active_agent_thread(cx))
-                        .is_some_and(|thread| {
-                            thread.read(cx).connection().agent_id().as_ref() == "pi-live"
-                        });
+                    let has_pi_live_thread = active_review_thread(workspace, cx).is_ok();
                     let reviewable_file = active_review_editor(workspace, cx)
                         .is_some_and(|editor| editor.read(cx).inline_review_file_path(cx).is_ok());
-                    if has_bridge && reviewable_file {
+                    if has_pi_live_thread && reviewable_file {
                         if let Err(error) =
                             load_reviews(workspace, ReviewLoadTrigger::FileActivated, window, cx)
                         {
