@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use strum::EnumString;
 use thiserror::Error;
 
+pub use language_model_core::InputTransformation;
+
 pub mod batches;
 pub mod completion;
 
@@ -1186,29 +1188,6 @@ pub struct Response {
     /// with the [`THINKING_BINDING_CONTROLS_BETA_HEADER`] beta header.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_transformations: Vec<InputTransformation>,
-}
-
-/// A change the API made to one block of the request before the model read it.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct InputTransformation {
-    #[serde(rename = "type")]
-    pub kind: InputTransformationKind,
-    /// Location of the affected block, such as `messages.1.content.0`.
-    pub path: String,
-    /// Why the block was affected, such as `prefix_binding_mismatch`. Kept as
-    /// a string because the API adds new reasons over time.
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum InputTransformationKind {
-    /// The thinking block was removed before the model read it.
-    ThinkingDropped,
-    /// The thinking block failed the prefix check but reached the model unchanged.
-    ThinkingMismatchAllowed,
-    #[serde(other)]
-    Unknown,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

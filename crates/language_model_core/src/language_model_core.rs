@@ -66,15 +66,17 @@ pub enum LanguageModelCompletionEvent {
     ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
     Compaction(CompactionUpdate),
-    /// The provider removed thinking blocks from the request before the model
-    /// read them, so the model answered without that earlier reasoning.
-    ThinkingDropped(Vec<DroppedThinkingBlock>),
+    /// Transformations the provider applied or flagged while processing the request.
+    InputTransformations(Vec<InputTransformation>),
 }
 
-/// A thinking block the provider removed from a request.
+/// A provider-reported transformation or mismatch affecting request content.
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-pub struct DroppedThinkingBlock {
-    /// Provider-specific location of the block, such as `messages.1.content.0`.
+pub struct InputTransformation {
+    /// Provider-specific transformation type, including unrecognized future types.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Provider-specific location, such as `messages.1.content.0`.
     pub path: String,
     /// Provider-specific reason, such as `prefix_binding_mismatch`.
     pub reason: String,
