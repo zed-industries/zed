@@ -247,11 +247,11 @@ impl Debug for RemoteRunningKernel {
 }
 
 impl RunningKernel for RemoteRunningKernel {
-    fn request_tx(&self) -> futures::channel::mpsc::Sender<runtimelib::JupyterMessage> {
+    fn request_tx(&self) -> futures::channel::mpsc::Sender<jupyter_protocol::JupyterMessage> {
         self.request_tx.clone()
     }
 
-    fn stdin_tx(&self) -> futures::channel::mpsc::Sender<runtimelib::JupyterMessage> {
+    fn stdin_tx(&self) -> futures::channel::mpsc::Sender<jupyter_protocol::JupyterMessage> {
         self.stdin_tx.clone()
     }
 
@@ -259,19 +259,19 @@ impl RunningKernel for RemoteRunningKernel {
         &self.working_directory
     }
 
-    fn execution_state(&self) -> &runtimelib::ExecutionState {
+    fn execution_state(&self) -> &jupyter_protocol::ExecutionState {
         &self.execution_state
     }
 
-    fn set_execution_state(&mut self, state: runtimelib::ExecutionState) {
+    fn set_execution_state(&mut self, state: jupyter_protocol::ExecutionState) {
         self.execution_state = state;
     }
 
-    fn kernel_info(&self) -> Option<&runtimelib::KernelInfoReply> {
+    fn kernel_info(&self) -> Option<&jupyter_protocol::KernelInfoReply> {
         self.kernel_info.as_ref()
     }
 
-    fn set_kernel_info(&mut self, info: runtimelib::KernelInfoReply) {
+    fn set_kernel_info(&mut self, info: jupyter_protocol::KernelInfoReply) {
         self.kernel_info = Some(info);
     }
 

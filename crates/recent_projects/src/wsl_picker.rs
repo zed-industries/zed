@@ -125,13 +125,13 @@ impl picker::PickerDelegate for WslPickerDelegate {
                 .collect::<Vec<_>>();
 
             let query = query.trim_start();
-            let case = fuzzy_nucleo::Case::smart_if_uppercase_in(query);
             self.matches = fuzzy_nucleo::match_strings(
                 &candidates,
                 query,
-                case,
-                fuzzy_nucleo::LengthPenalty::On,
-                100,
+                fuzzy_nucleo::StringMatchOptions {
+                    max_results: fuzzy_nucleo::MaxResults::limit::<100>(),
+                    ..Default::default()
+                },
             );
             self.matches.sort_unstable_by_key(|m| m.candidate_id);
 

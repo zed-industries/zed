@@ -874,17 +874,17 @@ impl ConversationView {
             .pending_tool_call(&session_id, cx)
     }
 
-    pub fn root_thread_has_pending_tool_call(&self, cx: &App) -> bool {
+    pub fn root_thread_is_waiting_for_input(&self, cx: &App) -> bool {
         let Some(root_thread) = self.root_thread_view() else {
             return false;
         };
         let root_session_id = root_thread.read(cx).thread.read(cx).session_id().clone();
         self.as_connected().is_some_and(|connected| {
-            connected
-                .conversation
-                .read(cx)
+            let conversation = connected.conversation.read(cx);
+            conversation
                 .pending_tool_call(&root_session_id, cx)
                 .is_some()
+                || !conversation.elicitation_requests.is_empty()
         })
     }
 
@@ -9840,10 +9840,11 @@ pub(crate) mod tests {
         assert!(cx.debug_bounds("plan-status-All Done").is_none());
         thread.update(cx, |thread, cx| {
             thread.upsert_plan_items(acp_v2::PlanItems::new("status-plan", vec![]), None, cx);
+            assert!(thread.plan().is_none());
             assert!(
                 thread
-                    .plan()
-                    .expect("empty selected plan")
+                    .plan_by_id(&"status-plan".into())
+                    .expect("emptied plan")
                     .entries()
                     .is_empty()
             );
