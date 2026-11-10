@@ -311,10 +311,7 @@ mod tests {
         // An earlier deadline doesn't shorten it.
         request.sustain(now + Duration::from_millis(10));
         assert_eq!(request.take(now), (true, true));
-        assert_eq!(
-            request.take(now + Duration::from_millis(500)),
-            (true, true)
-        );
+        assert_eq!(request.take(now + Duration::from_millis(500)), (true, true));
         assert_eq!(request.take(now + Duration::from_secs(1)), (false, false));
         assert_eq!(request.take(now + Duration::from_secs(2)), (false, false));
     }

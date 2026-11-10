@@ -237,9 +237,8 @@ impl IDirectManipulationViewportEventHandler_Impl for DirectManipulationEventHan
 
         // Running and inertia need an update every frame. The `ZoomToRect`
         // reset below runs once more before the viewport is ready again.
-        self.gesture_active.set(
-            current == DIRECTMANIPULATION_RUNNING || current == DIRECTMANIPULATION_INERTIA,
-        );
+        self.gesture_active
+            .set(current == DIRECTMANIPULATION_RUNNING || current == DIRECTMANIPULATION_INERTIA);
 
         // A new gesture interrupted inertia, so end the old sequence.
         if current == DIRECTMANIPULATION_RUNNING && previous == DIRECTMANIPULATION_INERTIA {
