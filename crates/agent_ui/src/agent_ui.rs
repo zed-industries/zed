@@ -17,6 +17,7 @@ mod external_source_prompt;
 mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
+mod inline_review;
 mod language_model_selector;
 mod mention_set;
 mod message_editor;
@@ -710,6 +711,7 @@ pub fn init(
         init_language_model_settings(cx);
     }
     agent_panel::init(cx);
+    inline_review::init(cx);
     context_server_configuration::init(language_registry, fs.clone(), cx);
     thread_metadata_store::init(cx);
     terminal_thread_metadata_store::init(cx);

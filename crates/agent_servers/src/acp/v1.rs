@@ -519,6 +519,31 @@ fn client_capabilities_for_agent(
 }
 
 impl AcpConnection {
+    pub fn extension_request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        cx: &mut App,
+    ) -> Task<Result<serde_json::Value>> {
+        if !method.starts_with('_') {
+            return Task::ready(Err(anyhow!(
+                "ACP extension methods must start with an underscore"
+            )));
+        }
+        let request = match agent_client_protocol::UntypedMessage::new(method, params) {
+            Ok(request) => request,
+            Err(error) => return Task::ready(Err(error.into())),
+        };
+        let connection = self.connection.clone();
+        cx.foreground_executor().spawn(async move {
+            connection
+                .send_request(request)
+                .block_task()
+                .await
+                .map_err(map_acp_error)
+        })
+    }
+
     /// Binds supported v2 client handlers to the existing foreground owners.
     /// This does not change the protocol used by the connection's transport.
     pub fn with_v2_client_ingress<Handler: HandleDispatchFrom<Agent>>(
@@ -1790,8 +1815,13 @@ pub mod test_support {
     use super::*;
     use futures::StreamExt as _;
 
+    type FakeRequestHandler =
+        Arc<dyn Fn(&str, serde_json::Value) -> Result<serde_json::Value, acp::Error> + Send + Sync>;
+
     #[derive(Clone, Default)]
     pub struct FakeAcpAgentServer {
+        agent_id: Option<AgentId>,
+        request_handler: Option<Arc<dyn Fn() -> FakeRequestHandler + Send + Sync>>,
         load_session_count: Arc<AtomicUsize>,
         close_session_count: Arc<AtomicUsize>,
         fail_next_prompt: Arc<AtomicBool>,
@@ -1806,6 +1836,22 @@ pub mod test_support {
     impl FakeAcpAgentServer {
         pub fn new() -> Self {
             Self::default()
+        }
+
+        pub fn with_request_handler_factory<Handler>(
+            mut self,
+            agent_id: AgentId,
+            factory: impl Fn() -> Handler + Send + Sync + 'static,
+        ) -> Self
+        where
+            Handler: Fn(&str, serde_json::Value) -> Result<serde_json::Value, acp::Error>
+                + Send
+                + Sync
+                + 'static,
+        {
+            self.agent_id = Some(agent_id);
+            self.request_handler = Some(Arc::new(move || Arc::new(factory())));
+            self
         }
 
         pub fn load_session_count(&self) -> Arc<AtomicUsize> {
@@ -1856,7 +1902,9 @@ pub mod test_support {
         }
 
         fn agent_id(&self) -> AgentId {
-            AgentId::new("Test")
+            self.agent_id
+                .clone()
+                .unwrap_or_else(|| AgentId::new("Test"))
         }
 
         fn connect(
@@ -1865,6 +1913,8 @@ pub mod test_support {
             project: Entity<Project>,
             cx: &mut App,
         ) -> Task<anyhow::Result<Rc<dyn AgentConnection>>> {
+            let agent_id = self.agent_id.clone();
+            let request_handler = self.request_handler.as_ref().map(|factory| factory());
             let load_session_count = self.load_session_count.clone();
             let close_session_count = self.close_session_count.clone();
             let fail_next_prompt = self.fail_next_prompt.clone();
@@ -1873,7 +1923,7 @@ pub mod test_support {
             let auth_elicitation_completion = self.auth_elicitation_completion.clone();
             let exit_status_sender = self.exit_status_sender.clone();
             cx.spawn(async move |cx| {
-                let harness = build_fake_acp_connection(
+                let mut harness = build_fake_acp_connection(
                     project,
                     load_session_count,
                     close_session_count,
@@ -1881,9 +1931,15 @@ pub mod test_support {
                     auth_elicitation_request,
                     auth_elicitation_response,
                     auth_elicitation_completion,
+                    request_handler,
                     cx,
                 )
                 .await?;
+                if let Some(agent_id) = agent_id {
+                    Rc::get_mut(&mut harness.connection)
+                        .expect("new connection is unique")
+                        .id = agent_id;
+                }
                 let (exit_tx, exit_rx) = async_channel::bounded(1);
                 *exit_status_sender
                     .lock()
@@ -2104,6 +2160,7 @@ pub mod test_support {
             Mutex<Option<async_channel::Sender<acp::CreateElicitationResponse>>>,
         >,
         auth_elicitation_completion: Arc<Mutex<Option<acp::CompleteElicitationNotification>>>,
+        request_handler: Option<FakeRequestHandler>,
         cx: &mut AsyncApp,
     ) -> Result<FakeAcpConnectionHarness> {
         let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
@@ -2180,16 +2237,44 @@ pub mod test_support {
                 agent_client_protocol::on_receive_request!(),
             )
             .on_receive_request(
-                async move |_req: acp::NewSessionRequest, responder, _cx| {
-                    responder.respond(acp::NewSessionResponse::new(acp::SessionId::new("unused")))
+                {
+                    let request_handler = request_handler.clone();
+                    async move |req: acp::NewSessionRequest, responder, _cx| {
+                        if let Some(handler) = &request_handler {
+                            let params = serde_json::to_value(req)
+                                .map_err(|error| acp::Error::new(-32603, error.to_string()))?;
+                            match handler("session/new", params).and_then(|value| {
+                                serde_json::from_value(value)
+                                    .map_err(|error| acp::Error::new(-32603, error.to_string()))
+                            }) {
+                                Ok(response) => responder.respond(response),
+                                Err(error) => responder.respond_with_error(error),
+                            }
+                        } else {
+                            responder.respond(acp::NewSessionResponse::new(acp::SessionId::new(
+                                "unused",
+                            )))
+                        }
+                    }
                 },
                 agent_client_protocol::on_receive_request!(),
             )
             .on_receive_request(
                 {
                     let fail_next_prompt = fail_next_prompt.clone();
-                    async move |_req: acp::PromptRequest, responder, _cx| {
-                        if fail_next_prompt.swap(false, Ordering::SeqCst) {
+                    let request_handler = request_handler.clone();
+                    async move |req: acp::PromptRequest, responder, _cx| {
+                        if let Some(handler) = &request_handler {
+                            let params = serde_json::to_value(req)
+                                .map_err(|error| acp::Error::new(-32603, error.to_string()))?;
+                            match handler("session/prompt", params).and_then(|value| {
+                                serde_json::from_value(value)
+                                    .map_err(|error| acp::Error::new(-32603, error.to_string()))
+                            }) {
+                                Ok(response) => responder.respond(response),
+                                Err(error) => responder.respond_with_error(error),
+                            }
+                        } else if fail_next_prompt.swap(false, Ordering::SeqCst) {
                             responder.respond_with_error(acp::ErrorCode::InternalError.into())
                         } else {
                             responder.respond(acp::PromptResponse::new(acp::StopReason::EndTurn))
@@ -2231,6 +2316,21 @@ pub mod test_support {
             .on_receive_notification(
                 async move |_notif: acp::CancelNotification, _cx| Ok(()),
                 agent_client_protocol::on_receive_notification!(),
+            )
+            .on_receive_request(
+                async move |request: agent_client_protocol::UntypedMessage,
+                            responder: Responder<serde_json::Value>,
+                            _| {
+                    let result = request_handler
+                        .as_ref()
+                        .ok_or_else(|| acp::Error::new(-32601, "Unknown method"))
+                        .and_then(|handler| handler(request.method(), request.params().clone()));
+                    match result {
+                        Ok(response) => responder.respond(response),
+                        Err(error) => responder.respond_with_error(error),
+                    }
+                },
+                agent_client_protocol::on_receive_request!(),
             )
             .connect_to(agent_transport);
 
@@ -2335,6 +2435,7 @@ pub mod test_support {
             Arc::new(Mutex::new(None)),
             Arc::new(Mutex::new(None)),
             Arc::new(Mutex::new(None)),
+            None,
             &mut cx.to_async(),
         )
         .await
@@ -2364,6 +2465,7 @@ pub mod test_support {
             Arc::new(Mutex::new(Some(request))),
             Arc::new(Mutex::new(Some(response_tx))),
             Arc::new(Mutex::new(None)),
+            None,
             &mut cx.to_async(),
         )
         .await
@@ -2396,6 +2498,7 @@ pub mod test_support {
             Arc::new(Mutex::new(Some(request))),
             Arc::new(Mutex::new(Some(response_tx))),
             Arc::new(Mutex::new(Some(completion))),
+            None,
             &mut cx.to_async(),
         )
         .await
@@ -2414,6 +2517,76 @@ mod tests {
     use super::*;
     use futures::StreamExt as _;
     use settings::Settings as _;
+
+    #[gpui::test]
+    async fn extension_requests_round_trip_without_prompts_and_preserve_errors(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_settings_test(cx);
+        let project = project::Project::test(fs::FakeFs::new(cx.executor()), [], cx).await;
+        let mut harness = test_support::connect_fake_acp_connection(project, cx).await;
+        let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
+        let _agent = cx.background_spawn(
+            Agent
+                .builder()
+                .on_receive_request(
+                    async move |request: agent_client_protocol::UntypedMessage,
+                                responder: Responder<serde_json::Value>,
+                                _connection| {
+                        match request.method() {
+                            "_test/storage" => responder.respond(request.params().clone()),
+                            "_test/fail" => {
+                                responder.respond_with_error(acp::Error::new(-32001, "disk full"))
+                            }
+                            _ => panic!("Unexpected model/session request"),
+                        }
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_to(agent_transport),
+        );
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        let _client = cx.background_spawn(connect_client_future(
+            "extension-test",
+            client_transport,
+            harness.connection.dispatch_tx.clone(),
+            sender,
+            futures::future::pending(),
+        ));
+        Rc::get_mut(&mut harness.connection).unwrap().connection = receiver.await.unwrap();
+        let payload = serde_json::json!({"version": 1, "comments": ["Unicode π", null]});
+        let response = cx
+            .update(|cx| {
+                harness
+                    .connection
+                    .extension_request("_test/storage", payload.clone(), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(response, payload);
+        let error = cx
+            .update(|cx| {
+                harness
+                    .connection
+                    .extension_request("_test/fail", serde_json::json!({}), cx)
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<acp::Error>(),
+            Some(&acp::Error::new(-32001, "disk full"))
+        );
+        assert!(
+            cx.update(|cx| harness.connection.extension_request(
+                "session/prompt",
+                serde_json::json!({}),
+                cx
+            ))
+            .await
+            .is_err()
+        );
+        assert!(harness.connection.sessions.borrow().is_empty());
+    }
 
     #[test]
     fn test_auth_error_mapping_retains_sdk_record_and_description() {
