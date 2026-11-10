@@ -2164,6 +2164,7 @@ impl LocalWorktree {
         };
         let t0 = Instant::now();
         let fs = self.fs.clone();
+        let fs_case_sensitive = self.fs_case_sensitive;
         let mut refresh = self.refresh_entries_for_paths(paths);
         // todo(lw): Hot foreground spawn
         cx.spawn(async move |this, cx| {
@@ -2179,8 +2180,18 @@ impl LocalWorktree {
             // scanner has not expanded yet. Report it the same way as an excluded
             // path so that callers can still open it by absolute path.
             let abs_path = this.read_with(cx, |this, _| this.absolutize(&path))?;
-            if fs.metadata(&abs_path).await?.is_some() {
-                return Ok(None);
+            if let Some(metadata) = fs.metadata(&abs_path).await? {
+                // On a case-insensitive filesystem the path may differ from the on-disk
+                // one only by case. The scanner reports those paths as removed, so don't
+                // open the file under a spelling that isn't on disk either: callers that
+                // probe candidates (e.g. the README opened on startup) rely on the error
+                // to retry with the next candidate.
+                let is_case_only_rename = !fs_case_sensitive
+                    && !metadata.is_symlink
+                    && is_case_only_mismatch(&abs_path, &fs.canonicalize(&abs_path).await?);
+                if !is_case_only_rename {
+                    return Ok(None);
+                }
             }
 
             anyhow::bail!("Could not find entry in worktree for {path:?} after refresh")
@@ -4401,6 +4412,13 @@ enum BackgroundScannerPhase {
     Events,
 }
 
+/// On a case-insensitive filesystem a path whose file name differs from the
+/// canonical one only by case refers to a different path (`mv test.txt TEST.TXT`),
+/// so metadata for the spelling that is not on disk has to be ignored.
+fn is_case_only_mismatch(abs_path: &Path, canonical_path: &Path) -> bool {
+    canonical_path.file_name() != abs_path.file_name()
+}
+
 impl BackgroundScanner {
     async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>) {
         let root_abs_path;
@@ -5717,12 +5735,11 @@ impl BackgroundScanner {
                         // Because if not, this might be a case-only-renaming (`mv test.txt TEST.TXT`)
                         // and we want to ignore the metadata for the old path (`test.txt`) so it's
                         // treated as removed.
-                        if !self.fs_case_sensitive && !metadata.is_symlink {
-                            let canonical_file_name = canonical_path.file_name();
-                            let file_name = abs_path.file_name();
-                            if canonical_file_name != file_name {
-                                return Ok(None);
-                            }
+                        if !self.fs_case_sensitive
+                            && !metadata.is_symlink
+                            && is_case_only_mismatch(abs_path, &canonical_path)
+                        {
+                            return Ok(None);
                         }
 
                         anyhow::Ok(Some((metadata, SanitizedPath::new_arc(&canonical_path))))
