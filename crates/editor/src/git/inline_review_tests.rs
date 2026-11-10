@@ -62,6 +62,7 @@ async fn inline_review_submits_selected_lines_and_keeps_reply_through_edits(
     assert_eq!(submissions.len(), 2);
     assert_eq!(submissions[0].discussion_id, submissions[1].discussion_id);
     assert_ne!(submissions[0].id, submissions[1].id);
+    assert_ne!(submissions[0].submission_id, submissions[1].submission_id);
     let comment = &submissions[0];
     assert_eq!(
         comment.path,
@@ -69,6 +70,8 @@ async fn inline_review_submits_selected_lines_and_keeps_reply_through_edits(
     );
     assert_eq!(comment.lines, 0..2);
     assert_eq!(comment.excerpt, "first\nsecond");
+    assert_eq!(comment.before, "");
+    assert_eq!(comment.after, "\nthird\n");
     assert_eq!(comment.comment, "Explain these lines");
     editor.update_in(cx, |editor, window, cx| {
         editor.set_inline_review_reply(comment.id, "Pi".into(), "The final reply".into(), cx);
@@ -181,6 +184,138 @@ fn hiding_one_discussion_preserves_others_drafts_and_inflight_reply(cx: &mut Tes
             );
         })
         .unwrap();
+}
+
+#[gpui::test]
+async fn saved_reviews_restore_in_a_fresh_editor_and_keep_discussion_identity(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        serde_json::json!({"file.txt": "before\nfirst\nsecond\nthird\n"}),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                path!("/root/file.txt").into(),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let mut review = SavedInlineReview {
+        version: 1,
+        discussion_id: uuid::Uuid::new_v4().to_string(),
+        submission_id: uuid::Uuid::new_v4().to_string(),
+        path: path!("/root/file.txt").into(),
+        start_line: 1,
+        end_line: 2,
+        excerpt: "second".into(),
+        before: "first\n".into(),
+        after: "\nthird\n".into(),
+        comment: "Explain".into(),
+        created_at: 1,
+        outcome: "pending".into(),
+        reply: None,
+        error: None,
+    };
+    let encoded = serde_json::to_string(&review).unwrap();
+    let submitted = Rc::new(RefCell::new(Vec::new()));
+    let on_submit: ReviewSubmitHandler = Rc::new({
+        let submitted = submitted.clone();
+        move |comment, _, _| submitted.borrow_mut().push(comment)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(editor.total_review_comment_count(), 0);
+        editor.fold_ranges(vec![Point::new(1, 0)..Point::new(3, 5)], false, window, cx);
+        editor
+            .restore_inline_review(
+                serde_json::from_str(&encoded).unwrap(),
+                on_submit.clone(),
+                window,
+                cx,
+            )
+            .unwrap();
+        assert_eq!(editor.diff_review_line_range(cx), Some((2, 2)));
+        assert!(editor.diff_review_overlays[0].collapsed);
+        editor.unfold_ranges(&[Point::new(1, 0)..Point::new(3, 5)], true, false, cx);
+        let stored = &editor.stored_review_comments[0].1[0];
+        assert!(
+            stored
+                .submission_status
+                .as_ref()
+                .unwrap()
+                .contains("not resent")
+        );
+        assert!(stored.on_cancel.is_none());
+        review.outcome = "answered".into();
+        review.reply = Some("**Pi reply**".into());
+        editor
+            .restore_inline_review(review.clone(), on_submit.clone(), window, cx)
+            .unwrap();
+        editor
+            .restore_inline_review(review.clone(), on_submit.clone(), window, cx)
+            .unwrap();
+        assert_eq!(editor.total_review_comment_count(), 1);
+        let stored = &editor.stored_review_comments[0].1[0];
+        assert_eq!(stored.agent_reply.as_ref().unwrap().0.as_ref(), "Pi");
+        assert_eq!(
+            stored
+                .agent_reply
+                .as_ref()
+                .unwrap()
+                .1
+                .read(cx)
+                .source()
+                .as_ref(),
+            "**Pi reply**"
+        );
+        editor.dismiss_all_diff_review_overlays(cx);
+        editor
+            .restore_inline_review(review.clone(), on_submit.clone(), window, cx)
+            .unwrap();
+        assert_eq!(editor.diff_review_overlays.len(), 1);
+        select_ranges(editor, "before\nfirst\n«secondˇ»\nthird\n", window, cx);
+        editor
+            .show_inline_review(on_submit.clone(), window, cx)
+            .unwrap();
+        let input = editor.diff_review_prompt_editor().unwrap().clone();
+        input.update(cx, |input, cx| input.insert("Follow-up", window, cx));
+        editor.submit_diff_review_comment(window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(submitted.borrow().len(), 1);
+    assert_eq!(submitted.borrow()[0].discussion_id, review.discussion_id);
+    assert_ne!(submitted.borrow()[0].submission_id, review.submission_id);
+    editor.update_in(cx, |editor, window, cx| {
+        let buffer = editor.buffer.read(cx).as_singleton().unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "first\nsecond\nthird\n")], None, cx)
+        });
+        let mut ambiguous = review.clone();
+        ambiguous.submission_id = uuid::Uuid::new_v4().to_string();
+        assert!(
+            editor
+                .restore_inline_review(ambiguous, on_submit, window, cx)
+                .unwrap_err()
+                .to_string()
+                .contains("ambiguous")
+        );
+        assert_eq!(editor.total_review_comment_count(), 2);
+    });
 }
 
 #[gpui::test]

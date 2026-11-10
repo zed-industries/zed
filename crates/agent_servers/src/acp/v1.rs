@@ -519,6 +519,31 @@ fn client_capabilities_for_agent(
 }
 
 impl AcpConnection {
+    pub fn extension_request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        cx: &mut App,
+    ) -> Task<Result<serde_json::Value>> {
+        if !method.starts_with('_') {
+            return Task::ready(Err(anyhow!(
+                "ACP extension methods must start with an underscore"
+            )));
+        }
+        let request = match agent_client_protocol::UntypedMessage::new(method, params) {
+            Ok(request) => request,
+            Err(error) => return Task::ready(Err(error.into())),
+        };
+        let connection = self.connection.clone();
+        cx.foreground_executor().spawn(async move {
+            connection
+                .send_request(request)
+                .block_task()
+                .await
+                .map_err(map_acp_error)
+        })
+    }
+
     /// Binds supported v2 client handlers to the existing foreground owners.
     /// This does not change the protocol used by the connection's transport.
     pub fn with_v2_client_ingress<Handler: HandleDispatchFrom<Agent>>(
@@ -2414,6 +2439,76 @@ mod tests {
     use super::*;
     use futures::StreamExt as _;
     use settings::Settings as _;
+
+    #[gpui::test]
+    async fn extension_requests_round_trip_without_prompts_and_preserve_errors(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_settings_test(cx);
+        let project = project::Project::test(fs::FakeFs::new(cx.executor()), [], cx).await;
+        let mut harness = test_support::connect_fake_acp_connection(project, cx).await;
+        let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
+        let _agent = cx.background_spawn(
+            Agent
+                .builder()
+                .on_receive_request(
+                    async move |request: agent_client_protocol::UntypedMessage,
+                                responder: Responder<serde_json::Value>,
+                                _connection| {
+                        match request.method() {
+                            "_test/storage" => responder.respond(request.params().clone()),
+                            "_test/fail" => {
+                                responder.respond_with_error(acp::Error::new(-32001, "disk full"))
+                            }
+                            _ => panic!("Unexpected model/session request"),
+                        }
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_to(agent_transport),
+        );
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        let _client = cx.background_spawn(connect_client_future(
+            "extension-test",
+            client_transport,
+            harness.connection.dispatch_tx.clone(),
+            sender,
+            futures::future::pending(),
+        ));
+        Rc::get_mut(&mut harness.connection).unwrap().connection = receiver.await.unwrap();
+        let payload = serde_json::json!({"version": 1, "comments": ["Unicode π", null]});
+        let response = cx
+            .update(|cx| {
+                harness
+                    .connection
+                    .extension_request("_test/storage", payload.clone(), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(response, payload);
+        let error = cx
+            .update(|cx| {
+                harness
+                    .connection
+                    .extension_request("_test/fail", serde_json::json!({}), cx)
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<acp::Error>(),
+            Some(&acp::Error::new(-32001, "disk full"))
+        );
+        assert!(
+            cx.update(|cx| harness.connection.extension_request(
+                "session/prompt",
+                serde_json::json!({}),
+                cx
+            ))
+            .await
+            .is_err()
+        );
+        assert!(harness.connection.sessions.borrow().is_empty());
+    }
 
     #[test]
     fn test_auth_error_mapping_retains_sdk_record_and_description() {

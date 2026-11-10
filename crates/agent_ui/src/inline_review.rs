@@ -1,17 +1,23 @@
+mod storage;
 use crate::AgentPanel;
 use acp_thread::{AcpThread, AcpThreadEvent, SubmissionResponse, ThreadStatus};
 use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
 use anyhow::{Context as _, Result, bail, ensure};
-use editor::Editor;
+use editor::{Editor, InlineReviewComment, SavedInlineReview};
+use futures::{
+    FutureExt as _,
+    future::{LocalBoxFuture, Shared},
+};
 use gpui::{App, Context, Entity, EntityId, Global, Subscription, WeakEntity, Window, actions};
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::Arc;
 use std::{
     collections::{HashMap, VecDeque},
     rc::Rc,
 };
+use storage::ReviewStorage;
 use util::ResultExt as _;
-use uuid::Uuid;
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
 const REVIEW_META_KEY: &str = "zed-pi-live/review";
@@ -21,15 +27,21 @@ actions!(
     [
         /// Comment on selected file lines and queue it for the active pi-live session.
         CommentWithPiLive,
+        /// Restore saved pi discussions for the current file without submitting prompts.
+        RestorePiReviews,
     ]
 );
 
+#[derive(Clone)]
 struct ReviewJob {
     editor: WeakEntity<Editor>,
+    workspace: Option<WeakEntity<Workspace>>,
     comment_id: usize,
     discussion_id: String,
     submission_id: String,
     text: String,
+    storage: ReviewStorage,
+    saved: Shared<LocalBoxFuture<'static, Result<(), Arc<anyhow::Error>>>>,
 }
 
 struct ReviewQueue {
@@ -45,7 +57,52 @@ impl Global for ReviewQueues {}
 
 pub fn init(cx: &mut App) {
     cx.set_global(ReviewQueues::default());
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+        if let Some(window) = window {
+            cx.subscribe_in(
+                &cx.entity(),
+                window,
+                |workspace, _, event: &workspace::Event, window, cx| {
+                    if !matches!(event, workspace::Event::ActiveItemChanged) {
+                        return;
+                    }
+                    let has_bridge = workspace
+                        .panel::<AgentPanel>(cx)
+                        .and_then(|panel| panel.read(cx).active_agent_thread(cx))
+                        .is_some_and(|thread| {
+                            thread.read(cx).connection().agent_id().as_ref() == "pi-live"
+                        });
+                    let regular_file = workspace
+                        .active_item_as::<Editor>(cx)
+                        .is_some_and(|editor| editor.read(cx).inline_review_file_path(cx).is_ok());
+                    if has_bridge && regular_file {
+                        if let Err(error) = load_reviews(workspace, false, window, cx) {
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<RestorePiReviews>(),
+                                    error.to_string(),
+                                ),
+                                cx,
+                            );
+                        }
+                    }
+                },
+            )
+            .detach();
+        }
+        workspace.register_action(
+            |workspace: &mut Workspace, _: &RestorePiReviews, window, cx| {
+                if let Err(error) = load_reviews(workspace, false, window, cx) {
+                    workspace.show_toast(
+                        Toast::new(
+                            NotificationId::unique::<RestorePiReviews>(),
+                            error.to_string(),
+                        ),
+                        cx,
+                    );
+                }
+            },
+        );
         workspace.register_action(
             |workspace: &mut Workspace, _: &CommentWithPiLive, window, cx| {
                 if let Err(error) = show_comment(workspace, window, cx) {
@@ -68,6 +125,15 @@ fn show_comment(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Result<()> {
+    load_reviews(workspace, true, window, cx)
+}
+
+fn load_reviews(
+    workspace: &mut Workspace,
+    open_comment: bool,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Result<()> {
     let editor = workspace
         .active_item_as::<Editor>(cx)
         .context("Open a regular file and select the lines to review")?;
@@ -82,24 +148,153 @@ fn show_comment(
         thread.read(cx).connection().agent_id().as_ref() == "pi-live",
         "Select an attached pi-live thread in the Agent Panel first"
     );
+    let path = editor.read(cx).inline_review_file_path(cx)?;
+    let original_selections = editor
+        .read(cx)
+        .selections
+        .disjoint_anchor_ranges()
+        .collect::<Vec<_>>();
+    let storage = ReviewStorage::for_thread(&thread, cx)?;
+    let loaded = storage.load(&path, cx);
     let target_editor = editor.downgrade();
-    editor.update(cx, |editor, cx| {
-        editor.show_inline_review(Rc::new(move |comment, _, cx| {
-            let text = format!("Review comment on {}:{}-{}\n\nSelected code (editor snapshot):\n{}\n\nComment:\n{}",
-                comment.path.display(), comment.lines.start + 1, comment.lines.end, comment.excerpt, comment.comment);
-            enqueue(thread.clone(), ReviewJob {
-                editor: target_editor.clone(),
-                comment_id: comment.id,
-                discussion_id: comment.discussion_id,
-                submission_id: Uuid::new_v4().to_string(),
-                text,
-            }, cx);
-        }), window, cx)
+    let target_workspace = cx.entity().downgrade();
+    let on_submit = Rc::new(
+        move |comment: InlineReviewComment, _: &mut Window, cx: &mut App| {
+            let text = format!(
+                "Review comment on {}:{}-{}\n\nSelected code (editor snapshot):\n{}\n\nComment:\n{}",
+                comment.path.display(),
+                comment.lines.start + 1,
+                comment.lines.end,
+                comment.excerpt,
+                comment.comment
+            );
+            let record = SavedInlineReview {
+                version: 1,
+                discussion_id: comment.discussion_id.clone(),
+                submission_id: comment.submission_id.clone(),
+                path: comment.path,
+                start_line: comment.lines.start,
+                end_line: comment.lines.end,
+                excerpt: comment.excerpt,
+                before: comment.before,
+                after: comment.after,
+                comment: comment.comment,
+                created_at: chrono::Utc::now().timestamp_micros(),
+                outcome: "pending".into(),
+                reply: None,
+                error: None,
+            };
+            let saved = storage
+                .create(record, cx)
+                .map(|result| result.map_err(Arc::new))
+                .boxed_local()
+                .shared();
+            enqueue(
+                thread.clone(),
+                ReviewJob {
+                    editor: target_editor.clone(),
+                    comment_id: comment.id,
+                    discussion_id: comment.discussion_id,
+                    submission_id: comment.submission_id,
+                    text,
+                    storage: storage.clone(),
+                    workspace: Some(target_workspace.clone()),
+                    saved,
+                },
+                cx,
+            );
+        },
+    );
+    let editor = editor.downgrade();
+    cx.spawn_in(window, async move |workspace, cx| {
+        let loaded = loaded.await;
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                let result = (|| -> Result<()> {
+                    let reviews = loaded?;
+                    let editor = editor.upgrade().context("Review editor was closed")?;
+                    ensure!(
+                        workspace.active_item_as::<Editor>(cx).as_ref() == Some(&editor),
+                        "Active file changed while loading reviews; run the action again"
+                    );
+                    if open_comment {
+                        ensure!(
+                            editor
+                                .read(cx)
+                                .selections
+                                .disjoint_anchor_ranges()
+                                .collect::<Vec<_>>()
+                                == original_selections,
+                            "Selection changed while loading reviews; run the action again"
+                        );
+                    }
+                    let mut failures = Vec::new();
+                    let focused = window.focused(cx);
+                    let restored = editor.update(cx, |editor, cx| -> Result<()> {
+                        ensure!(
+                            editor.inline_review_file_path(cx)? == path,
+                            "File path changed while loading reviews"
+                        );
+                        for review in reviews {
+                            if let Err(error) =
+                                editor.restore_inline_review(review, on_submit.clone(), window, cx)
+                            {
+                                failures.push(error.to_string());
+                            }
+                        }
+                        if open_comment {
+                            editor.show_inline_review(on_submit, window, cx)?;
+                        }
+                        Ok(())
+                    });
+                    if !open_comment || restored.is_err() {
+                        if let Some(focused) = focused {
+                            window.focus(&focused, cx);
+                        }
+                    }
+                    restored?;
+                    if let Some(first) = failures.first() {
+                        bail!(
+                            "{} saved review(s) could not be attached. {first}",
+                            failures.len()
+                        );
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    workspace.show_toast(
+                        Toast::new(
+                            NotificationId::unique::<RestorePiReviews>(),
+                            error.to_string(),
+                        ),
+                        cx,
+                    );
+                }
+            })
+            .log_err();
     })
+    .detach();
+    Ok(())
 }
 
 fn enqueue(thread: Entity<AcpThread>, job: ReviewJob, cx: &mut App) {
     let id = thread.entity_id();
+    let saving_job = job.clone();
+    cx.spawn(async move |cx| {
+        if let Err(error) = saving_job.saved.clone().await {
+            cx.update(|cx| {
+                report_storage_failure(
+                    &saving_job,
+                    format!(
+                        "Could not confirm the comment was saved; it was not dispatched: {error}"
+                    ),
+                    cx,
+                )
+            });
+        }
+        cx.update(|cx| pump(id, cx));
+    })
+    .detach();
     if !cx.global::<ReviewQueues>().0.contains_key(&id) {
         let subscription = cx.subscribe(&thread, move |_, event, cx| {
             if matches!(event, AcpThreadEvent::StatusChanged) {
@@ -147,6 +342,7 @@ fn cancel_queued(id: EntityId, submission_id: &str, cx: &mut App) {
         });
     if let Some(job) = cancelled {
         set_status(&job, "Cancelled".into(), cx);
+        persist_outcome(job, "cancelled", None, None, cx);
         pump(id, cx);
     }
 }
@@ -171,7 +367,11 @@ fn pump(id: EntityId, cx: &mut App) {
             cx.global_mut::<ReviewQueues>().0.remove(&id);
             return;
         }
-        if queue.thread.read(cx).status() != ThreadStatus::Idle {
+        let Some(saved) = queue.pending.front().and_then(|job| job.saved.peek()) else {
+            return;
+        };
+        let save_error = saved.as_ref().err().cloned();
+        if queue.thread.read(cx).status() != ThreadStatus::Idle && save_error.is_none() {
             return;
         }
         let thread = queue.thread.clone();
@@ -181,7 +381,19 @@ fn pump(id: EntityId, cx: &mut App) {
             .get_mut(&id)
             .and_then(|queue| queue.pending.pop_front());
         let Some(job) = job else { return };
+        if let Some(error) = save_error {
+            settle_job(
+                id,
+                job,
+                Err(anyhow::anyhow!(
+                    "Comment was not dispatched because storage failed: {error}"
+                )),
+                cx,
+            );
+            return;
+        }
         if job.editor.upgrade().is_none() {
+            persist_outcome(job, "not_sent", None, None, cx);
             continue;
         }
         if let Some(queue) = cx.global_mut::<ReviewQueues>().0.get_mut(&id) {
@@ -192,31 +404,98 @@ fn pump(id: EntityId, cx: &mut App) {
         let submission = thread.update(cx, |thread, cx| thread.send(vec![content], cx));
         cx.spawn(async move |cx| {
             let result = match submission.await {
-                Ok(Some(SubmissionResponse::LegacyCompleted(response))) => correlated_reply(response, &job.discussion_id, &job.submission_id),
+                Ok(Some(SubmissionResponse::LegacyCompleted(response))) => {
+                    correlated_reply(response, &job.discussion_id, &job.submission_id)
+                }
                 Ok(None) => Ok(None),
                 Ok(_) => Err(anyhow::anyhow!("No completed inline reply received")),
                 Err(error) => Err(error),
             };
-            cx.update(|cx| {
-                let completed = matches!(&result, Ok(Some(_)));
-                match result {
-                    Ok(Some(text)) => { job.editor.update(cx, |editor, cx| editor.set_inline_review_reply(job.comment_id, "Pi".into(), text, cx)).log_err(); }
-                    Ok(None) => set_status(&job, "Cancelled".into(), cx),
-                    Err(error) => set_status(&job, format!("Failed: {error}. Check the transcript before retrying; this comment was not resent."), cx),
-                }
-                let not_sent = if let Some(queue) = cx.global_mut::<ReviewQueues>().0.get_mut(&id) {
-                    queue.running = false;
-                    if completed { VecDeque::new() } else { std::mem::take(&mut queue.pending) }
-                } else { VecDeque::new() };
-                for job in not_sent {
-                    set_status(&job, "Not sent: an earlier review failed or was stopped. Check the transcript before posting again.".into(), cx);
-                }
-                pump(id, cx);
-            });
+            cx.update(|cx| settle_job(id, job, result, cx));
             drop(thread);
-        }).detach();
+        })
+        .detach();
         return;
     }
+}
+
+fn report_storage_failure(job: &ReviewJob, message: String, cx: &mut App) {
+    log::error!("{message}");
+    if job.editor.upgrade().is_some() {
+        set_status(job, message.clone(), cx);
+    }
+    if let Some(workspace) = &job.workspace {
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.show_toast(
+                    Toast::new(NotificationId::unique::<RestorePiReviews>(), message),
+                    cx,
+                );
+            })
+            .log_err();
+    }
+}
+
+fn persist_outcome(
+    job: ReviewJob,
+    outcome: &'static str,
+    reply: Option<String>,
+    error: Option<String>,
+    cx: &mut App,
+) {
+    cx.spawn(async move |cx| {
+        if let Err(error) = job.saved.clone().await {
+            log::error!("Outcome was not written because the initial save failed: {error}");
+            return;
+        }
+        let saved = cx.update(|cx| job.storage.finish(&job.submission_id, outcome, reply, error, cx));
+        if let Err(error) = saved.await {
+            cx.update(|cx| report_storage_failure(&job, format!("Could not confirm the review outcome was saved: {error}. Check pi's transcript; nothing was resent."), cx));
+        }
+    }).detach();
+}
+
+fn settle_job(id: EntityId, job: ReviewJob, result: Result<Option<String>>, cx: &mut App) {
+    let completed = matches!(&result, Ok(Some(_)));
+    match result {
+        Ok(Some(text)) => {
+            if let Some(editor) = job.editor.upgrade() {
+                editor.update(cx, |editor, cx| {
+                    editor.set_inline_review_reply(job.comment_id, "Pi".into(), text.clone(), cx)
+                });
+            }
+            persist_outcome(job, "answered", Some(text), None, cx);
+        }
+        Ok(None) => {
+            set_status(&job, "Cancelled".into(), cx);
+            persist_outcome(job, "cancelled", None, None, cx);
+        }
+        Err(error) => {
+            set_status(
+                &job,
+                format!(
+                    "Failed: {error}. Check the transcript before retrying; this comment was not resent."
+                ),
+                cx,
+            );
+            persist_outcome(job, "failed", None, Some(error.to_string()), cx);
+        }
+    }
+    let not_sent = if let Some(queue) = cx.global_mut::<ReviewQueues>().0.get_mut(&id) {
+        queue.running = false;
+        if completed {
+            VecDeque::new()
+        } else {
+            std::mem::take(&mut queue.pending)
+        }
+    } else {
+        VecDeque::new()
+    };
+    for job in not_sent {
+        set_status(&job, "Not sent: an earlier review failed or was stopped. Check the transcript before posting again.".into(), cx);
+        persist_outcome(job, "not_sent", None, None, cx);
+    }
+    pump(id, cx);
 }
 
 fn review_content(discussion_id: &str, submission_id: &str, text: &str) -> acp_v2::ContentBlock {
@@ -317,6 +596,11 @@ mod tests {
             discussion_id: discussion.into(),
             submission_id: submission.into(),
             text: submission.into(),
+            workspace: None,
+            storage: ReviewStorage {
+                request: Rc::new(|_, _| gpui::Task::ready(Ok(json!({"version": 1})))),
+            },
+            saved: futures::future::ready(Ok(())).boxed_local().shared(),
         }
     }
 
@@ -340,10 +624,10 @@ mod tests {
                 cx,
             );
             cancel_queued(thread.entity_id(), "cancel-me", cx);
-            cancel_queued(thread.entity_id(), "first", cx);
         });
         cx.run_until_parked();
         cx.update(|cx| {
+            cancel_queued(thread.entity_id(), "first", cx);
             assert_eq!(thread.read(cx).entries().len(), 1);
             let queue = &cx.global::<ReviewQueues>().0[&thread.entity_id()];
             assert_eq!(
@@ -389,6 +673,67 @@ mod tests {
         cx.run_until_parked();
         cx.update(|cx| {
             assert_eq!(thread.read(cx).entries().len(), 1);
+            assert!(cx.global::<ReviewQueues>().0.is_empty());
+        });
+        assert!(connection.take_cancel_calls().is_empty());
+    }
+
+    #[gpui::test]
+    async fn saving_gates_dispatch_and_cancellation_waits_for_initial_save(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (thread, editor, connection) = queue_fixture(cx).await;
+        let (saved, saving) = futures::channel::oneshot::channel::<()>();
+        let outcomes = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut pending = job(&editor, "discussion", "saving");
+        pending.saved = async move {
+            saving
+                .await
+                .map_err(|error| Arc::new(anyhow::anyhow!(error)))
+        }
+        .boxed_local()
+        .shared();
+        pending.storage = ReviewStorage {
+            request: Rc::new({
+                let outcomes = outcomes.clone();
+                move |request, _| {
+                    outcomes.borrow_mut().push(request);
+                    gpui::Task::ready(Ok(json!({"version": 1})))
+                }
+            }),
+        };
+        cx.update(|cx| enqueue(thread.clone(), pending, cx));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert!(thread.read(cx).entries().is_empty());
+            cancel_queued(thread.entity_id(), "saving", cx);
+        });
+        cx.run_until_parked();
+        assert!(outcomes.borrow().is_empty());
+        saved.send(()).unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            outcomes.borrow().as_slice(),
+            &[json!({"operation": "finish", "submissionId": "saving", "outcome": "cancelled"})]
+        );
+        cx.update(|cx| assert!(thread.read(cx).entries().is_empty()));
+        assert!(connection.take_cancel_calls().is_empty());
+    }
+
+    #[gpui::test]
+    async fn storage_failure_never_dispatches_or_retries(cx: &mut gpui::TestAppContext) {
+        let (thread, editor, connection) = queue_fixture(cx).await;
+        let mut failed = job(&editor, "discussion", "failed-save");
+        failed.saved = futures::future::ready(Err(Arc::new(anyhow::anyhow!("disk full"))))
+            .boxed_local()
+            .shared();
+        cx.update(|cx| {
+            enqueue(thread.clone(), failed, cx);
+            enqueue(thread.clone(), job(&editor, "discussion", "not-sent"), cx);
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert!(thread.read(cx).entries().is_empty());
             assert!(cx.global::<ReviewQueues>().0.is_empty());
         });
         assert!(connection.take_cancel_calls().is_empty());

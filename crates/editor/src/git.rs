@@ -1,4 +1,6 @@
 pub(super) mod blame;
+mod review_persistence;
+pub use review_persistence::SavedInlineReview;
 #[cfg(test)]
 mod inline_review_tests;
 
@@ -182,6 +184,8 @@ pub(super) struct StoredReviewComment {
     agent_reply: Option<(SharedString, Entity<Markdown>)>,
     original_excerpt: Option<String>,
     discussion_id: Option<String>,
+    submission_id: Option<String>,
+    restored_pending: bool,
     submission_status: Option<String>,
     on_cancel: Option<Rc<dyn Fn(&mut App)>>,
 }
@@ -189,6 +193,9 @@ pub(super) struct StoredReviewComment {
 pub struct InlineReviewComment {
     pub id: usize,
     pub discussion_id: String,
+    pub submission_id: String,
+    pub before: String,
+    pub after: String,
     pub path: std::path::PathBuf,
     pub lines: Range<u32>,
     pub excerpt: String,
@@ -255,6 +262,8 @@ impl StoredReviewComment {
             agent_reply: None,
             original_excerpt: None,
             discussion_id: None,
+            submission_id: None,
+            restored_pending: false,
             submission_status: None,
             on_cancel: None,
         }
@@ -616,15 +625,11 @@ impl Editor {
         } else {
             range.end.row
         };
-        let start = Point::new(range.start.row, 0)
-            .to_display_point(&snapshot.display_snapshot)
-            .row();
+        let start = Point::new(range.start.row, 0);
         let end = Point::new(
             end_row,
             snapshot.buffer_snapshot().line_len(MultiBufferRow(end_row)),
-        )
-        .to_display_point(&snapshot.display_snapshot)
-        .row();
+        );
         for overlay in &self.diff_review_overlays {
             let existing = overlay.anchor_range.to_point(snapshot.buffer_snapshot());
             if existing.start.row == range.start.row {
@@ -634,7 +639,13 @@ impl Editor {
                 );
             }
         }
-        self.show_review_overlay(start..end, Some(on_submit), window, cx);
+        self.show_review_overlay_for_anchor_range(
+            snapshot.buffer_snapshot().anchor_after(start)
+                ..snapshot.buffer_snapshot().anchor_before(end),
+            Some(on_submit),
+            window,
+            cx,
+        );
         Ok(())
     }
 
@@ -716,7 +727,20 @@ impl Editor {
         let anchor_range =
             buffer_snapshot.anchor_after(start_point)..buffer_snapshot.anchor_before(line_end);
 
-        // Compute the hunk key for this display row
+        self.show_review_overlay_for_anchor_range(anchor_range, on_submit, window, cx);
+    }
+
+    fn show_review_overlay_for_anchor_range(
+        &mut self,
+        anchor_range: Range<Anchor>,
+        on_submit: Option<ReviewSubmitHandler>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let points = anchor_range.to_point(&buffer_snapshot);
+        let start_point = points.start;
+        let end_multi_buffer_row = MultiBufferRow(points.end.row);
         let file_path = buffer_snapshot
             .file_at(start_point)
             .map(|file: &Arc<dyn language::File>| file.path().clone())
@@ -881,6 +905,17 @@ impl Editor {
             })
             .and_then(|comment| comment.discussion_id.clone())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let points = anchor_range.to_point(&snapshot);
+        let before = snapshot
+            .text_for_range(Point::new(points.start.row.saturating_sub(2), 0)..points.start)
+            .collect::<String>();
+        let after = snapshot
+            .text_for_range(
+                points.end
+                    ..Point::new(points.end.row.saturating_add(3), 0).min(snapshot.max_point()),
+            )
+            .collect::<String>();
+        let submission_id = uuid::Uuid::new_v4().to_string();
         let id = self.add_review_comment(hunk_key.clone(), comment_text.clone(), anchor_range, cx);
         if let Some(on_submit) = on_submit {
             if let Some((path, lines, excerpt)) = source {
@@ -888,12 +923,16 @@ impl Editor {
                     if let Some(comment) = comments.iter_mut().find(|comment| comment.id == id) {
                         comment.original_excerpt = Some(excerpt.clone());
                         comment.discussion_id = Some(discussion_id.clone());
+                        comment.submission_id = Some(submission_id.clone());
                         comment.submission_status = Some("Queued".into());
                     }
                 }
                 let request = InlineReviewComment {
                     id,
                     discussion_id,
+                    submission_id,
+                    before,
+                    after,
                     path,
                     lines,
                     excerpt,
