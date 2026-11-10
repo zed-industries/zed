@@ -203,8 +203,13 @@ fn spawn_task_or_modal(
                 reveal_target: Some(reveal_target),
             });
             let name = task_name.clone();
-            spawn_tasks_filtered(move |(_, task)| task.label.eq(&name), overrides, window, cx)
-                .detach_and_log_err(cx)
+            spawn_tasks_filtered(
+                move |(_, task, _)| task.label.eq(&name),
+                overrides,
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx)
         }
         Spawn::ByTag {
             task_tag,
@@ -215,7 +220,9 @@ fn spawn_task_or_modal(
             });
             let tag = task_tag.clone();
             spawn_tasks_filtered(
-                move |(_, task)| task.tags.contains(&tag),
+                move |(_, task, task_context)| {
+                    task.binds_to_tag(&tag, &task_context.task_variables)
+                },
                 overrides,
                 window,
                 cx,
@@ -273,7 +280,7 @@ pub fn spawn_tasks_filtered<F>(
     cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>>
 where
-    F: FnMut((&TaskSourceKind, &TaskTemplate)) -> bool + 'static,
+    F: FnMut((&TaskSourceKind, &TaskTemplate, &TaskContext)) -> bool + 'static,
 {
     cx.spawn_in(window, async move |workspace, cx| {
         let task_contexts = workspace.update_in(cx, |workspace, window, cx| {
@@ -313,15 +320,15 @@ where
                 let default_context = TaskContext::default();
 
                 tasks.retain_mut(|(task_source_kind, target_task)| {
-                    if predicate((task_source_kind, target_task)) {
+                    let task_context = task_contexts
+                        .context_for_task(task_source_kind, target_task)
+                        .unwrap_or(&default_context);
+                    if predicate((task_source_kind, target_task, task_context)) {
                         if let Some(overrides) = &overrides
                             && let Some(target_override) = overrides.reveal_target
                         {
                             target_task.reveal_target = target_override;
                         }
-                        let task_context = task_contexts
-                            .context_for_task(task_source_kind, target_task)
-                            .unwrap_or(&default_context);
 
                         workspace.schedule_task(
                             task_source_kind.clone(),
@@ -533,6 +540,7 @@ mod tests {
         collections::HashMap,
         path::{Path, PathBuf},
         sync::Arc,
+        time::Duration,
     };
 
     use editor::{Editor, MultiBufferOffset, SelectionEffects};
@@ -551,7 +559,8 @@ mod tests {
     use workspace::{AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace};
 
     use crate::{
-        Rerun, Spawn, task_contexts, use_project_root_for_external_item, worktree_context,
+        Rerun, Spawn, TasksModal, task_contexts, use_project_root_for_external_item,
+        worktree_context,
     };
 
     const GLOBAL_TASKS_JSON: &str = r#"[
@@ -1163,6 +1172,106 @@ mod tests {
         );
     }
 
+    const PACKAGE_JSON: &str = r#"{
+        "name": "tasks-repro",
+        "scripts": {
+            "dev": "vite",
+            "build": "vite build"
+        }
+    }"#;
+
+    async fn open_package_json(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, Entity<Editor>, &mut VisualTestContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ "package.json": PACKAGE_JSON }))
+            .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+        cx.update(|cx| {
+            // Built-in languages come with language server adapters, which must not be started here.
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .enable_language_server = Some(false);
+                });
+            });
+            let languages = project.read(cx).languages().clone();
+            let fs = project.read(cx).fs().clone();
+            languages::init(languages, fs, NodeRuntime::unavailable(), cx);
+        });
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/project/package.json")),
+                    OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .expect("package.json should be opened in an editor");
+        cx.run_until_parked();
+        (workspace, editor, cx)
+    }
+
+    fn move_cursor_to(editor: &Entity<Editor>, text: &str, cx: &mut VisualTestContext) {
+        editor.update_in(cx, |editor, window, cx| {
+            let Some(offset) = editor.buffer().read(cx).snapshot(cx).text().find(text) else {
+                panic!("missing {text:?} in package.json");
+            };
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(offset)..MultiBufferOffset(offset)])
+            });
+            editor.refresh_runnables(None, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    fn spawn_package_script_by_tag(cx: &mut VisualTestContext) {
+        cx.dispatch_action(Spawn::ByTag {
+            task_tag: "package-script".to_string(),
+            reveal_target: None,
+        });
+        cx.run_until_parked();
+    }
+
+    async fn listed_task_labels(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> (Vec<String>, Vec<String>) {
+        let task_contexts = workspace
+            .update_in(cx, |workspace, window, cx| {
+                task_contexts(workspace, window, cx)
+            })
+            .await;
+        let (used, current) = task_inventory(workspace, cx)
+            .update(cx, |inventory, cx| {
+                inventory.used_and_current_resolved_tasks(Arc::new(task_contexts), cx)
+            })
+            .await;
+        let labels = |tasks: Vec<(TaskSourceKind, ResolvedTask)>| {
+            let mut labels = tasks
+                .into_iter()
+                .map(|(_, task)| task.resolved_label)
+                .collect::<Vec<_>>();
+            labels.sort();
+            labels
+        };
+        (labels(used), labels(current))
+    }
+
     fn task_inventory(
         workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
@@ -1178,6 +1287,96 @@ mod tests {
                     .cloned()
             })
             .expect("project should have a task inventory")
+    }
+
+    #[gpui::test]
+    async fn test_spawn_by_tag_runs_the_package_json_script_under_cursor(cx: &mut TestAppContext) {
+        let (workspace, editor, cx) = open_package_json(cx).await;
+
+        move_cursor_to(&editor, "\"dev\"", cx);
+        spawn_package_script_by_tag(cx);
+        assert_eq!(
+            last_scheduled_task(&workspace, cx).resolved.args,
+            vec!["run".to_string(), "dev".to_string()]
+        );
+        assert_eq!(
+            listed_task_labels(&workspace, cx).await,
+            (
+                vec!["package.json > dev".to_string()],
+                vec!["package.json > build".to_string()]
+            ),
+            "only the script under the cursor should be spawned, and listed once afterwards"
+        );
+
+        move_cursor_to(&editor, "\"vite build\"", cx);
+        spawn_package_script_by_tag(cx);
+        assert_eq!(
+            last_scheduled_task(&workspace, cx).resolved.args,
+            vec!["run".to_string(), "build".to_string()],
+            "a cursor on a script's value should spawn that script"
+        );
+        assert_eq!(
+            listed_task_labels(&workspace, cx).await,
+            (
+                vec![
+                    "package.json > build".to_string(),
+                    "package.json > dev".to_string()
+                ],
+                Vec::new()
+            )
+        );
+
+        move_cursor_to(&editor, "\"name\"", cx);
+        spawn_package_script_by_tag(cx);
+        assert_eq!(
+            last_scheduled_task(&workspace, cx).resolved.args,
+            vec!["run".to_string(), "build".to_string()],
+            "no script should be spawned outside of the scripts"
+        );
+        assert!(
+            workspace.read_with(cx, |workspace, cx| workspace
+                .active_modal::<TasksModal>(cx)
+                .is_some()),
+            "the task modal should open when no task is bound to the tag"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_package_json_scripts_are_listed_from_the_unsaved_buffer(cx: &mut TestAppContext) {
+        let (workspace, editor, cx) = open_package_json(cx).await;
+        let buffer = editor
+            .read_with(cx, |editor, cx| editor.buffer().read(cx).as_singleton())
+            .expect("package.json should be opened in a singleton buffer");
+        buffer.update(cx, |buffer, cx| {
+            let Some(build_key_start) = buffer.text().find("\"build\"") else {
+                panic!("missing the build script");
+            };
+            let name_start = build_key_start + 1;
+            buffer.edit(
+                [(name_start..name_start + "build".len(), "preview")],
+                None,
+                cx,
+            );
+        });
+        move_cursor_to(&editor, "\"preview\"", cx);
+
+        assert_eq!(
+            listed_task_labels(&workspace, cx).await,
+            (
+                Vec::new(),
+                vec![
+                    "package.json > dev".to_string(),
+                    "package.json > preview".to_string()
+                ]
+            ),
+            "scripts should be listed from the buffer, not from the file on disk"
+        );
+        spawn_package_script_by_tag(cx);
+        assert_eq!(
+            last_scheduled_task(&workspace, cx).resolved.args,
+            vec!["run".to_string(), "preview".to_string()],
+            "the renamed script should be bound to its runnable before the buffer is saved"
+        );
     }
 
     fn last_scheduled_task(

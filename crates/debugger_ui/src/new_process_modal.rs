@@ -207,12 +207,20 @@ impl NewProcessModal {
                                 })
                                 .await;
 
+                            // Debug locators need every current task, including the ones
+                            // the task picker lists among the used tasks.
+                            let fresh_resolved_tasks = task_inventory
+                                .update(cx, |task_inventory, cx| {
+                                    task_inventory.fresh_resolved_tasks(task_contexts.clone(), cx)
+                                })
+                                .await;
+
                             if let Ok(task) = debug_picker.update(cx, |picker, cx| {
                                 picker.delegate.tasks_loaded(
                                     task_contexts.clone(),
                                     languages,
                                     lsp_tasks.clone(),
-                                    current_resolved_tasks.clone(),
+                                    fresh_resolved_tasks,
                                     add_current_language_tasks,
                                     cx,
                                 )

@@ -6,7 +6,6 @@ use serde_json::json;
 use settings::SettingsLocation;
 use std::path::Path;
 use std::sync::Arc;
-use task::{TaskContext, TaskVariables, VariableName};
 use util::rel_path::rel_path;
 
 use project::task_store::{TaskSettingsLocation, TaskStore};
@@ -610,72 +609,50 @@ async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_tasks_spawning_the_same_process_are_deduplicated(cx: &mut TestAppContext) {
+async fn test_fresh_resolved_tasks_include_used_tasks(cx: &mut TestAppContext) {
     init_test(cx);
     let inventory = cx.update(|cx| Inventory::new(cx));
     inventory.update(cx, |inventory, _| {
         inventory
             .update_file_based_tasks(
                 TaskSettingsLocation::Global(tasks_file()),
-                Some(
-                    &json!([
-                        {
-                            "label": "package.json > dev",
-                            "command": "npm",
-                            "args": ["run", "dev"],
-                        },
-                        {
-                            "label": "package.json > $ZED_CUSTOM_script",
-                            "command": "npm",
-                            "args": ["run", "$ZED_CUSTOM_script"],
-                            "tags": ["package-script"],
-                        },
-                        {
-                            "label": "package.json > dev",
-                            "command": "pnpm",
-                            "args": ["run", "dev"],
-                        }
-                    ])
-                    .to_string(),
-                ),
+                Some(&mock_tasks_from_names(["used_task", "unused_task"])),
             )
             .unwrap();
     });
+    register_task_used(&inventory, "used_task", cx).await;
 
-    let task_contexts = TaskContexts {
-        active_item_context: Some((
-            None,
-            None,
-            TaskContext {
-                task_variables: TaskVariables::from_iter([(
-                    VariableName::Custom("script".into()),
-                    "dev".to_owned(),
-                )]),
-                ..TaskContext::default()
-            },
-        )),
-        ..TaskContexts::default()
-    };
+    let task_contexts = Arc::new(TaskContexts::default());
     let (used, current) = inventory
         .update(cx, |inventory, cx| {
-            inventory.used_and_current_resolved_tasks(Arc::new(task_contexts), cx)
+            inventory.used_and_current_resolved_tasks(task_contexts.clone(), cx)
         })
         .await;
-    let tasks = used
-        .into_iter()
-        .chain(current)
-        .map(|(_, task)| (task.resolved_label, task.resolved.command_label))
-        .sorted()
-        .collect::<Vec<_>>();
-
+    assert_eq!(resolved_labels(used), vec!["used_task"]);
     assert_eq!(
-        tasks,
-        vec![
-            ("package.json > dev".to_string(), "npm run dev".to_string()),
-            ("package.json > dev".to_string(), "pnpm run dev".to_string()),
-        ],
-        "Tasks spawning the same process should be listed once, tasks with the same label but a different command should stay"
+        resolved_labels(current),
+        vec!["unused_task"],
+        "the task picker should list a used task once, among the used tasks"
     );
+
+    let fresh = inventory
+        .update(cx, |inventory, cx| {
+            inventory.fresh_resolved_tasks(task_contexts, cx)
+        })
+        .await;
+    assert_eq!(
+        resolved_labels(fresh),
+        vec!["unused_task", "used_task"],
+        "fresh tasks, used by debug locators, should include the tasks used before"
+    );
+}
+
+fn resolved_labels(tasks: Vec<(TaskSourceKind, task::ResolvedTask)>) -> Vec<String> {
+    tasks
+        .into_iter()
+        .map(|(_, task)| task.resolved_label)
+        .sorted()
+        .collect()
 }
 
 fn init_test(_cx: &mut TestAppContext) {

@@ -5,10 +5,11 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use github_releases::{GitHubLspBinaryVersion, latest_github_release};
-use gpui::{App, AsyncApp, Entity, Task};
+use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use language::{
-    Buffer, ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
-    LspAdapterDelegate, LspInstaller, Toolchain,
+    Buffer, BufferSnapshot, ContextProvider, LanguageName, LanguageRegistry, LocalFile as _,
+    LspAdapter, LspAdapterDelegate, LspInstaller, ResolvedRunnable, RunnableMatchCapture,
+    RunnableResolver, Toolchain,
 };
 use lsp::{LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -29,7 +30,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use task::{TaskTemplate, TaskTemplates, VariableName};
+use task::{TagCondition, TaskTemplate, TaskTemplates, VariableName};
 use util::{
     ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into,
     paths::PathStyle, rel_path::RelPath, union_json_value_into,
@@ -42,14 +43,46 @@ const SERVER_PATH: &str =
 
 pub(crate) struct JsonTaskProvider;
 
+/// The runnable capture holding a script name, exposed to tasks as `ZED_CUSTOM_script`.
+const SCRIPT_CAPTURE: &str = "script";
+
+struct JsonScriptRunnableResolver;
+
+impl RunnableResolver for JsonScriptRunnableResolver {
+    fn resolve(
+        &self,
+        local_captures: &[RunnableMatchCapture],
+        _: &[RunnableMatchCapture],
+        buffer: &BufferSnapshot,
+    ) -> Option<ResolvedRunnable> {
+        let run_capture = local_captures.iter().find(|capture| capture.is_run())?;
+        // The capture spans the quoted key, so escape sequences are decoded
+        // the same way as when the task provider parses the file.
+        let quoted_name = buffer
+            .text_for_range(run_capture.range())
+            .collect::<String>();
+        let script_name = serde_json_lenient::from_str::<String>(&quoted_name).ok()?;
+        if script_name.is_empty() {
+            return None;
+        }
+        Some(ResolvedRunnable {
+            run_range: run_capture.range(),
+            extra_captures: smallvec::smallvec![(SCRIPT_CAPTURE.to_owned(), script_name)],
+        })
+    }
+}
+
 impl ContextProvider for JsonTaskProvider {
     fn associated_tasks(
         &self,
         buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> gpui::Task<Option<TaskTemplates>> {
-        let file = buffer.as_ref().and_then(|buf| buf.read(cx).file());
-        let Some(file) = project::File::from_dyn(file).cloned() else {
+        let Some(buffer) = buffer else {
+            return Task::ready(None);
+        };
+        let buffer = buffer.read(cx);
+        let Some(file) = project::File::from_dyn(buffer.file()) else {
             return Task::ready(None);
         };
         let is_package_json = file
@@ -62,81 +95,82 @@ impl ContextProvider for JsonTaskProvider {
             return Task::ready(None);
         }
 
-        cx.spawn(async move |cx| {
-            let contents = file
-                .worktree
-                .update(cx, |this, cx| this.load_file(&file.path, cx))
-                .await
-                .ok()?;
-            let path = cx.update(|cx| file.abs_path(cx)).as_path().into();
-            let contents_text = contents.text.to_string();
-
+        // Runnables are detected in the buffer, so its scripts are listed from the buffer too:
+        // the file on disk may lack unsaved script renames.
+        let path: Arc<Path> = file.abs_path(cx).into();
+        let snapshot = buffer.text_snapshot();
+        cx.background_spawn(async move {
+            let contents = snapshot.text();
             let task_templates = if is_package_json {
-                let package_json = serde_json_lenient::from_str::<
-                    HashMap<String, serde_json_lenient::Value>,
-                >(&contents_text)
-                .ok()?;
-                let package_json = PackageJsonData::new(path, package_json);
-                let command = package_json.package_manager.unwrap_or("npm").to_owned();
-                package_json
-                    .scripts
-                    .into_iter()
-                    .map(|(_, key)| TaskTemplate {
-                        label: format!("package.json > {key}"),
-                        command: command.clone(),
-                        args: vec!["run".into(), key],
-                        cwd: Some(VariableName::Dirname.template_value()),
-                        ..TaskTemplate::default()
-                    })
-                    .chain([TaskTemplate {
-                        label: format!(
-                            "package.json > {}",
-                            VariableName::Custom("script".into()).template_value()
-                        ),
-                        command: command.clone(),
-                        args: vec![
-                            "run".into(),
-                            VariableName::Custom("script".into()).template_value(),
-                        ],
-                        cwd: Some(VariableName::Dirname.template_value()),
-                        tags: vec!["package-script".into()],
-                        ..TaskTemplate::default()
-                    }])
-                    .collect()
-            } else if is_composer_json {
-                serde_json_lenient::Value::from_str(&contents_text)
-                    .ok()?
-                    .get("scripts")?
-                    .as_object()?
-                    .keys()
-                    .map(|key| TaskTemplate {
-                        label: format!("composer.json > {key}"),
-                        command: "composer".to_owned(),
-                        args: vec!["-d".into(), "$ZED_DIRNAME".into(), key.into()],
-                        ..TaskTemplate::default()
-                    })
-                    .chain([TaskTemplate {
-                        label: format!(
-                            "composer.json > {}",
-                            VariableName::Custom("script".into()).template_value()
-                        ),
-                        command: "composer".to_owned(),
-                        args: vec![
-                            "-d".into(),
-                            "$ZED_DIRNAME".into(),
-                            VariableName::Custom("script".into()).template_value(),
-                        ],
-                        tags: vec!["composer-script".into()],
-                        ..TaskTemplate::default()
-                    }])
-                    .collect()
+                package_json_task_templates(path, &contents)?
             } else {
-                vec![]
+                composer_json_task_templates(&contents)?
             };
-
             Some(TaskTemplates(task_templates))
         })
     }
+
+    fn runnable_resolver(&self) -> Option<Arc<dyn RunnableResolver>> {
+        Some(Arc::new(JsonScriptRunnableResolver))
+    }
+}
+
+fn package_json_task_templates(path: Arc<Path>, contents: &str) -> Option<Vec<TaskTemplate>> {
+    let package_json =
+        serde_json_lenient::from_str::<HashMap<String, serde_json_lenient::Value>>(contents)
+            .ok()?;
+    let package_json = PackageJsonData::new(path, package_json);
+    let command = package_json.package_manager.unwrap_or("npm");
+    Some(
+        package_json
+            .scripts
+            .into_iter()
+            .map(|(_, script_name)| TaskTemplate {
+                label: format!("package.json > {}", escape_task_variables(&script_name)),
+                command: command.to_owned(),
+                args: vec!["run".into(), escape_task_variables(&script_name)],
+                cwd: Some(VariableName::Dirname.template_value()),
+                tags: vec!["package-script".into()],
+                tag_condition: Some(script_tag_condition(script_name)),
+                ..TaskTemplate::default()
+            })
+            .collect(),
+    )
+}
+
+fn composer_json_task_templates(contents: &str) -> Option<Vec<TaskTemplate>> {
+    let composer_json = serde_json_lenient::Value::from_str(contents).ok()?;
+    let scripts = composer_json.get("scripts")?.as_object()?;
+    Some(
+        scripts
+            .keys()
+            .map(|script_name| TaskTemplate {
+                label: format!("composer.json > {}", escape_task_variables(script_name)),
+                command: "composer".to_owned(),
+                args: vec![
+                    "-d".into(),
+                    "$ZED_DIRNAME".into(),
+                    escape_task_variables(script_name),
+                ],
+                tags: vec!["composer-script".into()],
+                tag_condition: Some(script_tag_condition(script_name.clone())),
+                ..TaskTemplate::default()
+            })
+            .collect(),
+    )
+}
+
+/// Binds a script's template only to the runnable of that script, see `JsonScriptRunnableResolver`.
+fn script_tag_condition(script_name: String) -> TagCondition {
+    TagCondition {
+        variable: VariableName::Custom(SCRIPT_CAPTURE.into()),
+        value: script_name,
+    }
+}
+
+/// Script names are arbitrary JSON keys, so `$` in them must not start a task variable.
+pub(crate) fn escape_task_variables(text: &str) -> String {
+    text.replace('$', "$$")
 }
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -429,9 +463,18 @@ async fn get_cached_server_binary(
 
 #[cfg(test)]
 mod tests {
+    use std::{ops::Range, path::Path, sync::Arc};
+
+    use gpui::{AppContext as _, Entity, TestAppContext};
+    use language::{Buffer, Language};
     use serde_json::json;
 
-    use super::{json_schema_proxy_settings, unquote_filter_texts};
+    use task::{TaskContext, TaskTemplate, TaskVariables, VariableName};
+
+    use super::{
+        JsonTaskProvider, SCRIPT_CAPTURE, composer_json_task_templates, json_schema_proxy_settings,
+        package_json_task_templates, unquote_filter_texts,
+    };
 
     #[test]
     fn test_unquote_filter_texts() {
@@ -521,6 +564,196 @@ mod tests {
     #[test]
     fn test_json_schema_proxy_settings_ignores_missing_proxy() {
         assert_eq!(json_schema_proxy_settings(None), None);
+    }
+
+    fn json_language() -> Arc<Language> {
+        let language = crate::language("json", tree_sitter_json::LANGUAGE.into());
+        Arc::new(
+            Arc::try_unwrap(language)
+                .unwrap()
+                .with_context_provider(Some(Arc::new(JsonTaskProvider))),
+        )
+    }
+
+    fn script_runnables(
+        buffer: &Entity<Buffer>,
+        range: Range<usize>,
+        cx: &mut TestAppContext,
+    ) -> Vec<(String, Option<String>)> {
+        buffer.read_with(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot
+                .runnable_ranges(range)
+                .map(|runnable| {
+                    (
+                        snapshot
+                            .text_for_range(runnable.run_range)
+                            .collect::<String>(),
+                        runnable.extra_captures.get(SCRIPT_CAPTURE).cloned(),
+                    )
+                })
+                .collect()
+        })
+    }
+
+    #[gpui::test]
+    fn test_script_runnables_capture_decoded_names(cx: &mut TestAppContext) {
+        let package_json = r#"{
+        "name": "tasks-repro",
+        "scripts": {
+          "dev": "vite",
+          "t\u0065st": "vitest",
+          "$ZED_FILE": "echo",
+          "": "echo empty"
+        },
+        "config": {
+          "build": "not a script"
+        }
+      }"#;
+        let buffer =
+            cx.new(|cx| Buffer::local(package_json, cx).with_language(json_language(), cx));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            script_runnables(&buffer, 0..package_json.len(), cx),
+            vec![
+                ("\"dev\"".to_string(), Some("dev".to_string())),
+                ("\"t\\u0065st\"".to_string(), Some("test".to_string())),
+                ("\"$ZED_FILE\"".to_string(), Some("$ZED_FILE".to_string())),
+            ],
+            "every script key should be runnable with its JSON-decoded name captured, \
+                  empty and non-script keys should not be runnable"
+        );
+
+        let dev_value_offset = package_json
+            .find("\"vite\"")
+            .expect("missing the dev script value");
+
+        assert_eq!(
+            script_runnables(&buffer, dev_value_offset..dev_value_offset, cx),
+            vec![("\"dev\"".to_string(), Some("dev".to_string()))],
+            "a position on a script's value should belong to that script's runnable only"
+        );
+    }
+
+    fn script_context(script_name: Option<&str>) -> TaskContext {
+        TaskContext {
+            task_variables: TaskVariables::from_iter(
+                [
+                    (VariableName::File, "/project/package.json".to_owned()),
+                    (VariableName::Dirname, "/project".to_owned()),
+                ]
+                .into_iter()
+                .chain(script_name.map(|script_name| {
+                    (
+                        VariableName::Custom(SCRIPT_CAPTURE.into()),
+                        script_name.to_owned(),
+                    )
+                })),
+            ),
+            ..TaskContext::default()
+        }
+    }
+
+    fn bound_template<'a>(
+        templates: &'a [TaskTemplate],
+        tag: &str,
+        context: &TaskContext,
+    ) -> &'a TaskTemplate {
+        let bound_templates = templates
+            .iter()
+            .filter(|template| template.binds_to_tag(tag, &context.task_variables))
+            .collect::<Vec<_>>();
+        match bound_templates.as_slice() {
+            [template] => template,
+            _ => panic!("expected exactly one template bound to {tag}, got {bound_templates:?}"),
+        }
+    }
+
+    #[test]
+    fn test_package_json_script_templates() {
+        let templates = package_json_task_templates(
+            Path::new("/project/package.json").into(),
+            r#"{
+                      "scripts": {
+                          "dev": "vite",
+                          "t\u0065st": "vitest",
+                          "$ZED_FILE": "echo"
+                      }
+                  }"#,
+        )
+        .expect("package.json should be parsed");
+
+        for script_name in ["dev", "test", "$ZED_FILE"] {
+            let context = script_context(Some(script_name));
+            let template = bound_template(&templates, "package-script", &context);
+            let task = template
+                .resolve_task("test", &context)
+                .expect("script template should resolve");
+            assert_eq!(task.resolved_label, format!("package.json > {script_name}"));
+            assert_eq!(task.resolved.command.as_deref(), Some("npm"));
+            assert_eq!(
+                task.resolved.args,
+                vec!["run".to_string(), script_name.to_string()],
+                "script names should be passed literally, without task variable substitution"
+            );
+        }
+
+        let outside_scripts = script_context(None);
+        assert!(
+            templates.iter().all(|template| !template
+                .binds_to_tag("package-script", &outside_scripts.task_variables)),
+            "no script template should bind outside of the scripts"
+        );
+        assert_eq!(
+            templates
+                .iter()
+                .filter_map(|template| template.resolve_task("test", &outside_scripts))
+                .map(|task| task.resolved_label)
+                .collect::<Vec<_>>(),
+            vec![
+                "package.json > $ZED_FILE".to_string(),
+                "package.json > dev".to_string(),
+                "package.json > test".to_string(),
+            ],
+            "every script should still be listed once, wherever the cursor is"
+        );
+    }
+
+    #[test]
+    fn test_composer_json_script_templates() {
+        let templates = composer_json_task_templates(
+            r#"{ "scripts": { "lint": "phpcs", "$ZED_FILE": "echo" } }"#,
+        )
+        .expect("composer.json should be parsed");
+
+        for script_name in ["lint", "$ZED_FILE"] {
+            let context = script_context(Some(script_name));
+            let template = bound_template(&templates, "composer-script", &context);
+            let task = template
+                .resolve_task("test", &context)
+                .expect("script template should resolve");
+            assert_eq!(
+                task.resolved_label,
+                format!("composer.json > {script_name}")
+            );
+            assert_eq!(
+                task.resolved.args,
+                vec![
+                    "-d".to_string(),
+                    "/project".to_string(),
+                    script_name.to_string()
+                ],
+            );
+        }
+
+        assert!(
+            templates.iter().all(|template| !template.binds_to_tag(
+                "package-script",
+                &script_context(Some("lint")).task_variables
+            )),
+            "composer scripts should not bind to the package.json tag"
+        );
     }
 }
 

@@ -26,7 +26,7 @@ use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
-use crate::{PackageJson, PackageJsonData};
+use crate::{PackageJson, PackageJsonData, json::escape_task_variables};
 
 pub(crate) struct TypeScriptContextProvider {
     fs: Arc<dyn Fs>,
@@ -303,9 +303,9 @@ impl PackageJsonData {
                 format!("package.json > {script}")
             };
             task_templates.0.push(TaskTemplate {
-                label,
+                label: escape_task_variables(&label),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-                args: vec!["run".to_owned(), script.to_owned()],
+                args: vec!["run".to_owned(), escape_task_variables(script)],
                 tags: vec!["package-script".into()],
                 cwd: Some(
                     path.parent()
