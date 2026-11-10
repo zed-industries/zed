@@ -4,8 +4,8 @@ use smallvec::SmallVec;
 
 use crate::{
     Anchor, AnyElement, App, Axis, Bounds, Display, Edges, Element, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, ParentElement, Pixels, Point, Position, Size, Style,
-    Window, point, px,
+    InspectorElementId, LayoutId, ParentElement, Pixels, Point, Position, Size, Style, Window,
+    point, px,
 };
 
 /// The state that the anchored element element uses to track its children.
@@ -304,14 +304,6 @@ impl Element for Anchored {
         for child in &mut self.children {
             child.paint(window, cx);
         }
-    }
-}
-
-impl IntoElement for Anchored {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

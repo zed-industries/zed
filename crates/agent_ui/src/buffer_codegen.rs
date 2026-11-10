@@ -1356,6 +1356,7 @@ impl CodegenAlternative {
                         | LanguageModelCompletionEvent::Thinking { .. }
                         | LanguageModelCompletionEvent::RedactedThinking { .. }
                         | LanguageModelCompletionEvent::ReasoningDetails(_)
+                        | LanguageModelCompletionEvent::InputTransformations(_)
                         | LanguageModelCompletionEvent::Compaction(_),
                     ) => {}
                     Err(error) => {
@@ -1431,6 +1432,7 @@ impl CodegenAlternative {
                             | LanguageModelCompletionEvent::RedactedThinking { .. }
                             | LanguageModelCompletionEvent::StartMessage { .. }
                             | LanguageModelCompletionEvent::ReasoningDetails(_)
+                            | LanguageModelCompletionEvent::InputTransformations(_)
                             | LanguageModelCompletionEvent::Compaction(_),
                         ) => None,
                         Err(error) => Some(Err(error)),
