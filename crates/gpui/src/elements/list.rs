@@ -1506,7 +1506,7 @@ impl Element for List {
                     let summary = state.items.summary();
                     let total_height = summary.height;
 
-                    window.request_measured_layout(
+                    window.request_keyed_measured_layout(
                         style,
                         (max_element_width, total_height),
                         move |known_dimensions, available_space, _window, _cx| {

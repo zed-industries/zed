@@ -5486,13 +5486,32 @@ impl Window {
     /// determine the element's size.
     ///
     /// The given closure is invoked at layout time with the known dimensions and available space and
-    /// returns a `Size`. `key` must describe everything else the size depends on: while it equals
-    /// the key the element's node was last measured with, the sizes measured then can be used
-    /// without calling `measure` again, and the node doesn't need to be laid out again. Give a
-    /// key that never compares equal to have `measure` called every frame.
+    /// returns a `Size`. It is invoked every frame; see [`Self::request_keyed_measured_layout`] to
+    /// keep the measured sizes while what they depend on is unchanged.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
-    pub fn request_measured_layout<K, F>(
+    pub fn request_measured_layout<F>(&mut self, style: Style, mut measure: F) -> LayoutId
+    where
+        F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
+            + 'static,
+    {
+        self.request_keyed_measure(
+            &style,
+            (),
+            |_, _| false,
+            move |_, known_dimensions, available_space, _, window, cx| {
+                measure(known_dimensions, available_space, window, cx)
+            },
+        )
+    }
+
+    /// Like [`Self::request_measured_layout`], but `key` must describe everything the size depends
+    /// on besides the known dimensions and available space: while it equals the key the element's
+    /// node was last measured with, the sizes measured then can be used without calling `measure`
+    /// again, and the node doesn't need to be laid out again.
+    ///
+    /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
+    pub fn request_keyed_measured_layout<K, F>(
         &mut self,
         style: Style,
         key: K,
@@ -5513,7 +5532,7 @@ impl Window {
         )
     }
 
-    /// Like [`Self::request_measured_layout`], but `reuse` decides whether a key measures
+    /// Like [`Self::request_keyed_measured_layout`], but `reuse` decides whether a key measures
     /// the same as the previous one, and `measure` is given the key and whether this is
     /// the node's final measurement rather than a sizing probe.
     pub(crate) fn request_keyed_measure<K, F>(

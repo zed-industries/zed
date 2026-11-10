@@ -1208,10 +1208,11 @@ mod tests {
             _: &mut App,
         ) -> (LayoutId, ()) {
             let measured = self.0;
-            let layout_id =
-                window.request_measured_layout(Style::default(), measured, move |_, _, _, _| {
-                    measured
-                });
+            let layout_id = window.request_keyed_measured_layout(
+                Style::default(),
+                measured,
+                move |_, _, _, _| measured,
+            );
             (layout_id, ())
         }
 

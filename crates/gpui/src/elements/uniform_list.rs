@@ -289,7 +289,7 @@ impl Element for UniformList {
             |style, window, cx| match self.sizing_behavior {
                 ListSizingBehavior::Infer => {
                     window.with_text_style(style.text_style().cloned(), |window| {
-                        window.request_measured_layout(
+                        window.request_keyed_measured_layout(
                             style,
                             (item_size, max_items),
                             move |known_dimensions, available_space, _window, _cx| {

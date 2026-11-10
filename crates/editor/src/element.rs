@@ -8522,7 +8522,7 @@ impl Element for EditorElement {
                             window,
                             cx,
                         );
-                        window.request_measured_layout(
+                        window.request_keyed_measured_layout(
                             Style::default(),
                             key,
                             move |known_dimensions, available_space, window, cx| {
