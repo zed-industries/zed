@@ -16485,7 +16485,6 @@ dependencies = [
  "search",
  "serde",
  "serde_json",
- "serde_yaml_ng",
  "settings",
  "shell_command_parser",
  "strum 0.28.0",
