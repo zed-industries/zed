@@ -129,6 +129,7 @@ client = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 eval_utils.workspace = true
+git_ui.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 indoc.workspace = true

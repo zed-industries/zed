@@ -81,6 +81,7 @@ impl Editor {
         &mut self,
         review: SavedInlineReview,
         on_submit: ReviewSubmitHandler,
+        replace_submit_handler: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
@@ -130,7 +131,13 @@ impl Editor {
                 }
                 cx.notify();
             }
-            return self.show_saved_review_overlay(id, on_submit, window, cx);
+            return self.show_saved_review_overlay(
+                id,
+                on_submit,
+                replace_submit_handler,
+                window,
+                cx,
+            );
         }
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let anchors = self.saved_review_range(&review, cx)?;
@@ -171,13 +178,14 @@ impl Editor {
         if let Some(reply) = review.reply {
             self.set_inline_review_reply(id, "Pi".into(), reply, cx);
         }
-        self.show_saved_review_overlay(id, on_submit, window, cx)
+        self.show_saved_review_overlay(id, on_submit, replace_submit_handler, window, cx)
     }
 
     fn show_saved_review_overlay(
         &mut self,
         id: usize,
         on_submit: ReviewSubmitHandler,
+        replace_submit_handler: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
@@ -192,11 +200,14 @@ impl Editor {
             })
             .context("Saved review was removed")?;
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        if self
+        if let Some(overlay) = self
             .diff_review_overlays
-            .iter()
-            .any(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &key, &snapshot))
+            .iter_mut()
+            .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &key, &snapshot))
         {
+            if replace_submit_handler {
+                overlay.on_submit = Some(on_submit);
+            }
             return Ok(());
         }
         ensure!(

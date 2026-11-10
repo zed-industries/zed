@@ -416,6 +416,7 @@ async fn saved_reviews_restore_in_a_fresh_editor_and_keep_discussion_identity(
             .restore_inline_review(
                 serde_json::from_str(&encoded).unwrap(),
                 on_submit.clone(),
+                false,
                 window,
                 cx,
             )
@@ -435,10 +436,10 @@ async fn saved_reviews_restore_in_a_fresh_editor_and_keep_discussion_identity(
         review.outcome = "answered".into();
         review.reply = Some("**Pi reply**".into());
         editor
-            .restore_inline_review(review.clone(), on_submit.clone(), window, cx)
+            .restore_inline_review(review.clone(), on_submit.clone(), false, window, cx)
             .unwrap();
         editor
-            .restore_inline_review(review.clone(), on_submit.clone(), window, cx)
+            .restore_inline_review(review.clone(), on_submit.clone(), false, window, cx)
             .unwrap();
         assert_eq!(editor.total_review_comment_count(), 1);
         let stored = &editor.stored_review_comments[0].1[0];
@@ -456,7 +457,7 @@ async fn saved_reviews_restore_in_a_fresh_editor_and_keep_discussion_identity(
         );
         editor.dismiss_all_diff_review_overlays(cx);
         editor
-            .restore_inline_review(review.clone(), on_submit.clone(), window, cx)
+            .restore_inline_review(review.clone(), on_submit.clone(), false, window, cx)
             .unwrap();
         assert_eq!(editor.diff_review_overlays.len(), 1);
         select_ranges(editor, "before\nfirst\n«secondˇ»\nthird\n", window, cx);
@@ -480,7 +481,7 @@ async fn saved_reviews_restore_in_a_fresh_editor_and_keep_discussion_identity(
         ambiguous.submission_id = uuid::Uuid::new_v4().to_string();
         assert!(
             editor
-                .restore_inline_review(ambiguous, on_submit, window, cx)
+                .restore_inline_review(ambiguous, on_submit, false, window, cx)
                 .unwrap_err()
                 .to_string()
                 .contains("ambiguous")
@@ -706,7 +707,13 @@ async fn diff_reviews_capture_and_restore_exact_sides_and_comparisons(cx: &mut T
                 restored
                     .update(visual, |editor, window, cx| {
                         editor
-                            .restore_inline_review(saved.clone(), Rc::new(|_, _, _| {}), window, cx)
+                            .restore_inline_review(
+                                saved.clone(),
+                                Rc::new(|_, _, _| {}),
+                                false,
+                                window,
+                                cx,
+                            )
                             .unwrap_or_else(|error| {
                                 panic!("{comparison:?} {side:?} left={left}: {error:#}")
                             });
@@ -738,6 +745,7 @@ async fn diff_reviews_capture_and_restore_exact_sides_and_comparisons(cx: &mut T
                                 .restore_inline_review(
                                     changed_base,
                                     Rc::new(|_, _, _| {}),
+                                    false,
                                     window,
                                     cx
                                 )

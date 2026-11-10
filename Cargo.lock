@@ -488,6 +488,7 @@ dependencies = [
  "fuzzy",
  "fuzzy_nucleo",
  "git",
+ "git_ui",
  "git_ui_core",
  "gpui",
  "gpui_tokio",

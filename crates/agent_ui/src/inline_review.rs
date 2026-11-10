@@ -55,6 +55,13 @@ struct ReviewQueue {
 struct ReviewQueues(HashMap<EntityId, ReviewQueue>);
 impl Global for ReviewQueues {}
 
+#[derive(Clone, Copy, PartialEq)]
+enum ReviewLoadTrigger {
+    FileActivated,
+    Restore,
+    Comment,
+}
+
 pub fn init(cx: &mut App) {
     cx.set_global(ReviewQueues::default());
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
@@ -75,7 +82,9 @@ pub fn init(cx: &mut App) {
                     let reviewable_file = active_review_editor(workspace, cx)
                         .is_some_and(|editor| editor.read(cx).inline_review_file_path(cx).is_ok());
                     if has_bridge && reviewable_file {
-                        if let Err(error) = load_reviews(workspace, false, window, cx) {
+                        if let Err(error) =
+                            load_reviews(workspace, ReviewLoadTrigger::FileActivated, window, cx)
+                        {
                             workspace.show_toast(
                                 Toast::new(
                                     NotificationId::unique::<RestorePiReviews>(),
@@ -91,7 +100,8 @@ pub fn init(cx: &mut App) {
         }
         workspace.register_action(
             |workspace: &mut Workspace, _: &RestorePiReviews, window, cx| {
-                if let Err(error) = load_reviews(workspace, false, window, cx) {
+                if let Err(error) = load_reviews(workspace, ReviewLoadTrigger::Restore, window, cx)
+                {
                     workspace.show_toast(
                         Toast::new(
                             NotificationId::unique::<RestorePiReviews>(),
@@ -104,7 +114,8 @@ pub fn init(cx: &mut App) {
         );
         workspace.register_action(
             |workspace: &mut Workspace, _: &CommentWithPiLive, window, cx| {
-                if let Err(error) = load_reviews(workspace, true, window, cx) {
+                if let Err(error) = load_reviews(workspace, ReviewLoadTrigger::Comment, window, cx)
+                {
                     workspace.show_toast(
                         Toast::new(
                             NotificationId::unique::<CommentWithPiLive>(),
@@ -122,18 +133,19 @@ pub fn init(cx: &mut App) {
 fn active_review_editor(workspace: &Workspace, cx: &App) -> Option<Entity<Editor>> {
     workspace
         .active_item_as::<SplittableEditor>(cx)
+        .or_else(|| {
+            workspace
+                .active_item(cx)?
+                .to_searchable_item_handle(cx)?
+                .to_any_view()
+                .downcast::<SplittableEditor>()
+                .ok()
+        })
         .map(|editor| editor.read(cx).focused_editor().clone())
         .or_else(|| workspace.active_item_as::<Editor>(cx))
 }
 
-fn load_reviews(
-    workspace: &mut Workspace,
-    open_comment: bool,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) -> Result<()> {
-    let editor = active_review_editor(workspace, cx)
-        .context("Open a file or Git diff and select the lines to review")?;
+fn active_review_thread(workspace: &Workspace, cx: &App) -> Result<Entity<AcpThread>> {
     let panel = workspace
         .panel::<AgentPanel>(cx)
         .context("Open the Agent Panel and attach pi-live first")?;
@@ -145,6 +157,20 @@ fn load_reviews(
         thread.read(cx).connection().agent_id().as_ref() == "pi-live",
         "Select an attached pi-live thread in the Agent Panel first"
     );
+    Ok(thread)
+}
+
+fn load_reviews(
+    workspace: &mut Workspace,
+    trigger: ReviewLoadTrigger,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Result<()> {
+    let open_comment = trigger == ReviewLoadTrigger::Comment;
+    let editor = active_review_editor(workspace, cx)
+        .context("Open a file or Git diff and select the lines to review")?;
+    let thread = active_review_thread(workspace, cx)?;
+    let session_id = thread.read(cx).session_id().clone();
     let path = editor.read(cx).inline_review_file_path(cx)?;
     let original_selections = editor
         .read(cx)
@@ -157,6 +183,38 @@ fn load_reviews(
     let target_workspace = cx.entity().downgrade();
     let on_submit = Rc::new(
         move |comment: InlineReviewComment, _: &mut Window, cx: &mut App| {
+            let binding = (|| -> Result<_> {
+                let workspace = target_workspace
+                    .upgrade()
+                    .context("Review workspace was closed")?;
+                let thread = active_review_thread(workspace.read(cx), cx)?;
+                ensure!(
+                    thread.read(cx).session_id() == &session_id,
+                    "The selected pi-live session changed. Reopen this discussion with Comment With Pi Live to select its new target"
+                );
+                let storage = ReviewStorage::for_thread(&thread, cx)?;
+                Ok((thread, storage))
+            })();
+            let (thread, storage) = match binding {
+                Ok(binding) => binding,
+                Err(error) => {
+                    let message = format!("Not sent: {error}");
+                    target_editor
+                        .update(cx, |editor, cx| {
+                            editor.set_inline_review_status(comment.id, message.clone(), None, cx);
+                        })
+                        .log_err();
+                    target_workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_toast(
+                                Toast::new(NotificationId::unique::<CommentWithPiLive>(), message),
+                                cx,
+                            );
+                        })
+                        .log_err();
+                    return;
+                }
+            };
             let text = review_prompt(&comment);
             let record = SavedInlineReview {
                 version: if comment.diff.is_some() { 2 } else { 1 },
@@ -181,14 +239,14 @@ fn load_reviews(
                 .boxed_local()
                 .shared();
             enqueue(
-                thread.clone(),
+                thread,
                 ReviewJob {
                     editor: target_editor.clone(),
                     comment_id: comment.id,
                     discussion_id: comment.discussion_id,
                     submission_id: comment.submission_id,
                     text,
-                    storage: storage.clone(),
+                    storage,
                     workspace: Some(target_workspace.clone()),
                     saved,
                 },
@@ -227,9 +285,13 @@ fn load_reviews(
                             "File path changed while loading reviews"
                         );
                         for review in reviews {
-                            if let Err(error) =
-                                editor.restore_inline_review(review, on_submit.clone(), window, cx)
-                            {
+                            if let Err(error) = editor.restore_inline_review(
+                                review,
+                                on_submit.clone(),
+                                trigger != ReviewLoadTrigger::FileActivated,
+                                window,
+                                cx,
+                            ) {
                                 failures.push(error.to_string());
                             }
                         }
@@ -555,6 +617,379 @@ fn correlated_reply(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{AppContext as _, Focusable as _, VisualTestContext};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    struct ReviewRequest {
+        connection: usize,
+        method: String,
+        params: serde_json::Value,
+    }
+
+    struct ReviewWorkspace {
+        window: gpui::WindowHandle<workspace::MultiWorkspace>,
+        workspace: Entity<Workspace>,
+        panel: Entity<AgentPanel>,
+        editor: Entity<Editor>,
+        server: Rc<agent_servers::FakeAcpAgentServer>,
+        requests: Arc<Mutex<Vec<ReviewRequest>>>,
+    }
+
+    async fn review_workspace(cx: &mut gpui::TestAppContext) -> ReviewWorkspace {
+        crate::conversation_view::tests::init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            git_ui::init(cx);
+            init(cx);
+        });
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let records = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let next_connection = Arc::new(AtomicUsize::new(0));
+        let next_session = Arc::new(AtomicUsize::new(0));
+        let handler_factory = {
+            let requests = requests.clone();
+            move || {
+                let connection = next_connection.fetch_add(1, Ordering::SeqCst);
+                let requests = requests.clone();
+                let records = records.clone();
+                let next_session = next_session.clone();
+                move |method: &str, params: serde_json::Value| {
+                    requests.lock().unwrap().push(ReviewRequest {
+                        connection,
+                        method: method.into(),
+                        params: params.clone(),
+                    });
+                    match method {
+                        "session/new" => Ok(
+                            json!({"sessionId": format!("session-{}", next_session.fetch_add(1, Ordering::SeqCst))}),
+                        ),
+                        "session/prompt" => {
+                            let mut metadata =
+                                params["prompt"][0]["_meta"][REVIEW_META_KEY].clone();
+                            metadata["text"] = json!("Review reply");
+                            Ok(
+                                json!({"stopReason": "end_turn", "_meta": {REVIEW_META_KEY: metadata}}),
+                            )
+                        }
+                        "_zed-pi-live/review-store" => {
+                            let mut records = records.lock().unwrap();
+                            match params["operation"].as_str() {
+                                Some("create") => records.push(params["review"].clone()),
+                                Some("list") => {
+                                    return Ok(
+                                        json!({"version": 1, "reviews": records.iter().filter(|review| review["path"] == params["path"]).collect::<Vec<_>>()}),
+                                    );
+                                }
+                                Some("finish") => {
+                                    let review = records
+                                        .iter_mut()
+                                        .find(|review| {
+                                            review["submissionId"] == params["submissionId"]
+                                        })
+                                        .unwrap();
+                                    for field in ["outcome", "reply", "error"] {
+                                        if let Some(value) = params.get(field) {
+                                            review[field] = value.clone();
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    return Err(acp_v1::Error::new(
+                                        -32602,
+                                        "Unknown storage operation",
+                                    ));
+                                }
+                            }
+                            Ok(json!({"version": 1}))
+                        }
+                        _ => Err(acp_v1::Error::new(-32601, "Unexpected request")),
+                    }
+                }
+            }
+        };
+        let server = Rc::new(
+            agent_servers::FakeAcpAgentServer::new()
+                .with_request_handler_factory("pi-live".into(), handler_factory),
+        );
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            util::path!("/project"),
+            json!({".git": {}, "file.txt": "header\nnew code\nfooter\n", "other.txt": "Another file\n"}),
+        )
+        .await;
+        fs.set_head_for_repo(
+            util::path!("/project/.git").as_ref(),
+            &[("file.txt", "header\nold code\nfooter\n".into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            util::path!("/project/.git").as_ref(),
+            &[("file.txt", "header\nold code\nfooter\n".into())],
+        );
+        let project = project::Project::test(fs, [util::path!("/project").as_ref()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let window =
+            cx.add_window(|window, cx| workspace::MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |window, _| window.workspace().clone())
+            .unwrap();
+        let visual = &mut VisualTestContext::from_window(*window, cx);
+        let panel = workspace.update_in(visual, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        panel.update_in(visual, |panel, window, cx| {
+            panel.open_external_thread_with_server(server.clone(), window, cx)
+        });
+        visual.run_until_parked();
+        let editor = workspace
+            .update_in(visual, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    util::path!("/project/file.txt").into(),
+                    workspace::OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        visual.run_until_parked();
+        ReviewWorkspace {
+            window,
+            workspace,
+            panel,
+            editor,
+            server,
+            requests,
+        }
+    }
+
+    fn post_review(editor: &Entity<Editor>, text: &str, cx: &mut VisualTestContext) {
+        editor.update_in(cx, |editor, window, cx| {
+            let prompt = editor
+                .diff_review_prompt_editor()
+                .expect("review composer")
+                .clone();
+            prompt.update(cx, |prompt, cx| prompt.insert(text, window, cx));
+            window.focus(&prompt.focus_handle(cx), cx);
+            editor.submit_diff_review_comment(window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn comment_action_targets_the_focused_old_side_of_a_solo_diff(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fixture = review_workspace(cx).await;
+        let cx = &mut VisualTestContext::from_window(*fixture.window, cx);
+        fixture.editor.update_in(cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx), cx)
+        });
+        cx.dispatch_action(git::OpenFileDiff);
+        cx.run_until_parked();
+        let split = fixture.workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                workspace
+                    .active_item_as::<git_ui::solo_diff_view::SoloDiffView>(cx)
+                    .is_some()
+            );
+            assert!(workspace.active_item_as::<SplittableEditor>(cx).is_none());
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .to_searchable_item_handle(cx)
+                .unwrap()
+                .to_any_view()
+                .downcast::<SplittableEditor>()
+                .unwrap()
+        });
+        split.update_in(cx, |split, window, cx| {
+            if split.lhs_editor().is_none() {
+                split.toggle_split(&editor::ToggleSplitDiff, window, cx);
+            }
+        });
+        cx.run_until_parked();
+        let left = split.read_with(cx, |split, _| split.lhs_editor().unwrap().clone());
+        left.update_in(cx, |editor, window, cx| {
+            let text = editor.buffer().read(cx).snapshot(cx).text();
+            let start = text.find("old code").expect("old-side source");
+            editor.change_selections(
+                editor::SelectionEffects::no_scroll(),
+                window,
+                cx,
+                |selections| {
+                    selections.select_ranges([multi_buffer::MultiBufferOffset(start)
+                        ..multi_buffer::MultiBufferOffset(start + "old code".len())])
+                },
+            );
+            window.focus(&editor.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+        cx.dispatch_action(CommentWithPiLive);
+        cx.run_until_parked();
+        post_review(&left, "Explain this removed code", cx);
+        let requests = fixture.requests.lock().unwrap();
+        let created = requests
+            .iter()
+            .filter(|request| request.params["operation"] == "create")
+            .collect::<Vec<_>>();
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].params["review"]["excerpt"], "old code");
+        assert_eq!(created[0].params["review"]["diff"]["side"], "old");
+        assert_eq!(
+            created[0].params["review"]["diff"]["comparison"],
+            "uncommitted"
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.method == "session/prompt")
+                .count(),
+            1
+        );
+    }
+
+    #[gpui::test]
+    async fn existing_discussion_uses_reloaded_panel_and_requires_rebinding_for_another_session(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fixture = review_workspace(cx).await;
+        let cx = &mut VisualTestContext::from_window(*fixture.window, cx);
+        fixture.editor.update_in(cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx), cx)
+        });
+        cx.dispatch_action(CommentWithPiLive);
+        cx.run_until_parked();
+        post_review(&fixture.editor, "First comment", cx);
+        let original = fixture
+            .panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx).unwrap());
+        let conversation = fixture.panel.read_with(cx, |panel, _| {
+            panel.active_conversation_view().unwrap().clone()
+        });
+        conversation.update_in(cx, |conversation, window, cx| {
+            conversation.retry_connection(window, cx)
+        });
+        cx.run_until_parked();
+        let reloaded = fixture
+            .panel
+            .read_with(cx, |panel, cx| panel.active_agent_thread(cx).unwrap());
+        assert_ne!(original.entity_id(), reloaded.entity_id());
+        assert_eq!(
+            original.read_with(cx, |thread, _| thread.session_id().clone()),
+            reloaded.read_with(cx, |thread, _| thread.session_id().clone())
+        );
+        post_review(&fixture.editor, "Follow-up after reload", cx);
+        {
+            let requests = fixture.requests.lock().unwrap();
+            let prompts = requests
+                .iter()
+                .filter(|request| request.method == "session/prompt")
+                .collect::<Vec<_>>();
+            assert_eq!(
+                prompts
+                    .iter()
+                    .map(|request| request.connection)
+                    .collect::<Vec<_>>(),
+                vec![0, 1]
+            );
+            let creates = requests
+                .iter()
+                .filter(|request| request.params["operation"] == "create")
+                .collect::<Vec<_>>();
+            assert_eq!(
+                creates
+                    .iter()
+                    .map(|request| request.connection)
+                    .collect::<Vec<_>>(),
+                vec![0, 1]
+            );
+            assert_eq!(
+                creates[0].params["review"]["discussionId"],
+                creates[1].params["review"]["discussionId"]
+            );
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|request| request.params["operation"] == "finish"
+                        && request.params["outcome"] == "answered")
+                    .count(),
+                2
+            );
+        }
+        fixture.panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(fixture.server.clone(), window, cx)
+        });
+        cx.run_until_parked();
+        fixture
+            .workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    util::path!("/project/other.txt").into(),
+                    workspace::OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        fixture.workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&fixture.editor, true, true, window, cx)
+        });
+        cx.run_until_parked();
+        post_review(&fixture.editor, "Do not silently change sessions", cx);
+        assert_eq!(
+            fixture
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|request| request.params["operation"] == "create")
+                .count(),
+            2
+        );
+        assert_eq!(
+            fixture
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|request| request.method == "session/prompt")
+                .count(),
+            2
+        );
+        fixture.editor.update_in(cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx), cx)
+        });
+        cx.dispatch_action(RestorePiReviews);
+        cx.run_until_parked();
+        post_review(
+            &fixture.editor,
+            "Explicitly restored for the selected session",
+            cx,
+        );
+        let requests = fixture.requests.lock().unwrap();
+        let prompts = requests
+            .iter()
+            .filter(|request| request.method == "session/prompt")
+            .collect::<Vec<_>>();
+        assert_eq!(prompts.len(), 3);
+        assert_ne!(
+            prompts[1].params["sessionId"],
+            prompts[2].params["sessionId"]
+        );
+    }
 
     fn response(thread: &str, submission: &str) -> acp_v1::PromptResponse {
         let mut meta = serde_json::Map::new();
