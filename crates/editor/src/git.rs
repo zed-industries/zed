@@ -1521,28 +1521,34 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Find the overlay that currently has focus, or use the first one
-        let overlay_info = self.diff_review_overlays.iter_mut().find_map(|overlay| {
-            if overlay.prompt_editor.focus_handle(cx).is_focused(window) {
-                overlay.comments_expanded = !overlay.comments_expanded;
-                Some(overlay.hunk_key.clone())
-            } else {
-                None
-            }
-        });
-
-        // If no focused overlay found, toggle the first one
-        let hunk_key = overlay_info.or_else(|| {
-            self.diff_review_overlays.first_mut().map(|overlay| {
-                overlay.comments_expanded = !overlay.comments_expanded;
-                overlay.hunk_key.clone()
-            })
-        });
-
+        let hunk_key = self
+            .diff_review_overlays
+            .iter()
+            .find(|overlay| overlay.prompt_editor.focus_handle(cx).is_focused(window))
+            .or_else(|| self.diff_review_overlays.first())
+            .map(|overlay| overlay.hunk_key.clone());
         if let Some(hunk_key) = hunk_key {
-            self.refresh_diff_review_overlay_height(&hunk_key, window, cx);
-            cx.notify();
+            self.toggle_review_comments_for_hunk(&hunk_key, window, cx);
         }
+    }
+
+    fn toggle_review_comments_for_hunk(
+        &mut self,
+        hunk_key: &DiffHunkKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some(overlay) = self
+            .diff_review_overlays
+            .iter_mut()
+            .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
+        else {
+            return;
+        };
+        overlay.comments_expanded = !overlay.comments_expanded;
+        self.refresh_diff_review_overlay_height(hunk_key, window, cx);
+        cx.notify();
     }
 
     /// Handles the EditReviewComment action - sets a comment into editing mode.
@@ -2866,6 +2872,9 @@ impl Editor {
             let editor = editor_handle.clone();
             let key = hunk_key.clone();
             return h_flex()
+                .id(("review-discussion", prompt_editor.entity_id()))
+                .block_mouse_except_scroll()
+                .debug_selector(|| "review-discussion".into())
                 .w_full()
                 .px_2()
                 .bg(colors.editor_background)
@@ -2890,6 +2899,9 @@ impl Editor {
         let action_icon_size = IconSize::XSmall;
 
         v_flex()
+            .id(("review-discussion", prompt_editor.entity_id()))
+            .block_mouse_except_scroll()
+            .debug_selector(|| "review-discussion".into())
             .w_full()
             .bg(colors.editor_background)
             .border_b_1()
@@ -2977,11 +2989,18 @@ impl Editor {
                                     .icon_color(ui::Color::Muted)
                                     .icon_size(action_icon_size)
                                     .tooltip(Tooltip::text("Add comment"))
-                                    .on_click(|_, window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(crate::actions::SubmitDiffReviewComment),
-                                            cx,
-                                        );
+                                    .on_click({
+                                        let editor = editor_handle.clone();
+                                        let prompt_editor = prompt_editor.clone();
+                                        move |_, window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    window
+                                                        .focus(&prompt_editor.focus_handle(cx), cx);
+                                                    editor.submit_diff_review_comment(window, cx);
+                                                })
+                                                .log_err();
+                                        }
                                     }),
                             ),
                     ),
@@ -2997,6 +3016,17 @@ impl Editor {
                     action_icon_size,
                     colors,
                     crate::hover_popover::hover_markdown_style(cx.window, cx.app),
+                    {
+                        let editor = editor_handle.clone();
+                        let key = hunk_key.clone();
+                        move |_, window, cx| {
+                            editor
+                                .update(cx, |editor, cx| {
+                                    editor.toggle_review_comments_for_hunk(&key, window, cx);
+                                })
+                                .log_err();
+                        }
+                    },
                 ))
             })
             .into_any_element()
@@ -3011,6 +3041,7 @@ impl Editor {
         action_icon_size: IconSize,
         colors: &theme::ThemeColors,
         markdown_style: markdown::MarkdownStyle,
+        on_toggle: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
         let comment_count: usize = comments
             .iter()
@@ -3024,6 +3055,7 @@ impl Editor {
             .child(
                 h_flex()
                     .id("review-comments-header")
+                    .debug_selector(|| "review-comments-header".into())
                     .w_full()
                     .items_center()
                     .gap_1()
@@ -3032,12 +3064,7 @@ impl Editor {
                     .cursor_pointer()
                     .rounded_md()
                     .hover(|style| style.bg(colors.ghost_element_hover))
-                    .on_click(|_, window: &mut Window, cx| {
-                        window.dispatch_action(
-                            Box::new(crate::actions::ToggleReviewCommentsExpanded),
-                            cx,
-                        );
-                    })
+                    .on_click(on_toggle)
                     .child(
                         Icon::new(if expanded {
                             IconName::ChevronDown

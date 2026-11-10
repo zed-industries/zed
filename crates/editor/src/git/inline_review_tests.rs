@@ -73,7 +73,7 @@ async fn inline_review_submits_selected_lines_and_keeps_reply_through_edits(
     assert_eq!(comment.before, "");
     assert_eq!(comment.after, "\nthird\n");
     assert_eq!(comment.comment, "Explain these lines");
-    editor.update_in(cx, |editor, window, cx| {
+    editor.update_in(cx, |editor, _window, cx| {
         editor.set_inline_review_reply(comment.id, "Pi".into(), "The final reply".into(), cx);
         let buffer = editor.buffer.read(cx).as_singleton().unwrap();
         buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "before\n")], None, cx));
@@ -184,6 +184,176 @@ fn hiding_one_discussion_preserves_others_drafts_and_inflight_reply(cx: &mut Tes
             );
         })
         .unwrap();
+}
+
+#[gpui::test]
+fn discussion_mouse_controls_target_the_clicked_discussion(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let buffer = cx.new(|cx| Buffer::local("first\nmiddle\nlast\n", cx));
+    let window = cx.add_window(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+    let editor = window.root(cx).unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    cx.simulate_resize(gpui::size(px(900.), px(1000.)));
+    editor.update_in(cx, |editor, window, cx| {
+        for (row, comment) in [(0, "First comment"), (2, "Second comment")] {
+            let snapshot = editor.buffer.read(cx).snapshot(cx);
+            let range = snapshot.anchor_after(Point::new(row, 0))
+                ..snapshot.anchor_before(Point::new(row, snapshot.line_len(MultiBufferRow(row))));
+            editor.show_review_overlay_for_anchor_range(
+                range.clone(),
+                Some(Rc::new(|_, _, _| {})),
+                window,
+                cx,
+            );
+            let overlay = editor.diff_review_overlays.last().unwrap();
+            let key = overlay.hunk_key.clone();
+            let input = overlay.prompt_editor.clone();
+            input.update(cx, |input, cx| {
+                input.insert("unfinished follow-up", window, cx)
+            });
+            let id = editor.add_review_comment(key, comment.into(), range, cx);
+            editor.set_inline_review_reply(
+                id,
+                "Pi".into(),
+                "A **reply** to this comment".into(),
+                cx,
+            );
+        }
+    });
+    cx.run_until_parked();
+
+    let close = cx.debug_bounds("ICON-Close").unwrap().center();
+    cx.simulate_click(close, gpui::Modifiers::none());
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(!editor.diff_review_overlays[0].collapsed);
+        assert!(editor.diff_review_overlays[1].collapsed);
+    });
+    let close = cx.debug_bounds("ICON-Close").unwrap().center();
+    cx.simulate_click(close, gpui::Modifiers::none());
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor
+                .diff_review_overlays
+                .iter()
+                .all(|overlay| overlay.collapsed)
+        );
+    });
+
+    let reopen =
+        cx.debug_bounds("review-discussion").unwrap().origin + gpui::point(px(24.), px(8.));
+    cx.simulate_mouse_move(reopen, None, gpui::Modifiers::none());
+    editor.update_in(cx, |editor, window, _| {
+        assert!(
+            !editor
+                .last_position_map
+                .as_ref()
+                .unwrap()
+                .text_hitbox
+                .is_hovered(window)
+        );
+    });
+    cx.simulate_click(reopen, gpui::Modifiers::none());
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        assert!(editor.diff_review_overlays[0].collapsed);
+        assert!(!editor.diff_review_overlays[1].collapsed);
+        assert_eq!(
+            editor.diff_review_overlays[1]
+                .prompt_editor
+                .read(cx)
+                .text(cx),
+            "unfinished follow-up"
+        );
+    });
+
+    let input = editor.read_with(cx, |editor, cx| {
+        editor.diff_review_overlays[1]
+            .prompt_editor
+            .read(cx)
+            .last_position_map
+            .as_ref()
+            .unwrap()
+            .text_hitbox
+            .bounds
+            .center()
+    });
+    cx.simulate_click(input, gpui::Modifiers::none());
+    cx.simulate_input(" typed");
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.diff_review_overlays[1]
+                .prompt_editor
+                .read(cx)
+                .text(cx),
+            "unfinished follow-up typed"
+        );
+        assert_eq!(
+            editor.buffer.read(cx).snapshot(cx).text(),
+            "first\nmiddle\nlast\n"
+        );
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle, cx)
+    });
+    cx.run_until_parked();
+    let header = cx.debug_bounds("review-comments-header").unwrap().center();
+    cx.simulate_click(header, gpui::Modifiers::none());
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.diff_review_overlays[0].comments_expanded);
+        assert!(!editor.diff_review_overlays[1].comments_expanded);
+    });
+    let header = cx.debug_bounds("review-comments-header").unwrap().center();
+    cx.simulate_click(header, gpui::Modifiers::none());
+    cx.run_until_parked();
+    let selections = editor.read_with(cx, |editor, _| {
+        editor.selections.disjoint_anchors().to_vec()
+    });
+    let background =
+        cx.debug_bounds("review-discussion").unwrap().bottom_right() - gpui::point(px(4.), px(4.));
+    cx.simulate_mouse_move(background, None, gpui::Modifiers::none());
+    cx.simulate_click(background, gpui::Modifiers::none());
+    cx.run_until_parked();
+    editor.update_in(cx, |editor, window, _| {
+        assert_eq!(editor.selections.disjoint_anchors(), selections);
+        assert!(
+            !editor
+                .last_position_map
+                .as_ref()
+                .unwrap()
+                .text_hitbox
+                .is_hovered(window)
+        );
+    });
+
+    let submit = cx.debug_bounds("ICON-Return").unwrap().center();
+    cx.simulate_click(submit, gpui::Modifiers::none());
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.stored_review_comments[0].1.len(), 1);
+        assert_eq!(editor.stored_review_comments[1].1.len(), 2);
+        assert_eq!(
+            editor.stored_review_comments[1].1[1].comment,
+            "unfinished follow-up typed"
+        );
+        assert_eq!(
+            editor.diff_review_overlays[0]
+                .prompt_editor
+                .read(cx)
+                .text(cx),
+            "unfinished follow-up"
+        );
+        assert!(
+            editor.diff_review_overlays[1]
+                .prompt_editor
+                .read(cx)
+                .text(cx)
+                .is_empty()
+        );
+    });
 }
 
 #[gpui::test]
