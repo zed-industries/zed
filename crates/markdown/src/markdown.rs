@@ -490,14 +490,20 @@ impl Default for MermaidViewState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum AutoscrollRequest {
+    Reveal(usize),
+    Top(usize),
+}
+
 pub struct Markdown {
     source: SharedString,
     selection: Selection,
     pressed_link: Option<RenderedLink>,
     pressed_footnote_ref: Option<RenderedFootnoteRef>,
-    autoscroll_request: Option<usize>,
+    autoscroll_request: Option<AutoscrollRequest>,
     pending_heading_scroll: Option<SharedString>,
-    pending_autoscroll: Option<usize>,
+    pending_autoscroll: Option<AutoscrollRequest>,
     active_root_block: Option<usize>,
     parsed_markdown: ParsedMarkdown,
     images_by_source_offset: HashMap<usize, Arc<Image>>,
@@ -986,7 +992,7 @@ impl Markdown {
 
     pub fn scroll_to_heading(&mut self, slug: &str, cx: &mut Context<Self>) -> Option<usize> {
         if let Some(source_index) = self.parsed_markdown.heading_slugs.get(slug).copied() {
-            self.autoscroll_request = Some(source_index);
+            self.autoscroll_request = Some(AutoscrollRequest::Reveal(source_index));
             cx.notify();
             Some(source_index)
         } else {
@@ -1031,10 +1037,23 @@ impl Markdown {
         source_index: usize,
         cx: &mut Context<Self>,
     ) {
+        self.request_autoscroll(AutoscrollRequest::Reveal(source_index), cx);
+    }
+
+    /// Align a source position to the top when using a controlled scroll handle.
+    pub fn request_scroll_to_source_index_top(
+        &mut self,
+        source_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_autoscroll(AutoscrollRequest::Top(source_index), cx);
+    }
+
+    fn request_autoscroll(&mut self, request: AutoscrollRequest, cx: &mut Context<Self>) {
         if self.pending_parse.is_some() || self.options.defer_parsing {
-            self.pending_autoscroll = Some(source_index);
+            self.pending_autoscroll = Some(request);
         } else {
-            self.autoscroll_request = Some(source_index);
+            self.autoscroll_request = Some(request);
         }
         cx.refresh_windows();
     }
@@ -1067,8 +1086,8 @@ impl Markdown {
                 if let Some(slug) = self.pending_heading_scroll.take() {
                     self.pending_autoscroll = None;
                     self.scroll_to_heading(&slug, cx);
-                } else if let Some(source_index) = self.pending_autoscroll.take() {
-                    self.autoscroll_request = Some(source_index);
+                } else if let Some(request) = self.pending_autoscroll.take() {
+                    self.autoscroll_request = Some(request);
                     cx.refresh_windows();
                 }
             }
@@ -1439,9 +1458,9 @@ impl Markdown {
                         this.parsed_markdown.heading_slugs.get(&slug).copied()
                 {
                     this.pending_autoscroll = None;
-                    this.autoscroll_request = Some(source_index);
-                } else if let Some(source_index) = this.pending_autoscroll.take() {
-                    this.autoscroll_request = Some(source_index);
+                    this.autoscroll_request = Some(AutoscrollRequest::Reveal(source_index));
+                } else if let Some(request) = this.pending_autoscroll.take() {
+                    this.autoscroll_request = Some(request);
                 }
                 cx.notify();
                 cx.refresh_windows();
@@ -2512,7 +2531,7 @@ impl MarkdownElement {
                     };
                     markdown.selection.set_head(source_index, &rendered_text);
                     markdown.autoscroll_code_block(source_index, event.position);
-                    markdown.autoscroll_request = Some(source_index);
+                    markdown.autoscroll_request = Some(AutoscrollRequest::Reveal(source_index));
                     cx.notify();
                 } else {
                     let is_hitbox_hovered = hitbox.is_hovered(window);
@@ -2558,7 +2577,8 @@ impl MarkdownElement {
                         if let Some(source_index) =
                             markdown.footnote_definition_content_start(&pressed_footnote_ref.label)
                         {
-                            markdown.autoscroll_request = Some(source_index);
+                            markdown.autoscroll_request =
+                                Some(AutoscrollRequest::Reveal(source_index));
                             cx.notify();
                         }
                     } else if let Some(pressed_link) = markdown.pressed_link.take()
@@ -2591,14 +2611,18 @@ impl MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<()> {
-        let autoscroll_index = self.markdown.update(cx, |markdown, _| {
-            let source_index = markdown.autoscroll_request?;
+        let request = self.markdown.update(cx, |markdown, _| {
+            let request = markdown.autoscroll_request?;
             if markdown.has_pending_render() {
                 return None;
             }
             markdown.autoscroll_request = None;
-            Some(source_index)
+            Some(request)
         })?;
+        let (autoscroll_index, align_top) = match request {
+            AutoscrollRequest::Reveal(index) => (index, false),
+            AutoscrollRequest::Top(index) => (index, true),
+        };
         let (position, line_height) = rendered_text.position_for_source_index(autoscroll_index)?;
 
         match &self.autoscroll {
@@ -2609,7 +2633,9 @@ impl MarkdownElement {
                 let bottom_goal = viewport.bottom() - margin;
                 let current_offset = scroll_handle.offset();
 
-                let new_offset_y = if position.y < top_goal {
+                let new_offset_y = if align_top {
+                    current_offset.y + (viewport.top() - position.y)
+                } else if position.y < top_goal {
                     current_offset.y + (top_goal - position.y)
                 } else if position.y + line_height > bottom_goal {
                     current_offset.y + (bottom_goal - (position.y + line_height))
@@ -2617,10 +2643,15 @@ impl MarkdownElement {
                     current_offset.y
                 };
 
-                scroll_handle.set_offset(point(
+                let new_offset = point(
                     current_offset.x,
                     new_offset_y.clamp(-scroll_handle.max_offset().y, Pixels::ZERO),
-                ));
+                );
+                if new_offset != current_offset {
+                    scroll_handle.set_offset(new_offset);
+                    // The text was laid out before its ancestor's scroll offset changed.
+                    window.defer(cx, |window, _| window.refresh());
+                }
             }
             AutoscrollBehavior::Propagate => {
                 let text_style = self.style.base_text_style.clone();
@@ -5322,13 +5353,18 @@ mod tests {
         ensure_theme_initialized(cx);
         let cx = cx.add_empty_window();
 
-        for (initial_source, parse_on_layout) in [("", false), ("obsolete", true)] {
+        for (initial_source, parse_on_layout, request) in [
+            ("", false, AutoscrollRequest::Reveal(9)),
+            ("obsolete", true, AutoscrollRequest::Reveal(9)),
+            ("", false, AutoscrollRequest::Top(9)),
+            ("obsolete", true, AutoscrollRequest::Top(9)),
+        ] {
             let markdown = cx.new(|cx| Markdown::new_deferred(initial_source, None, cx));
             markdown.update(cx, |markdown, cx| {
                 markdown.append("discarded", cx);
                 markdown.reset(SharedString::default(), cx);
                 markdown.append("héllo **world**", cx);
-                markdown.request_autoscroll_to_source_index(9, cx);
+                markdown.request_autoscroll(request, cx);
                 markdown.reset(markdown.source().clone(), cx);
             });
             cx.run_until_parked();
@@ -5336,7 +5372,7 @@ mod tests {
                 assert!(markdown.options.defer_parsing);
                 assert!(!markdown.has_pending_render());
                 assert!(markdown.parsed_markdown.events.is_empty());
-                assert_eq!(markdown.pending_autoscroll, Some(9));
+                assert_eq!(markdown.pending_autoscroll, Some(request));
                 assert_eq!(markdown.autoscroll_request, None);
             });
 
@@ -5369,11 +5405,95 @@ mod tests {
                     vec![0..7, 9..14]
                 );
                 assert_eq!(markdown.pending_autoscroll, None);
-                assert_eq!(markdown.autoscroll_request, Some(9));
+                assert_eq!(markdown.autoscroll_request, Some(request));
                 markdown.ensure_parsed(cx);
                 assert!(!markdown.has_pending_render());
             });
         }
+    }
+
+    #[gpui::test]
+    fn test_source_navigation_aligns_to_top_without_changing_reveal(cx: &mut TestAppContext) {
+        struct ScrollingMarkdown {
+            markdown: Entity<Markdown>,
+            scroll_handle: ScrollHandle,
+            rendered_text: Rc<RefCell<Option<RenderedText>>>,
+        }
+
+        impl Render for ScrollingMarkdown {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let rendered_text = self.rendered_text.clone();
+                div()
+                    .id("scrolling-markdown")
+                    .w(px(600.))
+                    .h(px(400.))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .pb(px(400.))
+                    .child(
+                        MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                            .scroll_handle(self.scroll_handle.clone())
+                            .on_render(move |text| *rendered_text.borrow_mut() = Some(text)),
+                    )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let mut source = "paragraph\n\n".repeat(50);
+        let target = source.len();
+        source.push_str("## Final heading\n\nEnd.\n");
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        let scroll_handle = ScrollHandle::new();
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view(|_, _| ScrollingMarkdown {
+            markdown: markdown.clone(),
+            scroll_handle: scroll_handle.clone(),
+            rendered_text: rendered_text.clone(),
+        });
+        cx.run_until_parked();
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.request_scroll_to_source_index_top(target, cx);
+        });
+        cx.run_until_parked();
+        let target_position = || {
+            rendered_text
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .position_for_source_index(target)
+                .unwrap()
+                .0
+                .y
+        };
+        assert!(
+            (target_position() - scroll_handle.bounds().top()).abs() < px(1.),
+            "heading y {:?}, viewport {:?}, offset {:?}, max {:?}",
+            target_position(),
+            scroll_handle.bounds(),
+            scroll_handle.offset(),
+            scroll_handle.max_offset()
+        );
+        let aligned_offset = scroll_handle.offset();
+
+        let visible_offset = point(aligned_offset.x, aligned_offset.y + px(150.));
+        scroll_handle.set_offset(visible_offset);
+        markdown.update(cx, |markdown, cx| {
+            markdown.request_autoscroll_to_source_index(target, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            scroll_handle.offset(),
+            visible_offset,
+            "ordinary reveal must not move a target that is already visible"
+        );
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.request_scroll_to_source_index_top(target, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(scroll_handle.offset(), aligned_offset);
+        assert!((target_position() - scroll_handle.bounds().top()).abs() < px(1.));
     }
 
     #[gpui::test]

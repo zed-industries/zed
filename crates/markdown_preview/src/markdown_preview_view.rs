@@ -591,10 +591,14 @@ impl MarkdownPreviewView {
                                             || item.item_id() == editor.entity_id()
                                     })
                                 });
-                            let reveal = editor_is_focused
-                                || this.focus_handle.is_focused(window)
-                                || navigating_active_item;
+                            let reveal = editor_is_focused || this.focus_handle.is_focused(window);
                             this.sync_preview_to_source_index(selection_start, reveal, cx);
+                            if navigating_active_item && !reveal {
+                                this.markdown.update(cx, |markdown, cx| {
+                                    markdown
+                                        .request_scroll_to_source_index_top(selection_start, cx);
+                                });
+                            }
                             cx.notify();
                         }
                     }
@@ -1963,6 +1967,8 @@ impl Render for MarkdownPreviewView {
                         .track_scroll(&self.scroll_handle)
                         .restrict_scroll_to_axis()
                         .p_4()
+                        // Leave room to align even the final heading at the viewport top.
+                        .pb(self.scroll_handle.bounds().size.height)
                         .child({
                             let markdown_element =
                                 self.render_markdown_element(&preview_theme, window, cx);
@@ -2930,6 +2936,22 @@ mod tests {
                 "outline navigation must scroll the preview even while the panel has focus"
             );
         });
+        let aligned_offset = preview.read_with(cx, |preview, _| preview.scroll_handle.offset());
+        cx.update(|window, cx| {
+            preview
+                .read(cx)
+                .scroll_handle
+                .set_offset(Default::default());
+            MarkdownPreviewView::change_selection_to_source_index(
+                &editor, target, false, window, cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            preview.read_with(cx, |preview, _| preview.scroll_handle.offset()),
+            aligned_offset,
+            "repeated outline navigation must restore alignment after manual scrolling"
+        );
         cx.update(|window, cx| {
             assert!(panel_focus.is_focused(window));
             let workspace = preview.read(cx).workspace.upgrade().unwrap();
@@ -2941,9 +2963,12 @@ mod tests {
             MarkdownPreviewView::change_selection_to_source_index(&editor, 0, false, window, cx);
         });
         cx.run_until_parked();
-        assert_eq!(
-            preview.read_with(cx, |preview, _| preview.scroll_handle.offset().y),
-            px(0.),
+        let first_heading_offset = preview.read_with(cx, |preview, _| {
+            assert_eq!(preview.active_source_index, Some(0));
+            preview.scroll_handle.offset()
+        });
+        assert!(
+            first_heading_offset.y > aligned_offset.y,
             "a second outline click must be able to navigate back to the first heading"
         );
         cx.update(|window, cx| {
@@ -2970,8 +2995,8 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(
-            preview.read_with(cx, |preview, _| preview.scroll_handle.offset().y),
-            px(0.),
+            preview.read_with(cx, |preview, _| preview.scroll_handle.offset()),
+            first_heading_offset,
             "background selection changes must not scroll an inactive document's preview"
         );
         editor.read_with(cx, |editor, cx| {
