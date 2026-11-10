@@ -3,11 +3,11 @@ use collections::HashMap;
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt};
 use language_model_core::{
-    CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
-    LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, LanguageModelToolUseInput, MessageContent, ProviderCompactionState, Role,
-    SharedString, StopReason, TokenUsage,
+    CompactedContext, CompactionUpdate, DroppedThinkingBlock, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelRequest, LanguageModelRequestToolInput, LanguageModelToolChoice,
+    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseInput,
+    MessageContent, ProviderCompactionState, Role, SharedString, StopReason, TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
@@ -17,9 +17,10 @@ use std::sync::Arc;
 use crate::{
     AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
     CacheTtl, CompactionTrigger, ContentDelta, ContextManagement, ContextManagementEdit, Event,
-    ImageSource, Message, PrefixMismatchBehavior, RequestContent, ResponseContent,
-    StringOrContents, Thinking, ThinkingBlockBinding, Tool, ToolChoice, ToolResultContent,
-    ToolResultPart, Usage, completion_error_from_anthropic, completion_error_from_anthropic_api,
+    ImageSource, InputTransformationKind, Message, PrefixMismatchBehavior, RequestContent,
+    ResponseContent, StringOrContents, Thinking, ThinkingBlockBinding, Tool, ToolChoice,
+    ToolResultContent, ToolResultPart, Usage, completion_error_from_anthropic,
+    completion_error_from_anthropic_api,
 };
 
 pub const COMPACTION_STATE_FORMAT: &str = "anthropic.messages.encrypted-content.v1";
@@ -108,6 +109,7 @@ pub async fn collect_compaction_result(
             | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
             | LanguageModelCompletionEvent::StartMessage { .. }
             | LanguageModelCompletionEvent::ReasoningDetails(_)
+            | LanguageModelCompletionEvent::ThinkingDropped(_)
             | LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started)
             | LanguageModelCompletionEvent::Compaction(CompactionUpdate::SummaryDelta(_)) => {}
         }
@@ -728,14 +730,31 @@ impl AnthropicEventMapper {
             }
             Event::MessageStart { message } => {
                 update_usage(&mut self.usage, &message.usage);
-                vec![
+                let dropped_thinking_blocks = message
+                    .input_transformations
+                    .into_iter()
+                    .filter(|transformation| {
+                        transformation.kind == InputTransformationKind::ThinkingDropped
+                    })
+                    .map(|transformation| DroppedThinkingBlock {
+                        path: transformation.path,
+                        reason: transformation.reason,
+                    })
+                    .collect::<Vec<_>>();
+                let mut events = vec![
                     Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
                         &self.usage,
                     ))),
                     Ok(LanguageModelCompletionEvent::StartMessage {
                         message_id: message.id,
                     }),
-                ]
+                ];
+                if !dropped_thinking_blocks.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::ThinkingDropped(
+                        dropped_thinking_blocks,
+                    )));
+                }
+                events
             }
             Event::MessageDelta { delta, usage } => {
                 update_usage(&mut self.usage, &usage);
@@ -1849,6 +1868,56 @@ mod tests {
             vec![LanguageModelCompletionEvent::Compaction(
                 CompactionUpdate::Failed
             )]
+        );
+    }
+
+    #[test]
+    fn test_event_mapper_reports_dropped_thinking_blocks() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "message_start",
+            "message": {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "claude-fable-5-1",
+                "usage": { "input_tokens": 10, "output_tokens": 0 },
+                "input_transformations": [
+                    {
+                        "type": "thinking_dropped",
+                        "path": "messages.1.content.0",
+                        "reason": "prefix_binding_mismatch"
+                    },
+                    {
+                        "type": "thinking_mismatch_allowed",
+                        "path": "messages.3.content.0",
+                        "reason": "prefix_binding_mismatch"
+                    },
+                    {
+                        "type": "some_future_transformation",
+                        "path": "messages.5.content.0",
+                        "reason": "some_future_reason"
+                    }
+                ]
+            }
+        }))
+        .unwrap();
+
+        let events = mapper
+            .map_event(start_event)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(
+            events.last(),
+            Some(&LanguageModelCompletionEvent::ThinkingDropped(vec![
+                DroppedThinkingBlock {
+                    path: "messages.1.content.0".into(),
+                    reason: "prefix_binding_mismatch".into(),
+                }
+            ]))
         );
     }
 

@@ -66,6 +66,18 @@ pub enum LanguageModelCompletionEvent {
     ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
     Compaction(CompactionUpdate),
+    /// The provider removed thinking blocks from the request before the model
+    /// read them, so the model answered without that earlier reasoning.
+    ThinkingDropped(Vec<DroppedThinkingBlock>),
+}
+
+/// A thinking block the provider removed from a request.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct DroppedThinkingBlock {
+    /// Provider-specific location of the block, such as `messages.1.content.0`.
+    pub path: String,
+    /// Provider-specific reason, such as `prefix_binding_mismatch`.
+    pub reason: String,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
