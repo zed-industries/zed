@@ -783,7 +783,8 @@ impl TextMeasure {
         };
         let len = text.len();
 
-        let Some(lines) = window
+        // Text that fails to shape is measured as empty.
+        let (lines, len) = window
             .text_system()
             .shape_text(
                 text,
@@ -793,20 +794,8 @@ impl TextMeasure {
                 text_style.line_clamp, // Limit the number of lines if line_clamp is set.
             )
             .log_err()
-        else {
-            if final_layout || element_state.0.borrow().is_none() {
-                element_state.0.borrow_mut().replace(TextLayoutInner {
-                    lines: Default::default(),
-                    len: 0,
-                    line_height,
-                    wrap_width,
-                    truncate_width,
-                    size: Some(Size::default()),
-                    bounds: None,
-                });
-            }
-            return Size::default();
-        };
+            .map(|lines| (lines, len))
+            .unwrap_or_default();
 
         let mut size: Size<Pixels> = Size::default();
         for line in &lines {

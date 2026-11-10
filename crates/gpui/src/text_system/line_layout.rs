@@ -607,7 +607,10 @@ impl LineLayoutCache {
         // text is shaped in another element, as when rows of a list move between elements,
         // it would otherwise be shaped from scratch. Wrapped lines go first, since their
         // unwrapped lines are held by the wrapped lines kept.
-        keep_held_layouts(&mut previous_frame.wrapped_lines, &mut current_frame.wrapped_lines);
+        keep_held_layouts(
+            &mut previous_frame.wrapped_lines,
+            &mut current_frame.wrapped_lines,
+        );
         keep_held_layouts(&mut previous_frame.lines, &mut current_frame.lines);
         current_frame.used_lines.clear();
         current_frame.used_wrapped_lines.clear();
