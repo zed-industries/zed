@@ -8,8 +8,8 @@ use futures::{
     io::BufReader,
 };
 use gpui::{App, Entity, Task, Window};
+use jupyter_protocol::{ExecutionState, JupyterMessage, KernelInfoReply};
 use project::Project;
-use runtimelib::{ExecutionState, JupyterMessage, KernelInfoReply};
 use std::path::PathBuf;
 use util::ResultExt;
 
@@ -206,7 +206,7 @@ impl SshRunningKernel {
             )?;
 
             // Parse connection info and create ZMQ connections
-            let connection_info_struct: runtimelib::ConnectionInfo =
+            let connection_info_struct: jupyter_protocol::ConnectionInfo =
                 serde_json::from_value(local_connection_info)?;
             let session_id = uuid::Uuid::new_v4().to_string();
 
@@ -214,7 +214,7 @@ impl SshRunningKernel {
                 let max_retries = 5;
                 let mut retry = 0;
                 loop {
-                    match runtimelib::create_client_iopub_connection(
+                    match jupyter_zmq_client::create_client_iopub_connection(
                         &connection_info_struct,
                         "",
                         &session_id,
@@ -243,8 +243,8 @@ impl SshRunningKernel {
                 }
             };
 
-            let peer_identity = runtimelib::peer_identity_for_session(&session_id)?;
-            let shell_socket = runtimelib::create_client_shell_connection_with_identity(
+            let peer_identity = jupyter_zmq_client::peer_identity_for_session(&session_id)?;
+            let shell_socket = jupyter_zmq_client::create_client_shell_connection_with_identity(
                 &connection_info_struct,
                 &session_id,
                 peer_identity.clone(),
@@ -252,10 +252,10 @@ impl SshRunningKernel {
             .await
             .context("failed to create shell connection")?;
             let control_socket =
-                runtimelib::create_client_control_connection(&connection_info_struct, &session_id)
+                jupyter_zmq_client::create_client_control_connection(&connection_info_struct, &session_id)
                     .await
                     .context("failed to create control connection")?;
-            let stdin_socket = runtimelib::create_client_stdin_connection_with_identity(
+            let stdin_socket = jupyter_zmq_client::create_client_stdin_connection_with_identity(
                 &connection_info_struct,
                 &session_id,
                 peer_identity,

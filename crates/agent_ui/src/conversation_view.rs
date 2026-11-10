@@ -9840,10 +9840,11 @@ pub(crate) mod tests {
         assert!(cx.debug_bounds("plan-status-All Done").is_none());
         thread.update(cx, |thread, cx| {
             thread.upsert_plan_items(acp_v2::PlanItems::new("status-plan", vec![]), None, cx);
+            assert!(thread.plan().is_none());
             assert!(
                 thread
-                    .plan()
-                    .expect("empty selected plan")
+                    .plan_by_id(&"status-plan".into())
+                    .expect("emptied plan")
                     .entries()
                     .is_empty()
             );

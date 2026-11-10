@@ -618,10 +618,10 @@ impl PickerDelegate for CommandPaletteDelegate {
                 let mut matches = fuzzy_nucleo::match_strings_async(
                     &candidates,
                     &query,
-                    fuzzy_nucleo::Case::Smart,
-                    fuzzy_nucleo::LengthPenalty::On,
-                    10000,
-                    &Default::default(),
+                    fuzzy_nucleo::StringMatchOptions {
+                        max_results: fuzzy_nucleo::MaxResults::limit::<10_000>(),
+                        ..Default::default()
+                    },
                     executor,
                 )
                 .await;
