@@ -26,6 +26,9 @@ pub(crate) struct DirectManipulationHandler {
     window: HWND,
     scale_factor: Rc<Cell<f32>>,
     pending_events: Rc<RefCell<Vec<PlatformInput>>>,
+    /// Whether a gesture is in progress (from its first contact until its inertia ends), during
+    /// which the viewport must be updated every frame.
+    gesture_active: Rc<Cell<bool>>,
 }
 
 impl DirectManipulationHandler {
@@ -65,12 +68,14 @@ impl DirectManipulationHandler {
 
             let scale_factor = Rc::new(Cell::new(scale_factor));
             let pending_events = Rc::new(RefCell::new(Vec::new()));
+            let gesture_active = Rc::new(Cell::new(false));
 
             let event_handler: IDirectManipulationViewportEventHandler =
                 DirectManipulationEventHandler::new(
                     window,
                     Rc::clone(&scale_factor),
                     Rc::clone(&pending_events),
+                    Rc::clone(&gesture_active),
                 )
                 .into();
 
@@ -86,6 +91,7 @@ impl DirectManipulationHandler {
                 window,
                 scale_factor,
                 pending_events,
+                gesture_active,
             })
         }
     }
@@ -94,15 +100,26 @@ impl DirectManipulationHandler {
         self.scale_factor.set(scale_factor);
     }
 
-    pub fn on_pointer_hit_test(&self, wparam: WPARAM) {
+    /// Hands a touchpad contact to Direct Manipulation. Returns whether it did, starting a
+    /// gesture that needs [`Self::update`] every frame.
+    pub fn on_pointer_hit_test(&self, wparam: WPARAM) -> bool {
         unsafe {
             let pointer_id = wparam.loword() as u32;
             let mut pointer_type = POINTER_INPUT_TYPE::default();
-            if GetPointerType(pointer_id, &mut pointer_type).is_ok() && pointer_type == PT_TOUCHPAD
+            if GetPointerType(pointer_id, &mut pointer_type).is_ok()
+                && pointer_type == PT_TOUCHPAD
+                && self.viewport.SetContact(pointer_id).log_err().is_some()
             {
-                self.viewport.SetContact(pointer_id).log_err();
+                self.gesture_active.set(true);
+                return true;
             }
         }
+        false
+    }
+
+    /// Whether a gesture is in progress, so [`Self::update`] must run every frame.
+    pub fn is_gesture_active(&self) -> bool {
+        self.gesture_active.get()
     }
 
     pub fn update(&self) {
@@ -143,6 +160,7 @@ struct DirectManipulationEventHandler {
     last_y_offset: Cell<f32>,
     scroll_phase: Cell<TouchPhase>,
     pending_events: Rc<RefCell<Vec<PlatformInput>>>,
+    gesture_active: Rc<Cell<bool>>,
 }
 
 impl DirectManipulationEventHandler {
@@ -150,6 +168,7 @@ impl DirectManipulationEventHandler {
         window: HWND,
         scale_factor: Rc<Cell<f32>>,
         pending_events: Rc<RefCell<Vec<PlatformInput>>>,
+        gesture_active: Rc<Cell<bool>>,
     ) -> Self {
         Self {
             window,
@@ -160,6 +179,7 @@ impl DirectManipulationEventHandler {
             last_y_offset: Cell::new(0.0),
             scroll_phase: Cell::new(TouchPhase::Started),
             pending_events,
+            gesture_active,
         }
     }
 
@@ -214,6 +234,12 @@ impl IDirectManipulationViewportEventHandler_Impl for DirectManipulationEventHan
         if current == previous {
             return Ok(());
         }
+
+        // Running and inertia need an update every frame. The `ZoomToRect`
+        // reset below runs once more before the viewport is ready again.
+        self.gesture_active.set(
+            current == DIRECTMANIPULATION_RUNNING || current == DIRECTMANIPULATION_INERTIA,
+        );
 
         // A new gesture interrupted inertia, so end the old sequence.
         if current == DIRECTMANIPULATION_RUNNING && previous == DIRECTMANIPULATION_INERTIA {
