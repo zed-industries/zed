@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use collections::{FxHashMap, FxHashSet};
-use slotmap::{DefaultKey, KeyData, SecondaryMap, SlotMap};
+use slotmap::{DefaultKey, KeyData, SecondaryMap};
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Range};
 use taffy::{
@@ -131,54 +131,15 @@ struct CachedNode {
     stretched: bool,
 }
 
-/// The layout nodes of one `.cached()` view's contents, or, for the root owner, of
-/// everything not inside such a view.
-///
-/// A cached view that isn't rendered again replays its last frame without requesting
-/// any layout, so its nodes are retained as they were, without being compared, and stay
-/// clean in Taffy for when it next renders.
 #[derive(Default)]
-struct LayoutOwner {
-    key: u64,
-    scopes: FxHashMap<u64, LayoutScope>,
-    /// The last frame this owner's nodes were requested or retained in.
-    frame: u64,
-    /// Whether its nodes were requested in `frame`, rather than retained.
-    laid_out: bool,
-    /// The owners laid out or retained while this one was last laid out, which are
-    /// retained along with it.
-    nested: SmallVec<[DefaultKey; 2]>,
-}
-
 struct LayoutCache {
-    owners: SlotMap<DefaultKey, LayoutOwner>,
-    owner_keys: FxHashMap<u64, DefaultKey>,
-    root_owner: DefaultKey,
-    current_owner: DefaultKey,
-    owner_stack: Vec<DefaultKey>,
+    scopes: FxHashMap<u64, LayoutScope>,
     nodes: SecondaryMap<DefaultKey, CachedNode>,
     /// Nodes no element requested last frame, detached from the tree. A request that
     /// misses reuses one before allocating, and those still unused at the end of this
     /// frame are removed.
     free_nodes: Vec<NodeId>,
     frame: u64,
-}
-
-impl Default for LayoutCache {
-    fn default() -> Self {
-        let mut owners = SlotMap::default();
-        let root_owner = owners.insert(LayoutOwner::default());
-        Self {
-            owners,
-            owner_keys: FxHashMap::default(),
-            root_owner,
-            current_owner: root_owner,
-            owner_stack: Vec::new(),
-            nodes: SecondaryMap::default(),
-            free_nodes: Vec::new(),
-            frame: 0,
-        }
-    }
 }
 
 fn node_key(id: NodeId) -> DefaultKey {
@@ -228,22 +189,6 @@ impl TaffyLayoutEngine {
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
         self.computed_layouts.clear();
-    }
-
-    /// Requests the layout nodes of a `.cached()` view's contents, identified by `key`,
-    /// until [`Self::end_layout_owner`].
-    pub(crate) fn begin_layout_owner(&mut self, key: u64) {
-        self.cache.begin_owner(key);
-    }
-
-    pub(crate) fn end_layout_owner(&mut self) {
-        self.cache.end_owner();
-    }
-
-    /// Keeps the layout nodes of a `.cached()` view that replays its last frame, as
-    /// they were, until it is laid out again.
-    pub(crate) fn retain_layout_owner(&mut self, key: u64) {
-        self.cache.retain_owner(key);
     }
 
     pub fn request_layout(
@@ -306,10 +251,7 @@ impl TaffyLayoutEngine {
         let cache = &mut self.cache;
 
         let frame = cache.frame;
-        let scope = cache.owners[cache.current_owner]
-            .scopes
-            .entry(scope)
-            .or_default();
+        let scope = cache.scopes.entry(scope).or_default();
         if scope.frame != frame {
             scope.frame = frame;
             scope.requested = 0;
@@ -695,47 +637,6 @@ impl TaffyLayoutEngine {
 }
 
 impl LayoutCache {
-    fn begin_owner(&mut self, key: u64) {
-        let owners = &mut self.owners;
-        let owner = *self.owner_keys.entry(key).or_insert_with(|| {
-            owners.insert(LayoutOwner {
-                key,
-                ..Default::default()
-            })
-        });
-        let parent = std::mem::replace(&mut self.current_owner, owner);
-        self.owner_stack.push(parent);
-        self.owners[parent].nested.push(owner);
-        let owner = &mut self.owners[owner];
-        owner.frame = self.frame;
-        owner.laid_out = true;
-        owner.nested.clear();
-    }
-
-    fn end_owner(&mut self) {
-        if let Some(parent) = self.owner_stack.pop() {
-            self.current_owner = parent;
-        }
-    }
-
-    fn retain_owner(&mut self, key: u64) {
-        let Some(&owner) = self.owner_keys.get(&key) else {
-            return;
-        };
-        self.owners[self.current_owner].nested.push(owner);
-        let mut retained = SmallVec::<[DefaultKey; 8]>::new();
-        retained.push(owner);
-        while let Some(owner) = retained.pop() {
-            if let Some(owner) = self.owners.get_mut(owner)
-                && owner.frame != self.frame
-            {
-                owner.frame = self.frame;
-                owner.laid_out = false;
-                retained.extend(owner.nested.iter().copied());
-            }
-        }
-    }
-
     fn evict_unrequested(
         &mut self,
         taffy: &mut TaffyTree,
@@ -747,35 +648,15 @@ impl LayoutCache {
         }
 
         let frame = self.frame;
-        debug_assert!(self.owner_stack.is_empty(), "layout owner not ended");
-        self.current_owner = self.root_owner;
-        let root_owner = &mut self.owners[self.root_owner];
-        root_owner.frame = frame;
-        root_owner.laid_out = true;
-        root_owner.nested.clear();
-
         let free_nodes = &mut self.free_nodes;
-        let owner_keys = &mut self.owner_keys;
-        self.owners.retain(|_, owner| {
-            if owner.frame != frame {
-                for scope in owner.scopes.values_mut() {
-                    free_nodes.extend(scope.nodes.drain(..));
-                }
-                owner_keys.remove(&owner.key);
-                return false;
-            }
-            if owner.laid_out {
-                owner.scopes.retain(|_, scope| {
-                    let requested = if scope.frame == frame {
-                        scope.requested
-                    } else {
-                        0
-                    };
-                    free_nodes.extend(scope.nodes.drain(requested..));
-                    requested > 0
-                });
-            }
-            true
+        self.scopes.retain(|_, scope| {
+            let requested = if scope.frame == frame {
+                scope.requested
+            } else {
+                0
+            };
+            free_nodes.extend(scope.nodes.drain(requested..));
+            requested > 0
         });
 
         // Every node an element requested this frame had its children set to nodes also
@@ -1578,59 +1459,6 @@ mod tests {
             node_counts.windows(2).all(|pair| pair[0] == pair[1]),
             "{node_counts:?}"
         );
-    }
-
-    struct CachedText;
-
-    impl Render for CachedText {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div().child("Text inside a cached view")
-        }
-    }
-
-    struct CachedViewParent {
-        child: crate::Entity<CachedText>,
-    }
-
-    impl Render for CachedViewParent {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div().flex().child(div().size(px(10.))).child(
-                self.child
-                    .clone()
-                    .cached(crate::StyleRefinement::default().size_full()),
-            )
-        }
-    }
-
-    #[crate::test]
-    fn cached_views_keep_their_layout_while_replaying(cx: &mut TestAppContext) {
-        let window = cx.open_window(size(px(800.), px(600.)), |_, cx| CachedViewParent {
-            child: cx.new(|_| CachedText),
-        });
-        let parent = window.root(cx).expect("window should have a root");
-        let child = parent.read_with(cx, |parent, _| parent.child.clone());
-        let draw = |cx: &mut TestAppContext| {
-            cx.update_window(window.into(), |_, window, cx| {
-                let measured_before = MEASUREMENTS.get();
-                window.draw(cx).clear(cx);
-                (
-                    window.layout_node_count(),
-                    MEASUREMENTS.get() - measured_before,
-                )
-            })
-            .expect("window should remain open")
-        };
-
-        child.update(cx, |_, cx| cx.notify());
-        let (node_count, _) = draw(cx);
-        // The child replays its last frame in these, requesting no layout.
-        for _ in 0..3 {
-            parent.update(cx, |_, cx| cx.notify());
-            assert_eq!(draw(cx), (node_count, 0));
-        }
-        // Its nodes were kept, so its unchanged text isn't measured again.
-        child.update(cx, |_, cx| cx.notify());
-        assert_eq!(draw(cx), (node_count, 0));
     }
 
     #[test]
