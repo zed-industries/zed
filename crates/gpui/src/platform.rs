@@ -214,6 +214,17 @@ pub fn guess_compositor() -> &'static str {
     GraphicalEnvironment::detect().guess_compositor()
 }
 
+/// Returns the desktop environment named by `XDG_CURRENT_DESKTOP`, if set.
+///
+/// The value is a colon-separated list ordered from most to least specific,
+/// such as `ubuntu:GNOME`.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub fn desktop_environment() -> Option<String> {
+    std::env::var("XDG_CURRENT_DESKTOP")
+        .ok()
+        .filter(|desktop| !desktop.is_empty())
+}
+
 /// The graphical session to connect to: the variables that locate its display server, as some
 /// process sees them.
 ///
