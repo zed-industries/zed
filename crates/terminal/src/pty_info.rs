@@ -1,6 +1,13 @@
 use gpui::{Context, Task};
 use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 #[cfg(target_os = "windows")]
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
@@ -72,6 +79,14 @@ pub(crate) struct ProcessInfo {
     pub(crate) argv: Vec<String>,
 }
 
+/// Minimum time between two refreshes of a terminal's process info.
+///
+/// A terminal asks for a refresh on every `Wakeup`, so one that keeps printing
+/// (a build, a spinner) would refresh back to back. On Windows each refresh
+/// snapshots every process on the machine (sysinfo uses
+/// `CreateToolhelp32Snapshot`), which costs several milliseconds of CPU.
+const MIN_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
+
 /// Fetches Zed-relevant Pseudo-Terminal (PTY) process information
 pub(crate) struct PtyProcessInfo {
     system: RwLock<System>,
@@ -80,6 +95,9 @@ pub(crate) struct PtyProcessInfo {
     last_foreground_pid: Mutex<Option<Pid>>,
     pub(crate) current: RwLock<Option<ProcessInfo>>,
     task: Mutex<Option<Task<()>>>,
+    refresh_requested: AtomicBool,
+    #[cfg(test)]
+    load_count: std::sync::atomic::AtomicUsize,
 }
 
 impl PtyProcessInfo {
@@ -111,6 +129,9 @@ impl PtyProcessInfo {
             last_foreground_pid: Mutex::new(None),
             current: RwLock::new(None),
             task: Mutex::new(None),
+            refresh_requested: AtomicBool::new(false),
+            #[cfg(test)]
+            load_count: Default::default(),
         }
     }
 
@@ -175,6 +196,8 @@ impl PtyProcessInfo {
     }
 
     fn load(&self) -> Option<ProcessInfo> {
+        #[cfg(test)]
+        self.load_count.fetch_add(1, Ordering::Relaxed);
         let process = self.refresh()?;
         let cwd = process.cwd().map_or(PathBuf::new(), |p| p.to_owned());
 
@@ -199,41 +222,57 @@ impl PtyProcessInfo {
     /// Updates the cached process info, emitting a [`Event::TitleChanged`] event if the Zed-relevant info has changed
     pub(crate) fn emit_title_changed_if_changed(self: &Arc<Self>, cx: &mut Context<'_, Terminal>) {
         if self.task.lock().is_some() {
+            self.refresh_requested.store(true, Ordering::Relaxed);
             return;
         }
-        let this = self.clone();
-        let change_task = cx.background_executor().spawn(async move {
-            let previous = this.current.read().clone();
-            let current = this.load();
-            let has_changed = match (previous.as_ref(), current.as_ref()) {
-                (None, None) => false,
-                (Some(prev), Some(now)) => prev.cwd != now.cwd || prev.name != now.name,
-                _ => true,
-            };
-            if has_changed {
-                *this.current.write() = current.clone();
-            }
-            let changed_cwd = match (previous.as_ref(), current.as_ref()) {
-                (Some(prev), Some(now)) if prev.cwd != now.cwd => Some(now.cwd.clone()),
-                (None, Some(now)) => Some(now.cwd.clone()),
-                _ => None,
-            };
-            (has_changed, changed_cwd)
-        });
         let this = Arc::downgrade(self);
         *self.task.lock() = Some(cx.spawn(async move |term, cx| {
-            let (has_changed, new_cwd) = change_task.await;
-            if has_changed {
-                term.update(cx, |terminal, cx| {
-                    if let Some(cwd) = new_cwd {
-                        terminal.record_cwd_change(cwd);
-                    }
-                    cx.emit(Event::TitleChanged);
-                })
-                .ok();
-            }
-            if let Some(this) = this.upgrade() {
-                this.task.lock().take();
+            loop {
+                let Some(info) = this.upgrade() else {
+                    return;
+                };
+                let (has_changed, new_cwd) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let previous = info.current.read().clone();
+                        let current = info.load();
+                        let has_changed = match (previous.as_ref(), current.as_ref()) {
+                            (None, None) => false,
+                            (Some(prev), Some(now)) => prev.cwd != now.cwd || prev.name != now.name,
+                            _ => true,
+                        };
+                        if has_changed {
+                            *info.current.write() = current.clone();
+                        }
+                        let changed_cwd = match (previous.as_ref(), current.as_ref()) {
+                            (Some(prev), Some(now)) if prev.cwd != now.cwd => Some(now.cwd.clone()),
+                            (None, Some(now)) => Some(now.cwd.clone()),
+                            _ => None,
+                        };
+                        (has_changed, changed_cwd)
+                    })
+                    .await;
+                if has_changed {
+                    term.update(cx, |terminal, cx| {
+                        if let Some(cwd) = new_cwd {
+                            terminal.record_cwd_change(cwd);
+                        }
+                        cx.emit(Event::TitleChanged);
+                    })
+                    .ok();
+                }
+
+                // Wakeups that arrive meanwhile are answered by one more
+                // refresh once the interval has passed, so the last change
+                // is still picked up.
+                cx.background_executor().timer(MIN_REFRESH_INTERVAL).await;
+                let Some(info) = this.upgrade() else {
+                    return;
+                };
+                if !info.refresh_requested.swap(false, Ordering::Relaxed) {
+                    info.task.lock().take();
+                    return;
+                }
             }
         }));
     }
@@ -243,9 +282,10 @@ impl PtyProcessInfo {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{AppContext as _, TestAppContext};
 
     /// Regression test for <https://github.com/zed-industries/zed/issues/58651>:
     /// on Linux, sysinfo keeps an open `/proc/<pid>/stat` handle for every
@@ -253,6 +293,7 @@ mod tests {
     /// absent from the refreshed pid set. The per-terminal `System` must
     /// therefore not snapshot every process on the machine, nor accumulate an
     /// entry per foreground process that has ever run in this terminal.
+    #[cfg(unix)]
     #[test]
     #[allow(
         clippy::disallowed_methods,
@@ -288,5 +329,56 @@ mod tests {
             churned_len <= 2,
             "foreground process churn retained {churned_len} process entries"
         );
+    }
+
+    #[gpui::test]
+    async fn busy_terminal_refreshes_process_info_at_most_once_per_interval(
+        cx: &mut TestAppContext,
+    ) {
+        let terminal = cx.new(|cx| {
+            crate::TerminalBuilder::new_display_only(
+                crate::terminal_settings::CursorShape::default(),
+                crate::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                util::paths::PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        let info = Arc::new(PtyProcessInfo::new(ProcessIdGetter::new(
+            -1,
+            std::process::id(),
+        )));
+        let load_count = || info.load_count.load(Ordering::Relaxed);
+
+        // One second of output, delivered as a `Wakeup` every 4 ms (the
+        // terminal batches PTY events over 4 ms windows).
+        let wakeup_period = Duration::from_millis(4);
+        let wakeups = 250;
+        for _ in 0..wakeups {
+            terminal.update(cx, |_, cx| info.emit_title_changed_if_changed(cx));
+            cx.run_until_parked();
+            cx.executor().advance_clock(wakeup_period);
+        }
+        for _ in 0..3 {
+            cx.executor().advance_clock(MIN_REFRESH_INTERVAL);
+            cx.run_until_parked();
+        }
+
+        let busy_time = wakeup_period * wakeups;
+        let max_loads = (busy_time.as_millis() / MIN_REFRESH_INTERVAL.as_millis()) as usize + 2;
+        assert!(
+            load_count() <= max_loads,
+            "{wakeups} wakeups over {busy_time:?} refreshed the process info {} times",
+            load_count()
+        );
+        assert!(info.task.lock().is_none());
+
+        // Once the terminal is quiet again, the next wakeup refreshes immediately.
+        let before = load_count();
+        terminal.update(cx, |_, cx| info.emit_title_changed_if_changed(cx));
+        cx.run_until_parked();
+        assert_eq!(load_count(), before + 1);
     }
 }
