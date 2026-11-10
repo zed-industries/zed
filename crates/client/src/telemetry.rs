@@ -107,7 +107,36 @@ static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$").unwrap()
 });
 
-pub fn os_name() -> String {
+/// Returns the OS name, including the display server the platform connected to.
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "freebsd")),
+    expect(unused_variables)
+)]
+pub fn os_name(cx: &App) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        "macOS".to_string()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        format!("Linux {}", cx.compositor_name())
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        format!("FreeBSD {}", cx.compositor_name())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        "Windows".to_string()
+    }
+}
+
+/// Returns the OS name, guessing the display server from the environment.
+///
+/// Prefer [`os_name`] once an [`App`] exists; the platform may connect to a
+/// different display server than the environment suggests.
+pub fn guessed_os_name() -> String {
     #[cfg(target_os = "macos")]
     {
         "macOS".to_string()
@@ -207,7 +236,7 @@ impl Telemetry {
             worktrees_with_project_type_events_sent: HashSet::new(),
 
             os_version: None,
-            os_name: os_name(),
+            os_name: os_name(cx),
             desktop_environment: gpui::desktop_environment(),
             app_version: release_channel::AppVersion::global(cx).to_string(),
             subscribers: Vec::new(),
@@ -367,16 +396,7 @@ impl Telemetry {
         state.installation_id = installation_id.map(|id| id.into());
         state.session_id = Some(session_id);
         state.app_version = release_channel::AppVersion::global(cx).to_string();
-        // The platform may have connected to a different display server than
-        // `os_name` guesses from the environment.
-        #[cfg(target_os = "linux")]
-        {
-            state.os_name = format!("Linux {}", cx.compositor_name());
-        }
-        #[cfg(target_os = "freebsd")]
-        {
-            state.os_name = format!("FreeBSD {}", cx.compositor_name());
-        }
+        state.os_name = os_name(cx);
     }
 
     pub fn metrics_enabled(self: &Arc<Self>) -> bool {
