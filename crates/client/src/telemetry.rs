@@ -107,64 +107,23 @@ static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$").unwrap()
 });
 
-/// Returns the OS name, guessing the display server from the environment.
-///
-/// Prefer [`connected_os_name`] once an [`App`] exists, since the platform may
-/// connect to a different display server than the environment suggests.
 pub fn os_name() -> String {
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    {
-        os_name_with_compositor(gpui::guess_compositor())
-    }
     #[cfg(target_os = "macos")]
     {
         "macOS".to_string()
     }
+    #[cfg(target_os = "linux")]
+    {
+        format!("Linux {}", gpui::guess_compositor())
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        format!("FreeBSD {}", gpui::guess_compositor())
+    }
+
     #[cfg(target_os = "windows")]
     {
         "Windows".to_string()
-    }
-}
-
-/// Returns the OS name, including the display server the platform connected to.
-#[cfg_attr(
-    not(any(target_os = "linux", target_os = "freebsd")),
-    expect(unused_variables)
-)]
-pub fn connected_os_name(cx: &App) -> String {
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    {
-        os_name_with_compositor(cx.compositor_name())
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-    {
-        os_name()
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-fn os_name_with_compositor(compositor: &str) -> String {
-    let os = if cfg!(target_os = "linux") {
-        "Linux"
-    } else {
-        "FreeBSD"
-    };
-    // Keep the capitalization `guess_compositor` has always reported.
-    let compositor = match compositor {
-        "" | "headless" => "Headless",
-        compositor => compositor,
-    };
-    format!("{os} {compositor}")
-}
-
-fn desktop_environment() -> Option<String> {
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    {
-        gpui::desktop_environment()
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-    {
-        None
     }
 }
 
@@ -249,7 +208,7 @@ impl Telemetry {
 
             os_version: None,
             os_name: os_name(),
-            desktop_environment: desktop_environment(),
+            desktop_environment: gpui::desktop_environment(),
             app_version: release_channel::AppVersion::global(cx).to_string(),
             subscribers: Vec::new(),
         }));
@@ -408,7 +367,16 @@ impl Telemetry {
         state.installation_id = installation_id.map(|id| id.into());
         state.session_id = Some(session_id);
         state.app_version = release_channel::AppVersion::global(cx).to_string();
-        state.os_name = connected_os_name(cx);
+        // The platform may have connected to a different display server than
+        // `os_name` guesses from the environment.
+        #[cfg(target_os = "linux")]
+        {
+            state.os_name = format!("Linux {}", cx.compositor_name());
+        }
+        #[cfg(target_os = "freebsd")]
+        {
+            state.os_name = format!("FreeBSD {}", cx.compositor_name());
+        }
     }
 
     pub fn metrics_enabled(self: &Arc<Self>) -> bool {

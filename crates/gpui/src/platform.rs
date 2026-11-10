@@ -217,8 +217,7 @@ pub fn guess_compositor() -> &'static str {
 /// Returns the desktop environment named by `XDG_CURRENT_DESKTOP`, if set.
 ///
 /// The value is a colon-separated list ordered from most to least specific,
-/// such as `ubuntu:GNOME`.
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+/// such as `ubuntu:GNOME`. Platforms without XDG desktops normally leave it unset.
 pub fn desktop_environment() -> Option<String> {
     std::env::var("XDG_CURRENT_DESKTOP")
         .ok()
