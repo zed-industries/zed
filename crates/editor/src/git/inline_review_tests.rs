@@ -187,6 +187,158 @@ fn hiding_one_discussion_preserves_others_drafts_and_inflight_reply(cx: &mut Tes
 }
 
 #[gpui::test]
+async fn discussions_reserve_space_for_code_and_file_headers_as_replies_grow(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        serde_json::json!({
+            ".git": {}, "first.txt": "reviewed\nfollowing\n", "second.txt": "another file\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let multibuffer = cx.new(|_| MultiBuffer::new(language::Capability::ReadWrite));
+    for (index, name) in ["first.txt", "second.txt"].into_iter().enumerate() {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(std::path::Path::new(path!("/project")).join(name), cx)
+            })
+            .await
+            .unwrap();
+        let diff = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                multi_buffer::PathKey::sorted(index as u64),
+                buffer.clone(),
+                [Point::zero()..buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+            multibuffer.add_diff(diff, cx);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+        });
+    }
+    let window = cx.add_window(|window, cx| {
+        let mut editor = Editor::for_multibuffer(multibuffer, Some(project), window, cx);
+        editor.set_diff_hunk_renderer(Some(Arc::new(DefaultDiffHunkRenderer)), cx);
+        editor
+    });
+    let editor = window.root(cx).unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    cx.simulate_resize(gpui::size(px(900.), px(1000.)));
+    editor.update_in(cx, |editor, window, cx| {
+        editor
+            .show_inline_review(Rc::new(|_, _, _| {}), window, cx)
+            .unwrap();
+    });
+    cx.run_until_parked();
+    let assert_layout = |cx: &mut VisualTestContext| {
+        let bounds = cx.debug_bounds("review-discussion").unwrap();
+        editor.read_with(cx, |editor, _| {
+            let position_map = editor.last_position_map.as_ref().unwrap();
+            let snapshot = &position_map.snapshot.display_snapshot;
+            let blocks = snapshot
+                .blocks_in_range(DisplayRow(0)..snapshot.max_point().row() + DisplayRow(1))
+                .collect::<Vec<_>>();
+            let (start, block) = blocks
+                .iter()
+                .find(|(_, block)| {
+                    block.id() == BlockId::Custom(editor.diff_review_overlays[0].block_id)
+                })
+                .unwrap();
+            assert!(
+                block.height() as f32 * position_map.line_height >= bounds.size.height,
+                "discussion must reserve its rendered height"
+            );
+            let end = *start + DisplayRow(block.height());
+            assert!(Point::new(0, 0).to_display_point(snapshot).row() < *start);
+            assert!(
+                Point::new(1, 0).to_display_point(snapshot).row() >= end,
+                "following code must be below the discussion"
+            );
+            let header = blocks
+                .iter()
+                .find(|(row, block)| *row > *start && block.is_buffer_header())
+                .expect("next file header");
+            assert!(
+                header.0 >= end,
+                "next file header must be below the discussion"
+            );
+        });
+        bounds.size.height
+    };
+    let composer_height = assert_layout(cx);
+    let (comment_id, key, input) = editor.update_in(cx, |editor, window, cx| {
+        let input = editor.diff_review_overlays[0].prompt_editor.clone();
+        input.update(cx, |input, cx| {
+            input.insert("Explain this code", window, cx)
+        });
+        editor.submit_diff_review_comment(window, cx);
+        input.update(cx, |input, cx| input.insert("Unsent follow-up", window, cx));
+        (
+            editor.stored_review_comments[0].1[0].id,
+            editor.diff_review_overlays[0].hunk_key.clone(),
+            input,
+        )
+    });
+    cx.run_until_parked();
+    assert!(assert_layout(cx) > composer_height);
+    editor.update(cx, |editor, cx| {
+        let reply = (0..30).map(|index| format!("Paragraph {index}: This explanation must remain readable alongside the source code and following file headers, including after the editor becomes narrower.\n\n")).collect::<String>();
+        editor.set_inline_review_reply(comment_id, "Pi".into(), reply, cx);
+    });
+    cx.run_until_parked();
+    let reply_height = assert_layout(cx);
+    assert!(
+        reply_height > composer_height + px(500.),
+        "long replies must not be capped in a nested scroll area"
+    );
+    cx.simulate_resize(gpui::size(px(420.), px(1000.)));
+    cx.run_until_parked();
+    let narrow_height = assert_layout(cx);
+    assert!(narrow_height > reply_height);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_review_overlay_collapsed(&key, true, window, cx)
+    });
+    cx.run_until_parked();
+    assert!(assert_layout(cx) < composer_height);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_review_overlay_collapsed(&key, false, window, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(assert_layout(cx), narrow_height);
+    assert_eq!(
+        input.read_with(cx, |input, cx| input.text(cx)),
+        "Unsent follow-up"
+    );
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle, cx);
+        let snapshot = editor.snapshot(window, cx);
+        let following = Point::new(1, 0)
+            .to_display_point(&snapshot.display_snapshot)
+            .row();
+        editor.set_scroll_top_row(following, window, cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        let position_map = editor.last_position_map.as_ref().unwrap();
+        let following = Point::new(1, 0)
+            .to_display_point(&position_map.snapshot.display_snapshot)
+            .row();
+        assert!(position_map.visible_row_range.contains(&following));
+        assert!(position_map.scroll_position.y > 0.);
+    });
+}
+
+#[gpui::test]
 fn discussion_mouse_controls_target_the_clicked_discussion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let buffer = cx.new(|cx| Buffer::local("first\nmiddle\nlast\n", cx));

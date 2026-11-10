@@ -791,11 +791,7 @@ impl Editor {
         let block = BlockProperties {
             style: BlockStyle::Sticky,
             placement: BlockPlacement::Below(anchor),
-            height: if on_submit.is_some() {
-                None
-            } else {
-                Some(initial_height)
-            },
+            height: Some(initial_height),
             render: Arc::new(move |cx| {
                 Self::render_diff_review_overlay(
                     &prompt_editor_for_render,
@@ -3117,16 +3113,12 @@ impl Editor {
                                                     .size(LabelSize::Small)
                                                     .color(Color::Accent),
                                             )
-                                            .child(
-                                                div()
-                                                    .id(("inline-review-reply", id))
-                                                    .max_h(rems(24.))
-                                                    .overflow_y_scroll()
-                                                    .child(markdown::MarkdownElement::new(
-                                                        markdown,
-                                                        markdown_style.clone(),
-                                                    )),
-                                            ),
+                                            .child(div().id(("inline-review-reply", id)).child(
+                                                markdown::MarkdownElement::new(
+                                                    markdown,
+                                                    markdown_style.clone(),
+                                                ),
+                                            )),
                                     ),
                             )
                         })
