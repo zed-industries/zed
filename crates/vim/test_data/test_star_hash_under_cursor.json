@@ -1,0 +1,22 @@
+{"Put":{"state":"lˇet x let"}}
+{"Key":"*"}
+{"Get":{"state":"let x ˇlet","mode":"Normal"}}
+{"Put":{"state":"ˇlet x let"}}
+{"Key":"*"}
+{"Get":{"state":"let x ˇlet","mode":"Normal"}}
+{"Put":{"state":"ˇ let x let"}}
+{"Key":"*"}
+{"Get":{"state":" let x ˇlet","mode":"Normal"}}
+{"Put":{"state":"(ˇ[ tmp ([tmp"}}
+{"Key":"*"}
+{"Get":{"state":"([ tmp ([ˇtmp","mode":"Normal"}}
+{"Put":{"state":"tmp(ˇ[ (["}}
+{"Key":"*"}
+{"Get":{"state":"tmp([ ˇ([","mode":"Normal"}}
+{"Put":{"state":"tmpˇ([ (["}}
+{"Key":"*"}
+{"Get":{"state":"tmp([ ˇ([","mode":"Normal"}}
+{"Key":"#"}
+{"Get":{"state":"tmpˇ([ ([","mode":"Normal"}}
+{"Key":"*"}
+{"Get":{"state":"tmp([ ˇ([","mode":"Normal"}}
