@@ -52,12 +52,12 @@ impl FileDiffView {
     ) -> Task<Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
-            let old_buffer =
-                project.update(cx, |project, cx| project.open_local_buffer(&old_path, cx));
-            let new_buffer =
-                project.update(cx, |project, cx| project.open_local_buffer(&new_path, cx));
-            let (old_buffer, new_buffer) =
-                futures::future::try_join(old_buffer, new_buffer).await?;
+            let old_buffer = project
+                .update(cx, |project, cx| project.open_local_buffer(&old_path, cx))
+                .await?;
+            let new_buffer = project
+                .update(cx, |project, cx| project.open_local_buffer(&new_path, cx))
+                .await?;
 
             let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
 
@@ -486,52 +486,6 @@ mod tests {
                 });
             });
             theme_settings::init(theme::LoadThemes::JustBase, cx);
-        });
-    }
-
-    #[gpui::test(iterations = 10)]
-    async fn test_diff_view_loads_both_files_concurrently(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/test"),
-            serde_json::json!({
-                "old.txt": "old text", "new.txt": "new text"
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
-        let executor = cx.executor();
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
-        fs.set_load_delay(path!("/test/old.txt"), Duration::from_millis(40));
-        fs.set_load_delay(path!("/test/new.txt"), Duration::from_millis(40));
-        let mut task = workspace.update_in(cx, |workspace, window, cx| {
-            FileDiffView::open(
-                path!("/test/old.txt").into(),
-                path!("/test/new.txt").into(),
-                None,
-                workspace.weak_handle(),
-                window,
-                cx,
-            )
-        });
-        executor.run_until_parked();
-        let mut elapsed_ms = 0;
-        let view = loop {
-            executor.advance_clock(Duration::from_millis(40));
-            elapsed_ms += 40;
-            executor.run_until_parked();
-            if let Some(result) = (&mut task).now_or_never() {
-                break result.unwrap();
-            }
-            assert!(elapsed_ms < 400, "diff did not finish loading");
-        };
-        assert_eq!(elapsed_ms, 40, "both file reads must overlap");
-        view.read_with(cx, |view, cx| {
-            assert_eq!(view.old_buffer.read(cx).text(), "old text");
-            assert_eq!(view.new_buffer.read(cx).text(), "new text");
         });
     }
 

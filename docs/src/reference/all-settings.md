@@ -3187,6 +3187,41 @@ These settings belong inside the `git` object.
 | `path_style`                 | `"file_name_first"` | Use `"file_name_first"` or `"file_path_first"` in Git views.           |
 | `show_stage_restore_buttons` | `true`              | Show stage and restore buttons on diff hunks.                          |
 
+### Git Dates
+
+In the Settings Editor, open **Version Control** to set **Date Format** and each
+view's **Date Style**. The Git Panel's date style is under **Panels**.
+
+`git.date_format` controls absolute dates across Git views:
+
+- `"locale"` (default): keep each view's existing date format.
+- `"iso"`: `YYYY-MM-DD HH:MM`.
+- A [strftime format](https://man7.org/linux/man-pages/man3/strftime.3.html), such as
+  `"%Y-%m-%d %H:%M:%S %z"`.
+
+Dates use your local time zone. Empty or invalid formats fall back to `"locale"`.
+Hovers, tooltips, and commit views always show absolute dates using this format.
+
+Each view has its own `date_style`, either `"relative"` or `"absolute"`. The default
+is `"relative"` for blame, inline blame (including the status bar), branch and stash
+pickers, and Git Panel history. Git Graph rows default to `"absolute"`.
+
+Or add this to your settings.json:
+
+```json [settings]
+{
+  "git": {
+    "date_format": "%Y-%m-%d %H:%M",
+    "blame": { "date_style": "relative" },
+    "inline_blame": { "date_style": "relative" },
+    "branch_picker": { "date_style": "relative" },
+    "stash_picker": { "date_style": "relative" }
+  },
+  "git_panel": { "date_style": "relative" },
+  "git_graph": { "date_style": "absolute" }
+}
+```
+
 ### Git Gutter
 
 - Description: Whether or not to show the git gutter.
@@ -4716,7 +4751,7 @@ These settings belong inside the `file_finder` object.
 
 ## Preferred Line Length
 
-- Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled.
+- Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled. The {#action editor::Rewrap} action also wraps to this column by default, whether or not soft-wrap is enabled.
 - Setting: `preferred_line_length`
 - Default: `80`
 

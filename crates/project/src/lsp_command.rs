@@ -13,7 +13,6 @@ use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashMap;
-use futures::{FutureExt as _, StreamExt as _, TryStreamExt as _, stream};
 use gpui::{App, AsyncApp, Entity, SharedString, Task, TaskExt, prelude::FluentBuilder};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
@@ -32,7 +31,6 @@ use lsp::{
     DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
     OneOf, RenameOptions, ServerCapabilities,
 };
-use rpc::ErrorExt as _;
 use serde_json::Value;
 
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
@@ -1986,67 +1984,46 @@ pub async fn location_links_from_lsp(
     mut cx: AsyncApp,
 ) -> Result<Vec<LocationLink>> {
     let unresolved_links = definition_locations_from_lsp(message);
+
     let (_, language_server) = language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
-    // Concurrent opens of the same file outside the project can each create an invisible
-    // worktree, producing duplicate buffers, so share one open per URI.
-    let mut buffer_tasks = HashMap::default();
-    let links = unresolved_links
-        .into_iter()
-        .map(|(origin_range, target_uri, target_range)| {
-            let target_buffer = buffer_tasks
-                .entry(target_uri.clone())
-                .or_insert_with(|| {
-                    lsp_store
-                        .update(&mut cx, |store, cx| {
-                            store.open_local_buffer_via_lsp(
-                                target_uri,
-                                language_server.server_id(),
-                                cx,
-                            )
-                        })
-                        .map(|result| result.map_err(Arc::new))
-                        .shared()
-                })
-                .clone();
-            let buffer = buffer.clone();
-            let cx = cx.clone();
-            async move {
-                let target_buffer_handle =
-                    target_buffer.await.map_err(|error| (*error).cloned())?;
-                Ok(cx.update(|cx| {
-                    let origin_location = origin_range.map(|origin_range| {
-                        let origin_buffer = buffer.read(cx);
-                        let origin_range = range_from_lsp(origin_range);
-                        let origin_start =
-                            origin_buffer.clip_point_utf16(origin_range.start, Bias::Left);
-                        let origin_end =
-                            origin_buffer.clip_point_utf16(origin_range.end, Bias::Left);
-                        Location {
-                            buffer: buffer.clone(),
-                            range: origin_buffer.anchor_after(origin_start)
-                                ..origin_buffer.anchor_before(origin_end),
-                        }
-                    });
+    let mut definitions = Vec::new();
+    for (origin_range, target_uri, target_range) in unresolved_links {
+        let target_buffer_handle = lsp_store
+            .update(&mut cx, |this, cx| {
+                this.open_local_buffer_via_lsp(target_uri, language_server.server_id(), cx)
+            })
+            .await?;
 
-                    let target_buffer = target_buffer_handle.read(cx);
-                    let target_range = range_from_lsp(target_range);
-                    let target_start =
-                        target_buffer.clip_point_utf16(target_range.start, Bias::Left);
-                    let target_end = target_buffer.clip_point_utf16(target_range.end, Bias::Left);
-                    let target_location = Location {
-                        buffer: target_buffer_handle,
-                        range: target_buffer.anchor_after(target_start)
-                            ..target_buffer.anchor_before(target_end),
-                    };
+        cx.update(|cx| {
+            let origin_location = origin_range.map(|origin_range| {
+                let origin_buffer = buffer.read(cx);
+                let origin_range = range_from_lsp(origin_range);
+                let origin_start = origin_buffer.clip_point_utf16(origin_range.start, Bias::Left);
+                let origin_end = origin_buffer.clip_point_utf16(origin_range.end, Bias::Left);
+                Location {
+                    buffer: buffer.clone(),
+                    range: origin_buffer.anchor_after(origin_start)
+                        ..origin_buffer.anchor_before(origin_end),
+                }
+            });
 
-                    LocationLink {
-                        origin: origin_location,
-                        target: target_location,
-                    }
-                }))
-            }
+            let target_buffer = target_buffer_handle.read(cx);
+            let target_range = range_from_lsp(target_range);
+            let target_start = target_buffer.clip_point_utf16(target_range.start, Bias::Left);
+            let target_end = target_buffer.clip_point_utf16(target_range.end, Bias::Left);
+            let target_location = Location {
+                buffer: target_buffer_handle,
+                range: target_buffer.anchor_after(target_start)
+                    ..target_buffer.anchor_before(target_end),
+            };
+
+            definitions.push(LocationLink {
+                origin: origin_location,
+                target: target_location,
+            })
         });
-    stream::iter(links).buffered(16).try_collect().await
+    }
+    Ok(definitions)
 }
 
 fn definition_locations_from_lsp(
@@ -2331,45 +2308,38 @@ impl LspCommand for GetReferences {
         server_id: LanguageServerId,
         mut cx: AsyncApp,
     ) -> Result<Vec<Location>> {
+        let mut references = Vec::new();
         let (_, language_server) =
             language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
-        // See `location_links_from_lsp` for why opens are shared per URI.
-        let mut buffer_tasks = HashMap::default();
-        let references = locations.into_iter().flatten().map(|location| {
-            let target_buffer = buffer_tasks
-                .entry(location.uri.clone())
-                .or_insert_with(|| {
-                    lsp_store
-                        .update(&mut cx, |store, cx| {
-                            store.open_local_buffer_via_lsp(
-                                location.uri,
-                                language_server.server_id(),
-                                cx,
-                            )
-                        })
-                        .map(|result| result.map_err(Arc::new))
-                        .shared()
-                })
-                .clone();
-            let cx = cx.clone();
-            async move {
-                let target_buffer_handle =
-                    target_buffer.await.map_err(|error| (*error).cloned())?;
-                Ok(target_buffer_handle
+
+        if let Some(locations) = locations {
+            for lsp_location in locations {
+                let target_buffer_handle = lsp_store
+                    .update(&mut cx, |lsp_store, cx| {
+                        lsp_store.open_local_buffer_via_lsp(
+                            lsp_location.uri,
+                            language_server.server_id(),
+                            cx,
+                        )
+                    })
+                    .await?;
+
+                target_buffer_handle
                     .clone()
                     .read_with(&cx, |target_buffer, _| {
-                        let range = range_from_lsp(location.range);
+                        let range = range_from_lsp(lsp_location.range);
                         let target_start = target_buffer.clip_point_utf16(range.start, Bias::Left);
                         let target_end = target_buffer.clip_point_utf16(range.end, Bias::Left);
-                        Location {
+                        references.push(Location {
                             buffer: target_buffer_handle,
                             range: target_buffer.anchor_after(target_start)
                                 ..target_buffer.anchor_before(target_end),
-                        }
-                    }))
+                        });
+                    });
             }
-        });
-        stream::iter(references).buffered(16).try_collect().await
+        }
+
+        Ok(references)
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetReferences {

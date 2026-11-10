@@ -29,6 +29,38 @@ pub trait CratesIoClient: Send + Sync {
     /// Requires a token with the `trusted-publishing` endpoint scope that
     /// belongs to an owner of the crate.
     async fn update_crate(&self, name: &CrateName, update: &CrateUpdate) -> Result<Crate>;
+
+    /// Lists both user and team owners.
+    async fn list_owners(&self, name: &CrateName) -> Result<Vec<Owner>>;
+
+    /// Returns one outcome per requested owner.
+    ///
+    /// Requires a token with the `change-owners` endpoint scope that belongs
+    /// to a user owner of the crate. crates.io accepts at most ten owners per
+    /// request.
+    async fn add_owners(
+        &self,
+        name: &CrateName,
+        owners: &[OwnerLogin],
+    ) -> Result<Vec<OwnerAddition>>;
+
+    /// Requires a token with the `change-owners` endpoint scope that belongs
+    /// to a user owner of the crate. crates.io rejects removing the last user
+    /// owner.
+    async fn remove_owners(&self, name: &CrateName, owners: &[OwnerLogin]) -> Result<()>;
+
+    /// Requires a token with the `trusted-publishing` endpoint scope that
+    /// belongs to an owner of the crate.
+    async fn list_github_configs(&self, crate_name: &CrateName) -> Result<Vec<GitHubConfig>>;
+
+    /// Requires a token with the `trusted-publishing` endpoint scope that
+    /// belongs to an owner of the crate with a verified email address.
+    /// crates.io allows at most five configurations per crate.
+    async fn create_github_config(&self, config: &NewGitHubConfig) -> Result<GitHubConfig>;
+
+    /// Requires a token with the `trusted-publishing` endpoint scope that
+    /// belongs to an owner of the configuration's crate.
+    async fn delete_github_config(&self, id: GitHubConfigId) -> Result<()>;
 }
 
 #[derive(Debug, thiserror::Error)]
