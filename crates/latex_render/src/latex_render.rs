@@ -5,8 +5,8 @@ use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui::{
     App, BackgroundExecutor, Bounds, Context, Element, ElementId, FontId as GpuiFontId, FontStyle,
-    FontWeight, GlobalElementId, GlyphId, Hsla, InspectorElementId, IntoElement, LayoutId,
-    PathBuilder, Pixels, Point, Rgba, Style, Task, TextRun, Window, fill, point, px, size,
+    FontWeight, GlobalElementId, GlyphId, Hsla, InspectorElementId, LayoutId, PathBuilder, Pixels,
+    Point, Rgba, Style, Task, TextRun, Window, fill, point, px, size,
 };
 use parking_lot::{Mutex, RwLock};
 use ratex_font::FontId;
@@ -538,14 +538,6 @@ impl Element for LatexFormulaElement {
             color,
             &self.formula.display_list,
         );
-    }
-}
-
-impl IntoElement for LatexFormulaElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self {
-        self
     }
 }
 
