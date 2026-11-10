@@ -154,7 +154,7 @@ impl Editor {
                     && overlay.anchor_range.to_point(&snapshot) == (start..end)),
             "Another review range occupies this line; saved discussion remains in remote storage"
         );
-        let id = self.add_review_comment(key.clone(), review.comment, anchors, cx);
+        let id = self.add_review_comment(key, review.comment, anchors, cx);
         if let Some(comment) = self
             .stored_review_comments
             .iter_mut()
