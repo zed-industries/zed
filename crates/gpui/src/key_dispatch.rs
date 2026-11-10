@@ -736,14 +736,6 @@ mod tests {
         }
     }
 
-    impl IntoElement for PendingTextInputTestView {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
-        }
-    }
-
     impl InputHandler for PendingTextInputTestView {
         fn accepts_text_input(&mut self, _: &mut Window, _: &mut App) -> bool {
             self.accepts_text_input.get()
@@ -1211,14 +1203,6 @@ mod tests {
                 window.set_key_context(key_context);
                 window.handle_input(&self.focus_handle, self.clone(), cx);
                 window.on_action(std::any::TypeId::of::<TestAction>(), |_, _, _, _| {});
-            }
-        }
-
-        impl IntoElement for CustomElement {
-            type Element = Self;
-
-            fn into_element(self) -> Self::Element {
-                self
             }
         }
 

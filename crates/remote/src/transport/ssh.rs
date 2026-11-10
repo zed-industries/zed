@@ -1643,12 +1643,18 @@ impl SshSocket {
         self.ssh_command(ShellKind::Posix, "sh", &["-s"], false)
     }
 
+    fn environment_posix_argument_command(&self, script: &str) -> Command {
+        self.ssh_command(ShellKind::Posix, "sh", &["-c", script], false)
+    }
+
     async fn environment_posix(&self) -> Result<RemoteEnvironment> {
         let script = RemoteEnvironment::posix_script();
-        let output = command_output(self.environment_posix_command(), Some(script.as_bytes()))
-            .await
-            .context("determining remote environment")?;
-        RemoteEnvironment::parse_posix(&output)
+        probe_environment_posix(
+            self.environment_posix_command(),
+            || self.environment_posix_argument_command(&script),
+            &script,
+        )
+        .await
     }
 
     /// Best-effort detection of the remote OS version. Failures are logged and
@@ -1784,6 +1790,28 @@ async fn command_output(mut command: Command, input: Option<&[u8]>) -> Result<St
     );
     write_result.with_context(|| format!("writing stdin for command {command:?}"))?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+async fn probe_environment_posix(
+    stdin_command: Command,
+    argument_command: impl FnOnce() -> Command,
+    script: &str,
+) -> Result<RemoteEnvironment> {
+    let output = command_output(stdin_command, Some(script.as_bytes()))
+        .await
+        .context("determining remote environment")?;
+    match RemoteEnvironment::parse_posix(&output) {
+        Ok(environment) => Ok(environment),
+        Err(error) => {
+            log::warn!(
+                "Failed to parse the remote environment probed via stdin, retrying with the script as an argument: {error:#}"
+            );
+            let output = command_output(argument_command(), None)
+                .await
+                .context("determining remote environment")?;
+            RemoteEnvironment::parse_posix(&output)
+        }
+    }
 }
 
 fn parse_port_number(port_str: &str) -> Result<u16> {
@@ -2594,6 +2622,27 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn environment_posix_probe_retries_when_stdin_is_consumed() -> Result<()> {
+        let socket = smol::block_on(SshSocket::new(
+            SshConnectionOptions::default(),
+            PathBuf::from("/tmp/zed-test.sock"),
+        ))?;
+        let script = RemoteEnvironment::posix_script();
+        let stdin_command = stdin_consuming_remote_shell(&socket.environment_posix_command())?;
+        let argument_command =
+            stdin_consuming_remote_shell(&socket.environment_posix_argument_command(&script))?;
+        let environment = smol::block_on(probe_environment_posix(
+            stdin_command,
+            move || argument_command,
+            &script,
+        ))?;
+        assert_eq!(environment.shell, "/bin/bash");
+        assert_eq!(environment.platform.arch.as_str(), std::env::consts::ARCH);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn version_query_failure_does_not_abort_probe() -> Result<()> {
         let command = if cfg!(target_os = "macos") {
             "sw_vers"
@@ -3330,5 +3379,23 @@ mod tests {
             options.ssh_destination_args(),
             ["--", "-oProxyCommand=touch /tmp/pwned"]
         );
+    }
+
+    #[cfg(unix)]
+    fn stdin_consuming_remote_shell(ssh_command: &Command) -> Result<Command> {
+        let remote_command = ssh_command
+            .get_args()
+            .last()
+            .context("Missing remote command")?
+            .to_string_lossy();
+        let mut command = util::command::new_command("/bin/sh");
+        command
+            .arg("-c")
+            .arg(format!("cat > /dev/null; {remote_command}"))
+            .env("SHELL", "/bin/bash")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        Ok(command)
     }
 }

@@ -21,6 +21,9 @@ pub struct EventRequestBody {
     pub app_version: String,
     pub os_name: String,
     pub os_version: Option<String>,
+    /// The Linux or FreeBSD desktop environment, from `XDG_CURRENT_DESKTOP`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop_environment: Option<String>,
     pub architecture: String,
     /// Zed release channel (stable, preview, dev)
     pub release_channel: Option<String>,

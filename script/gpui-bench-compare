@@ -11,12 +11,13 @@ samples and summary.json persist under target/gpui-bench-compare. Nothing
 switches the invoking checkout or publishes a branch.
 
 The default core suite keeps the mixed workload (plain and with cached views),
-five full-refresh tree shapes, element style, cached element style, pointer
-hover, warm installed-font text, text first frame, three scrolling workloads,
-random and patterned primitive painting, and two inspector workloads. --full
-selects every variant; --slow restores the benchmarks' own Criterion settings
-(including inspector's five-second measurement). --repetitions controls
-independent runs, not random seeds. Use --seed to compare another fixed tree.
+five full-refresh tree shapes with and without paths, element style, cached
+element style, pointer hover, warm installed-font text, text first frame, three
+scrolling workloads, random and patterned primitive painting, and two inspector
+workloads. --full selects every variant; --slow restores the benchmarks' own
+Criterion settings (including inspector's five-second measurement).
+--repetitions controls independent runs, not random seeds. Use --seed to
+compare another fixed tree.
 
 Foreground retired instructions are primary. Linux needs perf access
 (CAP_PERFMON or perf_event_paranoid <= 2); macOS needs Apple Silicon. Frames run
@@ -57,6 +58,7 @@ CORE = {
     "randomized_element_tree": (
         r"^((Randomized|Cached)Tree/mixed/tree/mixed/|"
         r"RandomizedTree/full refresh/tree/|"
+        r"PathlessTree/full refresh/tree/|"
         r"RandomizedTree/element style/tree/mixed/|"
         r"CachedTree/element style/tree/mixed/|"
         r"RandomizedTree/hover/tree/mixed/|"
