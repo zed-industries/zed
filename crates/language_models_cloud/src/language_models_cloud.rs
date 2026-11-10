@@ -2263,27 +2263,29 @@ mod tests {
     }
 
     #[test]
-    fn opus_55_hosted_requests_use_adaptive_thinking_with_prefix_binding() -> Result<()> {
+    fn test_hosted_requests_use_adaptive_thinking_with_prefix_binding() -> Result<()> {
         let mut config = cloud_anthropic_test_config();
-        config.id = cloud_llm_client::LanguageModelId("claude-opus-5-5".into());
-        for effort in [None, Some("high")] {
-            let request = anthropic_request(
-                &config,
-                LanguageModelRequest {
-                    thinking_allowed: true,
-                    thinking_effort: effort.map(str::to_string),
-                    temperature: Some(0.25),
-                    ..Default::default()
-                },
-            )?;
-            let body = serde_json::to_value(request)?;
-            assert_eq!(body["thinking"]["type"], "adaptive");
-            assert_eq!(
-                body["thinking"]["block_binding"]["prefix_mismatch_behavior"],
-                "drop_block"
-            );
-            assert_eq!(body["output_config"]["effort"].as_str(), effort);
-            assert!(body.get("temperature").is_none());
+        for model in ["claude-opus-5-5", "claude-fable-5-2"] {
+            config.id = cloud_llm_client::LanguageModelId(model.into());
+            for effort in [None, Some("high")] {
+                let request = anthropic_request(
+                    &config,
+                    LanguageModelRequest {
+                        thinking_allowed: true,
+                        thinking_effort: effort.map(str::to_string),
+                        temperature: Some(0.25),
+                        ..Default::default()
+                    },
+                )?;
+                let body = serde_json::to_value(request)?;
+                assert_eq!(body["thinking"]["type"], "adaptive", "{model}, {effort:?}");
+                assert_eq!(
+                    body["thinking"]["block_binding"]["prefix_mismatch_behavior"], "drop_block",
+                    "{model}, {effort:?}"
+                );
+                assert_eq!(body["output_config"]["effort"].as_str(), effort);
+                assert!(body.get("temperature").is_none(), "{model}, {effort:?}");
+            }
         }
         Ok(())
     }

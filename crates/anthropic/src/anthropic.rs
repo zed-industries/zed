@@ -50,7 +50,11 @@ pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-contro
 pub fn binds_thinking_blocks_to_prefix(model_id: &str) -> bool {
     matches!(
         model_id,
-        "claude-opus-5-5" | "claude-fable-5-1" | "claude-sonnet-5-5" | "claude-haiku-5-5"
+        "claude-opus-5-5"
+            | "claude-fable-5-1"
+            | "claude-fable-5-2"
+            | "claude-sonnet-5-5"
+            | "claude-haiku-5-5"
     )
 }
 

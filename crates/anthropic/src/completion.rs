@@ -292,7 +292,7 @@ pub fn into_anthropic(
 ) -> Result<crate::Request> {
     let requires_adaptive_thinking = matches!(
         model.as_str(),
-        "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-haiku-5-5"
+        "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-haiku-5-5" | "claude-fable-5-2"
     );
     let mode = if requires_adaptive_thinking {
         AnthropicModelMode::AdaptiveThinking
@@ -1141,6 +1141,7 @@ mod tests {
         for (model, expects_block_binding) in [
             ("claude-opus-5-5", true),
             ("claude-fable-5-1", true),
+            ("claude-fable-5-2", true),
             ("claude-fable-5", false),
             ("claude-mythos-5-1", false),
             ("claude-opus-5", false),
