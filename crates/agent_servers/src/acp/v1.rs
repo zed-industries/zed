@@ -486,12 +486,9 @@ fn client_builder(
         )
 }
 
-/// `offer_subagents` advertises the unstable subagents RFD, which Zed only offers v1 agents
-/// behind the `acp-beta` flag.
-fn client_capabilities_for_agent(
-    agent_id: &AgentId,
-    offer_subagents: bool,
-) -> acp::ClientCapabilities {
+/// `acp_beta` advertises the unstable subagents and plan operations RFDs, which Zed only
+/// offers v1 agents behind the `acp-beta` flag.
+fn client_capabilities_for_agent(agent_id: &AgentId, acp_beta: bool) -> acp::ClientCapabilities {
     let mut meta = acp::Meta::from_iter([
         ("terminal_output".into(), true.into()),
         ("terminal-auth".into(), true.into()),
@@ -521,7 +518,8 @@ fn client_capabilities_for_agent(
                 .form(acp::ElicitationFormCapabilities::new())
                 .url(acp::ElicitationUrlCapabilities::new()),
         )
-        .subagents(offer_subagents.then(acp::SubagentCapabilities::new))
+        .subagents(acp_beta.then(acp::SubagentCapabilities::new))
+        .plan(acp_beta.then(acp::PlanCapabilities::new))
         .meta(meta)
 }
 
@@ -575,8 +573,8 @@ impl AcpConnection {
         let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
             Rc::new(RefCell::new(None));
         let request_elicitations = cx.new(|_| ElicitationStore::default());
-        let offer_subagents = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>());
-        let client_capabilities = client_capabilities_for_agent(&agent_id, offer_subagents);
+        let acp_beta = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>());
+        let client_capabilities = client_capabilities_for_agent(&agent_id, acp_beta);
 
         let accepts_subagent_updates = client_capabilities.subagents.is_some();
         let dispatch_context = ClientContext {
@@ -4137,7 +4135,7 @@ mod tests {
             let plan = thread.plan_by_id(&plan_id).expect("first plan");
             assert_eq!(plan.meta, Some(v2_terminal_meta("plan")));
             assert_eq!(plan.update_meta, Some(v2_terminal_meta("update")));
-            let [retained] = plan.entries.as_slice() else {
+            let [retained] = plan.entries() else {
                 panic!("one retained entry");
             };
             assert_eq!(
@@ -4164,7 +4162,7 @@ mod tests {
             let plan = thread.plan_by_id(&plan_id).expect("retained hidden plan");
             assert_eq!(plan.meta, Some(acp_v2::Meta::new()));
             assert_eq!(plan.update_meta, Some(acp_v2::Meta::new()));
-            assert_eq!(plan.entries.first().expect("entry").content, markdown);
+            assert_eq!(plan.entries().first().expect("entry").content, markdown);
         });
         harness.send(
             json!({"sessionUpdate": "plan_update",
@@ -4177,7 +4175,7 @@ mod tests {
             let plan = thread.plan().expect("changed tasks reopen the plan");
             assert_eq!(plan.meta, None);
             assert_eq!(plan.update_meta, None);
-            let [entry] = plan.entries.as_slice() else {
+            let [entry] = plan.entries() else {
                 panic!("replacement entry");
             };
             assert_eq!(entry.source.status, acp_v2::PlanEntryStatus::Completed);
@@ -4196,14 +4194,14 @@ mod tests {
                 thread
                     .plan_by_id(&plan_id)
                     .expect("empty plan")
-                    .entries
+                    .entries()
                     .is_empty()
             );
             assert_eq!(
                 thread
                     .plan_by_id(&"plan-extra".into())
                     .expect("other plan")
-                    .entries
+                    .entries()
                     .len(),
                 1
             );
@@ -5224,6 +5222,54 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_plan_sdk_markdown_file_and_removal(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+
+        let harness = V2SessionHarness::new(cx).await;
+        for update in [
+            json!({"sessionUpdate": "plan_update",
+                "plan": {"type": "markdown", "planId": "design", "content": "# Design\n- step"}}),
+            json!({"sessionUpdate": "plan_update",
+                "plan": {"type": "file", "planId": "doc", "uri": "file:///tmp/plan.md"}}),
+        ] {
+            harness.send(update, None);
+        }
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, cx| {
+            let Some(acp_thread::PlanContent::Markdown(markdown)) = thread
+                .plan_by_id(&"design".into())
+                .map(|plan| &plan.content)
+            else {
+                panic!("markdown plan");
+            };
+            assert_eq!(markdown.read(cx).source(), "# Design\n- step");
+            let Some(acp_thread::PlanContent::File { uri }) =
+                thread.plan().map(|plan| &plan.content)
+            else {
+                panic!("file plan is visible");
+            };
+            assert_eq!(uri.as_ref(), "file:///tmp/plan.md");
+        });
+
+        harness.send(
+            json!({"sessionUpdate": "plan_removed", "planId": "doc"}),
+            None,
+        );
+        harness.drain(cx).await;
+        harness.thread.read_with(cx, |thread, _| {
+            assert!(thread.plan_by_id(&"doc".into()).is_none());
+            assert!(
+                matches!(
+                    thread.plan().map(|plan| &plan.content),
+                    Some(acp_thread::PlanContent::Markdown(_))
+                ),
+                "removing the visible plan falls back to the remaining one"
+            );
+        });
+        assert!(harness.fallback.lock().expect("fallback mutex").is_empty());
+    }
+
+    #[gpui::test]
     async fn v2_session_sdk_falls_through_unhandled_updates(cx: &mut gpui::TestAppContext) {
         let harness = V2SessionHarness::new(cx).await;
         let params = serde_json::json!({
@@ -5275,15 +5321,29 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn v2_plan_sdk_unrenderable_types_replace_the_plan(cx: &mut gpui::TestAppContext) {
+    async fn v2_plan_sdk_any_type_replaces_the_plan(cx: &mut gpui::TestAppContext) {
+        use acp_thread::PlanContent;
         use serde_json::json;
 
         let harness = V2SessionHarness::new(cx).await;
         let plan_id = acp_v2::PlanId::new("plan");
-        for replacement in [
-            json!({"type": "file", "planId": "plan", "uri": "file:///tmp/plan.md"}),
-            json!({"type": "markdown", "planId": "plan", "content": "Unsupported"}),
-            json!({"type": "_future", "planId": "plan", "payload": [null, 7]}),
+        let is_file = |content: &PlanContent| matches!(content, PlanContent::File { .. });
+        let is_markdown = |content: &PlanContent| matches!(content, PlanContent::Markdown(_));
+        let is_empty_items = |content: &PlanContent| matches!(content, PlanContent::Items(entries) if entries.is_empty());
+        for (replacement, expected) in [
+            (
+                json!({"type": "file", "planId": "plan", "uri": "file:///tmp/plan.md"}),
+                &is_file as &dyn Fn(&PlanContent) -> bool,
+            ),
+            (
+                json!({"type": "markdown", "planId": "plan", "content": "# Plan"}),
+                &is_markdown,
+            ),
+            // An unknown type still replaces the plan, so the stale entries stop showing.
+            (
+                json!({"type": "_future", "planId": "plan", "payload": [null, 7]}),
+                &is_empty_items,
+            ),
         ] {
             harness.send(
                 json!({"sessionUpdate": "plan_update",
@@ -5293,7 +5353,10 @@ mod tests {
             );
             harness.drain(cx).await;
             harness.thread.read_with(cx, |thread, _| {
-                assert_eq!(thread.plan_by_id(&plan_id).expect("plan").entries.len(), 1);
+                assert_eq!(
+                    thread.plan_by_id(&plan_id).expect("plan").entries().len(),
+                    1
+                );
             });
             harness.send(
                 json!({"sessionUpdate": "plan_update", "plan": replacement}),
@@ -5301,13 +5364,10 @@ mod tests {
             );
             harness.drain(cx).await;
             harness.thread.read_with(cx, |thread, _| {
+                let plan = thread.plan_by_id(&plan_id).expect("replaced plan");
                 assert!(
-                    thread
-                        .plan_by_id(&plan_id)
-                        .expect("replaced plan")
-                        .entries
-                        .is_empty(),
-                    "{replacement} must replace the stale entries"
+                    expected(&plan.content),
+                    "{replacement} must replace the plan"
                 );
             });
         }
@@ -5704,6 +5764,21 @@ mod tests {
                 "{capability} should be advertised"
             );
         }
+    }
+
+    #[test]
+    fn client_capabilities_advertise_plan_operations_only_with_acp_beta() {
+        let agent_id = AgentId::new("codex-acp");
+        let without = serde_json::to_value(client_capabilities_for_agent(&agent_id, false))
+            .expect("capabilities serialize");
+        assert_eq!(
+            without.get("plan"),
+            None,
+            "v1 plan operations must only be offered behind acp-beta"
+        );
+        let with = serde_json::to_value(client_capabilities_for_agent(&agent_id, true))
+            .expect("capabilities serialize");
+        assert_eq!(with.get("plan"), Some(&serde_json::json!({})));
     }
 
     #[gpui::test]

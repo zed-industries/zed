@@ -281,6 +281,111 @@ fn test_list_github_configs_rejects_full_page() {
 }
 
 #[test]
+fn test_owner_endpoints_match_crates_io_api() {
+    // Listing owners and changing them share a URL, so one response serves both.
+    let (fake_http_client, requests) = recording_fake_http_client(|_| {
+        let body = json!({
+            "users": [
+                {
+                    "kind": "user",
+                    "id": 436643,
+                    "login": "MrSubidubi",
+                    "url": "https://github.com/MrSubidubi",
+                    "name": "Finn Evers",
+                    "avatar": null,
+                    "github_username_matches": true,
+                },
+                {
+                    "kind": "team",
+                    "id": 12586,
+                    "login": "github:zed-industries:crates-io",
+                    "url": "https://github.com/zed-industries",
+                    "name": "crates-io",
+                    "avatar": null,
+                },
+            ],
+            "msg": "Crates.io user maxbrunsfeld has been invited to be an owner of crate gpui,\
+                    Crates.io user mikayla-maki already has a pending invitation to be an owner of crate gpui,\
+                    team github:zed-industries:crates-io has been added as an owner of crate gpui,\
+                    owners changed",
+            "ok": true,
+        });
+        (StatusCode::OK, body)
+    });
+    // Separate clients keep the test from waiting on the rate limit.
+    let client = || RealCratesIoClient::new(fake_http_client.clone(), ApiToken::new("secret"));
+    let gpui = CrateName::new("gpui");
+    let owner_logins = [
+        OwnerLogin::Username("maxbrunsfeld".to_owned()),
+        OwnerLogin::CratesIoUser("maxbrunsfeld".to_owned()),
+        OwnerLogin::GitHubUser("maxbrunsfeld".to_owned()),
+        OwnerLogin::GitHubTeam {
+            organization: "zed-industries".to_owned(),
+            team: "crates-io".to_owned(),
+        },
+    ];
+
+    let owners = smol::block_on(client().list_owners(&gpui)).unwrap();
+    let additions = smol::block_on(client().add_owners(&gpui, &owner_logins)).unwrap();
+    smol::block_on(client().remove_owners(&gpui, &owner_logins)).unwrap();
+
+    assert_eq!(
+        owners,
+        [
+            Owner::User(User {
+                id: UserId(436643),
+                login: "MrSubidubi".to_owned(),
+                name: Some("Finn Evers".to_owned()),
+            }),
+            Owner::Team(Team {
+                id: TeamId(12586),
+                login: "github:zed-industries:crates-io".to_owned(),
+                name: Some("crates-io".to_owned()),
+            }),
+        ]
+    );
+    assert_eq!(
+        additions,
+        [
+            OwnerAddition::UserInvited {
+                username: "maxbrunsfeld".to_owned(),
+            },
+            OwnerAddition::UserAlreadyInvited {
+                username: "mikayla-maki".to_owned(),
+            },
+            OwnerAddition::TeamAdded {
+                login: "github:zed-industries:crates-io".to_owned(),
+            },
+            OwnerAddition::Other("owners changed".to_owned()),
+        ]
+    );
+    let requests = requests.lock();
+    let expected_body = json!({
+        "owners": [
+            "maxbrunsfeld",
+            "crates.io:maxbrunsfeld",
+            "github:maxbrunsfeld",
+            "github:zed-industries:crates-io",
+        ]
+    });
+    for (request, method) in requests
+        .iter()
+        .zip([Method::GET, Method::PUT, Method::DELETE])
+    {
+        assert_eq!(request.method, method);
+        assert_eq!(request.uri, "https://crates.io/api/v1/crates/gpui/owners");
+    }
+    assert_eq!(
+        serde_json::from_str::<Value>(&requests[1].body).unwrap(),
+        expected_body
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&requests[2].body).unwrap(),
+        expected_body
+    );
+}
+
+#[test]
 fn test_throttle_spaces_requests_by_minimum_interval() {
     let throttle = RequestThrottle::new();
     let start = Instant::now();
