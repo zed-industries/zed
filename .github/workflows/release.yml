@@ -374,6 +374,58 @@ jobs:
     outputs:
       outcome: ${{ steps.run-compliance-check.outputs.outcome }}
     timeout-minutes: 60
+  bundle_freebsd:
+    needs:
+    - run_tests_linux
+    - clippy_linux
+    - check_scripts
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_bundling::setup_freebsd_cross_build
+      run: echo "FREEBSD_SYSROOT=$GITHUB_WORKSPACE/target/freebsd-sysroot-$SYSROOT_CACHE_KEY" >> "$GITHUB_ENV"
+      env:
+        SYSROOT_CACHE_KEY: ${{ hashFiles('script/build-remote-server-freebsd') }}
+    - name: Cache FreeBSD sysroot
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        path: ${{ env.FREEBSD_SYSROOT }}
+    - name: run_bundling::setup_freebsd_cross_build
+      run: sudo apt-get update && sudo apt-get install -y cmake ninja-build protobuf-compiler jq
+    - name: run_bundling::setup_freebsd_cross_build
+      run: |
+        tools_directory="$RUNNER_TEMP/freebsd-build-tools"
+        mkdir -p "$tools_directory/cargo-zigbuild" "$tools_directory/zig"
+        curl --fail --location --retry 3 https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.22.1/cargo-zigbuild-x86_64-unknown-linux-musl.tar.xz -o "$tools_directory/cargo-zigbuild.tar.xz"
+        echo "b18ca96a420b4fce29cd397308289b1f34298ca9d425daa0b4450fc95ee3260b  $tools_directory/cargo-zigbuild.tar.xz" | sha256sum --check
+        curl --fail --location --retry 3 https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz -o "$tools_directory/zig.tar.xz"
+        echo "473ec26806133cf4d1918caf1a410f8403a13d979726a9045b421b685031a982  $tools_directory/zig.tar.xz" | sha256sum --check
+        tar -xJf "$tools_directory/cargo-zigbuild.tar.xz" -C "$tools_directory/cargo-zigbuild" --strip-components=1
+        tar -xJf "$tools_directory/zig.tar.xz" -C "$tools_directory/zig" --strip-components=1
+        echo "$tools_directory/cargo-zigbuild" >> "$GITHUB_PATH"
+        echo "$tools_directory/zig" >> "$GITHUB_PATH"
+        rustup target add x86_64-unknown-freebsd
+    - name: run_bundling::bundle_freebsd
+      run: ./script/build-remote-server-freebsd --release
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: zed-remote-server-freebsd-x86_64.gz
+        path: target/zed-remote-server-freebsd-x86_64.gz
+        if-no-files-found: error
+    timeout-minutes: 180
   bundle_linux_aarch64:
     needs:
     - run_tests_linux
@@ -761,6 +813,7 @@ jobs:
   upload_release_assets:
     needs:
     - create_draft_release
+    - bundle_freebsd
     - bundle_linux_aarch64
     - bundle_linux_x86_64
     - build_static_bwrap_linux_aarch64
@@ -791,6 +844,7 @@ jobs:
         mv ./artifacts/bwrap-linux-x86_64.gz/bwrap-linux-x86_64.gz release-artifacts/bwrap-linux-x86_64.gz
         mv ./artifacts/Zed-x86_64.exe/Zed-x86_64.exe release-artifacts/Zed-x86_64.exe
         mv ./artifacts/Zed-aarch64.exe/Zed-aarch64.exe release-artifacts/Zed-aarch64.exe
+        mv ./artifacts/zed-remote-server-freebsd-x86_64.gz/zed-remote-server-freebsd-x86_64.gz release-artifacts/zed-remote-server-freebsd-x86_64.gz
         mv ./artifacts/zed-remote-server-macos-aarch64.gz/zed-remote-server-macos-aarch64.gz release-artifacts/zed-remote-server-macos-aarch64.gz
         mv ./artifacts/zed-remote-server-macos-x86_64.gz/zed-remote-server-macos-x86_64.gz release-artifacts/zed-remote-server-macos-x86_64.gz
         mv ./artifacts/zed-remote-server-linux-aarch64.gz/zed-remote-server-linux-aarch64.gz release-artifacts/zed-remote-server-linux-aarch64.gz
@@ -810,7 +864,7 @@ jobs:
     steps:
     - name: release::validate_release_assets
       run: |
-        EXPECTED_ASSETS='["Zed-aarch64.dmg", "Zed-x86_64.dmg", "zed-linux-aarch64.tar.gz", "zed-linux-x86_64.tar.gz", "bwrap-linux-aarch64.gz", "bwrap-linux-x86_64.gz", "Zed-x86_64.exe", "Zed-aarch64.exe", "zed-remote-server-macos-aarch64.gz", "zed-remote-server-macos-x86_64.gz", "zed-remote-server-linux-aarch64.gz", "zed-remote-server-linux-x86_64.gz", "zed-remote-server-windows-aarch64.zip", "zed-remote-server-windows-x86_64.zip"]'
+        EXPECTED_ASSETS='["Zed-aarch64.dmg", "Zed-x86_64.dmg", "zed-linux-aarch64.tar.gz", "zed-linux-x86_64.tar.gz", "bwrap-linux-aarch64.gz", "bwrap-linux-x86_64.gz", "Zed-x86_64.exe", "Zed-aarch64.exe", "zed-remote-server-freebsd-x86_64.gz", "zed-remote-server-macos-aarch64.gz", "zed-remote-server-macos-x86_64.gz", "zed-remote-server-linux-aarch64.gz", "zed-remote-server-linux-x86_64.gz", "zed-remote-server-windows-aarch64.zip", "zed-remote-server-windows-x86_64.zip"]'
         TAG="$GITHUB_REF_NAME"
 
         ACTUAL_ASSETS=$(gh release view "$TAG" --repo=zed-industries/zed --json assets -q '[.assets[].name]')
@@ -952,6 +1006,7 @@ jobs:
     - clippy_linux
     - clippy_windows
     - check_scripts
+    - bundle_freebsd
     - bundle_linux_aarch64
     - bundle_linux_x86_64
     - build_static_bwrap_linux_aarch64
@@ -981,6 +1036,7 @@ jobs:
                 if [ "$RESULT_CLIPPY_LINUX" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_linux"; fi
                 if [ "$RESULT_CLIPPY_WINDOWS" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_windows"; fi
                 if [ "$RESULT_CHECK_SCRIPTS" == "failure" ];then FAILED_JOBS="$FAILED_JOBS check_scripts"; fi
+                if [ "$RESULT_BUNDLE_FREEBSD" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_freebsd"; fi
                 if [ "$RESULT_BUNDLE_LINUX_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_aarch64"; fi
                 if [ "$RESULT_BUNDLE_LINUX_X86_64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_x86_64"; fi
                 if [ "$RESULT_BUILD_STATIC_BWRAP_LINUX_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS build_static_bwrap_linux_aarch64"; fi
@@ -1035,6 +1091,7 @@ jobs:
         RESULT_CLIPPY_LINUX: ${{ needs.clippy_linux.result }}
         RESULT_CLIPPY_WINDOWS: ${{ needs.clippy_windows.result }}
         RESULT_CHECK_SCRIPTS: ${{ needs.check_scripts.result }}
+        RESULT_BUNDLE_FREEBSD: ${{ needs.bundle_freebsd.result }}
         RESULT_BUNDLE_LINUX_AARCH64: ${{ needs.bundle_linux_aarch64.result }}
         RESULT_BUNDLE_LINUX_X86_64: ${{ needs.bundle_linux_x86_64.result }}
         RESULT_BUILD_STATIC_BWRAP_LINUX_AARCH64: ${{ needs.build_static_bwrap_linux_aarch64.result }}

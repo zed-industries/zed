@@ -4,7 +4,10 @@ use gh_workflow::{
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
-    run_bundling::{build_static_bwrap, bundle_linux, bundle_mac, bundle_windows, upload_artifact},
+    run_bundling::{
+        build_static_bwrap, bundle_freebsd, bundle_linux, bundle_mac, bundle_windows,
+        upload_artifact,
+    },
     run_tests,
     runners::{self, Arch, Platform},
     steps::{
@@ -30,6 +33,7 @@ pub(crate) fn release() -> Workflow {
     let (non_blocking_compliance_run, job_output) = compliance_check();
 
     let bundle = ReleaseBundleJobs {
+        freebsd_x86_64: bundle_freebsd(None, &[&linux_tests, &linux_clippy, &check_scripts]),
         linux_aarch64: bundle_linux(
             Arch::AARCH64,
             None,
@@ -134,6 +138,7 @@ pub(crate) fn release() -> Workflow {
 }
 
 pub(crate) struct ReleaseBundleJobs {
+    pub freebsd_x86_64: NamedJob,
     pub linux_aarch64: NamedJob,
     pub linux_x86_64: NamedJob,
     pub bwrap_linux_aarch64: NamedJob,
@@ -147,6 +152,7 @@ pub(crate) struct ReleaseBundleJobs {
 impl ReleaseBundleJobs {
     pub fn jobs(&self) -> Vec<&NamedJob> {
         vec![
+            &self.freebsd_x86_64,
             &self.linux_aarch64,
             &self.linux_x86_64,
             &self.bwrap_linux_aarch64,
@@ -160,6 +166,7 @@ impl ReleaseBundleJobs {
 
     pub fn into_jobs(self) -> Vec<NamedJob> {
         vec![
+            self.freebsd_x86_64,
             self.linux_aarch64,
             self.linux_x86_64,
             self.bwrap_linux_aarch64,

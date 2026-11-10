@@ -194,7 +194,7 @@ impl RemoteEnvironment {
             printf "\000%s\000%s\000" "$SHELL" "$platform";
             status=0;
             case "$platform" in
-                "Linux "*) cat /etc/os-release || status=$?;;
+                "Linux "*|"FreeBSD "*) cat /etc/os-release || status=$?;;
                 "Darwin "*) sw_vers -productVersion || status=$?;;
             esac;
             printf "\000%s" "$status";
@@ -2666,6 +2666,38 @@ mod tests {
 
         let environment = RemoteEnvironment::parse_posix(std::str::from_utf8(&output.stdout)?)?;
         assert_eq!(environment.os_version, None);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn freebsd_environment_probe_reads_os_version() -> Result<()> {
+        for version in ["14.3", "15.0"] {
+            let script = format!(
+                r#"uname() {{ printf 'FreeBSD amd64\n'; }};
+                cat() {{
+                    [ "$1" = /etc/os-release ] || return 1;
+                    printf 'ID=freebsd\nVERSION_ID="{version}"\n';
+                }};
+                SHELL=/bin/sh;
+                {}"#,
+                RemoteEnvironment::posix_script()
+            );
+            let output = smol::block_on(
+                util::command::new_command("/bin/bash")
+                    .args(["--posix", "-e", "-c", &script])
+                    .output(),
+            )?;
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let environment = RemoteEnvironment::parse_posix(std::str::from_utf8(&output.stdout)?)?;
+            assert_eq!(environment.platform.os, RemoteOs::FreeBsd);
+            assert_eq!(environment.platform.arch, RemoteArch::X86_64);
+            assert_eq!(environment.os_version, Some(format!("freebsd {version}")));
+        }
         Ok(())
     }
 

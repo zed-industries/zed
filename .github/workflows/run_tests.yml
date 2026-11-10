@@ -668,6 +668,54 @@ jobs:
       run: |
         rm -rf ./../.cargo
     timeout-minutes: 60
+  build_freebsd_remote_server:
+    needs:
+    - orchestrate
+    - check_style
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_bundling::setup_freebsd_cross_build
+      run: echo "FREEBSD_SYSROOT=$GITHUB_WORKSPACE/target/freebsd-sysroot-$SYSROOT_CACHE_KEY" >> "$GITHUB_ENV"
+      env:
+        SYSROOT_CACHE_KEY: ${{ hashFiles('script/build-remote-server-freebsd') }}
+    - name: Cache FreeBSD sysroot
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        path: ${{ env.FREEBSD_SYSROOT }}
+    - name: run_bundling::setup_freebsd_cross_build
+      run: sudo apt-get update && sudo apt-get install -y cmake ninja-build protobuf-compiler jq
+    - name: run_bundling::setup_freebsd_cross_build
+      run: |
+        tools_directory="$RUNNER_TEMP/freebsd-build-tools"
+        mkdir -p "$tools_directory/cargo-zigbuild" "$tools_directory/zig"
+        curl --fail --location --retry 3 https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.22.1/cargo-zigbuild-x86_64-unknown-linux-musl.tar.xz -o "$tools_directory/cargo-zigbuild.tar.xz"
+        echo "b18ca96a420b4fce29cd397308289b1f34298ca9d425daa0b4450fc95ee3260b  $tools_directory/cargo-zigbuild.tar.xz" | sha256sum --check
+        curl --fail --location --retry 3 https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz -o "$tools_directory/zig.tar.xz"
+        echo "473ec26806133cf4d1918caf1a410f8403a13d979726a9045b421b685031a982  $tools_directory/zig.tar.xz" | sha256sum --check
+        tar -xJf "$tools_directory/cargo-zigbuild.tar.xz" -C "$tools_directory/cargo-zigbuild" --strip-components=1
+        tar -xJf "$tools_directory/zig.tar.xz" -C "$tools_directory/zig" --strip-components=1
+        echo "$tools_directory/cargo-zigbuild" >> "$GITHUB_PATH"
+        echo "$tools_directory/zig" >> "$GITHUB_PATH"
+        rustup target add x86_64-unknown-freebsd
+    - name: run_tests::build_freebsd_remote_server
+      run: ./script/build-remote-server-freebsd
+    timeout-minutes: 180
   check_dependencies:
     needs:
     - orchestrate
@@ -1019,6 +1067,7 @@ jobs:
     - doctests
     - check_workspace_binaries
     - check_wasm
+    - build_freebsd_remote_server
     - check_dependencies
     - check_docs
     - check_licenses
@@ -1053,6 +1102,7 @@ jobs:
         check_result "doctests" "$RESULT_DOCTESTS"
         check_result "check_workspace_binaries" "$RESULT_CHECK_WORKSPACE_BINARIES"
         check_result "check_wasm" "$RESULT_CHECK_WASM"
+        check_result "build_freebsd_remote_server" "$RESULT_BUILD_FREEBSD_REMOTE_SERVER"
         check_result "check_dependencies" "$RESULT_CHECK_DEPENDENCIES"
         check_result "check_docs" "$RESULT_CHECK_DOCS"
         check_result "check_licenses" "$RESULT_CHECK_LICENSES"
@@ -1077,6 +1127,7 @@ jobs:
         RESULT_DOCTESTS: ${{ needs.doctests.result }}
         RESULT_CHECK_WORKSPACE_BINARIES: ${{ needs.check_workspace_binaries.result }}
         RESULT_CHECK_WASM: ${{ needs.check_wasm.result }}
+        RESULT_BUILD_FREEBSD_REMOTE_SERVER: ${{ needs.build_freebsd_remote_server.result }}
         RESULT_CHECK_DEPENDENCIES: ${{ needs.check_dependencies.result }}
         RESULT_CHECK_DOCS: ${{ needs.check_docs.result }}
         RESULT_CHECK_LICENSES: ${{ needs.check_licenses.result }}
