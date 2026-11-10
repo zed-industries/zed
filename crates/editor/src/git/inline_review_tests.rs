@@ -58,23 +58,26 @@ async fn inline_review_submits_selected_lines_and_keeps_reply_through_edits(
         editor.submit_diff_review_comment(window, cx);
     });
     cx.run_until_parked();
-    let submissions = submitted.borrow();
-    assert_eq!(submissions.len(), 2);
-    assert_eq!(submissions[0].discussion_id, submissions[1].discussion_id);
-    assert_ne!(submissions[0].id, submissions[1].id);
-    assert_ne!(submissions[0].submission_id, submissions[1].submission_id);
-    let comment = &submissions[0];
-    assert_eq!(
-        comment.path,
-        std::path::PathBuf::from(path!("/root/file.txt"))
-    );
-    assert_eq!(comment.lines, 0..2);
-    assert_eq!(comment.excerpt, "first\nsecond");
-    assert_eq!(comment.before, "");
-    assert_eq!(comment.after, "\nthird\n");
-    assert_eq!(comment.comment, "Explain these lines");
+    let (comment_id, discussion_id) = {
+        let submissions = submitted.borrow();
+        assert_eq!(submissions.len(), 2);
+        assert_eq!(submissions[0].discussion_id, submissions[1].discussion_id);
+        assert_ne!(submissions[0].id, submissions[1].id);
+        assert_ne!(submissions[0].submission_id, submissions[1].submission_id);
+        let comment = &submissions[0];
+        assert_eq!(
+            comment.path,
+            std::path::PathBuf::from(path!("/root/file.txt"))
+        );
+        assert_eq!(comment.lines, 0..2);
+        assert_eq!(comment.excerpt, "first\nsecond");
+        assert_eq!(comment.before, "");
+        assert_eq!(comment.after, "\nthird\n");
+        assert_eq!(comment.comment, "Explain these lines");
+        (comment.id, comment.discussion_id.clone())
+    };
     editor.update_in(cx, |editor, _window, cx| {
-        editor.set_inline_review_reply(comment.id, "Pi".into(), "The final reply".into(), cx);
+        editor.set_inline_review_reply(comment_id, "Pi".into(), "The final reply".into(), cx);
         let buffer = editor.buffer.read(cx).as_singleton().unwrap();
         buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "before\n")], None, cx));
         let snapshot = editor.buffer.read(cx).snapshot(cx);
@@ -83,6 +86,47 @@ async fn inline_review_submits_selected_lines_and_keeps_reply_through_edits(
         let (author, reply) = stored.agent_reply.as_ref().unwrap();
         assert_eq!(author.as_ref(), "Pi");
         assert_eq!(reply.read(cx).source().as_ref(), "The final reply");
+    });
+    for selection in [
+        "«beforeˇ»\nfirst\nsecond\nthird\n",
+        "before\n«first\nsecondˇ»\nthird\n",
+    ] {
+        editor.update_in(cx, |editor, window, cx| {
+            select_ranges(editor, selection, window, cx);
+            editor
+                .show_inline_review(
+                    {
+                        let submitted = submitted.clone();
+                        Rc::new(move |comment, _, _| submitted.borrow_mut().push(comment))
+                    },
+                    window,
+                    cx,
+                )
+                .unwrap();
+            let input = editor
+                .diff_review_overlays
+                .iter()
+                .find(|overlay| overlay.prompt_editor.focus_handle(cx).is_focused(window))
+                .unwrap()
+                .prompt_editor
+                .clone();
+            input.update(cx, |input, cx| {
+                input.insert("Comment after insertion", window, cx)
+            });
+            editor.submit_diff_review_comment(window, cx);
+        });
+        cx.run_until_parked();
+    }
+    {
+        let submissions = submitted.borrow();
+        assert_eq!(submissions.len(), 4);
+        assert_eq!(submissions[2].excerpt, "before");
+        assert_ne!(submissions[2].discussion_id, discussion_id);
+        assert_eq!(submissions[3].excerpt, "first\nsecond");
+        assert_eq!(submissions[3].discussion_id, discussion_id);
+    }
+    editor.update_in(cx, |editor, _window, cx| {
+        let buffer = editor.buffer.read(cx).as_singleton().unwrap();
         buffer.update(cx, |buffer, cx| buffer.edit([(7..12, "changed")], None, cx));
         let snapshot = editor.buffer.read(cx).snapshot(cx);
         assert!(editor.stored_review_comments[0].1[0].is_outdated(&snapshot));

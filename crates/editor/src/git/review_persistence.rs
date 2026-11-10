@@ -146,7 +146,7 @@ impl Editor {
             start.column == 0 && end.column == snapshot.line_len(MultiBufferRow(end.row)),
             "Saved review does not cover complete current lines"
         );
-        let key = Self::review_hunk_key(&snapshot, start);
+        let key = Self::review_hunk_key(&snapshot, anchors.start);
         ensure!(
             self.comments_for_hunk(&key, &snapshot)
                 .iter()

@@ -615,12 +615,11 @@ impl Editor {
         self.inline_review_source(anchor_range.clone(), cx)?;
         let snapshot = self.snapshot(window, cx);
         let range = anchor_range.to_point(snapshot.buffer_snapshot());
-        let end_row = range.end.row;
         for overlay in &self.diff_review_overlays {
             let existing = overlay.anchor_range.to_point(snapshot.buffer_snapshot());
             if existing.start.row == range.start.row {
                 anyhow::ensure!(
-                    existing.end.row == end_row && overlay.on_submit.is_some(),
+                    existing == range && overlay.on_submit.is_some(),
                     "A discussion already starts on this line with another range. Reopen it or select a different starting line"
                 );
             }
@@ -718,10 +717,8 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let points = anchor_range.to_point(&buffer_snapshot);
-        let start_point = points.start;
-        let end_multi_buffer_row = MultiBufferRow(points.end.row);
-        let new_hunk_key = Self::review_hunk_key(&buffer_snapshot, start_point);
+        let end_multi_buffer_row = MultiBufferRow(anchor_range.end.to_point(&buffer_snapshot).row);
+        let new_hunk_key = Self::review_hunk_key(&buffer_snapshot, anchor_range.start);
 
         // Check if we already have an overlay for this hunk
         if let Some(existing_overlay) = self.diff_review_overlays.iter_mut().find(|overlay| {
@@ -2735,13 +2732,13 @@ impl Editor {
         self.replace_blocks(renderers, None, cx);
     }
 
-    fn review_hunk_key(snapshot: &MultiBufferSnapshot, start: Point) -> DiffHunkKey {
+    fn review_hunk_key(snapshot: &MultiBufferSnapshot, start: Anchor) -> DiffHunkKey {
         DiffHunkKey {
             file_path: snapshot
-                .file_at(start)
+                .file_at(start.to_point(snapshot))
                 .map(|file| file.path().clone())
                 .unwrap_or_else(|| Arc::from(util::rel_path::RelPath::empty())),
-            hunk_start_anchor: snapshot.anchor_before(start),
+            hunk_start_anchor: start,
         }
     }
 
