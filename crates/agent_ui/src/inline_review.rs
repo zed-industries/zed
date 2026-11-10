@@ -1045,6 +1045,27 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         let (thread, editor, connection) = queue_fixture(cx).await;
+        let assert_submissions = |expected: &[&str], cx: &App| {
+            let submissions = thread
+                .read(cx)
+                .entries()
+                .iter()
+                .filter_map(|entry| match entry {
+                    acp_thread::AgentThreadEntry::UserMessage(message) => Some(message),
+                    _ => None,
+                })
+                .flat_map(|message| message.content.source_blocks())
+                .map(|block| {
+                    let acp_v2::ContentBlock::Text(content) = block else {
+                        panic!("expected a review prompt");
+                    };
+                    content.meta.as_ref().unwrap()[REVIEW_META_KEY]["submissionId"]
+                        .as_str()
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(submissions, expected);
+        };
         let first = connection.defer_next_prompt_response();
         cx.update(|cx| {
             enqueue(thread.clone(), job(&editor, "discussion-a", "first"), cx);
@@ -1064,31 +1085,25 @@ mod tests {
         cx.run_until_parked();
         cx.update(|cx| {
             cancel_queued(thread.entity_id(), "first", cx);
-            assert_eq!(thread.read(cx).entries().len(), 1);
-            let queue = &cx.global::<ReviewQueues>().0[&thread.entity_id()];
-            assert_eq!(
-                queue
-                    .pending
-                    .iter()
-                    .map(|job| job.submission_id.as_str())
-                    .collect::<Vec<_>>(),
-                vec!["second", "follow-up"]
-            );
+            assert_submissions(&["first"], cx);
         });
         assert!(connection.take_cancel_calls().is_empty());
         let second = connection.defer_next_prompt_response();
         first.send(Ok(response("discussion-a", "first"))).unwrap();
         cx.run_until_parked();
-        cx.update(|cx| assert_eq!(thread.read(cx).entries().len(), 2));
+        cx.update(|cx| assert_submissions(&["first", "second"], cx));
         let third = connection.defer_next_prompt_response();
         second.send(Ok(response("discussion-b", "second"))).unwrap();
         cx.run_until_parked();
-        cx.update(|cx| assert_eq!(thread.read(cx).entries().len(), 3));
+        cx.update(|cx| assert_submissions(&["first", "second", "follow-up"], cx));
         third
             .send(Ok(response("discussion-a", "follow-up")))
             .unwrap();
         cx.run_until_parked();
-        cx.update(|cx| assert!(cx.global::<ReviewQueues>().0.is_empty()));
+        cx.update(|cx| {
+            assert_submissions(&["first", "second", "follow-up"], cx);
+            assert!(cx.global::<ReviewQueues>().0.is_empty());
+        });
         assert!(connection.take_cancel_calls().is_empty());
     }
 
