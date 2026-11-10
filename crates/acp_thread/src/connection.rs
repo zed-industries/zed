@@ -260,6 +260,32 @@ pub trait AgentConnection {
     /// Requests cancellation; success does not establish that execution stopped.
     fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Result<()>;
 
+    /// Asks the agent to stop one tool call. Success means the agent accepted the request;
+    /// the tool call's own updates report when it stops.
+    fn cancel_tool_call(
+        &self,
+        _session_id: &acp_v2::SessionId,
+        _tool_call_id: &acp_v2::ToolCallId,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Cancelling tool calls is not supported"
+        )))
+    }
+
+    /// Asks the agent to stop one terminal's process. Success means the agent accepted the
+    /// request; the terminal's exit status reports when it stops.
+    fn cancel_terminal(
+        &self,
+        _session_id: &acp_v2::SessionId,
+        _terminal_id: &acp_v2::TerminalId,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Cancelling terminals is not supported"
+        )))
+    }
+
     /// Request-scoped elicitations are connection-level because they can arrive before a session
     /// thread exists. Session-scoped elicitations stay in the thread timeline, but use
     /// `ElicitationStore` for shared processing.

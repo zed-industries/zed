@@ -203,6 +203,7 @@ Git worktrees let you keep multiple checkouts of the same repository on disk at 
 This is useful when you want to work on more than one branch or task without stashing, rebuilding, or disturbing the files in your main checkout.
 
 Open the worktree picker from the title bar, next to the project picker, or by running {#action git::Worktree}.
+Search by worktree name or checked-out branch name to find an existing worktree.
 From the picker, you can:
 
 - Create a new linked worktree either from the current branch or default branch

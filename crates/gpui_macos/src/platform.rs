@@ -1,7 +1,7 @@
 use crate::{
     AppleActivity, AppleDispatcher, BoolExt, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
-    MacWindow, events::key_to_native, main_thread_marker, ns_string, pasteboard::Pasteboard,
-    renderer, set_active_window_cursor_style,
+    MacWindow, events::key_to_menu_equivalent, main_thread_marker, ns_string,
+    pasteboard::Pasteboard, renderer, set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -171,8 +171,8 @@ pub(crate) struct MacPlatformState {
     headless: bool,
     activation_policy: ActivationPolicy,
     application_created: bool,
-    general_pasteboard: Pasteboard,
-    find_pasteboard: Pasteboard,
+    general_pasteboard: Option<Pasteboard>,
+    find_pasteboard: Option<Pasteboard>,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     thermal_observer: Option<ProcessInfoObserver>,
@@ -401,7 +401,9 @@ impl MacPlatform {
                                 NSMenuItem::alloc(self.1),
                                 &NSString::from_str(name),
                                 Some(selector),
-                                &NSString::from_str(key_to_native(keystroke.key()).as_ref()),
+                                &NSString::from_str(
+                                    key_to_menu_equivalent(keystroke.key()).as_ref(),
+                                ),
                             );
                             if Self::os_version() >= Version::new(12, 0, 0) {
                                 item.setAllowsAutomaticKeyEquivalentLocalization(false);
@@ -1203,22 +1205,26 @@ impl Platform for MacPlatform {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
-        state.general_pasteboard.read()
+        state.general_pasteboard.as_ref()?.read()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         let state = self.0.lock();
-        state.general_pasteboard.write(item);
+        if let Some(pasteboard) = &state.general_pasteboard {
+            pasteboard.write(item);
+        }
     }
 
     fn read_from_find_pasteboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
-        state.find_pasteboard.read()
+        state.find_pasteboard.as_ref()?.read()
     }
 
     fn write_to_find_pasteboard(&self, item: ClipboardItem) {
         let state = self.0.lock();
-        state.find_pasteboard.write(item);
+        if let Some(pasteboard) = &state.find_pasteboard {
+            pasteboard.write(item);
+        }
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {

@@ -329,9 +329,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "5.0.0"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80ce60ce096020c2d0aa10445bc27b8856109e288abaf564ab517031ae819d69"
+checksum = "c60cfd8cddbb23d9e30f51dca5316b4cea769ba55900db1fa8951dca4f28d02d"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -348,9 +348,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "5.0.0"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a12951a4e9a163a9384dec4e5681bd774c0fdb3871c5ed1deb7b44bc630df17a"
+checksum = "b296716e42d77d38aef7f645cbe0765287b0e0a84722cb9f8ac39e6cdcecdb2a"
 dependencies = [
  "quote",
  "syn 3.0.3",
@@ -358,9 +358,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "1.15.1"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b2316d2cd561917bc2c16e3c64771c77e24363b56d40b58fdad091d02059992"
+checksum = "e20d2c4af6eb08f6a4f562520bdd939a4af803255fec461dd523638c22f5b265"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -4099,6 +4099,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "crates_io_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "derive_more",
+ "futures 0.3.34",
+ "http_client",
+ "itertools 0.14.0",
+ "parking_lot",
+ "semver",
+ "serde",
+ "serde_json",
+ "smol",
+ "thiserror 2.0.17",
+ "url",
+]
+
+[[package]]
 name = "crc"
 version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7089,6 +7109,7 @@ dependencies = [
  "tree-sitter-md",
  "ui",
  "ui_input",
+ "unicode-width 0.2.2",
  "unindent",
  "util",
  "watch",
@@ -12180,6 +12201,7 @@ dependencies = [
  "futures 0.3.34",
  "fuzzy",
  "gpui",
+ "menu",
  "picker",
  "project",
  "serde",
@@ -13365,8 +13387,11 @@ dependencies = [
  "project",
  "rope",
  "settings",
+ "theme",
+ "theme_settings",
  "ui",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -13907,6 +13932,7 @@ dependencies = [
  "tempfile",
  "terminal",
  "text",
+ "time",
  "toml 0.9.8",
  "tracing",
  "unindent",
@@ -13944,6 +13970,29 @@ dependencies = [
  "semver",
  "settings",
  "watch",
+]
+
+[[package]]
+name = "project_bookmarks"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "futures 0.3.34",
+ "fuzzy_nucleo",
+ "gpui",
+ "language",
+ "menu",
+ "picker",
+ "picker_preview",
+ "project",
+ "serde_json",
+ "text",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
+ "zlog",
 ]
 
 [[package]]
@@ -17856,10 +17905,13 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "language",
+ "languages",
  "menu",
+ "node_runtime",
  "picker",
  "project",
  "serde_json",
+ "settings",
  "task",
  "tree-sitter",
  "tree-sitter-json",
@@ -22380,7 +22432,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.28.0"
+version = "1.29.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -22488,6 +22540,7 @@ dependencies = [
  "pretty_assertions",
  "profiling",
  "project",
+ "project_bookmarks",
  "project_panel",
  "project_symbols",
  "prompt_store",
