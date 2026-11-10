@@ -208,6 +208,7 @@ pub(super) struct DiffReviewOverlay {
     pub(super) hunk_key: DiffHunkKey,
     /// Whether the comments section is expanded.
     pub(super) comments_expanded: bool,
+    collapsed: bool,
     /// Editors for comments currently being edited inline.
     /// Key: comment ID, Value: Editor entity for inline editing.
     pub(super) inline_edit_editors: HashMap<usize, Entity<Editor>>,
@@ -629,7 +630,7 @@ impl Editor {
             if existing.start.row == range.start.row {
                 anyhow::ensure!(
                     existing.end.row == end_row && overlay.on_submit.is_some(),
-                    "Close the existing review on this line before selecting a different range"
+                    "A discussion already starts on this line with another range. Reopen it or select a different starting line"
                 );
             }
         }
@@ -733,9 +734,12 @@ impl Editor {
             if on_submit.is_some() {
                 existing_overlay.on_submit = on_submit;
             }
-            // Just focus the existing overlay's prompt editor
+            existing_overlay.collapsed = false;
             let focus_handle = existing_overlay.prompt_editor.focus_handle(cx);
+            let hunk_key = existing_overlay.hunk_key.clone();
+            self.refresh_diff_review_overlay_height(&hunk_key, window, cx);
             window.focus(&focus_handle, cx);
+            cx.notify();
             return;
         }
 
@@ -819,6 +823,7 @@ impl Editor {
             prompt_editor: prompt_editor.clone(),
             hunk_key,
             comments_expanded: true,
+            collapsed: false,
             inline_edit_editors: HashMap::default(),
             inline_edit_subscriptions: HashMap::default(),
             user_avatar_uri,
@@ -1294,6 +1299,32 @@ impl Editor {
 
     pub(super) fn cancel_diff_review_drag(&mut self, cx: &mut Context<Self>) {
         self.diff_review_drag_state = None;
+        cx.notify();
+    }
+
+    fn set_review_overlay_collapsed(
+        &mut self,
+        hunk_key: &DiffHunkKey,
+        collapsed: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some(overlay) = self
+            .diff_review_overlays
+            .iter_mut()
+            .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
+        else {
+            return;
+        };
+        overlay.collapsed = collapsed;
+        let focus = if collapsed {
+            self.focus_handle.clone()
+        } else {
+            overlay.prompt_editor.focus_handle(cx)
+        };
+        self.refresh_diff_review_overlay_height(hunk_key, window, cx);
+        window.focus(&focus, cx);
         cx.notify();
     }
 
@@ -2603,28 +2634,30 @@ impl Editor {
         }
     }
 
-    /// Dismisses overlays that have no comments stored for their hunks.
-    /// Keeps overlays that have at least one comment.
+    /// Preserves comments, hidden discussions, and unsubmitted drafts.
     fn dismiss_overlays_without_comments(&mut self, cx: &mut Context<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
 
-        // First, compute which overlays have comments (to avoid borrow issues with retain)
-        let overlays_with_comments: Vec<bool> = self
+        let overlays_to_keep: Vec<bool> = self
             .diff_review_overlays
             .iter()
-            .map(|overlay| self.hunk_comment_count(&overlay.hunk_key, &snapshot) > 0)
+            .map(|overlay| {
+                self.hunk_comment_count(&overlay.hunk_key, &snapshot) > 0
+                    || overlay.collapsed
+                    || !overlay.prompt_editor.read(cx).text(cx).trim().is_empty()
+            })
             .collect();
 
         // Now collect block IDs to remove and retain overlays
         let mut block_ids_to_remove = HashSet::default();
         let mut index = 0;
         self.diff_review_overlays.retain(|overlay| {
-            let has_comments = overlays_with_comments[index];
+            let keep_overlay = overlays_to_keep[index];
             index += 1;
-            if !has_comments {
+            if !keep_overlay {
                 block_ids_to_remove.insert(overlay.block_id);
             }
-            has_comments
+            keep_overlay
         });
 
         if !block_ids_to_remove.is_empty() {
@@ -2643,7 +2676,7 @@ impl Editor {
     ) {
         // Extract all needed data from overlay first to avoid borrow conflicts
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let (comments_expanded, block_id, prompt_editor, automatic_height) = {
+        let (comments_expanded, block_id, prompt_editor, automatic_height, collapsed) = {
             let Some(overlay) = self
                 .diff_review_overlays
                 .iter()
@@ -2657,12 +2690,17 @@ impl Editor {
                 overlay.block_id,
                 overlay.prompt_editor.clone(),
                 overlay.on_submit.is_some(),
+                overlay.collapsed,
             )
         };
 
         // Calculate new height
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let new_height = self.calculate_overlay_height(hunk_key, comments_expanded, &snapshot);
+        let new_height = if collapsed {
+            2
+        } else {
+            self.calculate_overlay_height(hunk_key, comments_expanded, &snapshot)
+        };
 
         // Update the block height using resize_blocks (avoids flicker)
         let mut heights = HashMap::default();
@@ -2774,6 +2812,40 @@ impl Editor {
                 })
                 .unwrap_or((Vec::new(), true, HashMap::default(), None, None));
 
+        let collapsed = editor_handle.upgrade().is_some_and(|editor| {
+            let editor = editor.read(cx);
+            let snapshot = editor.buffer.read(cx).snapshot(cx);
+            editor.diff_review_overlays.iter().any(|overlay| {
+                overlay.collapsed && Self::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot)
+            })
+        });
+        if collapsed {
+            let message_count: usize = comments
+                .iter()
+                .map(|(comment, _)| 1 + usize::from(comment.agent_reply.is_some()))
+                .sum();
+            let editor = editor_handle.clone();
+            let key = hunk_key.clone();
+            return h_flex()
+                .w_full()
+                .px_2()
+                .bg(colors.editor_background)
+                .child(
+                    Button::new(
+                        "reopen-review-discussion",
+                        format!("Show discussion · {message_count} messages"),
+                    )
+                    .on_click(move |_, window, cx| {
+                        editor
+                            .update(cx, |editor, cx| {
+                                editor.set_review_overlay_collapsed(&key, false, window, cx)
+                            })
+                            .log_err();
+                    }),
+                )
+                .into_any_element();
+        }
+
         let comment_count = comments.len();
         let avatar_size = px(20.);
         let action_icon_size = IconSize::XSmall;
@@ -2846,10 +2918,19 @@ impl Editor {
                                 IconButton::new("diff-review-close", IconName::Close)
                                     .icon_color(ui::Color::Muted)
                                     .icon_size(action_icon_size)
-                                    .tooltip(Tooltip::text("Close"))
-                                    .on_click(|_, window, cx| {
-                                        window
-                                            .dispatch_action(Box::new(crate::actions::Cancel), cx);
+                                    .tooltip(Tooltip::text("Hide this discussion"))
+                                    .on_click({
+                                        let editor = editor_handle.clone();
+                                        let key = hunk_key.clone();
+                                        move |_, window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.set_review_overlay_collapsed(
+                                                        &key, true, window, cx,
+                                                    )
+                                                })
+                                                .log_err();
+                                        }
                                     }),
                             )
                             .child(
