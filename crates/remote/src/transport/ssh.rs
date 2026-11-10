@@ -1643,12 +1643,18 @@ impl SshSocket {
         self.ssh_command(ShellKind::Posix, "sh", &["-s"], false)
     }
 
+    fn environment_posix_argument_command(&self, script: &str) -> Command {
+        self.ssh_command(ShellKind::Posix, "sh", &["-c", script], false)
+    }
+
     async fn environment_posix(&self) -> Result<RemoteEnvironment> {
         let script = RemoteEnvironment::posix_script();
-        let output = command_output(self.environment_posix_command(), Some(script.as_bytes()))
-            .await
-            .context("determining remote environment")?;
-        RemoteEnvironment::parse_posix(&output)
+        probe_environment_posix(
+            self.environment_posix_command(),
+            || self.environment_posix_argument_command(&script),
+            &script,
+        )
+        .await
     }
 
     /// Best-effort detection of the remote OS version. Failures are logged and
@@ -1784,6 +1790,28 @@ async fn command_output(mut command: Command, input: Option<&[u8]>) -> Result<St
     );
     write_result.with_context(|| format!("writing stdin for command {command:?}"))?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+async fn probe_environment_posix(
+    stdin_command: Command,
+    argument_command: impl FnOnce() -> Command,
+    script: &str,
+) -> Result<RemoteEnvironment> {
+    let output = command_output(stdin_command, Some(script.as_bytes()))
+        .await
+        .context("determining remote environment")?;
+    match RemoteEnvironment::parse_posix(&output) {
+        Ok(environment) => Ok(environment),
+        Err(error) => {
+            log::warn!(
+                "Failed to parse the remote environment probed via stdin, retrying with the script as an argument: {error:#}"
+            );
+            let output = command_output(argument_command(), None)
+                .await
+                .context("determining remote environment")?;
+            RemoteEnvironment::parse_posix(&output)
+        }
+    }
 }
 
 fn parse_port_number(port_str: &str) -> Result<u16> {
@@ -2288,7 +2316,13 @@ fn build_command_windows(
     let byte_slice: Vec<u8> = utf16_bytes.iter().flat_map(|&u| u.to_le_bytes()).collect();
     let base64_encoded = base64::engine::general_purpose::STANDARD.encode(&byte_slice);
 
-    args.push(format!("powershell.exe -E {}", base64_encoded));
+    // Windows OpenSSH server automatically quotes the command for `ssh -T` (non-PTY),
+    // but leaves it unquoted for `ssh -t` (PTY).
+    // Related issue: https://github.com/PowerShell/Win32-OpenSSH/issues/2478
+    match interactive {
+        Interactive::Yes => args.push(format!("\"powershell.exe -E {}\"", base64_encoded)),
+        Interactive::No => args.push(format!("powershell.exe -E {}", base64_encoded)),
+    }
 
     Ok(CommandTemplate {
         program: "ssh".into(),
@@ -2583,6 +2617,27 @@ mod tests {
         let expected = format!("failed to run command {command:?}: probe failed");
         let error = smol::block_on(command_output(command, Some(&input))).unwrap_err();
         assert_eq!(error.to_string(), expected);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn environment_posix_probe_retries_when_stdin_is_consumed() -> Result<()> {
+        let socket = smol::block_on(SshSocket::new(
+            SshConnectionOptions::default(),
+            PathBuf::from("/tmp/zed-test.sock"),
+        ))?;
+        let script = RemoteEnvironment::posix_script();
+        let stdin_command = stdin_consuming_remote_shell(&socket.environment_posix_command())?;
+        let argument_command =
+            stdin_consuming_remote_shell(&socket.environment_posix_argument_command(&script))?;
+        let environment = smol::block_on(probe_environment_posix(
+            stdin_command,
+            move || argument_command,
+            &script,
+        ))?;
+        assert_eq!(environment.shell, "/bin/bash");
+        assert_eq!(environment.platform.arch.as_str(), std::env::consts::ARCH);
         Ok(())
     }
 
@@ -2883,6 +2938,114 @@ mod tests {
                 "--",
                 "host",
                 "cd && exec env 'INPUT_VA=val' /bin/fish -l"
+            ]
+        );
+        assert_eq!(command.env, env);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_build_command_windows() -> Result<()> {
+        use base64::Engine as _;
+
+        let encode_utf16_base64 = |script: &str| {
+            let utf16_bytes: Vec<u16> = script.encode_utf16().collect();
+            let byte_slice: Vec<u8> = utf16_bytes.iter().flat_map(|&u| u.to_le_bytes()).collect();
+            base64::engine::general_purpose::STANDARD.encode(&byte_slice)
+        };
+
+        let mut input_env = HashMap::default();
+        input_env.insert("INPUT_VAR".to_string(), "val".to_string());
+        let mut env = HashMap::default();
+        env.insert("SSH_VAR".to_string(), "ssh-val".to_string());
+
+        // Non-interactive command (Interactive::No should use -T and keep the command unquoted,
+        // because Windows OpenSSH already quotes the command in non-PTY mode)
+        let command = build_command_windows(
+            Some("remote_program".to_string()),
+            &["arg1".to_string(), "arg2".to_string()],
+            &input_env,
+            Some(r"C:\work".to_string()),
+            None,
+            env.clone(),
+            PathStyle::Windows,
+            "nu.exe",
+            ShellKind::Nushell,
+            vec!["-p".to_string(), "2222".to_string()],
+            vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "--".to_string(),
+                "host".to_string(),
+            ],
+            Interactive::No,
+        )?;
+
+        let expected_non_interactive_exec = format!(
+            "powershell.exe -E {}",
+            encode_utf16_base64(r"Set-Location -Path C:\work ; &remote_program arg1 arg2")
+        );
+        assert_eq!(command.program, "ssh");
+        assert_eq!(
+            command.args.iter().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "-p",
+                "2222",
+                "-o",
+                "LogLevel=ERROR",
+                "-T",
+                "-l",
+                "user",
+                "--",
+                "host",
+                &expected_non_interactive_exec,
+            ]
+        );
+        assert_eq!(command.env, env);
+
+        // Interactive command (Interactive::Yes should use -t and wrap the command in quotes,
+        // because Windows OpenSSH concatenates the command unquoted in PTY mode)
+        let command = build_command_windows(
+            None,
+            &[],
+            &input_env,
+            Some(r"D:\code\test_python".to_string()),
+            Some((1, "foo".to_owned(), 2)),
+            env.clone(),
+            PathStyle::Windows,
+            "nu.exe",
+            ShellKind::Nushell,
+            vec!["-p".to_string(), "2222".to_string()],
+            vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "--".to_string(),
+                "host".to_string(),
+            ],
+            Interactive::Yes,
+        )?;
+
+        let expected_interactive_exec = format!(
+            "\"powershell.exe -E {}\"",
+            encode_utf16_base64(r"Set-Location -Path D:\code\test_python ; nu.exe")
+        );
+        assert_eq!(command.program, "ssh");
+        assert_eq!(
+            command.args.iter().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "-p",
+                "2222",
+                "-L",
+                "1:foo:2",
+                "-o",
+                "LogLevel=ERROR",
+                "-t",
+                "-l",
+                "user",
+                "--",
+                "host",
+                &expected_interactive_exec,
             ]
         );
         assert_eq!(command.env, env);
@@ -3216,5 +3379,23 @@ mod tests {
             options.ssh_destination_args(),
             ["--", "-oProxyCommand=touch /tmp/pwned"]
         );
+    }
+
+    #[cfg(unix)]
+    fn stdin_consuming_remote_shell(ssh_command: &Command) -> Result<Command> {
+        let remote_command = ssh_command
+            .get_args()
+            .last()
+            .context("Missing remote command")?
+            .to_string_lossy();
+        let mut command = util::command::new_command("/bin/sh");
+        command
+            .arg("-c")
+            .arg(format!("cat > /dev/null; {remote_command}"))
+            .env("SHELL", "/bin/bash")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        Ok(command)
     }
 }
