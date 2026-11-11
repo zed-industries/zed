@@ -1146,14 +1146,14 @@ impl WaylandWindowStatePtr {
                     if visibility_changed {
                         self.report_visibility(configure.visibility);
                     }
-                    if throttled {
-                        return;
-                    }
-                    if let Some(size) = configure.size {
+                    if !throttled && let Some(size) = configure.size {
                         self.resize(size);
                     }
                     if fullscreen_changed {
                         self.notify_resize();
+                    }
+                    if throttled {
+                        return;
                     }
                 }
             }

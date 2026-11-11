@@ -1,4 +1,4 @@
-use gpui::WindowButtonLayout;
+use gpui::{App, Window, WindowButtonLayout};
 use settings::{RegisterSetting, Settings, SettingsContent, TitleBarVisibility};
 
 #[derive(Copy, Clone, Debug, RegisterSetting)]
@@ -15,6 +15,18 @@ pub struct TitleBarSettings {
     pub show_menus: bool,
     pub open_menus_on_hover: bool,
     pub button_layout: Option<WindowButtonLayout>,
+}
+
+impl TitleBarSettings {
+    pub fn is_title_bar_visible(window: &Window, cx: &App) -> bool {
+        match Self::get_global(cx).show {
+            TitleBarVisibility::Always => true,
+            TitleBarVisibility::Never => false,
+            TitleBarVisibility::HideInFullScreen => {
+                !window.is_fullscreen() && !window.is_simple_fullscreen()
+            }
+        }
+    }
 }
 
 impl Settings for TitleBarSettings {

@@ -142,7 +142,7 @@ use std::{
     time::Duration,
 };
 use task::{DebugScenario, SharedTaskContext, SpawnInTerminal};
-use theme::{ActiveTheme, ClientDecorationsExt, SystemAppearance};
+use theme::{ActiveTheme, SystemAppearance};
 use theme_settings::ThemeSettings;
 pub use toolbar::{
     PaneSearchBarCallbacks, Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -12370,29 +12370,49 @@ pub fn client_side_decorations(
     window: &mut Window,
     cx: &mut App,
 ) -> Stateful<Div> {
+    client_side_decorations_with_rounded_corners(
+        element,
+        Corners {
+            top_left: true,
+            top_right: true,
+            bottom_right: true,
+            bottom_left: true,
+        },
+        window,
+        cx,
+    )
+}
+
+pub(crate) fn client_side_decorations_with_rounded_corners(
+    element: impl IntoElement,
+    rounded_corners: Corners<bool>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
     let decorations = window.window_decorations();
     let is_resizable = window.is_resizable();
     let tiling = match decorations {
         Decorations::Server => Tiling::default(),
         Decorations::Client { tiling } => tiling,
     };
+    let radius = |rounded| {
+        if rounded {
+            theme::CLIENT_SIDE_DECORATION_ROUNDING
+        } else {
+            px(0.0)
+        }
+    };
+    let corner_radii = Corners {
+        top_left: radius(rounded_corners.top_left && !tiling.top && !tiling.left),
+        top_right: radius(rounded_corners.top_right && !tiling.top && !tiling.right),
+        bottom_left: radius(rounded_corners.bottom_left && !tiling.bottom && !tiling.left),
+        bottom_right: radius(rounded_corners.bottom_right && !tiling.bottom && !tiling.right),
+    };
 
     match decorations {
         Decorations::Client { .. } => {
             window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
-            let radius = |rounded| {
-                if rounded {
-                    theme::CLIENT_SIDE_DECORATION_ROUNDING
-                } else {
-                    px(0.0)
-                }
-            };
-            window.set_client_corner_radii(Corners {
-                top_left: radius(!tiling.top && !tiling.left),
-                top_right: radius(!tiling.top && !tiling.right),
-                bottom_left: radius(!tiling.bottom && !tiling.left),
-                bottom_right: radius(!tiling.bottom && !tiling.right),
-            });
+            window.set_client_corner_radii(corner_radii);
         }
         Decorations::Server => {
             window.set_client_inset(px(0.0));
@@ -12408,8 +12428,7 @@ pub fn client_side_decorations(
         .bg(transparent_black())
         .map(|div| match decorations {
             Decorations::Server => div,
-            Decorations::Client { .. } => div
-                .rounded_client_corners(tiling)
+            Decorations::Client { .. } => with_corner_radii(div, corner_radii)
                 .when(!tiling.top, |div| {
                     div.pt(theme::CLIENT_SIDE_DECORATION_SHADOW)
                 })
@@ -12464,9 +12483,8 @@ pub fn client_side_decorations(
                 .cursor(CursorStyle::Arrow)
                 .map(|div| match decorations {
                     Decorations::Server => div,
-                    Decorations::Client { .. } => div
+                    Decorations::Client { .. } => with_corner_radii(div, corner_radii)
                         .border_color(cx.theme().colors().border)
-                        .rounded_client_corners(tiling)
                         .when(!tiling.top, |div| {
                             div.border_t(theme::CLIENT_SIDE_DECORATION_BORDER)
                         })
@@ -12545,6 +12563,14 @@ pub fn client_side_decorations(
             ),
             Decorations::Client { .. } => div,
         })
+}
+
+fn with_corner_radii<E: Styled>(element: E, corner_radii: Corners<Pixels>) -> E {
+    element
+        .rounded_tl(corner_radii.top_left)
+        .rounded_tr(corner_radii.top_right)
+        .rounded_bl(corner_radii.bottom_left)
+        .rounded_br(corner_radii.bottom_right)
 }
 
 fn resize_edge(

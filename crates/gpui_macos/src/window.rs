@@ -435,10 +435,6 @@ unsafe fn build_window_class(name: &CStr, superclass: &AnyClass) -> *const AnyCl
             window_will_enter_fullscreen as extern "C" fn(_, Sel, *mut AnyObject),
         );
         decl.add_method(
-            sel!(windowDidEnterFullScreen:),
-            window_did_enter_fullscreen as extern "C" fn(_, Sel, *mut AnyObject),
-        );
-        decl.add_method(
             sel!(windowDidFailToEnterFullScreen:),
             window_did_fail_to_enter_fullscreen as extern "C" fn(_, Sel, *mut AnyObject),
         );
@@ -685,7 +681,7 @@ struct MacWindowState {
     last_left_mouse_down_event: Option<Retained<AnyObject>>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
-    traffic_lights_visible: bool,
+    native_titlebar_visible: bool,
     traffic_light_frames: Option<TrafficLightFrames>,
     pre_fullscreen_traffic_light_frames: Option<TrafficLightFrames>,
     transparent_titlebar: bool,
@@ -702,7 +698,6 @@ struct MacWindowState {
     app_owns_titlebar_drag: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
     is_exiting_fullscreen: bool,
-    in_native_fullscreen: bool,
     simple_fullscreen_state: Option<SimpleFullscreenState>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
@@ -718,8 +713,8 @@ struct MacWindowState {
 
 impl MacWindowState {
     fn move_traffic_light(&mut self) {
-        if !self.traffic_lights_visible {
-            self.update_traffic_light_visibility();
+        if !self.native_titlebar_visible {
+            self.update_native_titlebar_visibility();
         }
 
         if let Some(traffic_light_position) = self.traffic_light_position {
@@ -781,35 +776,42 @@ impl MacWindowState {
         }
     }
 
-    fn update_traffic_light_visibility(&self) {
-        let window = self.native_window();
-        for button in [
-            NSWindowButton::CloseButton,
-            NSWindowButton::MiniaturizeButton,
-            NSWindowButton::ZoomButton,
-        ] {
-            if let Some(button) = window.standardWindowButton(button) {
-                button.setHidden(!self.traffic_lights_visible);
+    fn update_native_titlebar_visibility(&self) {
+        let Some(close_button) = self
+            .native_window()
+            .standardWindowButton(NSWindowButton::CloseButton)
+        else {
+            return;
+        };
+        if let Some(titlebar_container) = Self::titlebar_container(&close_button) {
+            titlebar_container.setHidden(!self.native_titlebar_visible);
+        }
+    }
+
+    fn apply_fullscreen_titlebar_opacity(&self) {
+        let min_version = NSOperatingSystemVersion {
+            majorVersion: 15,
+            minorVersion: 3,
+            patchVersion: 0,
+        };
+
+        if is_macos_version_at_least(min_version) {
+            unsafe {
+                let _: () = msg_send![self.native_window, setTitlebarAppearsTransparent: Bool::NO];
             }
         }
     }
 
-    fn update_titlebar_transparency(&self) {
-        if !is_macos_version_at_least(FULLSCREEN_TITLEBAR_MIN_VERSION) {
-            return;
-        }
-        let transparent = titlebar_appears_transparent(
-            self.in_native_fullscreen,
-            self.traffic_lights_visible,
-            self.transparent_titlebar,
-        );
-        unsafe {
-            let current: Bool = msg_send![self.native_window, titlebarAppearsTransparent];
-            if current.as_bool() != transparent {
-                let _: () = msg_send![
-                    self.native_window,
-                    setTitlebarAppearsTransparent: Bool::new(transparent)
-                ];
+    fn restore_windowed_titlebar_transparency(&self) {
+        let min_version = NSOperatingSystemVersion {
+            majorVersion: 15,
+            minorVersion: 3,
+            patchVersion: 0,
+        };
+
+        if is_macos_version_at_least(min_version) && self.transparent_titlebar {
+            unsafe {
+                let _: () = msg_send![self.native_window, setTitlebarAppearsTransparent: Bool::YES];
             }
         }
     }
@@ -1189,7 +1191,7 @@ impl MacWindow {
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
-                traffic_lights_visible: true,
+                native_titlebar_visible: true,
                 traffic_light_frames: None,
                 pre_fullscreen_traffic_light_frames: None,
                 transparent_titlebar: titlebar
@@ -1203,7 +1205,6 @@ impl MacWindow {
                 app_owns_titlebar_drag,
                 fullscreen_restore_bounds: Bounds::default(),
                 is_exiting_fullscreen: false,
-                in_native_fullscreen: false,
                 simple_fullscreen_state: None,
                 move_tab_to_new_window_callback: None,
                 merge_all_windows_callback: None,
@@ -1708,13 +1709,10 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn set_traffic_light_visibility(&self, visible: bool) {
+    fn set_native_titlebar_visibility(&self, visible: bool) {
         let mut state = self.0.lock();
-        if state.traffic_lights_visible != visible {
-            state.traffic_lights_visible = visible;
-            state.update_traffic_light_visibility();
-            state.update_titlebar_transparency();
-        }
+        state.native_titlebar_visible = visible;
+        state.update_native_titlebar_visibility();
     }
 
     fn set_traffic_light_position(&self, position: Point<Pixels>) {
@@ -3141,23 +3139,14 @@ extern "C" fn window_will_enter_fullscreen(this: &AnyObject, _: Sel, _: *mut Any
     lock.is_exiting_fullscreen = false;
     lock.pre_fullscreen_traffic_light_frames = lock.traffic_light_frames;
     lock.restore_traffic_light();
-    lock.in_native_fullscreen = true;
-    lock.update_titlebar_transparency();
-}
-
-extern "C" fn window_did_enter_fullscreen(this: &AnyObject, _: Sel, _: *mut AnyObject) {
-    let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.as_ref().lock();
-    lock.update_traffic_light_visibility();
-    lock.update_titlebar_transparency();
+    lock.apply_fullscreen_titlebar_opacity();
 }
 
 extern "C" fn window_did_fail_to_enter_fullscreen(this: &AnyObject, _: Sel, _: *mut AnyObject) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    lock.in_native_fullscreen = false;
+    lock.restore_windowed_titlebar_transparency();
     lock.traffic_light_frames = lock.pre_fullscreen_traffic_light_frames.take();
-    lock.update_titlebar_transparency();
     lock.move_traffic_light();
 }
 
@@ -3165,8 +3154,7 @@ extern "C" fn window_will_exit_fullscreen(this: &AnyObject, _: Sel, _: *mut AnyO
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     lock.is_exiting_fullscreen = true;
-    lock.in_native_fullscreen = false;
-    lock.update_titlebar_transparency();
+    lock.restore_windowed_titlebar_transparency();
     lock.move_traffic_light();
 }
 
@@ -3174,8 +3162,9 @@ extern "C" fn window_did_fail_to_exit_fullscreen(this: &AnyObject, _: Sel, _: *m
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     lock.is_exiting_fullscreen = false;
-    lock.in_native_fullscreen = true;
-    lock.update_titlebar_transparency();
+    if lock.is_fullscreen() {
+        lock.apply_fullscreen_titlebar_opacity();
+    }
     lock.restore_traffic_light();
 }
 
@@ -3193,24 +3182,6 @@ extern "C" fn window_did_exit_fullscreen(this: &AnyObject, _: Sel, _: *mut AnyOb
 
 pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bool {
     NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion(version)
-}
-
-const FULLSCREEN_TITLEBAR_MIN_VERSION: NSOperatingSystemVersion = NSOperatingSystemVersion {
-    majorVersion: 15,
-    minorVersion: 3,
-    patchVersion: 0,
-};
-
-fn titlebar_appears_transparent(
-    in_native_fullscreen: bool,
-    traffic_lights_visible: bool,
-    transparent_titlebar: bool,
-) -> bool {
-    if in_native_fullscreen {
-        !traffic_lights_visible
-    } else {
-        transparent_titlebar
-    }
 }
 
 fn ns_error_description(error: *mut AnyObject) -> String {
@@ -4173,31 +4144,6 @@ extern "C" fn toggle_tab_bar(this: &AnyObject, _sel: Sel, _id: *mut AnyObject) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn titlebar_transparency_follows_fullscreen_traffic_light_visibility() {
-        let transparent_titlebar = true;
-
-        assert!(!titlebar_appears_transparent(
-            true,
-            true,
-            transparent_titlebar
-        ));
-        assert!(titlebar_appears_transparent(
-            true,
-            false,
-            transparent_titlebar
-        ));
-
-        let live_toggle = [true, false, true]
-            .map(|visible| titlebar_appears_transparent(true, visible, transparent_titlebar));
-        assert_eq!(live_toggle, [false, true, false]);
-
-        for visible in [true, false] {
-            assert!(titlebar_appears_transparent(false, visible, true));
-            assert!(!titlebar_appears_transparent(false, visible, false));
-        }
-    }
 
     #[test]
     fn display_id_for_screen_handles_missing_metadata() {
