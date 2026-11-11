@@ -13185,15 +13185,15 @@ async fn test_visibility_for_paths_in_gitignored_dirs(cx: &mut gpui::TestAppCont
         let file_in_ignored_dir = PathBuf::from(path!("/dir/.checkouts/worktrees/foo/README.md"));
 
         assert_eq!(
-            project.visibility_for_paths(std::slice::from_ref(&root), true, cx),
+            project.visibility_for_paths(std::slice::from_ref(&root.as_path()), true, cx),
             Some(true)
         );
         assert_eq!(
-            project.visibility_for_paths(std::slice::from_ref(&file), true, cx),
+            project.visibility_for_paths(std::slice::from_ref(&file.as_path()), true, cx),
             Some(true)
         );
         assert_eq!(
-            project.visibility_for_subpaths(std::slice::from_ref(&file), cx),
+            project.visibility_for_subpaths(std::slice::from_ref(&file.as_path()), cx),
             Some(true)
         );
 
@@ -13202,17 +13202,17 @@ async fn test_visibility_for_paths_in_gitignored_dirs(cx: &mut gpui::TestAppCont
         // opening an unrelated path.
         for path in [&ignored_dir, &file_in_ignored_dir] {
             assert_eq!(
-                project.visibility_for_paths(std::slice::from_ref(path), true, cx),
+                project.visibility_for_paths(std::slice::from_ref(&path.as_path()), true, cx),
                 None,
                 "{path:?} should not be considered contained"
             );
             assert_eq!(
-                project.visibility_for_paths(std::slice::from_ref(path), false, cx),
+                project.visibility_for_paths(std::slice::from_ref(&path.as_path()), false, cx),
                 None,
                 "{path:?} should not be considered contained"
             );
             assert_eq!(
-                project.visibility_for_subpaths(std::slice::from_ref(path), cx),
+                project.visibility_for_subpaths(std::slice::from_ref(&path.as_path()), cx),
                 None,
                 "{path:?} should not be considered a contained subpath"
             );

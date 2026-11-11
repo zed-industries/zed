@@ -128,7 +128,9 @@ pub fn init(cx: &mut App) {
                     .await;
                 workspace_handle
                     .update_in(cx, |workspace, window, cx| {
-                        if workspace.active_modal::<WhichKeyModal>(cx).is_some() {
+                        // The modal layer holds one modal at a time, so showing which-key
+                        // would dismiss an open modal such as the commit editor or a picker.
+                        if workspace.has_active_modal(window, cx) {
                             return;
                         };
 
@@ -185,7 +187,12 @@ mod tests {
     use std::cell::Cell;
 
     use collections::HashMap;
-    use gpui::PlatformKeyboardMapper;
+    use gpui::{
+        BorrowAppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+        InteractiveElement, IntoElement, KeyBinding, PlatformKeyboardMapper, Render,
+        TestAppContext, VisualTestContext, actions, div,
+    };
+    use workspace::{AppState, ModalView, MultiWorkspace};
 
     use super::*;
 
@@ -265,5 +272,106 @@ mod tests {
         };
 
         assert_eq!(binding_label(&action), "lazygit");
+    }
+
+    actions!(which_key_test, [TestChordAction]);
+
+    struct TestModal {
+        focus_handle: FocusHandle,
+        chord_action_count: usize,
+    }
+
+    impl TestModal {
+        fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+            Self {
+                focus_handle: cx.focus_handle(),
+                chord_action_count: 0,
+            }
+        }
+    }
+
+    impl EventEmitter<DismissEvent> for TestModal {}
+
+    impl Focusable for TestModal {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl ModalView for TestModal {}
+
+    impl Render for TestModal {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().track_focus(&self.focus_handle).on_action(cx.listener(
+                |this, _: &TestChordAction, _, _| {
+                    this.chord_action_count += 1;
+                },
+            ))
+        }
+    }
+
+    async fn init_workspace_test(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, &mut VisualTestContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            workspace::init(app_state.clone(), cx);
+            init(cx);
+            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(r#"{ "which_key": { "enabled": true, "delay_ms": 0 } }"#, cx)
+                    .expect("valid test settings");
+            });
+            cx.bind_keys([KeyBinding::new("ctrl-k ctrl-x", TestChordAction, None)]);
+            app_state
+        });
+        let project = project::Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        (workspace, cx)
+    }
+
+    #[gpui::test]
+    async fn test_which_key_shows_for_pending_chord(cx: &mut TestAppContext) {
+        let (workspace, cx) = init_workspace_test(cx).await;
+
+        cx.simulate_keystrokes("ctrl-k");
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.active_modal::<WhichKeyModal>(cx).is_some());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_which_key_does_not_replace_open_modal(cx: &mut TestAppContext) {
+        let (workspace, cx) = init_workspace_test(cx).await;
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, TestModal::new);
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("ctrl-k");
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                workspace.active_modal::<TestModal>(cx).is_some(),
+                "which-key should not dismiss the open modal"
+            );
+        });
+
+        cx.simulate_keystrokes("ctrl-x");
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            let modal = workspace
+                .active_modal::<TestModal>(cx)
+                .expect("modal should still be open");
+            assert_eq!(modal.read(cx).chord_action_count, 1);
+        });
     }
 }

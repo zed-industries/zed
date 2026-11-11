@@ -20734,6 +20734,7 @@ dependencies = [
  "collections",
  "command_palette",
  "gpui",
+ "project",
  "settings",
  "theme",
  "theme_settings",
@@ -22418,7 +22419,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.29.0"
+version = "1.30.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
