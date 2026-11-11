@@ -74,6 +74,39 @@ command = "git rev-parse HEAD"
 packages = ["zed"]
 profiles = ["release"]
 
+# Forwarded from the invoking environment when set. A Nix dev shell supplies
+# pkg-config and the libraries it finds this way, since the sandbox passes no
+# ambient environment to build scripts.
+[env.PKG_CONFIG]
+inherit = true
+packages = [
+    "alsa-sys",
+    "gio-sys",
+    "glib-sys",
+    "gobject-sys",
+    "webrtc-sys",
+    "x11",
+    "yeslogic-fontconfig-sys",
+]
+
+[env.PKG_CONFIG_PATH]
+inherit = true
+packages = [
+    "alsa-sys",
+    "gio-sys",
+    "glib-sys",
+    "gobject-sys",
+    "webrtc-sys",
+    "x11",
+    "yeslogic-fontconfig-sys",
+]
+
+# Lets a Nix dev shell supply its own cmake: the downloaded Linux cmake expects
+# a standard dynamic loader, which NixOS does not have.
+[env.CMAKE]
+inherit = true
+packages = ["webrtc-sys", "wasmtime-c-api-impl"]
+
 # Reads a package's actions perform that corgi's sandbox does not grant by
 # default. By default only a package's own `.rs` files (plus its manifest) are
 # readable, so non-`.rs` files a build script or macro reads must be listed even
