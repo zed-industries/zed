@@ -1222,10 +1222,6 @@ fn repository_display_name(
 
 pub struct GitPanel {
     pub(crate) active_repository: Option<Entity<Repository>>,
-    /// Kept in sync by `schedule_update`, which runs whenever a repository is
-    /// added, removed or activated. Computing it depends on every repository in
-    /// the project, so it is not recomputed per frame.
-    active_repository_display_name: SharedString,
     pub(crate) commit_editor: Entity<Editor>,
     /// Whether the commit editor should fill the vertical height of the panel.
     commit_editor_expanded: bool,
@@ -1577,11 +1573,6 @@ impl GitPanel {
             .detach();
 
             let mut this = Self {
-                active_repository_display_name: repository_display_name(
-                    active_repository.as_ref(),
-                    &project,
-                    cx,
-                ),
                 active_repository,
                 commit_editor,
                 commit_editor_expanded: false,
@@ -5682,8 +5673,6 @@ impl GitPanel {
         if active_repository_changed {
             self.update_active_history_sha(cx);
         }
-        self.active_repository_display_name =
-            repository_display_name(self.active_repository.as_ref(), &self.project, cx);
         self.reopen_commit_buffer(window, cx);
         self.preload_commit_history(cx);
         if self.active_tab == GitPanelTab::History {
@@ -7121,7 +7110,7 @@ impl GitPanel {
         let head_commit = active_repository.read(cx).head_commit.clone();
 
         let git_panel = cx.entity();
-        let display_name = self.active_repository_display_name.clone();
+        let display_name = repository_display_name(Some(&active_repository), &self.project, cx);
         let editor_is_long = self.commit_editor.update(cx, |editor, cx| {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
