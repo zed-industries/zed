@@ -1,12 +1,13 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DisplayId, DrawPhase,
-    Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, Result, SharedString, Size,
-    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode, window::ElementArenaScope,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardContentTypes, ClipboardItem,
+    ClipboardReadError, DisplayId, DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter,
+    ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
+    PlatformTextSystem, Point, Render, Result, SharedString, Size, SystemNotification,
+    SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
+    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
+    WindowVisibility, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -31,6 +32,19 @@ pub struct TestAppContext {
     on_quit: Rc<RefCell<Vec<Box<dyn FnOnce() + 'static>>>>,
     #[doc(hidden)]
     pub app: Rc<AppCell>,
+}
+
+/// Controls how the test platform answers clipboard content type queries.
+#[derive(Clone, Debug, Default)]
+pub enum TestClipboardContentTypes {
+    /// Immediately reports the stored item's entry types, or an empty set if nothing is stored.
+    #[default]
+    FromClipboard,
+    /// Immediately returns this result for every query.
+    Result(Result<ClipboardContentTypes, ClipboardReadError>),
+    /// Keeps each query pending until [`TestAppContext::resolve_clipboard_content_types_queries`].
+    /// Dropping its response sender instead resolves the query to [`ClipboardReadError::Unavailable`].
+    Pending,
 }
 
 impl AppContext for TestAppContext {
@@ -387,10 +401,49 @@ impl TestAppContext {
         self.test_platform.write_to_clipboard(item)
     }
 
-    /// Simulates reading from the platform clipboard.
-    /// This will return the most recent value from `write_to_clipboard`.
+    /// Returns the most recent value from `write_to_clipboard` without incrementing
+    /// [`Self::clipboard_read_count`].
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.test_platform.read_from_clipboard()
+        self.test_platform.current_clipboard_item.lock().clone()
+    }
+
+    /// Counts platform clipboard payload reads, including asynchronous reads.
+    /// Content type queries, test inspection, primary selection and find pasteboard reads are excluded.
+    pub fn clipboard_read_count(&self) -> usize {
+        self.test_platform.clipboard_read_count.get()
+    }
+
+    /// Sets the response mode for future queries without affecting already pending queries.
+    pub fn set_clipboard_content_types_response(&self, response: TestClipboardContentTypes) {
+        *self
+            .test_platform
+            .clipboard_content_types_response
+            .borrow_mut() = response;
+    }
+
+    /// Returns the number of queued clipboard content type queries awaiting a response.
+    pub fn pending_clipboard_content_types_queries(&self) -> usize {
+        self.test_platform
+            .pending_clipboard_content_types_queries
+            .borrow()
+            .len()
+    }
+
+    /// Answers all currently pending queries with the given result, leaving the response mode unchanged.
+    pub fn resolve_clipboard_content_types_queries(
+        &self,
+        result: Result<ClipboardContentTypes, ClipboardReadError>,
+    ) {
+        for sender in self
+            .test_platform
+            .pending_clipboard_content_types_queries
+            .borrow_mut()
+            .drain(..)
+        {
+            if sender.send(result.clone()).is_err() {
+                log::debug!("Clipboard content type query was canceled before it was resolved");
+            }
+        }
     }
 
     /// Simulates choosing a File in the platform's "Open" dialog.

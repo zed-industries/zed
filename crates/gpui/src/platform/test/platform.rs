@@ -2,14 +2,16 @@
 use crate::NoopTextSystem;
 #[cfg(any(test, feature = "test-support"))]
 use crate::PathPromptOptions;
+#[cfg(any(test, feature = "test-support"))]
+use crate::TestClipboardContentTypes;
 use crate::{
-    ActivityGuard, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem,
-    CursorStyle, DevicePixels, DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap,
-    OwnedMenu, Platform, PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PromptButton, ScreenCaptureFrame,
-    ScreenCaptureSource, ScreenCaptureStream, SharedString, SourceMetadata, SystemNotification,
-    SystemNotificationResponse, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance,
-    WindowParams, size,
+    ActivityGuard, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardContentTypes,
+    ClipboardItem, ClipboardReadError, CursorStyle, DevicePixels, DisplayId, DummyKeyboardMapper,
+    ForegroundExecutor, Keymap, OwnedMenu, Platform, PlatformDisplay, PlatformHeadlessRenderer,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton,
+    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SharedString, SourceMetadata,
+    SystemNotification, SystemNotificationResponse, Task, TestDisplay, TestWindow, ThermalState,
+    WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 #[cfg(any(test, feature = "test-support"))]
@@ -37,7 +39,14 @@ pub(crate) struct TestPlatform {
     displays: RefCell<Vec<TestDisplay>>,
     displays_changed_callback: RefCell<Option<Box<dyn FnMut()>>>,
     active_cursor: Mutex<CursorStyle>,
-    current_clipboard_item: Mutex<Option<ClipboardItem>>,
+    pub(crate) current_clipboard_item: Mutex<Option<ClipboardItem>>,
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) clipboard_read_count: Cell<usize>,
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) clipboard_content_types_response: RefCell<TestClipboardContentTypes>,
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) pending_clipboard_content_types_queries:
+        RefCell<Vec<oneshot::Sender<Result<ClipboardContentTypes, ClipboardReadError>>>>,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     current_primary_item: Mutex<Option<ClipboardItem>>,
     #[cfg(target_os = "macos")]
@@ -253,6 +262,14 @@ impl TestPlatform {
             active_window: Default::default(),
             expect_restart: Default::default(),
             current_clipboard_item: Mutex::new(None),
+            #[cfg(any(test, feature = "test-support"))]
+            clipboard_read_count: Cell::new(0),
+            #[cfg(any(test, feature = "test-support"))]
+            clipboard_content_types_response: RefCell::new(
+                TestClipboardContentTypes::FromClipboard,
+            ),
+            #[cfg(any(test, feature = "test-support"))]
+            pending_clipboard_content_types_queries: RefCell::new(Vec::new()),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             current_primary_item: Mutex::new(None),
             #[cfg(target_os = "macos")]
@@ -793,7 +810,36 @@ impl Platform for TestPlatform {
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        #[cfg(any(test, feature = "test-support"))]
+        self.clipboard_read_count
+            .set(self.clipboard_read_count.get() + 1);
         self.current_clipboard_item.lock().clone()
+    }
+
+    fn clipboard_content_types(&self) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        #[cfg(any(test, feature = "test-support"))]
+        match &*self.clipboard_content_types_response.borrow() {
+            TestClipboardContentTypes::FromClipboard => {}
+            TestClipboardContentTypes::Result(result) => return Task::ready(result.clone()),
+            TestClipboardContentTypes::Pending => {
+                let (sender, receiver) = oneshot::channel();
+                self.pending_clipboard_content_types_queries
+                    .borrow_mut()
+                    .push(sender);
+                return self.foreground_executor.spawn(async move {
+                    receiver
+                        .await
+                        .unwrap_or(Err(ClipboardReadError::Unavailable))
+                });
+            }
+        }
+
+        Task::ready(Ok(self
+            .current_clipboard_item
+            .lock()
+            .as_ref()
+            .map(ClipboardItem::content_types)
+            .unwrap_or_default()))
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
@@ -858,5 +904,27 @@ impl PlatformKeyboardLayout for TestKeyboardLayout {
 
     fn name(&self) -> &str {
         "zed.keyboard.example"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TestAppContext;
+
+    #[gpui::test]
+    async fn test_clipboard_payload_read_count(cx: &mut TestAppContext) {
+        let item = ClipboardItem::new_string("clipboard text".to_string());
+        cx.write_to_clipboard(item.clone());
+
+        assert_eq!(cx.read_from_clipboard(), Some(item.clone()));
+        assert_eq!(cx.clipboard_read_count(), 0);
+
+        assert_eq!(cx.update(|cx| cx.read_from_clipboard()), Some(item.clone()));
+        assert_eq!(cx.clipboard_read_count(), 1);
+
+        let read = cx.update(|cx| cx.read_from_clipboard_async());
+        assert_eq!(read.await, Ok(Some(item)));
+        assert_eq!(cx.clipboard_read_count(), 2);
     }
 }

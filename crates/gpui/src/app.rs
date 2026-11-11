@@ -47,16 +47,16 @@ use crate::subscription::SingleSubscriberSet;
 use crate::{
     Action, ActionBuildError, ActionRegistry, ActivationPolicy, ActivityGuard, Any, AnyView,
     AnyWindowHandle, AppContext, AppLifecyclePhase, Arena, ArenaBox, Asset, AssetSource,
-    BackgroundExecutor, Bounds, ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase,
-    DisplayChanges, DisplayEvent, DisplayId, EventEmitter, ExternalDragPayload, FocusHandle,
-    FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PowerMode, Priority, PromptBuilder,
-    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
-    SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
-    WindowInvalidator, WindowingRequest,
+    BackgroundExecutor, Bounds, ClipboardContentTypes, ClipboardItem, ClipboardReadError,
+    CursorStyle, DispatchPhase, DisplayChanges, DisplayEvent, DisplayId, EventEmitter,
+    ExternalDragPayload, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point,
+    PowerMode, Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render,
+    RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
+    WindowHandle, WindowId, WindowInvalidator, WindowingRequest,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -1846,6 +1846,17 @@ impl App {
         &self,
     ) -> Task<Result<Option<ClipboardItem>, ClipboardReadError>> {
         self.platform.read_from_clipboard_async()
+    }
+
+    /// Reports the representations the platform clipboard offers without retrieving their contents.
+    ///
+    /// An empty set means none of the supported representations are offered. An error means
+    /// availability is unknown, not that the clipboard is empty. Availability does not guarantee
+    /// a successful read. See [`Platform::clipboard_content_types`] for the platform contract.
+    pub fn clipboard_content_types(
+        &self,
+    ) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        self.platform.clipboard_content_types()
     }
 
     /// Sets the text rendering mode for the application.

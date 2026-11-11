@@ -29,6 +29,10 @@ use calloop::{EventLoop, LoopHandle, LoopSignal, channel::Sender};
 use futures::channel::oneshot;
 use gpui_util::{ResultExt as _, new_std_command};
 #[cfg(any(feature = "wayland", feature = "x11"))]
+use http_client::Url;
+#[cfg(any(feature = "wayland", feature = "x11"))]
+use smallvec::SmallVec;
+#[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::linux::{
@@ -36,11 +40,12 @@ use crate::linux::{
     select_backend,
 };
 use gpui::{
-    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    ForegroundExecutor, GraphicalEnvironment, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, PowerMode, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
-    WindowButtonLayout, WindowParams, WindowingModes, WindowingRequest,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardContentTypes,
+    ClipboardItem, ClipboardReadError, CursorStyle, ForegroundExecutor, GraphicalEnvironment,
+    Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, PowerMode,
+    Result, RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout,
+    WindowParams, WindowingModes, WindowingRequest,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -1173,6 +1178,10 @@ impl Platform for LinuxPlatform {
         self.connection.borrow().read_from_clipboard()
     }
 
+    fn clipboard_content_types(&self) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        self.connection.borrow().clipboard_content_types()
+    }
+
     fn add_recent_document(&self, _path: &Path) {}
 }
 
@@ -1355,6 +1364,51 @@ pub(super) fn read_fd_with_timeout(
             Err(err) => return Err(err.into()),
         }
     }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) fn parse_uri_list(mut bytes: &[u8]) -> SmallVec<[PathBuf; 2]> {
+    while let Some(rest) = bytes.strip_suffix(b"\0") {
+        bytes = rest;
+    }
+
+    bytes
+        .split(|&byte| byte == b'\n')
+        .filter_map(|line| {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            if line.is_empty() || line.starts_with(b"#") {
+                return None;
+            }
+            let line = match std::str::from_utf8(line) {
+                Ok(line) => line,
+                Err(error) => {
+                    log::debug!(
+                        "Skipping non-UTF-8 URI list line {:?}: {error}",
+                        String::from_utf8_lossy(line)
+                    );
+                    return None;
+                }
+            };
+            let url = match Url::parse(line) {
+                Ok(url) => url,
+                Err(error) => {
+                    log::debug!("Skipping malformed URI list line {line:?}: {error}");
+                    return None;
+                }
+            };
+            if url.scheme() != "file" {
+                log::debug!("Skipping non-file URI list line {line:?}");
+                return None;
+            }
+            match url.to_file_path() {
+                Ok(path) => Some(path),
+                Err(()) => {
+                    log::debug!("Skipping URI list line that is not a local file path: {line:?}");
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -1756,6 +1810,37 @@ async fn await_idle_sleep_prevention(
 mod tests {
     use super::*;
     use gpui::{Point, px};
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    #[test]
+    fn test_parse_uri_list() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
+
+        let cases: &[(&[u8], &[&[u8]])] = &[
+            (
+                b"# Copied files\r\nfile:///tmp/first\r\n\nfile:///tmp/second\n\0\0",
+                &[b"/tmp/first", b"/tmp/second"],
+            ),
+            (
+                b"file:///tmp/space%20and%23hash\0",
+                &[b"/tmp/space and#hash"],
+            ),
+            (b"file:///tmp/non-utf8-%FF", &[b"/tmp/non-utf8-\xff"]),
+            (b"file://localhost/tmp/local", &[b"/tmp/local"]),
+            (b"file://server/tmp/remote\ntrash:///foo", &[]),
+            (
+                b"not a URI\nfile:///tmp/valid\nfile:///tmp/invalid-\xff\nfile:///tmp/also-valid",
+                &[b"/tmp/valid", b"/tmp/also-valid"],
+            ),
+        ];
+        for &(input, expected) in cases {
+            let expected: SmallVec<[PathBuf; 2]> = expected
+                .iter()
+                .map(|path| PathBuf::from(OsStr::from_bytes(path)))
+                .collect();
+            assert_eq!(parse_uri_list(input), expected, "input: {input:?}");
+        }
+    }
 
     #[test]
     fn power_mode_callbacks_can_reenter_and_replace_themselves() -> anyhow::Result<()> {

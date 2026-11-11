@@ -1,8 +1,9 @@
 use std::{path::PathBuf, rc::Rc};
 
 use gpui::{
-    AnyWindowHandle, ClipboardItem, CursorStyle, GraphicalEnvironment, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformWindow, WindowParams, WindowingModes,
+    AnyWindowHandle, ClipboardContentTypes, ClipboardItem, ClipboardReadError, CursorStyle,
+    GraphicalEnvironment, PlatformDisplay, PlatformKeyboardLayout, PlatformWindow, Task,
+    WindowParams, WindowingModes,
 };
 
 #[cfg(feature = "wayland")]
@@ -188,6 +189,16 @@ impl DisplayConnection {
 
     pub(crate) fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         dispatch!(self, connection => connection.read_from_clipboard(), headless => None)
+    }
+
+    pub(crate) fn clipboard_content_types(
+        &self,
+    ) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        dispatch!(
+            self,
+            connection => connection.clipboard_content_types(),
+            headless => Task::ready(Err(ClipboardReadError::Unavailable))
+        )
     }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]

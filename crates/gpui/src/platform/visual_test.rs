@@ -7,10 +7,10 @@
 
 use crate::ScreenCaptureSource;
 use crate::{
-    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Task, TestDispatcher, WindowAppearance, WindowParams,
+    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardContentTypes, ClipboardItem,
+    ClipboardReadError, CursorStyle, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Task, TestDispatcher, WindowAppearance, WindowParams,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -228,6 +228,15 @@ impl Platform for VisualTestPlatform {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.clipboard.lock().clone()
+    }
+
+    fn clipboard_content_types(&self) -> Task<Result<ClipboardContentTypes, ClipboardReadError>> {
+        Task::ready(Ok(self
+            .clipboard
+            .lock()
+            .as_ref()
+            .map(ClipboardItem::content_types)
+            .unwrap_or_default()))
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
