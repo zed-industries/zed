@@ -3744,12 +3744,10 @@ async fn is_dot_git(path: &Path, fs: &dyn Fs) -> bool {
     // If we're in a bare repository, we are not inside a `.git` folder. In a
     // bare repository, the root folder contains what would normally be in the
     // `.git` folder.
-    let head_metadata = fs.metadata(&path.join("HEAD")).await;
-    if !matches!(head_metadata, Ok(Some(_))) {
+    if !fs.is_file(&path.join("HEAD")).await {
         return false;
     }
-    let config_metadata = fs.metadata(&path.join("config")).await;
-    matches!(config_metadata, Ok(Some(_)))
+    fs.is_file(&path.join("config")).await
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
