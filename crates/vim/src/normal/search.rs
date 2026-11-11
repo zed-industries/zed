@@ -691,6 +691,7 @@ impl Replacement {
     // convert a vim query into something more usable by zed.
     // we don't attempt to fully convert between the two regex syntaxes,
     // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
+    // convert \+, \{ and \} to +, { and } in the pattern,
     // convert \0..\9 to $0..$9 in the replacement so that common idioms work,
     // and escape literal `$` to `$$` in the replacement so vim's literal `$`
     // is not interpreted as a Rust regex capture-group reference.
@@ -719,8 +720,9 @@ impl Replacement {
                 } else if phase == 1 && c == '$' {
                     // Second '$' escapes by fallthrough
                     buffer.push('$')
-                // unescape escaped parens
-                } else if phase == 0 && (c == '(' || c == ')') {
+                // Vim's default regex syntax escapes grouping and repetition operators,
+                // while Zed's regex syntax uses them unescaped.
+                } else if phase == 0 && matches!(c, '(' | ')' | '+' | '{' | '}') {
                 } else if c != delimiter {
                     buffer.push('\\')
                 }
@@ -785,6 +787,7 @@ mod test {
     use editor::{DisplayPoint, display_map::DisplayRow};
 
     use indoc::indoc;
+    use itertools::Itertools;
     use search::BufferSearchBar;
     use settings::SettingsStore;
 
@@ -796,6 +799,28 @@ mod test {
         assert_eq!(parsed.search, r"\$test");
         assert_eq!(parsed.replacement, "$$rest");
         assert!(parsed.flag_g);
+    }
+
+    #[gpui::test]
+    async fn test_replace_repetition_operators(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇA12345B\nA123B\nAB").await;
+
+        cx.simulate_shared_keystrokes(&r":%s/A\([0-9]\{3\}\)B/\1/g".chars().join(" "))
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq("A12345B\nˇ123\nAB");
+
+        cx.simulate_shared_keystrokes(&r":%s/A\([0-9]\+\)B/\1/g".chars().join(" "))
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq("ˇ12345\n123\nAB");
+
+        cx.simulate_shared_keystrokes(&r":%s/A\([0-9]*\)B/\1/g".chars().join(" "))
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq("12345\n123\nˇ");
     }
 
     #[gpui::test]

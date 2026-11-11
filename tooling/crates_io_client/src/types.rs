@@ -1,13 +1,22 @@
 use std::fmt;
 
 use chrono::{DateTime, Utc};
+use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(pub i32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TeamId(pub i32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VersionId(pub i32);
+#[derive(
+    Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+pub struct GitHubConfigId(pub i32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GitHubAccountId(pub i32);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CrateName(pub String);
@@ -106,6 +115,60 @@ pub struct User {
     pub name: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Team {
+    pub id: TeamId,
+    /// For example `github:zed-industries:crates-io`.
+    pub login: String,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Owner {
+    User(User),
+    Team(Team),
+}
+
+/// Identifies an owner to add or remove.
+#[derive(Debug, Display, Clone, PartialEq, Eq, Hash)]
+pub enum OwnerLogin {
+    /// A crates.io user, or a GitHub user when removing owners. crates.io
+    /// rejects names that match different accounts.
+    #[display("{_0}")]
+    Username(String),
+    #[display("crates.io:{_0}")]
+    CratesIoUser(String),
+    #[display("github:{_0}")]
+    GitHubUser(String),
+    #[display("github:{organization}:{team}")]
+    GitHubTeam { organization: String, team: String },
+}
+
+/// The outcome of adding one owner, as crates.io describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnerAddition {
+    /// The user becomes an owner once they accept the invitation.
+    UserInvited {
+        username: String,
+    },
+    UserAlreadyInvited {
+        username: String,
+    },
+    /// Teams become owners immediately.
+    TeamAdded {
+        login: String,
+    },
+    /// A message this client does not recognize.
+    Other(String),
+}
+
+impl Serialize for OwnerLogin {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrateDetails {
     pub krate: Crate,
@@ -118,4 +181,28 @@ pub struct CrateUpdate {
     /// Whether the crate can only be published through Trusted Publishing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trustpub_only: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHubConfig {
+    pub id: GitHubConfigId,
+    #[serde(rename = "crate")]
+    pub crate_name: CrateName,
+    pub repository_owner: String,
+    /// Lets crates.io recognize the repository after its owner is renamed.
+    pub repository_owner_id: GitHubAccountId,
+    pub repository_name: String,
+    pub workflow_filename: String,
+    pub environment: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewGitHubConfig {
+    #[serde(rename = "crate")]
+    pub crate_name: CrateName,
+    pub repository_owner: String,
+    pub repository_name: String,
+    pub workflow_filename: String,
+    pub environment: Option<String>,
 }
