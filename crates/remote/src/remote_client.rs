@@ -401,13 +401,19 @@ pub async fn connect(
 /// whether to show interactive UI (e.g., a password modal) before
 /// connecting.
 pub fn has_active_connection(opts: &RemoteConnectionOptions, cx: &App) -> bool {
-    cx.try_global::<ConnectionPool>().is_some_and(|pool| {
-        matches!(
-            pool.connections.get(opts),
-            Some(ConnectionPoolEntry::Connected(remote))
-                if remote.upgrade().is_some_and(|r| !r.has_been_killed())
-        )
-    })
+    active_connection_path_style(opts, cx).is_some()
+}
+
+/// Returns the path style of the live connection for the given options, if
+/// the global [`ConnectionPool`] has one.
+pub fn active_connection_path_style(opts: &RemoteConnectionOptions, cx: &App) -> Option<PathStyle> {
+    match cx.try_global::<ConnectionPool>()?.connections.get(opts)? {
+        ConnectionPoolEntry::Connected(remote) => remote
+            .upgrade()
+            .filter(|remote| !remote.has_been_killed())
+            .map(|remote| remote.path_style()),
+        _ => None,
+    }
 }
 
 impl RemoteClient {

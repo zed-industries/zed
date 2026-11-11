@@ -16,7 +16,7 @@ use remote::{
 };
 pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
-use util::paths::{PathStyle, PathWithPosition};
+use util::paths::{PathStyle, PathWithPosition, url_path_to_path};
 use workspace::{AppState, MultiWorkspace, OpenOptions, Workspace, find_existing_workspace};
 
 pub use remote_connection::{
@@ -122,12 +122,20 @@ impl Settings for RemoteSettings {
 
 pub async fn open_remote_project(
     connection_options: RemoteConnectionOptions,
-    paths: Vec<PathBuf>,
+    mut paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<WindowHandle<MultiWorkspace>> {
     let created_new_window = open_options.requesting_window.is_none();
+
+    // An open workspace on this host has a live connection, so its path style is known before
+    // matching. Without one, the paths are converted once connected.
+    if let Some(path_style) =
+        cx.update(|cx| remote::active_connection_path_style(&connection_options, cx))
+    {
+        url_paths_to_paths(&mut paths, path_style);
+    }
 
     let existing = find_existing_workspace(
         &paths,
@@ -456,9 +464,8 @@ pub(crate) async fn determine_paths_with_positions(
     mut paths: Vec<PathBuf>,
 ) -> (Vec<PathBuf>, Vec<PathWithPosition>) {
     let mut paths_with_positions = Vec::<PathWithPosition>::new();
-    let path_style = remote_connection.path_style();
+    url_paths_to_paths(&mut paths, remote_connection.path_style());
     for path in &mut paths {
-        strip_slash_before_drive_letter(path, path_style);
         if let Some(path_str) = path.to_str() {
             let path_with_position = PathWithPosition::parse_str(&path_str);
             if path_with_position.row.is_some() {
@@ -474,14 +481,13 @@ pub(crate) async fn determine_paths_with_positions(
     (paths, paths_with_positions)
 }
 
-/// `ssh://` URL paths keep a `/` before a Windows drive letter (`/C:/x`), which a Windows host
-/// cannot open. The remote's path style is only known once connected, so this cannot happen
-/// while the URL is parsed.
-fn strip_slash_before_drive_letter(path: &mut PathBuf, path_style: PathStyle) {
-    if let Ok(stripped) = path_style.strip_prefix(path.as_path(), "/")
-        && path_style.is_absolute(stripped)
-    {
-        *path = stripped.to_path_buf();
+/// `ssh://` URL paths are converted here rather than when the URL is parsed, because the remote's
+/// path style is only known once connected.
+fn url_paths_to_paths(paths: &mut [PathBuf], path_style: PathStyle) {
+    for path in paths {
+        if let Some(url_path) = path.to_str() {
+            *path = PathBuf::from(url_path_to_path(url_path, path_style));
+        }
     }
 }
 
@@ -522,45 +528,94 @@ mod tests {
     use util::path;
     use workspace::find_existing_workspace;
 
-    #[test]
-    fn test_strip_slash_before_drive_letter() {
-        let strip = |path: &str, path_style| {
-            let mut path = PathBuf::from(path);
-            strip_slash_before_drive_letter(&mut path, path_style);
-            path
-        };
+    // The mock connection reports the local path style, so drive letters are only exercised when
+    // the tests run on Windows.
+    #[cfg(target_os = "windows")]
+    #[gpui::test]
+    async fn test_determine_paths_with_positions_converts_drive_letter_url_paths(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (opts, _headless) = init_remote_server(cx, server_cx).await;
+        let connection = remote::connect(opts, Arc::new(remote::MockDelegate), &mut cx.to_async())
+            .await
+            .unwrap();
+
+        let (paths, paths_with_positions) = determine_paths_with_positions(
+            &connection,
+            vec![
+                PathBuf::from("/C:/"),
+                PathBuf::from("/d:\\"),
+                PathBuf::from("/C:/project/src/lib.rs"),
+            ],
+        )
+        .await;
+
+        let expected = vec![
+            PathBuf::from("C:/"),
+            PathBuf::from("d:\\"),
+            PathBuf::from("C:/project/src/lib.rs"),
+        ];
+        assert_eq!(paths, expected);
+        assert_eq!(
+            paths_with_positions
+                .into_iter()
+                .map(|path| path.path)
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[gpui::test]
+    async fn test_drive_letter_url_path_reuses_open_remote_workspace(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let (opts, _headless) = init_remote_server(cx, server_cx).await;
+        let mut async_cx = cx.to_async();
+
+        let window = open_remote_project(
+            opts.clone(),
+            vec![PathBuf::from(path!("/project"))],
+            app_state.clone(),
+            workspace::OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
+
+        // As parsed from `ssh://host/C:/project/src/lib.rs`.
+        open_remote_project(
+            opts,
+            vec![PathBuf::from("/C:/project/src/lib.rs")],
+            app_state,
+            workspace::OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
 
         assert_eq!(
-            strip("/C:/project/main.rs", PathStyle::Windows),
-            PathBuf::from("C:/project/main.rs")
+            cx.update(|cx| cx.windows().len()),
+            1,
+            "a drive-letter URL path into the open project should reuse its window"
         );
-        assert_eq!(
-            strip("/d:\\project", PathStyle::Windows),
-            PathBuf::from("d:\\project")
-        );
-        assert_eq!(
-            strip("/C:/project/main.rs:12", PathStyle::Windows),
-            PathBuf::from("C:/project/main.rs:12")
-        );
-        // Not a drive path: left as it is.
-        assert_eq!(
-            strip("/~/project", PathStyle::Windows),
-            PathBuf::from("/~/project")
-        );
-        assert_eq!(strip("/C:", PathStyle::Windows), PathBuf::from("/C:"));
-        assert_eq!(
-            strip("/1:/project", PathStyle::Windows),
-            PathBuf::from("/1:/project")
-        );
-        assert_eq!(
-            strip("C:/project", PathStyle::Windows),
-            PathBuf::from("C:/project")
-        );
-        // On a Unix host `/C:/x` is a valid absolute path.
-        assert_eq!(
-            strip("/C:/project", PathStyle::Unix),
-            PathBuf::from("/C:/project")
-        );
+        let opened = window
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.project_path(cx))
+                    .map(|project_path| project_path.path.as_unix_str().to_owned())
+            })
+            .unwrap();
+        assert_eq!(opened.as_deref(), Some("src/lib.rs"));
     }
 
     #[gpui::test]

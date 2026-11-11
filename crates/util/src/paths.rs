@@ -1589,6 +1589,22 @@ impl UrlExt for url::Url {
     }
 }
 
+/// Converts the already-decoded path of a URL into a path on a host with `path_style`.
+///
+/// URL paths keep a `/` before a Windows drive letter (`/C:/x`), which Windows cannot open.
+/// Unlike [`UrlExt::to_file_path_ext`], this takes a decoded path, not a whole URL, so it also
+/// serves URLs whose authority is not a file host, such as `ssh://`.
+pub fn url_path_to_path(url_path: &str, path_style: PathStyle) -> &str {
+    if path_style.is_windows()
+        && let Some(path) = url_path.strip_prefix('/')
+        && let [drive, b':', ..] = path.as_bytes()
+        && drive.is_ascii_alphabetic()
+    {
+        return path;
+    }
+    url_path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3466,6 +3482,26 @@ mod tests {
 
         let path = r"\\windows.localhost\Distro\foo";
         assert_eq!(WslPath::from_path(&path), None);
+    }
+
+    #[test]
+    fn test_url_path_to_path() {
+        let windows = |path| url_path_to_path(path, PathStyle::Windows);
+        assert_eq!(windows("/C:/project/main.rs"), "C:/project/main.rs");
+        assert_eq!(windows("/C:/project/main.rs:12"), "C:/project/main.rs:12");
+        assert_eq!(windows("/d:\\project"), "d:\\project");
+        // Drive roots keep their separator.
+        assert_eq!(windows("/C:/"), "C:/");
+        assert_eq!(windows("/d:\\"), "d:\\");
+        // Not a drive path: left as it is.
+        assert_eq!(windows("/~/project"), "/~/project");
+        assert_eq!(windows("/1:/project"), "/1:/project");
+        assert_eq!(windows("C:/project"), "C:/project");
+        // On a Unix host `/C:/x` is a valid absolute path.
+        assert_eq!(
+            url_path_to_path("/C:/project", PathStyle::Unix),
+            "/C:/project"
+        );
     }
 
     #[test]
