@@ -1114,6 +1114,8 @@ impl WaylandWindowStatePtr {
 
                 if let Some(mut configure) = state.in_progress_configure.take() {
                     let got_unmaximized = state.maximized && !configure.maximized;
+                    let mode_changed = state.fullscreen != configure.fullscreen
+                        || state.maximized != configure.maximized;
                     state.fullscreen = configure.fullscreen;
                     state.maximized = configure.maximized;
                     state.tiling = configure.tiling;
@@ -1141,6 +1143,7 @@ impl WaylandWindowStatePtr {
                             }
                         }
                     }
+                    let resized = configure.size.is_some_and(|size| size != state.bounds.size);
                     drop(state);
                     if visibility_changed {
                         self.report_visibility(configure.visibility);
@@ -1150,6 +1153,14 @@ impl WaylandWindowStatePtr {
                     }
                     if let Some(size) = configure.size {
                         self.resize(size);
+                    }
+                    // Same-size mode changes skip the resize callback, so report them as a move.
+                    if mode_changed && !resized {
+                        let callback = self.callbacks.borrow_mut().moved.take();
+                        if let Some(mut fun) = callback {
+                            fun();
+                            self.callbacks.borrow_mut().moved = Some(fun);
+                        }
                     }
                 }
             }

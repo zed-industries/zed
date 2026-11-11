@@ -305,6 +305,11 @@ impl X11WindowState {
             renderer.update_transparency(is_transparent);
         }
     }
+
+    fn is_maximized(&self) -> bool {
+        // A maximized window that gets minimized will still retain its maximized state.
+        !self.hidden && self.maximized_vertical && self.maximized_horizontal
+    }
 }
 
 #[derive(Clone)]
@@ -1121,6 +1126,7 @@ impl X11WindowStatePtr {
             .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
 
         let was_active = state.active;
+        let was_maximized = state.maximized_vertical && state.maximized_horizontal;
         state.active = false;
         state.fullscreen = false;
         state.maximized_vertical = false;
@@ -1145,6 +1151,19 @@ impl X11WindowStatePtr {
         // the client, and focus is the conventional means for the user to zero it.
         if state.active && !was_active {
             set_wm_hints_urgency(&self.xcb, self.x_window, false);
+        }
+
+        // Maximized changes without a geometry change get no ConfigureNotify, so report them as a move.
+        // This ignores `hidden`, since minimizing shouldn't notify bounds observers.
+        let maximized_changed =
+            (state.maximized_vertical && state.maximized_horizontal) != was_maximized;
+        drop(state);
+        if maximized_changed {
+            let callback = self.callbacks.borrow_mut().moved.take();
+            if let Some(mut fun) = callback {
+                fun();
+                self.callbacks.borrow_mut().moved = Some(fun);
+            }
         }
 
         Ok(())
@@ -1390,10 +1409,7 @@ impl PlatformWindow for X11Window {
     }
 
     fn is_maximized(&self) -> bool {
-        let state = self.0.state.borrow();
-
-        // A maximized window that gets minimized will still retain its maximized state.
-        !state.hidden && state.maximized_vertical && state.maximized_horizontal
+        self.0.state.borrow().is_maximized()
     }
 
     fn window_bounds(&self) -> WindowBounds {
