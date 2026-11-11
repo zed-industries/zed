@@ -2389,6 +2389,526 @@ fn test_fold_at_level_with_crease_on_boundary_row(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_fold_at_current_level(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(
+            &"
+                class Foo:
+                    def a():
+                        print(1)
+
+                class Bar:
+                    def a():
+                        print(1)
+            "
+            .unindent(),
+            cx,
+        );
+
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            // Set the cursor on the `def a()` line to ensure that using
+            // `FoldAtCurrentLevel` will fold all the function definitions on both
+            // classes.
+            editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                selections.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
+            });
+            editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                class Foo:
+                    def a():⋯
+
+                class Bar:
+                    def a():⋯
+            "
+                .unindent(),
+            );
+
+            // Unfold everything again and set the cursor at the beginning of `class
+            // Foo` to ensure that `FoldAtCurrentLevel` will fold all class
+            // definitions.
+            editor.unfold_all(&actions::UnfoldAll, window, cx);
+            editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
+            });
+            editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                class Foo:⋯
+
+                class Bar:⋯
+            "
+                .unindent(),
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_fold_at_current_level_is_column_independent_with_injection(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.languages.0.extend([
+            (
+                "HTML".into(),
+                LanguageSettingsContent {
+                    tab_size: NonZeroU32::new(4),
+                    ..Default::default()
+                },
+            ),
+            (
+                "JavaScript".into(),
+                LanguageSettingsContent {
+                    tab_size: NonZeroU32::new(2),
+                    ..Default::default()
+                },
+            ),
+        ]);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let html_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "HTML".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_html::LANGUAGE.into()),
+        )
+        .with_injection_query(
+            r#"
+            (script_element
+                (raw_text) @injection.content
+                (#set! injection.language "javascript"))
+            "#,
+        )
+        .expect("valid HTML injection query"),
+    );
+    let javascript_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    ));
+    cx.language_registry().add(html_language.clone());
+    cx.language_registry().add(javascript_language);
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(html_language), cx));
+    cx.set_state(concat!(
+        "<body>\n",
+        "    ˇ<script>let value = 1;\n",
+        "        value++;\n",
+        "    </script>\n",
+        "</body>\n",
+    ));
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        assert!(snapshot.is_singleton());
+        assert_eq!(snapshot.indent_size_for_line(MultiBufferRow(1)).len, 4);
+        // The first non-whitespace character belongs to HTML, while column 16
+        // is inside the injected JavaScript on that very same buffer row.
+        for (column, expected_indent) in [(4, 4), (16, 2)] {
+            assert_eq!(
+                snapshot
+                    .language_indent_size_at(Point::new(1, column), cx)
+                    .expect("language indentation at fixture position")
+                    .len,
+                expected_indent,
+            );
+        }
+
+        let expected = concat!(
+            "<body>\n",
+            "    <script>let value = 1;⋯\n",
+            "    </script>\n",
+            "</body>\n",
+        );
+
+        // Four leading spaces / four-space HTML indentation + 1 = level 2.
+        // Pin the actual fold result as well as checking column independence.
+        editor.fold_at_level(&actions::FoldAtLevel(2), window, cx);
+        assert_eq!(editor.display_text(cx), expected);
+
+        for column in [0, 4, 16] {
+            editor.unfold_all(&actions::UnfoldAll, window, cx);
+            editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                let cursor = Point::new(1, column);
+                selections.select_ranges([cursor..cursor]);
+            });
+            editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                expected,
+                "folding must use the language at the first non-whitespace character, not cursor column {column}",
+            );
+        }
+    });
+}
+
+#[gpui::test]
+fn test_fold_at_current_level_with_tabs(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(true);
+    });
+    let text = concat!(
+        "class Foo:\n",
+        "\tdef a():\n",
+        "\t\tprint(1)\n",
+        "\n",
+        "class Bar:\n",
+        "\tdef b():\n",
+        "\t\tprint(2)\n",
+    );
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(text, cx);
+        build_editor(buffer, window, cx)
+    });
+    editor
+        .update(cx, |editor, window, cx| {
+            for column in [0, 1] {
+                editor.unfold_all(&actions::UnfoldAll, window, cx);
+                editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                    let cursor = Point::new(1, column);
+                    selections.select_ranges([cursor..cursor]);
+                });
+                editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                assert_eq!(
+                    editor.display_text(cx),
+                    concat!(
+                        "class Foo:\n",
+                        "    def a():⋯\n",
+                        "\n",
+                        "class Bar:\n",
+                        "    def b():⋯\n",
+                    ),
+                    "cursor column {column}",
+                );
+            }
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_current_level_with_tabs_and_soft_tab_settings(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
+    let text = concat!(
+        "class Foo:\n",
+        "\tdef a():\n",
+        "\t\tprint(1)\n",
+        "\n",
+        "class Bar:\n",
+        "\tdef b():\n",
+        "\t\tprint(2)\n",
+    );
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(text, cx);
+        build_editor(buffer, window, cx)
+    });
+    editor
+        .update(cx, |editor, window, cx| {
+            for column in [0, 1] {
+                editor.unfold_all(&actions::UnfoldAll, window, cx);
+                editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                    let cursor = Point::new(1, column);
+                    selections.select_ranges([cursor..cursor]);
+                });
+                editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                assert_eq!(
+                    editor.display_text(cx),
+                    concat!(
+                        "class Foo:\n",
+                        "    def a():⋯\n",
+                        "\n",
+                        "class Bar:\n",
+                        "    def b():⋯\n",
+                    ),
+                    "cursor column {column}",
+                );
+            }
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_current_level_with_spaces_and_hard_tab_settings(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(true);
+    });
+    let text = concat!(
+        "class Foo:\n",
+        "    def a():\n",
+        "        print(1)\n",
+        "\n",
+        "class Bar:\n",
+        "    def b():\n",
+        "        print(2)\n",
+    );
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(text, cx);
+        build_editor(buffer, window, cx)
+    });
+    editor
+        .update(cx, |editor, window, cx| {
+            for column in [0, 4] {
+                editor.unfold_all(&actions::UnfoldAll, window, cx);
+                editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                    let cursor = Point::new(1, column);
+                    selections.select_ranges([cursor..cursor]);
+                });
+                editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                assert_eq!(
+                    editor.display_text(cx),
+                    concat!(
+                        "class Foo:\n",
+                        "    def a():⋯\n",
+                        "\n",
+                        "class Bar:\n",
+                        "    def b():⋯\n",
+                    ),
+                    "cursor column {column}",
+                );
+            }
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_current_level_with_mixed_indentation(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
+    // A tab after two spaces reaches column four, not column six.
+    let text = concat!(
+        "class Foo:\n",
+        "  \tdef a():\n",
+        "  \t  \tprint(1)\n",
+        "\n",
+        "class Bar:\n",
+        "  \tdef b():\n",
+        "  \t  \tprint(2)\n",
+    );
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(text, cx);
+        build_editor(buffer, window, cx)
+    });
+    editor
+        .update(cx, |editor, window, cx| {
+            for column in [0, 3] {
+                editor.unfold_all(&actions::UnfoldAll, window, cx);
+                editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                    let cursor = Point::new(1, column);
+                    selections.select_ranges([cursor..cursor]);
+                });
+                editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                assert_eq!(
+                    editor.display_text(cx),
+                    concat!(
+                        "class Foo:\n",
+                        "    def a():⋯\n",
+                        "\n",
+                        "class Bar:\n",
+                        "    def b():⋯\n",
+                    ),
+                    "cursor column {column}",
+                );
+            }
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_current_level_ignores_empty_lines(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
+    let text = concat!(
+        "\n",
+        "class Foo:\n",
+        "    def a():\n",
+        "        print(1)\n",
+        "\n",
+        "class Bar:\n",
+        "    def b():\n",
+        "        print(2)\n",
+        "",
+    );
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(text, cx);
+        build_editor(buffer, window, cx)
+    });
+    editor
+        .update(cx, |editor, window, cx| {
+            for row in [0, 4, 8] {
+                for column in [0] {
+                    editor.unfold_all(&actions::UnfoldAll, window, cx);
+                    editor.change_selections(
+                        SelectionEffects::default(),
+                        window,
+                        cx,
+                        |selections| {
+                            let cursor = Point::new(row, column);
+                            selections.select_ranges([cursor..cursor]);
+                        },
+                    );
+                    editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                    assert_eq!(editor.display_text(cx), text, "cursor at ({row}, {column})",);
+                }
+            }
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_current_level_on_space_only_lines(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
+    let text = concat!(
+        "    \n",
+        "class Foo:\n",
+        "    def a():\n",
+        "        print(1)\n",
+        "\n",
+        "class Bar:\n",
+        "    def b():\n",
+        "        print(2)\n",
+        "    ",
+    );
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(text, cx);
+        build_editor(buffer, window, cx)
+    });
+    editor
+        .update(cx, |editor, window, cx| {
+            for row in [0, 8] {
+                for column in [0, 4] {
+                    editor.unfold_all(&actions::UnfoldAll, window, cx);
+                    editor.change_selections(
+                        SelectionEffects::default(),
+                        window,
+                        cx,
+                        |selections| {
+                            let cursor = Point::new(row, column);
+                            selections.select_ranges([cursor..cursor]);
+                        },
+                    );
+                    editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                    assert_eq!(
+                        editor.display_text(cx),
+                        concat!(
+                            "    \n",
+                            "class Foo:\n",
+                            "    def a():⋯\n",
+                            "\n",
+                            "class Bar:\n",
+                            "    def b():⋯\n",
+                            "    ",
+                        ),
+                        "cursor at ({row}, {column})",
+                    );
+                }
+            }
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_current_level_on_tab_only_lines(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
+    let text = concat!(
+        "\t\n",
+        "class Foo:\n",
+        "    def a():\n",
+        "        print(1)\n",
+        "\n",
+        "class Bar:\n",
+        "    def b():\n",
+        "        print(2)\n",
+        "\t",
+    );
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(text, cx);
+        build_editor(buffer, window, cx)
+    });
+    editor
+        .update(cx, |editor, window, cx| {
+            for row in [0, 8] {
+                for column in [0, 1] {
+                    editor.unfold_all(&actions::UnfoldAll, window, cx);
+                    editor.change_selections(
+                        SelectionEffects::default(),
+                        window,
+                        cx,
+                        |selections| {
+                            let cursor = Point::new(row, column);
+                            selections.select_ranges([cursor..cursor]);
+                        },
+                    );
+                    editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                    assert_eq!(
+                        editor.display_text(cx),
+                        concat!(
+                            "    \n",
+                            "class Foo:\n",
+                            "    def a():⋯\n",
+                            "\n",
+                            "class Bar:\n",
+                            "    def b():⋯\n",
+                            "    ",
+                        ),
+                        "cursor at ({row}, {column})",
+                    );
+                }
+            }
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_current_level_with_multiple_cursors(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let text = "class Foo:\n    def a():\n        print(1)\n\nclass Bar:\n    def b():\n        print(2)\n";
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(text, cx);
+        build_editor(buffer, window, cx)
+    });
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                selections.select_ranges([
+                    Point::new(1, 0)..Point::new(1, 0),
+                    Point::new(5, 0)..Point::new(5, 0),
+                ]);
+            });
+            editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+            assert_eq!(editor.display_text(cx), text);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

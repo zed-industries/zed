@@ -327,53 +327,69 @@ impl Editor {
         self.fold_at_level(&actions::FoldAtLevel(9), window, cx);
     }
 
+    /// Folds the document at the level derived from the current line's
+    /// indentation, expanding tabs according to the applicable tab size.
+    ///
+    /// Empty lines are ignored while whitespace-only lines use their existing
+    /// indentation and the language settings at the start of the line.
     pub fn fold_at_current_level(
         &mut self,
         _: &actions::FoldAtCurrentLevel,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Ensure that we're not working on a multibuffer and that there's only
-        // one single selection.
         if self.selections.count() > 1 || !self.buffer().read(cx).is_singleton() {
-            dbg!("Early returning...");
             return;
         }
 
-        // Fetch the indentation level of the line the cursor is currently on.
         let display_snapshot = self.display_snapshot(cx);
-        // TODO!: Isn't there a way to use `MultiBufferOffset` here and then
-        // obtain the `MultiBufferRow` from the offset using the
-        // `MultiBufferSnapshot`?
-        // TODO!: Also, if we're sure it's a singleton, shouldn't we use
-        // `BufferSnapshot` and similar `BufferX` structs?
-        let selection = self.selections.newest::<Point>(&display_snapshot);
-        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let multi_buffer_row = MultiBufferRow(selection.head().row);
-        let multi_buffer_offset = self
-            .selections
-            .newest::<MultiBufferOffset>(&display_snapshot)
-            .head();
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let row = MultiBufferRow(
+            self.selections
+                .newest::<Point>(&display_snapshot)
+                .head()
+                .row,
+        );
+        let max_column = buffer_snapshot.line_len(row);
 
-        // We need a way to convert from the `LineIndent` to actual
-        // `FoldAtLevel` value, and I believe that will depend on the buffer's
-        // indent size or something.
-        if let Some(language_indent) =
-            multi_buffer_snapshot.language_indent_size_at(multi_buffer_offset, cx)
-        {
-            // I believe we don't need these anymore. However, unsure because
-            // we're getting the language settings from the offset, meaning the
-            // cursor might be inside like a CSS string in a JSX document, and
-            // we might just want to grab the language settings at the first
-            // non-whitespace character of the buffer row instead.
-            // let language_settings =
-            //     multi_buffer_snapshot.language_settings_at(multi_buffer_offset, cx);
-            // let indent = multi_buffer_snapshot.line_indent_for_row(multi_buffer_row);
-            let indent_size = multi_buffer_snapshot.indent_size_for_line(multi_buffer_row);
-            let level = dbg!((indent_size.len / language_indent.len) + 1);
-
-            self.fold_at_level(&actions::FoldAtLevel(level), window, cx);
+        // An empty line provides no indentation from which to derive a level.
+        if max_column == 0 {
+            return;
         }
+
+        // Resolve settings at the first non-indent character so moving the
+        // cursor across injected languages doesn't change the level.
+        // For whitespace-only lines, use the settings at the start of the line.
+        let line_start = Point::new(row.0, 0);
+        let column = buffer_snapshot
+            .chars_at(line_start)
+            .take_while(|char| matches!(char, ' ' | '\t'))
+            .count() as u32;
+        let column = if column == max_column { 0 } else { column };
+        let offset = buffer_snapshot.point_to_offset(Point::new(row.0, column));
+        let language_settings = buffer_snapshot.language_settings_at(offset, cx);
+
+        // Count the number of spaces before the first non-indent character,
+        // converting tabs to `tab_size` while ensuring that tabs are only
+        // expanded as much as necessary.
+        //
+        // For example, if `tab_size` is 4 and a line starts with ` \t` (1 space
+        // and 1 tab), the number of columns should be 4 and not 5.
+        let mut indentation_columns = 0;
+        let tab_size = language_settings.tab_size.get();
+        for character in buffer_snapshot.chars_at(line_start) {
+            match character {
+                ' ' => indentation_columns += 1,
+                '\t' => indentation_columns += tab_size - (indentation_columns % tab_size),
+                _ => break,
+            }
+        }
+
+        self.fold_at_level(
+            &actions::FoldAtLevel(indentation_columns / tab_size + 1),
+            window,
+            cx,
+        );
     }
 
     pub fn fold_all(&mut self, _: &actions::FoldAll, window: &mut Window, cx: &mut Context<Self>) {
