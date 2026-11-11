@@ -224,8 +224,11 @@ impl CachedMermaidDiagram {
             async move |this, cx| {
                 let value = cx
                     .background_spawn(async move {
-                        let svg_string =
-                            mermaid_render::render_to_svg(&contents.contents, &mermaid_theme)?;
+                        let svg_string = mermaid_render::render_to_svg(
+                            &contents.contents,
+                            &mermaid_theme,
+                            &svg_renderer,
+                        )?;
                         let tree = svg_renderer
                             .parse_svg(svg_string.as_bytes())
                             .map_err(|error| anyhow::anyhow!("{error}"))?;
