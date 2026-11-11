@@ -430,6 +430,12 @@ impl WgpuContext {
             .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
 
         let mut required_features = wgpu::Features::empty();
+        // Lets benchmarks measure frames on the GPU when the adapter supports it.
+        #[cfg(feature = "bench-support")]
+        {
+            required_features |= adapter.features()
+                & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::PIPELINE_STATISTICS_QUERY);
+        }
         if dual_source_blending {
             required_features |= wgpu::Features::DUAL_SOURCE_BLENDING;
         } else {

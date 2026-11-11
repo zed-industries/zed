@@ -16,6 +16,8 @@ use objc2_core_video::{
     CVPixelBufferGetWidthOfPlane, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVReturnSuccess,
 };
 use objc2_foundation::{NSRange, NSString};
+#[cfg(any(test, feature = "bench-support"))]
+use objc2_metal::MTLCommandBufferStatus;
 #[cfg(target_os = "macos")]
 use objc2_metal::MTLCopyAllDevices;
 use objc2_metal::{
@@ -31,6 +33,8 @@ use objc2_metal::{MTLBlitCommandEncoder, MTLOrigin, MTLRegion, MTLSize};
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use parking_lot::Mutex;
 
+#[cfg(feature = "bench-support")]
+use std::collections::VecDeque;
 use std::{cell::Cell, mem, mem::MaybeUninit, ops::Range, ptr, slice, sync::Arc};
 
 // Exported to metal
@@ -807,7 +811,11 @@ impl MetalRenderer {
     /// headless benchmark rendering, where the produced pixels are never
     /// inspected.
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-    pub fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<()> {
+    pub fn render_scene(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+    ) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>> {
         if size.width.0 <= 0 || size.height.0 <= 0 {
             anyhow::bail!("Invalid size for render_scene: {:?}", size);
         }
@@ -845,7 +853,7 @@ impl MetalRenderer {
             // Commit without waiting, mirroring presentation to a real window where
             // the CPU doesn't block on the GPU.
             command_buffer.commit();
-            Ok(())
+            Ok(command_buffer)
         })
     }
 
@@ -1896,6 +1904,43 @@ pub struct SurfaceBounds {
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 pub struct MetalHeadlessRenderer {
     renderer: MetalRenderer,
+    /// Frames submitted by `render_scene` whose GPU time hasn't been read yet,
+    /// in submission order.
+    #[cfg(feature = "bench-support")]
+    pending_frames: VecDeque<Retained<ProtocolObject<dyn MTLCommandBuffer>>>,
+    #[cfg(feature = "bench-support")]
+    gpu_frame_times: Vec<std::time::Duration>,
+}
+
+#[cfg(feature = "bench-support")]
+impl MetalHeadlessRenderer {
+    /// Reads the GPU time of each pending frame that has finished, so the
+    /// pending queue doesn't keep growing across a long measurement.
+    fn collect_completed_frames(&mut self) -> Result<()> {
+        while let Some(command_buffer) = self.pending_frames.front() {
+            match command_buffer.status() {
+                MTLCommandBufferStatus::Completed => {
+                    let start = command_buffer.GPUStartTime();
+                    let end = command_buffer.GPUEndTime();
+                    if end >= start {
+                        self.gpu_frame_times
+                            .push(std::time::Duration::from_secs_f64(end - start));
+                    }
+                }
+                MTLCommandBufferStatus::Error => {
+                    let error = command_buffer
+                        .error()
+                        .map(|error| error.to_string())
+                        .unwrap_or_default();
+                    self.pending_frames.pop_front();
+                    anyhow::bail!("Metal command buffer failed: {error}");
+                }
+                _ => break,
+            }
+            self.pending_frames.pop_front();
+        }
+        Ok(())
+    }
 }
 
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
@@ -1903,7 +1948,13 @@ impl MetalHeadlessRenderer {
     pub fn new() -> Result<Self> {
         let instance_buffer_pool = Arc::new(Mutex::new(InstanceBufferPool::default()));
         let renderer = MetalRenderer::new_headless(instance_buffer_pool)?;
-        Ok(Self { renderer })
+        Ok(Self {
+            renderer,
+            #[cfg(feature = "bench-support")]
+            pending_frames: VecDeque::new(),
+            #[cfg(feature = "bench-support")]
+            gpu_frame_times: Vec::new(),
+        })
     }
 }
 
@@ -1918,11 +1969,31 @@ impl gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
     }
 
     fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> anyhow::Result<()> {
-        self.renderer.render_scene(scene, size)
+        let command_buffer = self.renderer.render_scene(scene, size)?;
+        #[cfg(feature = "bench-support")]
+        {
+            self.pending_frames.push_back(command_buffer);
+            self.collect_completed_frames()?;
+        }
+        #[cfg(not(feature = "bench-support"))]
+        drop(command_buffer);
+        Ok(())
     }
 
     fn sprite_atlas(&self) -> Arc<dyn gpui::PlatformAtlas> {
         self.renderer.sprite_atlas().clone()
+    }
+
+    #[cfg(feature = "bench-support")]
+    fn take_gpu_stats(&mut self) -> Result<gpui::GpuStats> {
+        for command_buffer in &self.pending_frames {
+            command_buffer.waitUntilCompleted();
+        }
+        self.collect_completed_frames()?;
+        Ok(gpui::GpuStats {
+            frame_times: mem::take(&mut self.gpu_frame_times),
+            ..Default::default()
+        })
     }
 }
 
@@ -1935,7 +2006,35 @@ mod tests {
         CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
         CVPixelBufferUnlockBaseAddress, kCVPixelBufferIOSurfacePropertiesKey,
     };
-    use objc2_metal::MTLCommandBufferStatus;
+
+    #[cfg(feature = "bench-support")]
+    #[test]
+    fn headless_renderer_times_each_rendered_frame_on_the_gpu() -> Result<()> {
+        use gpui::PlatformHeadlessRenderer as _;
+
+        let bounds = Bounds {
+            origin: Point::default(),
+            size: size(ScaledPixels(32.0), ScaledPixels(32.0)),
+        };
+        let mut scene = Scene::default();
+        scene.insert_primitive(gpui::Quad {
+            bounds,
+            content_mask: ContentMask { bounds },
+            background: gpui::red().into(),
+            ..Default::default()
+        });
+        scene.finish();
+
+        let mut renderer = MetalHeadlessRenderer::new()?;
+        for _ in 0..3 {
+            renderer.render_scene(&scene, size(DevicePixels(32), DevicePixels(32)))?;
+        }
+        renderer.render_scene_to_image(&scene, size(DevicePixels(32), DevicePixels(32)))?;
+
+        assert_eq!(renderer.take_gpu_stats()?.frame_times.len(), 3);
+        assert!(renderer.take_gpu_stats()?.frame_times.is_empty());
+        Ok(())
+    }
 
     #[test]
     fn path_intermediate_textures_are_reused_until_resize() -> Result<()> {
