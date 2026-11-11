@@ -299,11 +299,3 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         )
     }
 }
-
-impl<M: ManagedView> IntoElement for RightClickMenu<M> {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
