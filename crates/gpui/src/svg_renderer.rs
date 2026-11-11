@@ -102,6 +102,19 @@ pub struct SvgRenderer {
 /// scales should retain this value to avoid re-paying the parse cost.
 pub struct ParsedSvg(usvg::Tree);
 
+/// The font of an SVG `<text>` element, as the values of its presentation attributes.
+#[derive(Clone, Copy, Debug)]
+pub struct SvgTextFont<'a> {
+    /// The `font-family` list.
+    pub family: &'a str,
+    /// The `font-size`, in pixels.
+    pub size: f32,
+    /// The `font-weight`.
+    pub weight: &'a str,
+    /// The `font-style`.
+    pub style: &'a str,
+}
+
 /// The size in which to rasterize the SVG.
 #[derive(Clone, Copy)]
 pub enum SvgSize {
@@ -189,6 +202,29 @@ impl SvgRenderer {
     /// Parses SVG data into a [`ParsedSvg`] that can be rasterized at any scale.
     pub fn parse_svg(&self, bytes: &[u8]) -> Result<ParsedSvg, usvg::Error> {
         usvg::Tree::from_data(bytes, &self.usvg_options).map(ParsedSvg)
+    }
+
+    /// Returns the advance of `text` drawn by this renderer as a single line of SVG `<text>`.
+    pub fn measure_text_width(
+        &self,
+        text: &str,
+        font: &SvgTextFont<'_>,
+    ) -> Result<f32, usvg::Error> {
+        let mut svg = String::from(
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><text xml:space="preserve" text-decoration="underline" font-family=""#,
+        );
+        push_xml_escaped(&mut svg, font.family);
+        svg.push_str(r#"" font-weight=""#);
+        push_xml_escaped(&mut svg, font.weight);
+        svg.push_str(r#"" font-style=""#);
+        push_xml_escaped(&mut svg, font.style);
+        let size = font.size;
+        svg.push_str(&format!(r#"" font-size="{size}">"#));
+        push_xml_escaped(&mut svg, text);
+        svg.push_str("</text></svg>");
+
+        let tree = usvg::Tree::from_str(&svg, &self.usvg_options)?;
+        Ok(underline_width(tree.root()))
     }
 
     /// Rasterizes a previously parsed SVG into an image buffer.
@@ -306,6 +342,37 @@ fn rasterize_tree(tree: &usvg::Tree, size: SvgSize) -> Result<Pixmap, usvg::Erro
     Ok(pixmap)
 }
 
+fn underline_width(group: &usvg::Group) -> f32 {
+    group.children().iter().fold(0., |width, node| {
+        width
+            + match node {
+                usvg::Node::Text(text) => text
+                    .layouted()
+                    .iter()
+                    .filter_map(|span| span.underline.as_ref())
+                    .fold(0., |width, underline| {
+                        width + underline.data().bounds().width()
+                    }),
+                usvg::Node::Group(group) => underline_width(group),
+                usvg::Node::Path(_) | usvg::Node::Image(_) => 0.,
+            }
+    })
+}
+
+fn push_xml_escaped(xml: &mut String, text: &str) {
+    for character in text.chars() {
+        match character {
+            '&' => xml.push_str("&amp;"),
+            '<' => xml.push_str("&lt;"),
+            '>' => xml.push_str("&gt;"),
+            '"' => xml.push_str("&quot;"),
+            '\t' | '\n' | '\r' => xml.push(character),
+            '\u{0}'..='\u{1f}' | '\u{fffe}' | '\u{ffff}' => {}
+            _ => xml.push(character),
+        }
+    }
+}
+
 fn load_bundled_fonts(asset_source: &dyn AssetSource, db: &mut usvg::fontdb::Database) {
     let font_paths = [
         "fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf",
@@ -356,6 +423,7 @@ fn fix_generic_font_families(db: &mut usvg::fontdb::Database) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::borrow::Cow;
     use usvg::fontdb::{Database, Family, Query};
 
     const IBM_PLEX_REGULAR: &[u8] =
@@ -387,6 +455,34 @@ mod tests {
         )?;
 
         assert_eq!(image.size(0), Size::new(DevicePixels(24), DevicePixels(12)));
+        Ok(())
+    }
+
+    #[test]
+    fn measured_text_width_matches_rasterized_advance() -> Result<()> {
+        let renderer = SvgRenderer::new(Arc::new(BundledFonts));
+        let font = SvgTextFont {
+            family: "IBM Plex Sans",
+            size: 40.,
+            weight: "normal",
+            style: "normal",
+        };
+        let frame_width = rasterized_text_width(&renderer, "MM")?;
+        assert!(frame_width > 0.);
+
+        for text in ["MMMM", " ", "   ", "\u{a0}", "\u{200b}", "M\u{200b}"] {
+            let measured = renderer.measure_text_width(text, &font)?;
+            let rasterized = rasterized_text_width(&renderer, &format!("M{text}M"))? - frame_width;
+            assert!(
+                (measured - rasterized).abs() <= 1.,
+                "{text:?} measured {measured}px, rasterized {rasterized}px"
+            );
+        }
+        assert_eq!(
+            renderer.measure_text_width("M\u{200b}", &font)?,
+            renderer.measure_text_width("M", &font)?
+        );
+        assert!(renderer.measure_text_width("<&\"\u{1}>", &font)? > 0.);
         Ok(())
     }
 
@@ -521,5 +617,45 @@ mod tests {
             "Monospace should map to Lilex, got {:?}",
             face.families
         );
+    }
+
+    struct BundledFonts;
+
+    impl AssetSource for BundledFonts {
+        fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+            Ok(match path {
+                "fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf" => {
+                    Some(Cow::Borrowed(IBM_PLEX_REGULAR))
+                }
+                "fonts/lilex/Lilex-Regular.ttf" => Some(Cow::Borrowed(LILEX_REGULAR)),
+                _ => None,
+            })
+        }
+
+        fn list(&self, _path: &str) -> Result<Vec<SharedString>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn rasterized_text_width(renderer: &SvgRenderer, text: &str) -> Result<f32> {
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="400" height="60"><text xml:space="preserve" x="10" y="45" font-family="IBM Plex Sans" font-size="40">{text}</text></svg>"#
+        );
+        let pixmap = renderer.render_pixmap(svg.as_bytes(), SvgSize::ScaleFactor(1.))?;
+        let width = pixmap.width() as usize;
+        let inked_columns = (0..width)
+            .filter(|column| {
+                pixmap
+                    .pixels()
+                    .iter()
+                    .skip(*column)
+                    .step_by(width)
+                    .any(|pixel| pixel.alpha() > 0)
+            })
+            .collect::<Vec<_>>();
+        Ok(match (inked_columns.first(), inked_columns.last()) {
+            (Some(first), Some(last)) => (last - first + 1) as f32,
+            _ => 0.,
+        })
     }
 }
