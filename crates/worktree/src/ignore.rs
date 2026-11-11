@@ -148,4 +148,38 @@ impl IgnoreStack {
             },
         }
     }
+
+    /// Whether an ignore match on `abs_path` means every descendant is ignored.
+    ///
+    /// `/*` compiles to a single-segment glob, which also matches the directory
+    /// that owns the rules (the path stripped down to empty). Sealing that
+    /// match into [`IgnoreStack::all`] would drop `!` exceptions for children.
+    pub fn seals_ignored_descendants(&self, abs_path: &Path, is_dir: bool) -> bool {
+        self.is_abs_path_ignored(abs_path, is_dir) && !self.whitelist_rooted_at(abs_path)
+    }
+
+    fn whitelist_rooted_at(&self, abs_path: &Path) -> bool {
+        fn walk(entry: &IgnoreStackEntry, abs_path: &Path) -> bool {
+            match entry {
+                IgnoreStackEntry::None | IgnoreStackEntry::All => false,
+                IgnoreStackEntry::Global { ignore } => {
+                    abs_path == ignore.path() && ignore.num_whitelists() > 0
+                }
+                IgnoreStackEntry::RepoExclude { ignore, parent } => {
+                    (abs_path == ignore.path() && ignore.num_whitelists() > 0)
+                        || walk(parent, abs_path)
+                }
+                IgnoreStackEntry::Some {
+                    ignore,
+                    abs_base_path,
+                    parent,
+                } => {
+                    (abs_path == abs_base_path.as_ref() && ignore.num_whitelists() > 0)
+                        || walk(parent, abs_path)
+                }
+            }
+        }
+
+        walk(self.top.as_ref(), abs_path)
+    }
 }

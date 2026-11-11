@@ -3143,7 +3143,7 @@ impl LocalSnapshot {
         ignore_stack.repo_root = repo_root;
         let mut ancestor_ignore_stack = ignore_stack.clone();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
-            if ancestor_ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
+            if ancestor_ignore_stack.seals_ignored_descendants(parent_abs_path, true) {
                 ignore_stack = IgnoreStack::all();
                 break;
             } else if let Some(ignore) = ignore {
@@ -3154,7 +3154,7 @@ impl LocalSnapshot {
             }
         }
 
-        if ignore_stack.is_abs_path_ignored(abs_path, is_dir) {
+        if ignore_stack.seals_ignored_descendants(abs_path, is_dir) {
             ignore_stack = IgnoreStack::all();
         }
 

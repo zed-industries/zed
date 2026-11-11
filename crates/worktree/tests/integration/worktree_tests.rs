@@ -4929,6 +4929,66 @@ async fn test_repo_exclude_anchored_pattern(executor: BackgroundExecutor, cx: &m
 }
 
 #[gpui::test]
+async fn test_repo_exclude_root_glob_keeps_whitelist(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    let project_dir = Path::new(path!("/project"));
+    // `/*` matches the repository root itself. Whitelist exceptions under that
+    // root must still be indexed, while other root entries stay ignored.
+    fs.insert_tree(
+        project_dir,
+        json!({
+            ".git": {
+                "info": {
+                    "exclude": "/*\n!/src/\n/src/*\n!/src/keep/\n"
+                }
+            },
+            "src": {
+                "keep": {
+                    "lib.rs": "fn kept() {}\n",
+                },
+                "drop.rs": "",
+            },
+            "secret.txt": "",
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        project_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                ignored_paths: &["secret.txt", "src/drop.rs"],
+                tracked_paths: &["src/keep/lib.rs"],
+                ..Default::default()
+            },
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_repo_exclude_applies_within_nested_repos(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
