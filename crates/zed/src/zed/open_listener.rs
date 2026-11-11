@@ -743,10 +743,12 @@ async fn resolve_open_behavior(
             return None;
         }
 
-        let has_directory =
-            futures::stream::iter(paths.iter().map(|p| app_state.fs.is_dir(Path::new(p))))
-                .any(|is_dir| is_dir)
-                .await;
+        let has_directory = paths
+            .iter()
+            .map(|path| app_state.fs.is_dir(Path::new(path)))
+            .collect::<futures::stream::FuturesUnordered<_>>()
+            .any(|is_dir| async move { is_dir })
+            .await;
 
         if !has_directory {
             return None;
