@@ -134,6 +134,30 @@ This is where the real-Zed win comes from.
      constraints Taffy logged last time. If every size matches, the node and
      its ancestors stay clean.
    - **Note:** we have carry but not replay. It helps live-updating labels.
+5. **Parallel text shaping without the global write lock** (not started;
+   from the GPU-animation subthread).
+   - **Today:** every platform shapes under one exclusive lock:
+     `CosmicTextSystem::layout_line` (`gpui_wgpu/src/cosmic_text_system.rs`),
+     `AppleTextSystem::layout_line` (`gpui_apple/src/text_system.rs`) and
+     DirectWrite (`gpui_windows/src/direct_write.rs`) all take a write lock.
+     So shaping is serialized even from background threads, and font metrics,
+     raster bounds and glyph lookups contend on the same lock. The per-window
+     `LineLayoutCache` is a `RefCell`, so it's main-thread only.
+   - **Why the lock exists:** `PlatformTextSystem` is `Send + Sync`, but
+     shaping needs `&mut` state: cosmic-text's `FontSystem` and shape caches,
+     CoreText scratch and font caches, DirectWrite state.
+   - **Idea:** split immutable font data from per-thread shaping scratch
+     (thread-local or a pool of shapers, like `wrapper_pool`), so
+     `layout_line` only needs a read lock. Then add a parallel pre-pass that
+     shapes all cache-missed text for dirty elements on worker threads before
+     layout, so layout and measurement only hit the cache. CoreText and
+     DirectWrite can shape on multiple threads; cosmic-text needs one
+     `FontSystem` or shaper per thread.
+   - **Gate:** profile first, on a fixture where shaping is a real share of
+     the frame (first populated text frame, opening a large file, font-size
+     change). Measure lock contention and the speedup.
+   - **Risk:** font fallback state and missing-glyph reporting must stay
+     consistent across threads.
 
 ## Stage 3: cheaper, correct `cached()` views
 
