@@ -1068,7 +1068,11 @@ impl X11WindowStatePtr {
     pub fn property_notify(&self, event: xproto::PropertyNotifyEvent) -> anyhow::Result<()> {
         let state = self.state.borrow_mut();
         if event.atom == state.atoms._NET_WM_STATE {
+            let was_fullscreen = state.fullscreen;
             self.set_wm_properties(state)?;
+            if self.state.borrow().fullscreen != was_fullscreen {
+                self.notify_resize();
+            }
         } else if event.atom == state.atoms._GTK_EDGE_CONSTRAINTS {
             self.set_edge_constraints(state)?;
         }
@@ -1349,6 +1353,18 @@ impl X11WindowStatePtr {
         }
 
         Ok(())
+    }
+
+    fn notify_resize(&self) {
+        let (content_size, scale_factor) = {
+            let state = self.state.borrow();
+            (state.content_size(), state.scale_factor)
+        };
+        let callback = self.callbacks.borrow_mut().resize.take();
+        if let Some(mut fun) = callback {
+            fun(content_size, scale_factor);
+            self.callbacks.borrow_mut().resize = Some(fun);
+        }
     }
 
     pub fn set_active(&self, focus: bool) {

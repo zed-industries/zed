@@ -142,7 +142,7 @@ use std::{
     time::Duration,
 };
 use task::{DebugScenario, SharedTaskContext, SpawnInTerminal};
-use theme::{ActiveTheme, ClientDecorationsExt, SystemAppearance};
+use theme::{ActiveTheme, SystemAppearance};
 use theme_settings::ThemeSettings;
 pub use toolbar::{
     PaneSearchBarCallbacks, Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -1671,6 +1671,7 @@ pub struct Workspace {
     pub(crate) modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
+    window_tabs_item: Option<AnyView>,
     titlebar_focus_handle: FocusHandle,
     region_focus_handles: RegionFocusHandles,
     notifications: Notifications,
@@ -2177,6 +2178,7 @@ impl Workspace {
             modal_layer,
             toast_layer,
             titlebar_item: None,
+            window_tabs_item: None,
             titlebar_focus_handle: cx.focus_handle(),
             region_focus_handles: RegionFocusHandles::new(cx),
             notifications: Notifications::default(),
@@ -3518,6 +3520,20 @@ impl Workspace {
 
     pub fn set_titlebar_item(&mut self, item: AnyView, _: &mut Window, cx: &mut Context<Self>) {
         self.titlebar_item = Some(item);
+        cx.notify();
+    }
+
+    pub fn clear_titlebar_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.titlebar_item.take().is_some() {
+            if self.titlebar_focus_handle.contains_focused(window, cx) {
+                window.focus(&self.fallback_focus_handle(window, cx), cx);
+            }
+            cx.notify();
+        }
+    }
+
+    pub fn set_window_tabs_item(&mut self, item: AnyView, cx: &mut Context<Self>) {
+        self.window_tabs_item = Some(item);
         cx.notify();
     }
 
@@ -10014,6 +10030,7 @@ impl Render for Workspace {
                         .child(item),
                 )
             })
+            .children(self.window_tabs_item.clone())
             .on_modifiers_changed(move |_, _, cx| {
                 for &id in &notification_entities {
                     cx.notify(id);
@@ -12355,29 +12372,49 @@ pub fn client_side_decorations(
     window: &mut Window,
     cx: &mut App,
 ) -> Stateful<Div> {
+    client_side_decorations_with_rounded_corners(
+        element,
+        Corners {
+            top_left: true,
+            top_right: true,
+            bottom_right: true,
+            bottom_left: true,
+        },
+        window,
+        cx,
+    )
+}
+
+pub(crate) fn client_side_decorations_with_rounded_corners(
+    element: impl IntoElement,
+    rounded_corners: Corners<bool>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
     let decorations = window.window_decorations();
     let is_resizable = window.is_resizable();
     let tiling = match decorations {
         Decorations::Server => Tiling::default(),
         Decorations::Client { tiling } => tiling,
     };
+    let radius = |rounded| {
+        if rounded {
+            theme::CLIENT_SIDE_DECORATION_ROUNDING
+        } else {
+            px(0.0)
+        }
+    };
+    let corner_radii = Corners {
+        top_left: radius(rounded_corners.top_left && !tiling.top && !tiling.left),
+        top_right: radius(rounded_corners.top_right && !tiling.top && !tiling.right),
+        bottom_left: radius(rounded_corners.bottom_left && !tiling.bottom && !tiling.left),
+        bottom_right: radius(rounded_corners.bottom_right && !tiling.bottom && !tiling.right),
+    };
 
     match decorations {
         Decorations::Client { .. } => {
             window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
-            let radius = |rounded| {
-                if rounded {
-                    theme::CLIENT_SIDE_DECORATION_ROUNDING
-                } else {
-                    px(0.0)
-                }
-            };
-            window.set_client_corner_radii(Corners {
-                top_left: radius(!tiling.top && !tiling.left),
-                top_right: radius(!tiling.top && !tiling.right),
-                bottom_left: radius(!tiling.bottom && !tiling.left),
-                bottom_right: radius(!tiling.bottom && !tiling.right),
-            });
+            window.set_client_corner_radii(corner_radii);
         }
         Decorations::Server => {
             window.set_client_inset(px(0.0));
@@ -12393,8 +12430,7 @@ pub fn client_side_decorations(
         .bg(transparent_black())
         .map(|div| match decorations {
             Decorations::Server => div,
-            Decorations::Client { .. } => div
-                .rounded_client_corners(tiling)
+            Decorations::Client { .. } => with_corner_radii(div, corner_radii)
                 .when(!tiling.top, |div| {
                     div.pt(theme::CLIENT_SIDE_DECORATION_SHADOW)
                 })
@@ -12449,9 +12485,8 @@ pub fn client_side_decorations(
                 .cursor(CursorStyle::Arrow)
                 .map(|div| match decorations {
                     Decorations::Server => div,
-                    Decorations::Client { .. } => div
+                    Decorations::Client { .. } => with_corner_radii(div, corner_radii)
                         .border_color(cx.theme().colors().border)
-                        .rounded_client_corners(tiling)
                         .when(!tiling.top, |div| {
                             div.border_t(theme::CLIENT_SIDE_DECORATION_BORDER)
                         })
@@ -12530,6 +12565,14 @@ pub fn client_side_decorations(
             ),
             Decorations::Client { .. } => div,
         })
+}
+
+fn with_corner_radii<E: Styled>(element: E, corner_radii: Corners<Pixels>) -> E {
+    element
+        .rounded_tl(corner_radii.top_left)
+        .rounded_tr(corner_radii.top_right)
+        .rounded_bl(corner_radii.bottom_left)
+        .rounded_br(corner_radii.bottom_right)
 }
 
 fn resize_edge(
@@ -13048,6 +13091,74 @@ mod tests {
         assert!(!noise.relative_path);
         assert!(!noise.remote);
         assert!(!noise.branch);
+    }
+
+    #[gpui::test]
+    async fn test_clearing_title_bar_restores_editor_focus(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let title_bar = cx.new(|cx| TestItem::new(cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.set_titlebar_item(title_bar.clone().into(), window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            window.focus(&workspace.titlebar_focus_handle, cx);
+            assert!(workspace.titlebar_focus_handle.contains_focused(window, cx));
+
+            workspace.clear_titlebar_item(window, cx);
+            assert!(workspace.titlebar_item().is_none());
+            assert!(workspace.active_pane.focus_handle(cx).is_focused(window));
+
+            workspace.clear_titlebar_item(window, cx);
+            assert!(workspace.active_pane.focus_handle(cx).is_focused(window));
+        });
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.set_titlebar_item(title_bar.into(), window, cx);
+            let panel =
+                cx.new(|cx| TestPanel::new_with_activation_child(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            panel
+        });
+        cx.run_until_parked();
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            window.focus(&workspace.titlebar_focus_handle, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+            workspace.clear_titlebar_item(window, cx);
+        });
+        cx.run_until_parked();
+        workspace.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.titlebar_item().is_none());
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert_eq!(workspace.zoomed, Some(panel.to_any().downgrade()));
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+            assert!(
+                panel
+                    .read(cx)
+                    .activation_focus_handle
+                    .as_ref()
+                    .unwrap()
+                    .is_focused(window)
+            );
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
     }
 
     #[gpui::test]

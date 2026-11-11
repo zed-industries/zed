@@ -39,7 +39,7 @@ use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
 use notifications::status_toast::StatusToast;
-use platform_title_bar::apply_title_bar_insets;
+use platform_title_bar::{SidebarWindowControls, apply_title_bar_insets};
 use project::{AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId};
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::RemoteConnectionOptions;
@@ -7377,13 +7377,11 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_query = self.has_filter_query(cx);
-        let sidebar_on_left = self.side(cx) == SidebarSide::Left;
-        let sidebar_on_right = self.side(cx) == SidebarSide::Right;
-        let not_fullscreen = !window.is_fullscreen() && !window.is_simple_fullscreen();
-        let traffic_lights = cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
-        let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
-        let right_window_controls =
-            !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_right;
+        let SidebarWindowControls {
+            traffic_lights,
+            left: left_window_controls,
+            right: right_window_controls,
+        } = SidebarWindowControls::new(self.side(cx), window, cx);
         let header_height = platform_title_bar_height(window);
 
         h_flex()
@@ -7419,11 +7417,14 @@ impl Sidebar {
                         this.child(Divider::vertical().color(ui::DividerColor::Border))
                     })
                     .child(
-                        div().ml_1().child(
-                            Icon::new(IconName::MagnifyingGlass)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
+                        div()
+                            .debug_selector(|| "sidebar-header-search".into())
+                            .ml_1()
+                            .child(
+                                Icon::new(IconName::MagnifyingGlass)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            ),
                     )
                     .child(self.render_filter_input(cx))
                     .child(

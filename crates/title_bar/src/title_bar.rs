@@ -2,7 +2,6 @@ mod application_menu;
 pub mod collab;
 mod onboarding_banner;
 mod plan_chip;
-mod title_bar_settings;
 mod update_version;
 
 use crate::application_menu::{ApplicationMenu, show_menus};
@@ -15,6 +14,7 @@ pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
 };
+use platform_title_bar::{SystemWindowTabs, TitleBarSettings};
 use project::{linked_worktree_short_name, repo_identity_path};
 
 #[cfg(not(target_os = "macos"))]
@@ -28,8 +28,8 @@ use client::{Client, UserStore, zed_urls};
 use command_palette_hooks::CommandPaletteFilter;
 
 use gpui::{
-    Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    Action, Anchor, Animation, AnimationExt, AnyElement, AnyView, App, Context, Element, Entity,
+    Focusable, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Subscription, TaskExt, WeakEntity, Window, actions, div,
     pulsating_between,
 };
@@ -45,7 +45,6 @@ use std::any::TypeId;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ActiveTheme;
-use title_bar_settings::TitleBarSettings;
 use ui::{
     Avatar, ButtonLike, ContextMenu, ContextMenuEntry, IconWithIndicator, Indicator, PopoverMenu,
     PopoverMenuHandle, TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
@@ -101,9 +100,14 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
-        let multi_workspace = workspace.multi_workspace().cloned();
-        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, multi_workspace, window, cx));
-        workspace.set_titlebar_item(item.into(), window, cx);
+        let window_tabs = cx.new(|_| SystemWindowTabs::new());
+        workspace.set_window_tabs_item(AnyView::from(window_tabs), cx);
+        apply_title_bar_visibility(workspace, window, cx);
+
+        cx.observe_global_in::<SettingsStore>(window, apply_title_bar_visibility)
+            .detach();
+        cx.observe_window_bounds(window, apply_title_bar_visibility)
+            .detach();
 
         workspace.register_action(|_workspace, _: &UseClassicLayout, _window, cx| {
             set_window_layout(WindowLayout::Editor(None), cx);
@@ -171,6 +175,25 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+}
+
+fn apply_title_bar_visibility(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let visible = TitleBarSettings::is_title_bar_visible(window, cx);
+
+    if !visible {
+        workspace.clear_titlebar_item(window, cx);
+    } else if workspace.titlebar_item().is_none() {
+        let multi_workspace = workspace.multi_workspace().cloned();
+        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, multi_workspace, window, cx));
+        workspace.set_titlebar_item(AnyView::from(item), window, cx);
+    }
+
+    #[cfg(target_os = "macos")]
+    window.set_native_titlebar_visibility(visible);
 }
 
 /// Hides or shows the panel layout actions in the command palette based on
@@ -500,7 +523,7 @@ impl TitleBar {
 
         let update_version = cx.new(|cx| UpdateVersion::new(cx));
         let platform_titlebar = cx.new(|cx| {
-            let mut titlebar = PlatformTitleBar::new(id, cx);
+            let mut titlebar = PlatformTitleBar::new(id, cx).without_system_window_tabs();
             if let Some(mw) = multi_workspace.clone() {
                 titlebar = titlebar.with_multi_workspace(mw);
             }
@@ -1423,5 +1446,187 @@ impl TitleBar {
                 .into()
             })
             .anchor(Anchor::TopRight)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{
+        AnyWindowHandle, Empty, EntityId, SystemWindowTab, SystemWindowTabController,
+        TestAppContext, VisualTestContext,
+    };
+    use platform_title_bar::SidebarWindowControls;
+    use settings::{SidebarSide, TitleBarVisibility};
+
+    #[gpui::test]
+    async fn test_title_bar_visibility(cx: &mut TestAppContext) {
+        let (workspace, cx) = init_test(TitleBarVisibility::Never, cx).await;
+        assert_eq!(chrome(&workspace, cx), Chrome::HIDDEN);
+
+        set_visibility(Some(TitleBarVisibility::Always), cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::SHOWN);
+        let title_bar = title_bar_id(&workspace, cx);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.title_bar.get_or_insert_default().show_menus = Some(true);
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(title_bar_id(&workspace, cx), title_bar);
+
+        toggle_fullscreen(&workspace, cx);
+        assert_eq!(
+            chrome(&workspace, cx),
+            Chrome {
+                title_bar: true,
+                ..Chrome::HIDDEN
+            }
+        );
+
+        set_visibility(Some(TitleBarVisibility::HideInFullScreen), cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::HIDDEN);
+
+        toggle_fullscreen(&workspace, cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::SHOWN);
+
+        toggle_fullscreen(&workspace, cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::HIDDEN);
+
+        toggle_fullscreen(&workspace, cx);
+        set_visibility(Some(TitleBarVisibility::Never), cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::HIDDEN);
+
+        set_visibility(None, cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::SHOWN);
+    }
+
+    #[gpui::test]
+    async fn test_window_tabs_stay_mounted_without_title_bar(cx: &mut TestAppContext) {
+        let other_window = cx.add_window(|_, _| Empty);
+        let (workspace, cx) = init_test(TitleBarVisibility::Never, cx).await;
+        workspace.update_in(cx, |_, window, cx| {
+            let workspace_window = window.window_handle();
+            SystemWindowTabController::add_tab(
+                cx,
+                workspace_window.window_id(),
+                Vec::from([
+                    SystemWindowTab::new(SharedString::from("workspace"), workspace_window),
+                    SystemWindowTab::new(
+                        SharedString::from("other"),
+                        AnyWindowHandle::from(other_window),
+                    ),
+                ]),
+            );
+            SystemWindowTabController::set_visible(cx, true);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(chrome(&workspace, cx), Chrome::HIDDEN);
+        assert!(window_tabs_mounted(cx));
+
+        set_visibility(Some(TitleBarVisibility::HideInFullScreen), cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::SHOWN);
+        assert!(window_tabs_mounted(cx));
+
+        toggle_fullscreen(&workspace, cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::HIDDEN);
+        assert!(window_tabs_mounted(cx));
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct Chrome {
+        title_bar: bool,
+        left_sidebar: SidebarWindowControls,
+        right_sidebar: SidebarWindowControls,
+    }
+
+    impl Chrome {
+        const SHOWN: Self = Self {
+            title_bar: true,
+            left_sidebar: SidebarWindowControls {
+                traffic_lights: cfg!(target_os = "macos"),
+                left: !cfg!(target_os = "macos"),
+                right: false,
+            },
+            right_sidebar: SidebarWindowControls {
+                traffic_lights: false,
+                left: false,
+                right: !cfg!(target_os = "macos"),
+            },
+        };
+        const HIDDEN: Self = Self {
+            title_bar: false,
+            left_sidebar: NO_WINDOW_CONTROLS,
+            right_sidebar: NO_WINDOW_CONTROLS,
+        };
+    }
+
+    const NO_WINDOW_CONTROLS: SidebarWindowControls = SidebarWindowControls {
+        traffic_lights: false,
+        left: false,
+        right: false,
+    };
+
+    async fn init_test(
+        visibility: TitleBarVisibility,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, &mut VisualTestContext) {
+        cx.update(|cx| {
+            let mut settings = SettingsStore::test(cx);
+            settings.update_user_settings(cx, |settings| {
+                settings.title_bar.get_or_insert_default().show = Some(visibility);
+            });
+            cx.set_global(settings);
+            cx.set_global(db::AppDatabase::test_new());
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            command_palette_hooks::init(cx);
+        });
+        let project = Project::test(fs::FakeFs::new(cx.executor()), [], cx).await;
+        cx.update(|cx| {
+            let project = project.read(cx);
+            call::init(project.client(), project.user_store(), cx);
+            init(cx);
+        });
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        cx.run_until_parked();
+        (workspace, cx)
+    }
+
+    fn set_visibility(visibility: Option<TitleBarVisibility>, cx: &mut VisualTestContext) {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.title_bar.get_or_insert_default().show = visibility;
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    fn toggle_fullscreen(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) {
+        workspace.update_in(cx, |_, window, _| window.toggle_fullscreen());
+        cx.run_until_parked();
+    }
+
+    fn chrome(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Chrome {
+        workspace.update_in(cx, |workspace, window, cx| Chrome {
+            title_bar: workspace.titlebar_item().is_some(),
+            left_sidebar: SidebarWindowControls::new(SidebarSide::Left, window, cx),
+            right_sidebar: SidebarWindowControls::new(SidebarSide::Right, window, cx),
+        })
+    }
+
+    fn title_bar_id(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Option<EntityId> {
+        workspace.read_with(cx, |workspace, _| {
+            workspace.titlebar_item().map(|item| item.entity_id())
+        })
+    }
+
+    fn window_tabs_mounted(cx: &mut VisualTestContext) -> bool {
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        cx.debug_bounds("system-window-tabs")
+            .is_some_and(|bounds| bounds.size.height > px(0.))
     }
 }
