@@ -823,11 +823,7 @@ impl<D: PickerDelegate> Picker<D> {
             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
                 action(window, cx);
             }
-            if let Some(preview) = &mut self.preview
-                && let Some(update) = self.delegate.try_get_preview_data_for_match(cx)
-            {
-                preview.update(update, window, cx);
-            }
+            self.update_preview(window, cx);
         }
     }
 
@@ -892,11 +888,7 @@ impl<D: PickerDelegate> Picker<D> {
             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
                 action(window, cx);
             }
-            if let Some(preview) = &mut self.preview
-                && let Some(update) = self.delegate.try_get_preview_data_for_match(cx)
-            {
-                preview.update(update, window, cx);
-            }
+            self.update_preview(window, cx);
             if scroll_to_index {
                 self.scroll_to_item_index(ix);
             }
@@ -1304,12 +1296,17 @@ impl<D: PickerDelegate> Picker<D> {
             },
         }
         self.pending_update_matches = None;
-        if let Some(update) = self.delegate.try_get_preview_data_for_match(cx)
-            && let Some(preview) = &mut self.preview
+        self.update_preview(window, cx);
+        cx.notify();
+    }
+
+    fn update_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(preview) = &mut self.preview
+            && preview.layout != preview::Layout::Hidden
+            && let Some(update) = self.delegate.try_get_preview_data_for_match(cx)
         {
             preview.update(update, window, cx);
         }
-        cx.notify();
     }
 
     pub fn query(&self, cx: &App) -> String {
@@ -1612,7 +1609,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn set_preview_layout(
         &mut self,
         layout: preview::Layout,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         persistence::store_last_layout(D::name(), self.preview.as_ref().map(|_| layout), cx);
@@ -1620,7 +1617,11 @@ impl<D: PickerDelegate> Picker<D> {
         let Some(preview) = &mut self.preview else {
             return;
         };
+        let was_hidden = preview.layout == preview::Layout::Hidden;
         preview.layout = layout;
+        if was_hidden {
+            self.update_preview(window, cx);
+        }
         // Restore the size the user last left this layout at, or fall back to the
         // layout's default (simple when hidden, larger when a preview is shown).
         self.shape = persistence::try_load_shape(D::name(), layout, cx)
@@ -1643,6 +1644,7 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use std::cell::Cell;
+    use std::sync::Mutex;
 
     struct TestDelegate {
         items: Vec<bool>,
@@ -1782,6 +1784,14 @@ mod tests {
         }
 
         fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
+
+        fn try_get_preview_data_for_match(&self, _cx: &App) -> Option<PreviewUpdate> {
+            let selected_index = self.selected_index;
+            Some(PreviewUpdate::message(HighlightedText {
+                text: SharedString::from(format!("Item {selected_index}")),
+                highlights: Vec::new(),
+            }))
+        }
 
         fn render_match(
             &self,
@@ -1926,6 +1936,33 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_hidden_preview_is_not_updated(cx: &mut TestAppContext) {
+        init_test(cx);
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list_with_preview(
+                TestDelegate::new(vec![true, true, true]),
+                Arc::new(TestPreview(updates.clone())),
+                window,
+                cx,
+            )
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_selected_index(1, None, false, window, cx);
+            picker.set_preview_layout(preview::Layout::Right, window, cx);
+            picker.set_selected_index(2, None, false, window, cx);
+            picker.set_preview_layout(preview::Layout::Below, window, cx);
+            picker.set_preview_layout(preview::Layout::Hidden, window, cx);
+            picker.set_selected_index(0, None, false, window, cx);
+        });
+        assert_eq!(
+            *updates.lock().unwrap(),
+            vec![SharedString::from("Item 1"), SharedString::from("Item 2")]
+        );
+    }
+
+    #[gpui::test]
     async fn test_multi_select_mode_routes_clicks(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -2056,6 +2093,24 @@ mod tests {
                 "leaving the mode should clear the selection"
             );
         });
+    }
+
+    struct TestPreview(Arc<Mutex<Vec<SharedString>>>);
+
+    impl PreviewBackend for TestPreview {
+        fn update(&self, update: PreviewUpdate, _: &mut Window, _: &mut App) {
+            if let PreviewSource::Message(message) = update.source {
+                self.0.lock().unwrap().push(message.text);
+            }
+        }
+
+        fn render(&self, _: PreviewLayout, _: &mut App) -> AnyElement {
+            div().into_any_element()
+        }
+
+        fn adjust_to_new_size(&self, _: &mut Window, _: &mut App) {}
+
+        fn clear(&self, _: &mut App) {}
     }
 }
 

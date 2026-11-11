@@ -401,7 +401,7 @@ impl WatcherDebug {
         let watcher = recording.snapshot();
         let worktree_scan_exclusions = worktree_exclusions(&self.app_state, cx);
         let zed_version = AppVersion::global(cx).to_string();
-        let os_name = client::telemetry::os_name();
+        let os_name = client::telemetry::os_name(cx);
         let directory = std::env::home_dir().unwrap_or_default();
         let path = cx.prompt_for_new_path(&directory, Some("filesystem-watcher.json"));
         let fs = self.app_state.fs.clone();
@@ -889,7 +889,10 @@ mod tests {
         cx.run_until_parked();
         let json: serde_json::Value = serde_json::from_str(&fs.load(&path).await.unwrap()).unwrap();
         assert_eq!(json["zed_version"], "1.2.3+dev.test");
-        assert_eq!(json["os_name"], client::telemetry::os_name());
+        assert_eq!(
+            json["os_name"],
+            cx.update(|cx| client::telemetry::os_name(cx))
+        );
         let os_version = cx
             .background_executor
             .spawn(async { client::telemetry::os_version() })

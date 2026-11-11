@@ -1,6 +1,6 @@
 mod async_body;
 
-pub use anyhow::{Result, anyhow};
+use anyhow::Result;
 pub use async_body::{AsyncBody, Inner, Json};
 pub use http::{self, Method, Request, Response, StatusCode, Uri, request::Builder};
 use http::{HeaderName, HeaderValue};

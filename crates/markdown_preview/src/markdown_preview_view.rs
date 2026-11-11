@@ -3184,6 +3184,49 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn preview_does_not_offer_read_only_toggle(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/dir"), json!({ "notes.md": "# Notes\n" }))
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir/notes.md"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let editor = workspace
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+                    .unwrap();
+                let preview = workspace.update(cx, |workspace, cx| {
+                    MarkdownPreviewView::create_markdown_view(workspace, editor.clone(), window, cx)
+                });
+
+                assert_eq!(preview.read_only_toggle_buffer(cx), None);
+                preview.toggle_read_only(window, cx);
+                assert_eq!(
+                    editor.read(cx).capability(cx),
+                    language::Capability::ReadWrite
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     async fn toggles_task_checkbox_and_saves_when_preview_is_active(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         app_state
