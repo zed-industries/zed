@@ -1033,17 +1033,53 @@ fn set_config_option(
         let options = response.await?;
         // Saving the request would make rejected or normalized choices future defaults.
         if save_to_settings
-            && let Some(value) = options
-                .iter()
-                .find(|option| option.config_id == config_id)
-                .and_then(setting_value_for_config_option)
+            && let Some(option) = options.iter().find(|option| option.config_id == config_id)
+            && let Some(value) = setting_value_for_config_option(option)
         {
             cx.update(|cx| {
+                // New sessions start on the default model, so a setting tuned for a
+                // different model shouldn't become the default model's setting.
+                if is_model_specific(option)
+                    && !session_uses_default_model(&options, agent_server.as_ref(), cx)
+                {
+                    return;
+                }
                 agent_server.set_default_config_option(config_id.0.as_ref(), Some(value), fs, cx);
             });
         }
         Ok(())
     })
+}
+
+fn is_model_specific(option: &acp::SessionConfigOption) -> bool {
+    matches!(
+        option.category,
+        Some(
+            acp::SessionConfigOptionCategory::ModelConfig
+                | acp::SessionConfigOptionCategory::ThoughtLevel
+        )
+    )
+}
+
+fn session_uses_default_model(
+    options: &[acp::SessionConfigOption],
+    agent_server: &dyn AgentServer,
+    cx: &App,
+) -> bool {
+    let Some(model) = options
+        .iter()
+        .find(|option| option.category == Some(acp::SessionConfigOptionCategory::Model))
+    else {
+        return true;
+    };
+    let acp::SessionConfigKind::Select(select) = &model.kind else {
+        return true;
+    };
+    agent_server
+        .default_config_option(model.config_id.0.as_ref(), cx)
+        .is_none_or(|default_model| {
+            default_model.as_value_id() == Some(select.current_value.0.as_ref())
+        })
 }
 
 fn setting_value_for_config_option(
@@ -1436,6 +1472,80 @@ mod tests {
         );
     }
 
+    async fn set_effort_with_default_model(
+        default_model: &str,
+        cx: &mut TestAppContext,
+    ) -> Vec<(String, Option<AgentConfigOptionValue>)> {
+        let agent_server = Rc::new(TestAgentServer::default());
+        agent_server.saved_defaults.lock().push((
+            "model".to_string(),
+            Some(AgentConfigOptionValue::ValueId(default_model.to_string())),
+        ));
+        let config_options = Rc::new(TestSessionConfigOptions::new(vec![
+            acp::SessionConfigOption::select(
+                "model",
+                "Model",
+                "sonnet",
+                vec![
+                    acp::SessionConfigSelectOption::new("opus", "Opus"),
+                    acp::SessionConfigSelectOption::new("sonnet", "Sonnet"),
+                ],
+            )
+            .category(acp::SessionConfigOptionCategory::Model),
+            acp::SessionConfigOption::select(
+                "effort",
+                "Effort",
+                "low",
+                vec![
+                    acp::SessionConfigSelectOption::new("low", "Low"),
+                    acp::SessionConfigSelectOption::new("high", "High"),
+                ],
+            )
+            .category(acp::SessionConfigOptionCategory::ThoughtLevel),
+        ]));
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            set_config_option(
+                config_options.clone(),
+                agent_server.clone(),
+                "effort".into(),
+                acp::SessionConfigOptionValue::id("high"),
+                true,
+                fs,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        agent_server.saved_defaults.lock().clone()
+    }
+
+    #[gpui::test]
+    async fn model_specific_option_saves_when_session_uses_default_model(cx: &mut TestAppContext) {
+        let saved_defaults = set_effort_with_default_model("sonnet", cx).await;
+        assert_eq!(
+            saved_defaults.last(),
+            Some(&(
+                "effort".to_string(),
+                Some(AgentConfigOptionValue::ValueId("high".to_string()))
+            ))
+        );
+    }
+
+    #[gpui::test]
+    async fn model_specific_option_is_not_saved_for_a_different_default_model(
+        cx: &mut TestAppContext,
+    ) {
+        let saved_defaults = set_effort_with_default_model("opus", cx).await;
+        assert!(
+            saved_defaults
+                .iter()
+                .all(|(config_id, _)| config_id != "effort")
+        );
+    }
+
     #[gpui::test]
     async fn setting_config_option_without_saving_leaves_default_unchanged(
         cx: &mut TestAppContext,
@@ -1803,6 +1913,19 @@ mod tests {
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
+        }
+
+        fn default_config_option(
+            &self,
+            config_id: &str,
+            _cx: &App,
+        ) -> Option<AgentConfigOptionValue> {
+            self.saved_defaults
+                .lock()
+                .iter()
+                .rev()
+                .find(|(saved_id, _)| saved_id == config_id)
+                .and_then(|(_, value)| value.clone())
         }
 
         fn set_default_config_option(

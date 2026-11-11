@@ -494,6 +494,19 @@ impl AgentSettingsContent {
         }
     }
 
+    pub fn update_default_model<F>(&mut self, provider: &str, model: &str, f: F)
+    where
+        F: FnOnce(&mut LanguageModelSelection),
+    {
+        if let Some(default_model) = self
+            .default_model
+            .as_mut()
+            .filter(|m| m.provider.0 == provider && m.model == model)
+        {
+            f(default_model);
+        }
+    }
+
     pub fn set_tool_default_permission(&mut self, tool_id: &str, mode: ToolPermissionMode) {
         let tool_permissions = self.tool_permissions.get_or_insert_default();
         let tool_rules = tool_permissions
@@ -1213,6 +1226,34 @@ mod tests {
         let tool_permissions = settings.tool_permissions.as_ref().unwrap();
         let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
         assert_eq!(terminal_rules.default, Some(ToolPermissionMode::Allow));
+    }
+
+    #[test]
+    fn test_update_default_model_only_updates_matching_model() {
+        let mut settings = AgentSettingsContent::default();
+        settings.set_model(LanguageModelSelection {
+            provider: LanguageModelProviderSetting("anthropic".into()),
+            model: "model-a".into(),
+            enable_thinking: false,
+            effort: Some("low".into()),
+            speed: None,
+        });
+
+        settings.update_default_model("anthropic", "model-b", |default_model| {
+            default_model.effort = Some("high".into())
+        });
+        assert_eq!(
+            settings.default_model.as_ref().unwrap().effort.as_deref(),
+            Some("low")
+        );
+
+        settings.update_default_model("anthropic", "model-a", |default_model| {
+            default_model.effort = Some("high".into())
+        });
+        assert_eq!(
+            settings.default_model.as_ref().unwrap().effort.as_deref(),
+            Some("high")
+        );
     }
 
     #[test]
