@@ -3199,6 +3199,7 @@ pub enum ToolCallContent {
         source: acp_v2::Diff,
         render: DiffPatch,
     },
+    SessionReference(acp_v2::SessionReference),
     Other {
         source: acp_v2::ToolCallContent,
         markdown: Entity<Markdown>,
@@ -3213,6 +3214,7 @@ enum PreparedToolCallContent {
         meta: Option<acp_v2::Meta>,
     },
     DiffPatch(acp_v2::Diff),
+    SessionReference(acp_v2::SessionReference),
     Other(acp_v2::ToolCallContent),
 }
 
@@ -3235,6 +3237,13 @@ impl PreparedToolCallContent {
                     terminal: terminals.resolve(&acp_v2::TerminalId::new(terminal_id.0), cx)?,
                     meta,
                 },
+                acp_v1::ToolCallContent::Session(acp_v1::SessionReference {
+                    session_id,
+                    meta,
+                    ..
+                }) => {
+                    Self::SessionReference(acp_v2::SessionReference::new(session_id.0).meta(meta))
+                }
                 _ => continue,
             };
             prepared.push(content);
@@ -3265,6 +3274,7 @@ impl PreparedToolCallContent {
                 terminal: terminals.resolve(&terminal.terminal_id, cx)?,
                 meta: terminal.meta,
             }),
+            acp_v2::ToolCallContent::Session(reference) => Ok(Self::SessionReference(reference)),
             other => Ok(Self::Other(other)),
         }
     }
@@ -3314,6 +3324,9 @@ impl ToolCallContent {
                 render: DiffPatch::new(&source, language_registry, cx),
                 source,
             },
+            PreparedToolCallContent::SessionReference(reference) => {
+                Self::SessionReference(reference)
+            }
             PreparedToolCallContent::Other(source) => Self::Other {
                 source,
                 markdown: ContentBlock::create_markdown(
@@ -3371,6 +3384,10 @@ impl ToolCallContent {
                 }
                 *source = new_source;
             }
+            (
+                Self::SessionReference(reference),
+                PreparedToolCallContent::SessionReference(new_reference),
+            ) => *reference = new_reference,
             (Self::Other { source, .. }, PreparedToolCallContent::Other(new_source)) => {
                 *source = new_source;
             }
@@ -3388,6 +3405,7 @@ impl ToolCallContent {
                 source.changes.iter().map(diff_change_label).join("\n"),
                 Self::patch_preview(source)
             ),
+            Self::SessionReference(reference) => format!("Session {}", reference.session_id),
             Self::Other { markdown, .. } => markdown.read(cx).source().to_string(),
         }
     }
@@ -3397,7 +3415,10 @@ impl ToolCallContent {
             Self::ContentBlock { block, .. } => block.markdown(),
             Self::DiffPatch { render, .. } => render.fallback.as_ref(),
             Self::Other { markdown, .. } => Some(markdown),
-            Self::Diff(_) | Self::LegacyDiff { .. } | Self::Terminal { .. } => None,
+            Self::Diff(_)
+            | Self::LegacyDiff { .. }
+            | Self::Terminal { .. }
+            | Self::SessionReference(_) => None,
         }
     }
 
@@ -10654,6 +10675,49 @@ mod tests {
             };
             assert_eq!(source, &unknown);
             assert!(!markdown.read(cx).source().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn test_tool_content_session_references_are_kept_from_v1_and_v2(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let meta = acp_v2::Meta::from_iter([("revision".into(), 1.into())]);
+            let mut prepared = PreparedToolCallContent::prepare(
+                vec![acp_v1::ToolCallContent::Session(
+                    acp_v1::SessionReference::new("from-v1").meta(meta.clone()),
+                )],
+                ToolTerminalResolver::registered(&HashMap::default()),
+                cx,
+            )
+            .expect("prepare v1 content");
+            prepared.extend(
+                PreparedToolCallContent::prepare_v2(
+                    vec![acp_v2::ToolCallContent::Session(
+                        acp_v2::SessionReference::new("from-v2"),
+                    )],
+                    ToolTerminalResolver::registered(&HashMap::default()),
+                    cx,
+                )
+                .expect("prepare v2 content"),
+            );
+            let content: Vec<_> = prepared
+                .into_iter()
+                .map(|content| ToolCallContent::from_prepared(content, &languages, cx))
+                .collect();
+            let [
+                ToolCallContent::SessionReference(from_v1),
+                ToolCallContent::SessionReference(from_v2),
+            ] = content.as_slice()
+            else {
+                panic!("expected two session references, got {content:?}");
+            };
+            assert_eq!(
+                from_v1,
+                &acp_v2::SessionReference::new("from-v1").meta(meta)
+            );
+            assert_eq!(from_v2, &acp_v2::SessionReference::new("from-v2"));
         });
     }
 
