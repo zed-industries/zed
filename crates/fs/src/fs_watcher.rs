@@ -2267,6 +2267,10 @@ mod tests {
     fn dispatch_batches_are_bounded_without_losing_or_reordering_events() {
         let (watcher, fired) = recording_watcher();
         let (event_tx, event_rx) = async_channel::unbounded();
+        let rescan = || notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+        for _ in 0..MAX_DISPATCH_BATCH_SIZE {
+            event_tx.try_send(Ok(rescan())).expect("enqueue rescan");
+        }
         let expected = (0..MAX_DISPATCH_BATCH_SIZE * 2 + 3)
             .map(|index| if index % 2 == 0 { "/repo/a" } else { "/repo/b" })
             .collect::<Vec<_>>();
@@ -2275,6 +2279,12 @@ mod tests {
                 .try_send(Ok(modify_event(&format!("{path}/file.txt"))))
                 .expect("enqueue event");
         }
+
+        let first = event_rx.try_recv().expect("first rescan");
+        watcher.dispatch_batch(first, &event_rx);
+        assert_eq!(fired.lock().len(), 3);
+        assert_eq!(event_rx.len(), expected.len());
+        fired.lock().clear();
 
         let first = event_rx.try_recv().expect("first event");
         watcher.dispatch_batch(first, &event_rx);
@@ -2288,28 +2298,6 @@ mod tests {
             watcher.dispatch_batch(first, &event_rx);
         }
         assert_eq!(fired.lock().as_slice(), expected.as_slice());
-    }
-
-    #[test]
-    fn coalesced_rescans_count_toward_dispatch_batch_limit() {
-        let (watcher, fired) = recording_watcher();
-        let (event_tx, event_rx) = async_channel::unbounded();
-        let rescan = || notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
-        for _ in 0..MAX_DISPATCH_BATCH_SIZE {
-            event_tx.try_send(Ok(rescan())).expect("enqueue rescan");
-        }
-        event_tx
-            .try_send(Ok(modify_event("/repo/a/file.txt")))
-            .expect("enqueue change");
-
-        watcher.dispatch_batch(Ok(rescan()), &event_rx);
-        assert_eq!(fired.lock().len(), 3);
-        assert_eq!(event_rx.len(), 2);
-
-        let first = event_rx.try_recv().expect("remaining rescan");
-        watcher.dispatch_batch(first, &event_rx);
-        assert_eq!(fired.lock().len(), 7);
-        assert!(event_rx.is_empty());
     }
 
     #[test]
