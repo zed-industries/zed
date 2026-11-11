@@ -4,7 +4,7 @@ use fuzzy_nucleo::StringMatchCandidate;
 
 use collections::{HashMap, HashSet};
 use git::repository::{Branch, delete_branch_flag};
-use git::{GitHostingProviderRegistry, parse_git_remote_url};
+use git::{GitHostingProviderRegistry, normalize_branch_name, parse_git_remote_url};
 use gpui::http_client::Url;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global,
@@ -946,13 +946,6 @@ fn branch_matches_ref(branch: &Branch, branch_ref: &SharedString) -> bool {
     branch.ref_name.as_ref() == branch_ref.as_ref() || branch.name() == branch_ref.as_ref()
 }
 
-// Git branch names can't contain whitespace, so we replace spaces with dashes,
-// but we need to first trim because a branch name can't start or end with a
-// dash.
-fn normalize_branch_name(query: &str) -> String {
-    query.trim().replace(' ', "-")
-}
-
 fn branch_remote_name(branch: &Branch) -> Option<&str> {
     branch.remote_name().or_else(|| {
         branch
@@ -1497,10 +1490,10 @@ impl PickerDelegate for BranchListDelegate {
                 let mut matches: Vec<Entry> = fuzzy_nucleo::match_strings_async(
                     &candidates,
                     &query,
-                    fuzzy_nucleo::Case::Smart,
-                    fuzzy_nucleo::LengthPenalty::On,
-                    10000,
-                    &Default::default(),
+                    fuzzy_nucleo::StringMatchOptions {
+                        max_results: fuzzy_nucleo::MaxResults::limit::<10_000>(),
+                        ..Default::default()
+                    },
                     cx.background_executor().clone(),
                 )
                 .await
@@ -1683,19 +1676,15 @@ impl PickerDelegate for BranchListDelegate {
                     let subject = commit.subject.clone();
                     let commit_time = OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
                         .unwrap_or_else(|_| OffsetDateTime::now_utc());
-                    let local_offset =
-                        time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-                    let formatted_time = time_format::format_localized_timestamp(
+                    let formatted_time = crate::git_timestamp::format_git_date(
                         commit_time,
-                        OffsetDateTime::now_utc(),
-                        local_offset,
-                        time_format::TimestampFormat::Relative,
+                        ProjectSettings::get_global(cx).git.branch_picker.date_style,
+                        cx,
                     );
-                    let absolute_time = time_format::format_localized_timestamp(
+                    let absolute_time = crate::git_timestamp::format_git_timestamp(
                         commit_time,
-                        OffsetDateTime::now_utc(),
-                        local_offset,
                         time_format::TimestampFormat::EnhancedAbsolute,
+                        cx,
                     );
                     let author = commit.author_name.clone();
                     (
@@ -3287,13 +3276,6 @@ mod tests {
             &format!("refs/heads/{NEW_BRANCH}"),
             "branch ref_name should not have duplicate refs/heads/ prefix"
         );
-    }
-
-    #[test]
-    fn test_normalize_branch_name() {
-        assert_eq!(normalize_branch_name(" branch-name "), "branch-name");
-        assert_eq!(normalize_branch_name("branch name"), "branch-name");
-        assert_eq!(normalize_branch_name("  branch  name  "), "branch--name");
     }
 
     #[gpui::test]

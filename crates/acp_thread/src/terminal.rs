@@ -267,7 +267,10 @@ impl SandboxWrap {
             .filter_map(|path| sandbox::HostFilesystemLocation::capture(path).ok())
             .collect::<Vec<_>>();
         let fs = if self.allow_fs_write {
-            sandbox::SandboxFsPolicy::Unrestricted { protected_paths }
+            sandbox::SandboxFsPolicy::Unrestricted {
+                protected_paths,
+                protected_file_names: Vec::new(),
+            }
         } else {
             // Project worktree paths are captured fresh; user-approved grants are
             // rebuilt via the verifying reopen (or captured when legacy bare
@@ -302,6 +305,7 @@ impl SandboxWrap {
             sandbox::SandboxFsPolicy::Restricted {
                 writable_paths,
                 protected_paths,
+                protected_file_names: Vec::new(),
             }
         };
         let network = match &self.network {
