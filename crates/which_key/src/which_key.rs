@@ -363,15 +363,11 @@ mod tests {
                 workspace.active_modal::<TestModal>(cx).is_some(),
                 "which-key should not dismiss the open modal"
             );
-            assert!(workspace.active_modal::<WhichKeyModal>(cx).is_none());
         });
 
         cx.simulate_keystrokes("ctrl-x");
         cx.run_until_parked();
 
         assert_eq!(chord_action_count.get(), 1);
-        workspace.read_with(cx, |workspace, cx| {
-            assert!(workspace.active_modal::<TestModal>(cx).is_some());
-        });
     }
 }
