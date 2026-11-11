@@ -32,6 +32,10 @@ In the panel you can see the state of your project at a glance: which repository
 
 Zed monitors your repository so that changes you make on the command line are instantly reflected.
 
+When a project has multiple [active repositories](#repository-activation), the Changes tab shows a collapsible section for each repository. Each section has its own branch, change count, staging controls, and commit message editor, so you can work across repositories without switching the whole panel. Collapsing a section keeps its commit draft.
+
+The History tab follows the selected repository. Click a repository header or work in its section to select it.
+
 ### Configuration
 
 Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) to customize Git behavior. Settings are spread across two pages:

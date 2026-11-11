@@ -126,7 +126,7 @@ impl CommitModal {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
+        let Some(git_panel) = GitPanel::active_panel(workspace, cx) else {
             return;
         };
 

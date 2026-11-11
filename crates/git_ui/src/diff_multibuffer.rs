@@ -413,7 +413,9 @@ impl DiffMultibuffer {
                 };
                 self.workspace
                     .update(cx, |workspace, cx| {
-                        if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+                        if let Some(git_panel) =
+                            GitPanel::panel_for_repository(workspace, self.repo(cx), cx)
+                        {
                             git_panel.update(cx, |git_panel, cx| {
                                 git_panel.select_entry_by_path(project_path, window, cx)
                             })
@@ -934,12 +936,13 @@ impl Render for DiffMultibuffer {
                 )
             })
             .when(is_empty && !is_loading, |el| {
-                let remote_button = if let Some(panel) = self
-                    .workspace
-                    .upgrade()
-                    .and_then(|workspace| workspace.read(cx).panel::<GitPanel>(cx))
-                {
-                    panel.update(cx, |panel, cx| panel.render_remote_button(cx))
+                let remote_button = if let Some(panel) =
+                    self.workspace.upgrade().and_then(|workspace| {
+                        GitPanel::panel_for_repository(workspace.read(cx), self.repo(cx), cx)
+                    }) {
+                    panel.update(cx, |panel, cx| {
+                        panel.render_remote_button_with_focus(self.focus_handle.clone(), cx)
+                    })
                 } else {
                     None
                 };
@@ -949,7 +952,23 @@ impl Render for DiffMultibuffer {
                         .gap_1()
                         .child(h_flex().justify_around().child(Label::new(empty_label)))
                         .map(|el| match remote_button {
-                            Some(button) => el.child(h_flex().justify_around().child(button)),
+                            Some(button) => {
+                                let repo = self.repo(cx);
+                                let focus = self.focus_handle.clone();
+                                el.child(
+                                    h_flex()
+                                        .justify_around()
+                                        .capture_any_mouse_down(move |_, window, cx| {
+                                            if let Some(repo) = &repo {
+                                                repo.update(cx, |repo, cx| {
+                                                    repo.set_as_active_repository(cx)
+                                                });
+                                            }
+                                            window.focus(&focus, cx);
+                                        })
+                                        .child(button),
+                                )
+                            }
                             None => el.child(
                                 h_flex()
                                     .justify_around()
