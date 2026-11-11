@@ -478,16 +478,10 @@ pub(crate) async fn determine_paths_with_positions(
 /// cannot open. The remote's path style is only known once connected, so this cannot happen
 /// while the URL is parsed.
 fn strip_slash_before_drive_letter(path: &mut PathBuf, path_style: PathStyle) {
-    if path_style != PathStyle::Windows {
-        return;
-    }
-    let Some(stripped) = path.to_str().and_then(|path| path.strip_prefix('/')) else {
-        return;
-    };
-    if let [drive, b':', b'/' | b'\\', ..] = stripped.as_bytes()
-        && drive.is_ascii_alphabetic()
+    if let Ok(stripped) = path_style.strip_prefix(path.as_path(), "/")
+        && path_style.is_absolute(stripped)
     {
-        *path = PathBuf::from(stripped);
+        *path = stripped.to_path_buf();
     }
 }
 
