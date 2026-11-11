@@ -119,8 +119,7 @@ impl Render for SecurityModal {
                 this.trust_and_dismiss(cx);
             }))
             .on_action(cx.listener(|security_modal, _: &ToggleWorktreeSecurity, _window, cx| {
-                security_modal.trusted = Some(false);
-                security_modal.dismiss(cx);
+                security_modal.stay_restricted_and_dismiss(cx);
             }))
             .header(
                 v_flex()
@@ -280,8 +279,7 @@ impl Render for SecurityModal {
                                 .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
-                                security_modal.trusted = Some(false);
-                                security_modal.dismiss(cx);
+                                security_modal.stay_restricted_and_dismiss(cx);
                                 cx.stop_propagation();
                             })),
                     )
@@ -463,6 +461,11 @@ impl SecurityModal {
 
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
+    }
+
+    pub(crate) fn stay_restricted_and_dismiss(&mut self, cx: &mut Context<Self>) {
+        self.trusted = Some(false);
+        self.dismiss(cx);
     }
 
     /// The sole untrusted, non-file project, when exactly one is being prompted

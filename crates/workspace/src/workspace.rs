@@ -9432,14 +9432,55 @@ impl Workspace {
         }
     }
 
-    fn check_worktree_trust_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) else {
-            return;
+    pub fn inherit_restricted_worktrees(
+        &mut self,
+        source_workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        if source_workspace.entity_id() == cx.entity_id() {
+            return Task::ready(());
+        }
+        let Some((source_paths, source_connection_identity)) =
+            source_workspace.read(cx).restricted_worktree_paths(cx)
+        else {
+            return Task::ready(());
         };
+        let Some((restricted_paths, connection_identity)) = self.restricted_worktree_paths(cx)
+        else {
+            return Task::ready(());
+        };
+
+        let db = WorkspaceDb::global(cx);
+        cx.spawn_in(window, async move |workspace, cx| {
+            let source_has_undecided_worktrees = db
+                .has_undecided_restricted_worktrees(source_paths, source_connection_identity)
+                .await
+                .log_err()
+                .unwrap_or(true);
+            if source_has_undecided_worktrees {
+                return;
+            }
+            db.keep_worktrees_restricted(restricted_paths, connection_identity);
+            workspace
+                .update(cx, |workspace, cx| {
+                    workspace.worktree_trust_prompt_check = None;
+                    if let Some(security_modal) = workspace.active_modal::<SecurityModal>(cx) {
+                        security_modal.update(cx, |security_modal, cx| {
+                            security_modal.stay_restricted_and_dismiss(cx);
+                        });
+                    }
+                })
+                .ok();
+        })
+    }
+
+    fn restricted_worktree_paths(
+        &self,
+        cx: &App,
+    ) -> Option<(Vec<Arc<Path>>, Option<RemoteConnectionIdentity<'static>>)> {
+        let trusted_worktrees = TrustedWorktrees::try_get_global(cx)?;
         let project = self.project().read(cx);
-        let connection_identity = project
-            .remote_connection_identity(cx)
-            .map(RemoteConnectionIdentity::into_owned);
         let restricted_paths = trusted_worktrees
             .read(cx)
             .restricted_worktrees(&project.worktree_store(), cx)
@@ -9447,8 +9488,19 @@ impl Workspace {
             .map(|(_, abs_path)| abs_path)
             .collect::<Vec<_>>();
         if restricted_paths.is_empty() {
-            return;
+            return None;
         }
+        let connection_identity = project
+            .remote_connection_identity(cx)
+            .map(RemoteConnectionIdentity::into_owned);
+        Some((restricted_paths, connection_identity))
+    }
+
+    fn check_worktree_trust_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((restricted_paths, connection_identity)) = self.restricted_worktree_paths(cx)
+        else {
+            return;
+        };
 
         let db = WorkspaceDb::global(cx);
         self.worktree_trust_prompt_check = Some(cx.spawn_in(window, async move |workspace, cx| {

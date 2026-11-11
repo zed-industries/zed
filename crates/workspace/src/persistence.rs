@@ -3524,7 +3524,11 @@ mod tests {
         let connection = Connection::open_memory(Some(
             "test_trusted_worktrees_migration_splits_hosts_by_known_connections",
         ));
-        let old_migrations = &WorkspaceDb::MIGRATIONS[..WorkspaceDb::MIGRATIONS.len() - 1];
+        let trusted_worktrees_migration = WorkspaceDb::MIGRATIONS
+            .iter()
+            .position(|migration| migration.contains("CREATE TABLE trusted_worktrees_2"))
+            .expect("trusted worktrees migration should exist");
+        let old_migrations = &WorkspaceDb::MIGRATIONS[..trusted_worktrees_migration];
         connection
             .migrate(WorkspaceDb::NAME, old_migrations, &mut |_, _, _| false)
             .unwrap();
