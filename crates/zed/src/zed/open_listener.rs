@@ -695,6 +695,23 @@ pub async fn handle_cli_connection(
                 // resolve_open_behavior
                 debug_panic!("unexpected SetOpenBehavior message");
             }
+            CliRequest::DebugState => {
+                // Deliberately does not activate the app: activation redraws
+                // windows and would disturb the state being inspected.
+                let state = cx.update(|cx| cx.debug_state());
+                let response = match serde_json::to_string_pretty(&state) {
+                    Ok(message) => CliResponse::Stdout { message },
+                    Err(error) => CliResponse::Stderr {
+                        message: format!("failed to serialize debug state: {error}"),
+                    },
+                };
+                let status = match response {
+                    CliResponse::Stdout { .. } => 0,
+                    _ => 1,
+                };
+                responses.send(response).log_err();
+                responses.send(CliResponse::Exit { status }).log_err();
+            }
         }
     }
 }
