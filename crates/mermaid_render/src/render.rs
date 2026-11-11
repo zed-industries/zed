@@ -41,7 +41,10 @@ pub(super) fn render_mermaid(
     let label_measurer = Arc::new(LabelMeasurer {
         svg_renderer: svg_renderer.clone(),
         font_family: theme.font_family.clone(),
-        widths: Mutex::default(),
+        measurements: Mutex::new(Measurements {
+            widths: HashMap::new(),
+            remaining_budget: MEASUREMENT_BUDGET,
+        }),
         error: OnceLock::new(),
     });
     let text_measurer = DeterministicTextMeasurer::default().with_width_callback({
@@ -81,25 +84,47 @@ pub(super) fn render_mermaid(
     Ok(svg)
 }
 
+const MEASUREMENT_BUDGET: usize = 2 << 20;
+
 struct LabelMeasurer {
     svg_renderer: SvgRenderer,
     font_family: String,
-    widths: Mutex<HashMap<(String, u64, Option<String>, Option<String>), f64>>,
+    measurements: Mutex<Measurements>,
     error: OnceLock<String>,
+}
+
+struct Measurements {
+    widths: HashMap<(String, u64, Option<String>, Option<String>), f64>,
+    remaining_budget: usize,
 }
 
 impl LabelMeasurer {
     fn width(&self, text: &str, style: &TextStyle) -> f64 {
+        if self.error.get().is_some() {
+            return 0.0;
+        }
         let key = (
             text.to_owned(),
             style.font_size.to_bits(),
             style.font_weight.clone(),
             style.font_style.clone(),
         );
-        let mut widths = self.widths.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(width) = widths.get(&key) {
+        let mut measurements = self
+            .measurements
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(width) = measurements.widths.get(&key) {
             return *width;
         }
+        let Some(remaining_budget) = measurements
+            .remaining_budget
+            .checked_sub(measurement_cost(text))
+        else {
+            self.error
+                .get_or_init(|| "the diagram has too much text".to_string());
+            return 0.0;
+        };
+        measurements.remaining_budget = remaining_budget;
         let font = SvgTextFont {
             family: &self.font_family,
             size: style.font_size as f32,
@@ -113,9 +138,14 @@ impl LabelMeasurer {
                 0.0
             }
         };
-        widths.insert(key, width);
+        measurements.widths.insert(key, width);
         width
     }
+}
+
+fn measurement_cost(text: &str) -> usize {
+    let len = text.len();
+    64 + len + len.saturating_mul(len) / 4096
 }
 
 fn to_merman_config(theme: &MermaidTheme) -> Result<merman::MermaidConfig> {
@@ -499,6 +529,22 @@ mod tests {
 
         assert_eq!(text_nodes(tree.root()).len(), 2);
         assert_eq!(clipped_group_count(tree.root()), 0);
+    }
+
+    #[test]
+    fn diagrams_with_too_much_text_to_measure_fail_to_render() {
+        let source = format!(
+            "flowchart TD\nA[\"{}{}\"]",
+            "\u{200b}\u{200c}".repeat(20_000),
+            "M ".repeat(100)
+        );
+        let error = render_mermaid(&source, &MermaidTheme::default(), &svg_renderer())
+            .expect_err("render succeeded");
+
+        assert_eq!(
+            error.to_string(),
+            "failed to measure mermaid text: the diagram has too much text"
+        );
     }
 
     struct ViewportLabel {
