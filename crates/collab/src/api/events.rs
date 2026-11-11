@@ -148,6 +148,12 @@ fn for_snowflake(
             map.insert("app_version".to_string(), body.app_version.clone().into());
             map.insert("os_name".to_string(), body.os_name.clone().into());
             map.insert("os_version".to_string(), body.os_version.clone().into());
+            if let Some(desktop_environment) = body.desktop_environment.as_ref() {
+                map.insert(
+                    "desktop_environment".to_string(),
+                    desktop_environment.clone().into(),
+                );
+            }
             map.insert("architecture".to_string(), body.architecture.clone().into());
             map.insert(
                 "release_channel".to_string(),

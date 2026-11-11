@@ -1,10 +1,10 @@
-use crate::commit_view::CommitView;
+use crate::commit_view::{CommitView, CommitViewOptions};
 use anyhow::Result;
 use askpass::AskPassDelegate;
 use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
-use git::repository::CommitSummary;
+use git::repository::{CommitSummary, RepoPath};
 use git::{GitRemote, commit::ParsedCommitMessage};
 use git_ui_core::askpass_modal::AskPassModal;
 use git_ui_core::notifications::show_error_toast;
@@ -220,6 +220,7 @@ pub struct CommitTooltip {
     markdown: Entity<Markdown>,
     repository: Entity<Repository>,
     workspace: WeakEntity<Workspace>,
+    reveal_file: Option<RepoPath>,
 }
 
 impl CommitTooltip {
@@ -236,7 +237,7 @@ impl CommitTooltip {
             .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok())
             .unwrap_or(OffsetDateTime::now_utc());
 
-        Self::new(
+        let mut tooltip = Self::new(
             CommitDetails {
                 sha: blame.sha.to_string().into(),
                 commit_time,
@@ -253,7 +254,9 @@ impl CommitTooltip {
             repository,
             workspace,
             cx,
-        )
+        );
+        tooltip.reveal_file = RepoPath::new(&blame.filename).ok();
+        tooltip
     }
 
     pub fn new(
@@ -280,6 +283,7 @@ impl CommitTooltip {
             workspace,
             scroll_handle: ScrollHandle::new(),
             markdown,
+            reveal_file: None,
         }
     }
 }
@@ -331,6 +335,7 @@ impl Render for CommitTooltip {
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
         let repo = self.repository.clone();
         let workspace = self.workspace.clone();
+        let reveal_file = self.reveal_file.clone();
         let commit_summary = CommitSummary {
             sha: self.commit.sha.clone(),
             subject: self
@@ -446,8 +451,10 @@ impl Render for CommitTooltip {
                                                         commit_summary.sha.to_string(),
                                                         repo.downgrade(),
                                                         workspace.clone(),
-                                                        None,
-                                                        None,
+                                                        CommitViewOptions {
+                                                            reveal_file: reveal_file.clone(),
+                                                            ..Default::default()
+                                                        },
                                                         window,
                                                         cx,
                                                     );

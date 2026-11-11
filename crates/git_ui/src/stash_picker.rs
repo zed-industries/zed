@@ -18,7 +18,7 @@ use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-use crate::commit_view::CommitView;
+use crate::commit_view::{CommitView, CommitViewOptions};
 use crate::stash_picker;
 
 actions!(
@@ -301,8 +301,10 @@ impl StashListDelegate {
             stash_sha,
             repo.downgrade(),
             self.workspace.clone(),
-            Some(stash_index),
-            None,
+            CommitViewOptions {
+                stash: Some(stash_index),
+                ..Default::default()
+            },
             window,
             cx,
         );
