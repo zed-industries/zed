@@ -271,11 +271,17 @@ mod tests {
 
     gpui::actions!(which_key_test, [TestChordAction]);
 
-    struct TestModal(gpui::FocusHandle);
+    struct TestModal {
+        focus_handle: gpui::FocusHandle,
+        chord_action_count: usize,
+    }
 
     impl TestModal {
         fn new(_: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
-            Self(cx.focus_handle())
+            Self {
+                focus_handle: cx.focus_handle(),
+                chord_action_count: 0,
+            }
         }
     }
 
@@ -283,7 +289,7 @@ mod tests {
 
     impl gpui::Focusable for TestModal {
         fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
-            self.0.clone()
+            self.focus_handle.clone()
         }
     }
 
@@ -293,9 +299,13 @@ mod tests {
         fn render(
             &mut self,
             _window: &mut Window,
-            _cx: &mut gpui::Context<Self>,
+            cx: &mut gpui::Context<Self>,
         ) -> impl gpui::IntoElement {
-            gpui::div().track_focus(&self.0)
+            gpui::div().track_focus(&self.focus_handle).on_action(cx.listener(
+                |this, _: &TestChordAction, _, _| {
+                    this.chord_action_count += 1;
+                },
+            ))
         }
     }
 
@@ -343,13 +353,6 @@ mod tests {
     #[gpui::test]
     async fn test_which_key_does_not_replace_open_modal(cx: &mut gpui::TestAppContext) {
         let (workspace, cx) = init_workspace_test(cx).await;
-        let chord_action_count = std::rc::Rc::new(Cell::new(0));
-        cx.update(|_, cx| {
-            let chord_action_count = chord_action_count.clone();
-            cx.on_action(move |_: &TestChordAction, _| {
-                chord_action_count.set(chord_action_count.get() + 1);
-            });
-        });
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.toggle_modal(window, cx, TestModal::new);
         });
@@ -368,6 +371,11 @@ mod tests {
         cx.simulate_keystrokes("ctrl-x");
         cx.run_until_parked();
 
-        assert_eq!(chord_action_count.get(), 1);
+        workspace.read_with(cx, |workspace, cx| {
+            let modal = workspace
+                .active_modal::<TestModal>(cx)
+                .expect("modal should still be open");
+            assert_eq!(modal.read(cx).chord_action_count, 1);
+        });
     }
 }
