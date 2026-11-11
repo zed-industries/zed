@@ -471,6 +471,30 @@ mod tests {
     }
 
     #[test]
+    fn mindmap_labels_use_theme_text_color() {
+        let source = "mindmap\n    root((Root))\n        First\n        second[A<br/>B]";
+        let theme = MermaidTheme::default();
+        let svg = render_mermaid(source, &theme, &svg_renderer()).expect("render failed");
+        let svg = crate::postprocess::postprocess(&svg, &theme).expect("postprocess failed");
+        let mut options = usvg::Options::default();
+        options.fontdb_mut().load_system_fonts();
+        let tree = usvg::Tree::from_str(&svg, &options).expect("SVG parsing failed");
+
+        let fills = text_nodes(tree.root())
+            .into_iter()
+            .flat_map(|text| text.chunks())
+            .flat_map(|chunk| chunk.spans())
+            .map(|span| match span.fill().map(|fill| fill.paint()) {
+                Some(usvg::Paint::Color(color)) => {
+                    format!("#{:02x}{:02x}{:02x}", color.red, color.green, color.blue)
+                }
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(fills, vec![css_color(theme.text_color); 4]);
+    }
+
+    #[test]
     fn inherited_styles_do_not_change_label_typography() {
         let theme = MermaidTheme::default();
         let mut options = usvg::Options::default();

@@ -286,7 +286,7 @@ fn class_diagram_label_text_uses_accent_classes() {
         +String breed
         +bark() void
     }
-    Dog --|> Animal"#;
+    Dog --|> Animal : inherits"#;
 
     let svg =
         mermaid_render::render_to_svg(source, &theme, &svg_renderer()).expect("render failed");
@@ -315,9 +315,16 @@ fn class_diagram_label_text_uses_accent_classes() {
         }
     }
 
-    assert!(
-        !accent_classes.is_empty(),
-        "expected zed-accent-N classes on label text elements",
+    assert_eq!(
+        accent_classes,
+        [
+            "zed-accent-0",
+            "zed-accent-0",
+            "zed-accent-0",
+            "zed-accent-1",
+            "zed-accent-1",
+            "zed-accent-1",
+        ],
     );
 }
 
