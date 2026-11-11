@@ -5734,6 +5734,17 @@ fn select_range_in_active_editor(
 async fn test_seed_query_from_editor_selection(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
+    cx.update(|cx| {
+        let settings = *FileFinderSettings::get_global(cx);
+        FileFinderSettings::override_global(
+            FileFinderSettings {
+                prefill_query_from_selection: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()
@@ -5772,6 +5783,17 @@ async fn test_seed_query_from_editor_selection(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_no_seed_query_without_selection(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *FileFinderSettings::get_global(cx);
+        FileFinderSettings::override_global(
+            FileFinderSettings {
+                prefill_query_from_selection: true,
+                ..settings
+            },
+            cx,
+        );
+    });
 
     app_state
         .fs
