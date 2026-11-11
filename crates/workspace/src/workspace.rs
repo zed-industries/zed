@@ -11294,7 +11294,7 @@ fn preferred_workspace_target(
 }
 
 pub fn find_existing_workspace(
-    abs_paths: &[PathBuf],
+    abs_paths: &[impl AsRef<Path>],
     open_options: &OpenOptions,
     host: &ProjectHost<'_>,
     cx: &mut AsyncApp,
