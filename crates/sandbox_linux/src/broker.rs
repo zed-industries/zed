@@ -15,13 +15,12 @@
 //! - `connect` and `bind` on unix sockets are checked against the
 //!   filesystem rules (sockets are found by path) and performed by us.
 
+use std::cell::OnceCell;
 use std::collections::HashSet;
 use std::ffi::{CString, OsStr};
-use std::fs::File;
 use std::io;
 use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt as _;
-use std::os::unix::fs::FileExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -105,6 +104,7 @@ pub(crate) fn handle(
         tid: notification.pid as i32,
         number: notification.data.nr as i64,
         args: notification.data.args,
+        status: OnceCell::new(),
     };
     let policy = execution.sandbox.policy();
     let broker = Broker {
@@ -129,6 +129,14 @@ pub(crate) struct Request<'a> {
     tid: i32,
     number: i64,
     args: [u64; 6],
+    /// The thread's `/proc/<tid>/status` fields, read at most once.
+    status: OnceCell<Option<ThreadStatus>>,
+}
+
+#[derive(Clone, Copy)]
+struct ThreadStatus {
+    tgid: i32,
+    umask: u32,
 }
 
 impl Request<'_> {
@@ -136,13 +144,32 @@ impl Request<'_> {
         self.args[index] as i32
     }
 
-    /// Copy bytes out of the target. The copy is ours; the target can't touch
-    /// it afterwards (it may race the copy itself, yielding torn bytes, which
+    /// Copy up to `buffer.len()` bytes out of the target, stopping early at
+    /// an unmapped page. The copy is ours; the target can't touch it
+    /// afterwards (it may race the copy itself, yielding torn bytes, which
     /// are still just bytes).
+    fn read_memory(&self, address: u64, buffer: &mut [u8]) -> io::Result<usize> {
+        let local = libc::iovec {
+            iov_base: buffer.as_mut_ptr().cast(),
+            iov_len: buffer.len(),
+        };
+        let remote = libc::iovec {
+            iov_base: address as *mut libc::c_void,
+            iov_len: buffer.len(),
+        };
+        // SAFETY: `local` describes our buffer; the kernel checks `remote`.
+        let read = unsafe { libc::process_vm_readv(self.tid, &local, 1, &remote, 1, 0) };
+        if read < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(read as usize)
+    }
+
     fn read_bytes(&self, address: u64, length: usize) -> io::Result<Vec<u8>> {
-        let memory = File::open(format!("/proc/{}/mem", self.tid))?;
         let mut buffer = vec![0u8; length];
-        memory.read_exact_at(&mut buffer, address)?;
+        if self.read_memory(address, &mut buffer)? != length {
+            return Err(errno(libc::EFAULT));
+        }
         Ok(buffer)
     }
 
@@ -152,14 +179,14 @@ impl Request<'_> {
         if address == 0 {
             return Err(errno(libc::EFAULT));
         }
-        let memory = File::open(format!("/proc/{}/mem", self.tid))?;
         let mut result = Vec::new();
+        let mut chunk = [0u8; 4096];
         while result.len() <= libc::PATH_MAX as usize {
             // Never read across a page boundary in one go, so an unmapped page
             // after the string doesn't fail the read.
             let chunk_end = (address | 0xfff) + 1;
-            let mut chunk = vec![0u8; (chunk_end - address) as usize];
-            let read = memory.read_at(&mut chunk, address)?;
+            let length = (chunk_end - address) as usize;
+            let read = self.read_memory(address, &mut chunk[..length])?;
             if read == 0 {
                 return Err(errno(libc::EFAULT));
             }
@@ -173,16 +200,24 @@ impl Request<'_> {
         Err(errno(libc::ENAMETOOLONG))
     }
 
-    fn umask(&self) -> u32 {
-        std::fs::read_to_string(format!("/proc/{}/status", self.tid))
-            .ok()
-            .and_then(|status| {
+    fn status(&self) -> Option<ThreadStatus> {
+        *self.status.get_or_init(|| {
+            let status = process::read_status_head(self.tid)?;
+            let field = |name: &str| {
                 status
                     .lines()
-                    .find_map(|line| line.strip_prefix("Umask:"))
-                    .and_then(|value| u32::from_str_radix(value.trim(), 8).ok())
+                    .find_map(|line| line.strip_prefix(name))
+                    .map(str::trim)
+            };
+            Some(ThreadStatus {
+                tgid: field("Tgid:")?.parse().ok()?,
+                umask: u32::from_str_radix(field("Umask:")?, 8).ok()?,
             })
-            .unwrap_or(0o022)
+        })
+    }
+
+    fn umask(&self) -> u32 {
+        self.status().map_or(0o022, |status| status.umask)
     }
 
     /// Whether the target is still blocked in this syscall. Checked after
@@ -462,8 +497,29 @@ impl Broker<'_> {
         Ok(Response::Success)
     }
 
+    /// The root of the execution's mount namespace. Every process in it has
+    /// the same one: none can `chroot` or `pivot_root` without capabilities.
+    fn sandbox_root(&self) -> io::Result<BorrowedFd<'_>> {
+        if let Some(root) = self.execution.root.get() {
+            return Ok(root.as_fd());
+        }
+        let root = sys::open(
+            Path::new(&format!("/proc/{}/root", self.request.tid)),
+            libc::O_PATH | libc::O_DIRECTORY,
+        )?;
+        // The tid could have been recycled since the notification; don't
+        // keep another process's root.
+        if !self.request.still_valid() {
+            return Err(errno(libc::ESRCH));
+        }
+        Ok(self.execution.root.get_or_init(|| root).as_fd())
+    }
+
     fn tgid(&self) -> io::Result<i32> {
-        process::thread_group(self.request.tid).ok_or_else(|| errno(libc::ESRCH))
+        self.request
+            .status()
+            .map(|status| status.tgid)
+            .ok_or_else(|| errno(libc::ESRCH))
     }
 
     /// The absolute path (in the sandbox's view) the target means by
@@ -506,16 +562,13 @@ impl Broker<'_> {
     ) -> io::Result<Resolved> {
         let path = self.absolute_path(dirfd, raw)?;
         let root = match view {
-            View::Sandbox => sys::open(
-                Path::new(&format!("/proc/{}/root", self.request.tid)),
-                libc::O_PATH | libc::O_DIRECTORY,
-            )?,
-            View::Host => sys::open(Path::new("/"), libc::O_PATH | libc::O_DIRECTORY)?,
+            View::Sandbox => self.sandbox_root()?,
+            View::Host => self.shared.host_root(),
         };
         let resolver = Resolver {
-            root: root.as_fd(),
+            root,
             tid: self.request.tid,
-            tgid: self.tgid()?,
+            tgid: &|| self.tgid(),
             tree: self.execution.tree,
         };
         let resolved = resolver.resolve(&path, mode)?;

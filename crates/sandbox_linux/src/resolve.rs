@@ -6,6 +6,13 @@
 //! components between our check and our use. Instead we walk one component
 //! at a time from a root fd, holding each directory, and decide on the
 //! object we end up holding.
+//!
+//! Most paths take a fast path: `openat2` resolves the whole path in the
+//! kernel, confined to the root (`RESOLVE_IN_ROOT`, so `..` and absolute
+//! symlinks behave as for the target) and refusing magic links. The result
+//! is only used when it isn't on procfs, the one place where resolving as the
+//! supervisor differs from resolving as the target; anything else falls back
+//! to the walk.
 
 use std::collections::VecDeque;
 use std::ffi::{CString, OsStr, OsString};
@@ -19,6 +26,11 @@ use crate::sys::{self, errno};
 
 const MAX_SYMLINKS: usize = 40;
 const PROC_SUPER_MAGIC: i64 = 0x9fa0;
+
+// Syscalls added after the per-arch tables were unified share one number.
+const SYS_OPENAT2: libc::c_long = 437;
+const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
+const RESOLVE_IN_ROOT: u64 = 0x10;
 
 pub(crate) enum Resolved {
     /// The final component, unopened: in [`Mode::Entry`], or because it
@@ -41,12 +53,78 @@ pub(crate) struct Resolver<'a> {
     /// The thread the path belongs to, for `/proc/self` and
     /// `/proc/thread-self`.
     pub tid: i32,
-    pub tgid: i32,
+    /// The thread's process, looked up only if `/proc/self` is reached.
+    pub tgid: &'a dyn Fn() -> io::Result<i32>,
     pub tree: ProcessTree,
 }
 
 impl Resolver<'_> {
     pub fn resolve(&self, path: &Path, mode: Mode) -> io::Result<Resolved> {
+        if let Some(resolved) = self.resolve_fast(path, mode) {
+            return Ok(resolved);
+        }
+        self.resolve_walk(path, mode)
+    }
+
+    /// `None` whenever the walk has to decide (errors included, so that
+    /// error cases behave exactly as the walk makes them).
+    fn resolve_fast(&self, path: &Path, mode: Mode) -> Option<Resolved> {
+        match mode {
+            Mode::Object { follow } => {
+                let flags = if follow { 0 } else { libc::O_NOFOLLOW };
+                let object = self.open_in_root(path.as_os_str(), flags).ok()?;
+                (!is_procfs(object.as_fd()).ok()?).then_some(Resolved::Object(object))
+            }
+            Mode::Entry => {
+                let name = match path.components().next_back()? {
+                    Component::Normal(name) => name,
+                    _ => return None,
+                };
+                let parent = self
+                    .open_in_root(path.parent()?.as_os_str(), libc::O_DIRECTORY)
+                    .ok()?;
+                if is_procfs(parent.as_fd()).ok()? {
+                    return None;
+                }
+                Some(Resolved::Entry {
+                    parent,
+                    name: sys::cstring(name.as_bytes()).ok()?,
+                })
+            }
+        }
+    }
+
+    fn open_in_root(&self, path: &OsStr, flags: i32) -> io::Result<OwnedFd> {
+        #[repr(C)]
+        struct OpenHow {
+            flags: u64,
+            mode: u64,
+            resolve: u64,
+        }
+        let path = sys::cstring(path.as_bytes())?;
+        let how = OpenHow {
+            flags: (libc::O_PATH | libc::O_CLOEXEC | flags) as u64,
+            mode: 0,
+            resolve: RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS,
+        };
+        // SAFETY: a NUL-terminated path and a correctly sized `open_how`.
+        let fd = unsafe {
+            libc::syscall(
+                SYS_OPENAT2,
+                self.root.as_raw_fd(),
+                path.as_ptr(),
+                &how as *const OpenHow,
+                size_of::<OpenHow>(),
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: a freshly returned descriptor that nothing else owns.
+        Ok(unsafe { std::os::fd::FromRawFd::from_raw_fd(fd as i32) })
+    }
+
+    fn resolve_walk(&self, path: &Path, mode: Mode) -> io::Result<Resolved> {
         let mut pending = components(path);
         let mut current = self.reopen_root()?;
         let mut symlinks = 0;
@@ -107,9 +185,9 @@ impl Resolver<'_> {
                     // (`mounts -> self/mounts`). `self` itself is rewritten
                     // to the target, since the kernel would answer for us.
                     let target = match component.as_bytes() {
-                        b"self" => OsString::from(self.tgid.to_string()),
+                        b"self" => OsString::from((self.tgid)()?.to_string()),
                         b"thread-self" => {
-                            OsString::from(format!("{}/task/{}", self.tgid, self.tid))
+                            OsString::from(format!("{}/task/{}", (self.tgid)()?, self.tid))
                         }
                         _ => readlink(next.as_fd())?.into_os_string(),
                     };

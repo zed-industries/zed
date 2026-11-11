@@ -190,17 +190,23 @@ pub(crate) enum SocketKind {
     TcpListener,
     /// Reports each datagram's destination address.
     Udp,
+    /// A `NETLINK_SOCK_DIAG` socket, for listing the namespace's sockets.
+    /// Not bound: the address is ignored.
+    Diagnostics,
 }
 
 /// A socket bound to `address`, which needn't belong to any interface.
 pub(crate) fn create_socket(kind: SocketKind, address: SocketAddr) -> io::Result<OwnedFd> {
+    if let SocketKind::Diagnostics = kind {
+        return sys::socket(libc::AF_NETLINK, libc::SOCK_DGRAM, libc::NETLINK_SOCK_DIAG);
+    }
     let (domain, ipv6) = match address {
         SocketAddr::V4(_) => (libc::AF_INET, false),
         SocketAddr::V6(_) => (libc::AF_INET6, true),
     };
     let socket_type = match kind {
         SocketKind::TcpListener => libc::SOCK_STREAM,
-        SocketKind::Udp => libc::SOCK_DGRAM,
+        SocketKind::Udp | SocketKind::Diagnostics => libc::SOCK_DGRAM,
     };
     let socket = sys::socket(domain, socket_type, 0)?;
     let fd = socket.as_fd();
@@ -394,13 +400,22 @@ pub(crate) struct Network {
     sockets: Mutex<Vec<Arc<OwnedFd>>>,
     udp_ports: Mutex<HashSet<u16>>,
     flows: Mutex<HashMap<(SocketAddr, SocketAddr), Arc<Flow>>>,
+    /// A socket-diagnostics socket in the namespace, once created.
+    diagnostics: Mutex<Option<OwnedFd>>,
     closed: AtomicBool,
+}
+
+/// A socket in the sandbox's namespace, as socket diagnostics report it.
+struct DiagnosedSocket {
+    local: SocketAddr,
+    inode: u64,
 }
 
 impl Network {
     pub fn new(factory: OwnedFd) -> Self {
         Self {
             factory: Mutex::new(factory),
+            diagnostics: Mutex::new(None),
             bridge: Mutex::new(()),
             sockets: Mutex::default(),
             udp_ports: Mutex::default(),
@@ -433,6 +448,95 @@ impl Network {
             sockets.push(socket.clone());
         }
         socket
+    }
+
+    /// The namespace's IPv4 and IPv6 sockets of `protocol` in any of
+    /// `states` (a bit per TCP state), from `NETLINK_SOCK_DIAG`. Unlike
+    /// `/proc/net/tcp`, which walks the whole host's connection table, a
+    /// listening-state query only walks listeners.
+    fn diagnose(&self, protocol: u8, states: u32) -> io::Result<Vec<DiagnosedSocket>> {
+        const SOCK_DIAG_BY_FAMILY: u16 = 20;
+        const HEADER: usize = 16;
+        let mut diagnostics = lock(&self.diagnostics);
+        if diagnostics.is_none() {
+            *diagnostics = Some(self.create(
+                SocketKind::Diagnostics,
+                SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+            )?);
+        }
+        let Some(socket) = diagnostics.as_ref() else {
+            return Err(errno(libc::ENETDOWN));
+        };
+        let mut sockets = Vec::new();
+        for family in [libc::AF_INET as u8, libc::AF_INET6 as u8] {
+            // struct nlmsghdr, then struct inet_diag_req_v2 with a zeroed
+            // inet_diag_sockid: dump everything in `states`.
+            let mut request = Vec::with_capacity(HEADER + 56);
+            request.extend(((HEADER + 56) as u32).to_ne_bytes());
+            request.extend(SOCK_DIAG_BY_FAMILY.to_ne_bytes());
+            request.extend(((libc::NLM_F_REQUEST | libc::NLM_F_DUMP) as u16).to_ne_bytes());
+            request.extend(1u32.to_ne_bytes());
+            request.extend(0u32.to_ne_bytes());
+            request.extend([family, protocol, 0, 0]);
+            request.extend(states.to_ne_bytes());
+            request.extend([0u8; 48]);
+            // SAFETY: sending a buffer we own.
+            let sent = unsafe {
+                libc::send(
+                    socket.as_raw_fd(),
+                    request.as_ptr().cast(),
+                    request.len(),
+                    0,
+                )
+            };
+            if sent < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let mut buffer = vec![0u8; 32 * 1024];
+            'replies: loop {
+                // SAFETY: receiving into a buffer we own.
+                let received = unsafe {
+                    libc::recv(
+                        socket.as_raw_fd(),
+                        buffer.as_mut_ptr().cast(),
+                        buffer.len(),
+                        0,
+                    )
+                };
+                if received < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                let mut messages = &buffer[..received as usize];
+                while messages.len() >= HEADER {
+                    let length =
+                        u32::from_ne_bytes([messages[0], messages[1], messages[2], messages[3]])
+                            as usize;
+                    let message_type = u16::from_ne_bytes([messages[4], messages[5]]);
+                    if length < HEADER || length > messages.len() {
+                        return Err(errno(libc::EPROTO));
+                    }
+                    match i32::from(message_type) {
+                        libc::NLMSG_DONE => break 'replies,
+                        libc::NLMSG_ERROR => {
+                            let code = messages
+                                .get(HEADER..HEADER + 4)
+                                .map_or(-libc::EPROTO, |code| {
+                                    i32::from_ne_bytes([code[0], code[1], code[2], code[3]])
+                                });
+                            return Err(errno(-code));
+                        }
+                        _ => {
+                            if let Some(socket) = parse_diagnosed(&messages[HEADER..length]) {
+                                sockets.push(socket);
+                            }
+                        }
+                    }
+                    // Messages are 4-byte aligned.
+                    messages = &messages[((length + 3) & !3).min(messages.len())..];
+                }
+            }
+        }
+        Ok(sockets)
     }
 
     fn create(&self, kind: SocketKind, address: SocketAddr) -> io::Result<OwnedFd> {
@@ -590,7 +694,7 @@ pub(crate) fn connect_tcp(
     let network = &execution.network;
     if AddressClass::of(target.ip()) == AddressClass::Loopback {
         let _bridge = lock(&network.bridge);
-        if listening_in_sandbox(caller.tid, target) {
+        if listening_in_sandbox(network, caller.tid, target) {
             return Ok(TcpOutcome::Continue);
         }
     }
@@ -691,23 +795,46 @@ fn connect_upstream(address: SocketAddr, still_valid: &dyn Fn() -> bool) -> io::
     Ok(stream)
 }
 
+/// `struct inet_diag_msg`: family, state, timer, retransmits, then
+/// `inet_diag_sockid` (source port and address, in network order), ...,
+/// and the inode at offset 68.
+fn parse_diagnosed(message: &[u8]) -> Option<DiagnosedSocket> {
+    let family = i32::from(*message.first()?);
+    let port = u16::from_be_bytes(message.get(4..6)?.try_into().ok()?);
+    let ip = match family {
+        libc::AF_INET => IpAddr::from(<[u8; 4]>::try_from(message.get(8..12)?).ok()?),
+        libc::AF_INET6 => IpAddr::from(<[u8; 16]>::try_from(message.get(8..24)?).ok()?),
+        _ => return None,
+    };
+    let inode = u32::from_ne_bytes(message.get(68..72)?.try_into().ok()?);
+    Some(DiagnosedSocket {
+        local: SocketAddr::new(ip.to_canonical(), port),
+        inode: u64::from(inode),
+    })
+}
+
 /// Whether something in the sandbox listens where `target` (a loopback
 /// address) points, so connecting there stays inside.
-fn listening_in_sandbox(tid: i32, target: SocketAddr) -> bool {
-    const LISTEN: &str = "0A";
-    proc_sockets(tid, "tcp").any(|socket| {
-        socket.state == LISTEN
-            && socket.local.port() == target.port()
-            && (socket.local.ip().is_unspecified()
+fn listening_in_sandbox(network: &Network, tid: i32, target: SocketAddr) -> bool {
+    const TCP_LISTEN: u32 = 10;
+    let listens_at = |local: SocketAddr| {
+        local.port() == target.port()
+            && (local.ip().is_unspecified()
                 || target.ip().is_unspecified()
-                || socket.local.ip() == target.ip())
-    })
+                || local.ip() == target.ip())
+    };
+    match network.diagnose(libc::IPPROTO_TCP as u8, 1 << TCP_LISTEN) {
+        Ok(listeners) => listeners.iter().any(|socket| listens_at(socket.local)),
+        // Socket diagnostics unavailable (no `inet_diag`): read `/proc`.
+        Err(_) => {
+            proc_sockets(tid, "tcp").any(|socket| socket.state == "0A" && listens_at(socket.local))
+        }
+    }
 }
 
 struct ProcSocket {
     local: SocketAddr,
     state: String,
-    inode: u64,
 }
 
 /// The sockets in `pid`'s network namespace from `/proc/<pid>/net/<table>`
@@ -745,7 +872,6 @@ fn parse_proc_socket(line: &str) -> Option<ProcSocket> {
     Some(ProcSocket {
         local: SocketAddr::new(ip.to_canonical(), port),
         state: fields.get(3)?.to_string(),
-        inode: fields.get(9)?.parse().ok()?,
     })
 }
 
@@ -1085,7 +1211,7 @@ fn open_flow(
     let host = destination_host(sandbox, target.ip()).ok_or_else(|| errno(libc::ECONNREFUSED))?;
     let still_valid = || !network.is_closed();
     let caller = Caller {
-        tid: udp_sender(&execution.tree, source),
+        tid: udp_sender(network, &execution.tree, source),
         still_valid: &still_valid,
     };
     let request = RequestedAccess::Net {
@@ -1113,14 +1239,21 @@ fn open_flow(
 
 /// The process that owns the sandbox socket bound to `source`, for prompts
 /// and denial reports; the helper if it can't be found.
-fn udp_sender(tree: &ProcessTree, source: SocketAddr) -> i32 {
+fn udp_sender(network: &Network, tree: &ProcessTree, source: SocketAddr) -> i32 {
     let source = canonical(source);
-    let inode = proc_sockets(tree.helper, "udp")
-        .find(|socket| {
-            socket.local == source
-                || (socket.local.ip().is_unspecified() && socket.local.port() == source.port())
-        })
-        .map(|socket| socket.inode);
+    let inode = network
+        .diagnose(libc::IPPROTO_UDP as u8, u32::MAX)
+        .ok()
+        .and_then(|sockets| {
+            sockets
+                .into_iter()
+                .find(|socket| {
+                    socket.local == source
+                        || (socket.local.ip().is_unspecified()
+                            && socket.local.port() == source.port())
+                })
+                .map(|socket| socket.inode)
+        });
     let holder = inode.and_then(|inode| {
         let link = format!("socket:[{inode}]");
         tree.members().into_iter().find_map(|process| {

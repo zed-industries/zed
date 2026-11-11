@@ -41,11 +41,21 @@ pub(crate) fn controlling_terminal(pid: i32) -> Option<u64> {
 }
 
 pub(crate) fn thread_group(tid: i32) -> Option<i32> {
-    let status = std::fs::read_to_string(format!("/proc/{tid}/status")).ok()?;
-    status
+    read_status_head(tid)?
         .lines()
         .find_map(|line| line.strip_prefix("Tgid:"))
         .and_then(|value| value.trim().parse().ok())
+}
+
+/// The start of `/proc/<tid>/status` (`Name`, `Umask`, `State`, `Tgid`,
+/// ...), in one `read`. Reading the whole file makes the kernel format
+/// dozens of lines, through a growing buffer.
+pub(crate) fn read_status_head(tid: i32) -> Option<String> {
+    use std::io::Read as _;
+    let mut file = std::fs::File::open(format!("/proc/{tid}/status")).ok()?;
+    let mut buffer = [0u8; 512];
+    let length = file.read(&mut buffer).ok()?;
+    Some(String::from_utf8_lossy(&buffer[..length]).into_owned())
 }
 
 pub(crate) fn all_processes() -> Vec<ProcessInfo> {

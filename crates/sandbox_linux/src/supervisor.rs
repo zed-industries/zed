@@ -3,10 +3,10 @@
 //! One per [`SandboxContext`](crate::SandboxContext). The main thread polls:
 //! - the control socket from Zed ([`CONTROL_FD`]): requests, prompt replies;
 //! - pending attach sockets, each waiting for one helper's listener fd;
-//! - seccomp listeners, one per running execution, keyed to its sandbox.
+//! - seccomp listeners, one per running execution, for when it ends.
 //!
-//! It only receives notifications; workers handle them, since handling can
-//! block (opening a FIFO, a slow filesystem, waiting for the user).
+//! Each execution's notifications are received and handled by its own
+//! [`Receivers`].
 //!
 //! A notification can only arrive on the listener of the filter that trapped
 //! it, so the listener identifies the sandbox; nothing the sandboxed process
@@ -16,9 +16,10 @@
 //! with it, after which every trapped syscall fails with `ENOSYS`.
 
 use std::collections::{HashMap, VecDeque};
-use std::os::fd::{AsFd as _, AsRawFd as _, OwnedFd, RawFd};
+use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, OwnedFd, RawFd};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, RwLock, mpsc};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock, mpsc};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
@@ -38,7 +39,14 @@ pub(crate) const SUPERVISOR_FLAG: &str = "--zed-sandbox-linux-supervisor";
 pub(crate) const CONTROL_FD: RawFd = 3;
 
 const PROMPT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-const MAX_WORKERS: usize = 64;
+/// Per execution.
+const MAX_RECEIVERS: usize = 64;
+/// Idle receivers beyond this many exit.
+const SPARE_RECEIVERS: usize = 2;
+
+// From <linux/seccomp.h>.
+const SECCOMP_IOCTL_NOTIF_SET_FLAGS: libc::c_ulong = 0x4008_2104;
+const SECCOMP_USER_NOTIF_FD_SYNC_WAKE_UP: libc::c_ulong = 1;
 
 pub(crate) struct SandboxState {
     pub id: SandboxId,
@@ -74,6 +82,84 @@ pub(crate) struct Execution {
     pub sandbox: Arc<SandboxState>,
     pub tree: ProcessTree,
     pub network: Network,
+    /// The root of its mount namespace, once opened.
+    pub root: OnceLock<OwnedFd>,
+    receivers: Receivers,
+}
+
+/// The threads answering one execution's notifications, as leader and
+/// followers: one thread at a time waits on the listener, and once it
+/// receives a notification it leaves the waiting to another and handles the
+/// notification itself. Answering on the receiving thread saves a hand-off
+/// and lets the kernel wake it synchronously when the next notification
+/// arrives. Handling can block (a prompt, a FIFO, a slow filesystem), so a
+/// thread is added whenever none is left to wait.
+#[derive(Default)]
+struct Receivers {
+    leader: Mutex<()>,
+    /// Threads not handling a notification.
+    idle: AtomicUsize,
+    threads: AtomicUsize,
+}
+
+fn start_receiver(shared: &Arc<Shared>, execution: &Arc<Execution>) {
+    let receivers = &execution.receivers;
+    if receivers.threads.fetch_add(1, Ordering::SeqCst) >= MAX_RECEIVERS {
+        receivers.threads.fetch_sub(1, Ordering::SeqCst);
+        return;
+    }
+    receivers.idle.fetch_add(1, Ordering::SeqCst);
+    let spawned = std::thread::Builder::new()
+        .name("zed-sandbox-receiver".to_string())
+        .spawn({
+            let shared = shared.clone();
+            let execution = execution.clone();
+            move || run_receiver(&shared, &execution)
+        });
+    if let Err(error) = spawned {
+        receivers.threads.fetch_sub(1, Ordering::SeqCst);
+        receivers.idle.fetch_sub(1, Ordering::SeqCst);
+        eprintln!("zed sandbox supervisor: starting a receiver: {error}");
+    }
+}
+
+fn run_receiver(shared: &Arc<Shared>, execution: &Arc<Execution>) {
+    let receivers = &execution.receivers;
+    let exit = || {
+        receivers.idle.fetch_sub(1, Ordering::SeqCst);
+        receivers.threads.fetch_sub(1, Ordering::SeqCst);
+    };
+    loop {
+        let notification = {
+            let _leader = net::lock(&receivers.leader);
+            loop {
+                let mut entry = poll_fd(execution.listener.as_raw_fd());
+                // SAFETY: one valid pollfd.
+                let ready = unsafe { libc::poll(&mut entry, 1, -1) };
+                if ready < 0 {
+                    if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                        continue;
+                    }
+                    return exit();
+                }
+                if entry.revents & libc::POLLIN != 0 {
+                    if let Some(notification) = broker::receive(execution.listener.as_fd()) {
+                        break notification;
+                    }
+                } else if entry.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+                    // Every task under this filter has exited.
+                    return exit();
+                }
+            }
+        };
+        if receivers.idle.fetch_sub(1, Ordering::SeqCst) == 1 {
+            start_receiver(shared, execution);
+        }
+        broker::handle(shared, execution, notification);
+        if receivers.idle.fetch_add(1, Ordering::SeqCst) >= SPARE_RECEIVERS {
+            return exit();
+        }
+    }
 }
 
 /// What [`Shared::ask`] concluded.
@@ -122,9 +208,15 @@ pub(crate) struct Shared {
     prompts: Mutex<HashMap<PromptId, mpsc::Sender<PromptReply>>>,
     next_prompt: AtomicU64,
     queues: Mutex<HashMap<(SandboxId, HandlerId), Arc<PromptQueue>>>,
+    host_root: OwnedFd,
 }
 
 impl Shared {
+    /// `/`, opened once.
+    pub fn host_root(&self) -> BorrowedFd<'_> {
+        self.host_root.as_fd()
+    }
+
     fn send(&self, message: &SupervisorMessage) {
         // SEQPACKET sends are atomic, so workers and the main thread can
         // share the socket.
@@ -293,62 +385,6 @@ impl Shared {
     }
 }
 
-type Job = (Arc<Execution>, libc::seccomp_notif);
-
-/// Workers are added whenever none is idle (up to [`MAX_WORKERS`]), so a
-/// few syscalls blocked on prompts don't stall everything else.
-struct Pool {
-    shared: Arc<Shared>,
-    sender: mpsc::Sender<Job>,
-    receiver: Arc<Mutex<mpsc::Receiver<Job>>>,
-    idle: Arc<AtomicUsize>,
-    workers: usize,
-}
-
-impl Pool {
-    fn new(shared: Arc<Shared>) -> Self {
-        let (sender, receiver) = mpsc::channel();
-        Self {
-            shared,
-            sender,
-            receiver: Arc::new(Mutex::new(receiver)),
-            idle: Arc::new(AtomicUsize::new(0)),
-            workers: 0,
-        }
-    }
-
-    fn dispatch(&mut self, job: Job) {
-        if self.idle.load(Ordering::SeqCst) == 0 && self.workers < MAX_WORKERS {
-            let shared = self.shared.clone();
-            let receiver = self.receiver.clone();
-            let idle = self.idle.clone();
-            let spawned = std::thread::Builder::new()
-                .name("zed-sandbox-worker".to_string())
-                .spawn(move || run_worker(&shared, &receiver, &idle));
-            match spawned {
-                Ok(_) => self.workers += 1,
-                Err(error) => eprintln!("zed sandbox supervisor: spawning worker: {error}"),
-            }
-        }
-        self.sender.send(job).ok();
-    }
-}
-
-fn run_worker(shared: &Arc<Shared>, receiver: &Mutex<mpsc::Receiver<Job>>, idle: &AtomicUsize) {
-    loop {
-        idle.fetch_add(1, Ordering::SeqCst);
-        let job = match receiver.lock() {
-            Ok(receiver) => receiver.recv(),
-            Err(_) => return,
-        };
-        idle.fetch_sub(1, Ordering::SeqCst);
-        let Ok((execution, notification)) = job else {
-            return;
-        };
-        broker::handle(shared, &execution, notification);
-    }
-}
-
 pub(crate) fn run() -> ! {
     // Relays write to sockets whose peer may be gone: that's an error to
     // handle, not a reason to die.
@@ -366,14 +402,21 @@ pub(crate) fn run() -> ! {
             std::process::exit(1);
         }
     };
+    let host_root = match sys::open(Path::new("/"), libc::O_PATH | libc::O_DIRECTORY) {
+        Ok(root) => root,
+        Err(error) => {
+            eprintln!("zed sandbox supervisor: opening /: {error}");
+            std::process::exit(1);
+        }
+    };
     let shared = Arc::new(Shared {
         control,
         prompts: Mutex::new(HashMap::new()),
         next_prompt: AtomicU64::new(0),
         queues: Mutex::new(HashMap::new()),
+        host_root,
     });
     Supervisor {
-        pool: Pool::new(shared.clone()),
         shared,
         sandboxes: HashMap::new(),
         pending: Vec::new(),
@@ -385,7 +428,6 @@ pub(crate) fn run() -> ! {
 
 struct Supervisor {
     shared: Arc<Shared>,
-    pool: Pool,
     sandboxes: HashMap<SandboxId, Arc<SandboxState>>,
     /// Attach sockets whose helper hasn't sent its listener yet.
     pending: Vec<(OwnedFd, Arc<SandboxState>)>,
@@ -399,11 +441,12 @@ impl Supervisor {
         loop {
             let mut poll_fds = vec![poll_fd(self.shared.control.as_raw_fd())];
             poll_fds.extend(self.pending.iter().map(|(fd, _)| poll_fd(fd.as_raw_fd())));
-            poll_fds.extend(
-                self.executions
-                    .iter()
-                    .map(|execution| poll_fd(execution.listener.as_raw_fd())),
-            );
+            // Only for hang-ups: receivers take the notifications.
+            poll_fds.extend(self.executions.iter().map(|execution| libc::pollfd {
+                fd: execution.listener.as_raw_fd(),
+                events: 0,
+                revents: 0,
+            }));
             // SAFETY: a valid array of pollfds.
             let ready = unsafe { libc::poll(poll_fds.as_mut_ptr(), poll_fds.len() as _, -1) };
             if ready < 0 {
@@ -421,12 +464,7 @@ impl Supervisor {
 
             // Walk backwards so removals don't shift indices still to visit.
             for (index, entry) in listeners_ready.iter().enumerate().rev() {
-                if entry.revents & libc::POLLIN != 0 {
-                    let execution = &self.executions[index];
-                    if let Some(notification) = broker::receive(execution.listener.as_fd()) {
-                        self.pool.dispatch((execution.clone(), notification));
-                    }
-                } else if entry.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+                if entry.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
                     // Every task under this filter has exited.
                     self.executions.swap_remove(index).network.close();
                 }
@@ -439,6 +477,17 @@ impl Supervisor {
                 match receive_message::<AttachInfo>(socket.as_fd()) {
                     Ok(Some((info, mut fds))) if !fds.is_empty() => {
                         let listener = fds.remove(0);
+                        // Wake the receiver that answers on the target's
+                        // CPU right away (Linux 6.6). Older kernels refuse the
+                        // flag, which only costs that optimization.
+                        // SAFETY: SET_FLAGS takes the flags by value.
+                        unsafe {
+                            libc::ioctl(
+                                listener.as_raw_fd(),
+                                SECCOMP_IOCTL_NOTIF_SET_FLAGS as _,
+                                SECCOMP_USER_NOTIF_FD_SYNC_WAKE_UP,
+                            )
+                        };
                         let execution = Arc::new(Execution {
                             listener,
                             sandbox,
@@ -448,7 +497,10 @@ impl Supervisor {
                             // From now on the helper serves socket requests
                             // on the attach socket.
                             network: Network::new(socket),
+                            root: OnceLock::new(),
+                            receivers: Receivers::default(),
                         });
+                        start_receiver(&self.shared, &execution);
                         net::start(&self.shared, &execution, fds);
                         self.executions.push(execution);
                     }
