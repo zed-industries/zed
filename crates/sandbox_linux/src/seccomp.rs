@@ -4,7 +4,7 @@
 //! - every open except `O_PATH` (read rules need the supervisor to decide);
 //! - write-intent filesystem syscalls, decided from register arguments;
 //! - syscalls that act on another process by pid;
-//! - `connect`.
+//! - `connect` and `bind`.
 //!
 //! It denies syscalls the sandbox never needs (non-IP sockets, new user
 //! namespaces, io_uring, ptrace, ...) and returns `ENOSYS` for every syscall
@@ -92,18 +92,21 @@ pub(crate) enum Brokered {
     Setpriority,
     IoprioSet,
     Connect,
+    Bind,
 }
 
 /// What the filter does with one syscall number.
 #[derive(Clone, Copy)]
 enum Action {
     Return(u32),
-    /// Return `matched` if argument `arg` equals one of `values`.
+    /// Do `matched` if argument `arg`, masked with `mask`, equals one of
+    /// `values`, else do `otherwise`.
     ArgumentIn {
         arg: usize,
+        mask: u32,
         values: &'static [u32],
-        matched: u32,
-        otherwise: u32,
+        matched: &'static Action,
+        otherwise: &'static Action,
     },
     /// Return `set` if argument `arg` has any bit of `mask` set.
     ArgumentHasBits {
@@ -111,14 +114,6 @@ enum Action {
         mask: u32,
         set: u32,
         clear: u32,
-    },
-    /// Return `matched` if argument `arg` equals one of `values`, else do
-    /// `otherwise`.
-    ArgumentInOr {
-        arg: usize,
-        values: &'static [u32],
-        matched: u32,
-        otherwise: &'static Action,
     },
     /// Return `non_null` if the 64-bit argument `arg` is non-zero.
     ArgumentNonNull {
@@ -195,6 +190,7 @@ const BROKERED: &[(i64, Brokered, Action)] = {
         (libc::SYS_setpriority, Setpriority, always),
         (libc::SYS_ioprio_set, IoprioSet, always),
         (libc::SYS_connect, Connect, always),
+        (libc::SYS_bind, Bind, always),
     ]
 };
 
@@ -242,6 +238,22 @@ const DENIED: &[(i64, Action)] = {
     ];
     const UNIX_FAMILY: &[u32] = &[libc::AF_UNIX as u32];
     const ICMP_PROTOCOLS: &[u32] = &[libc::IPPROTO_ICMP as u32, libc::IPPROTO_ICMPV6 as u32];
+    const DATAGRAM: &[u32] = &[libc::SOCK_DGRAM as u32];
+    /// The type argument without `SOCK_NONBLOCK` / `SOCK_CLOEXEC`.
+    const SOCKET_TYPE_MASK: u32 = 0xf;
+    const ALLOWED: &Action = &Action::Return(ALLOW);
+    const REFUSED: &Action = &DENIED_WITH_EPERM;
+    // A datagram unix socket can send to any socket by path with
+    // `sendmsg`, whose address sits behind a pointer; trapping every
+    // `sendmsg` would slow all UDP. Stream and seqpacket sockets only reach
+    // a path through `connect`, which is brokered.
+    const UNIX_UNLESS_DATAGRAM: &Action = &Action::ArgumentIn {
+        arg: 1,
+        mask: SOCKET_TYPE_MASK,
+        values: DATAGRAM,
+        matched: REFUSED,
+        otherwise: ALLOWED,
+    };
     const NEW_USER_NAMESPACE: Action = Action::ArgumentHasBits {
         arg: 0,
         mask: libc::CLONE_NEWUSER as u32,
@@ -251,20 +263,25 @@ const DENIED: &[(i64, Action)] = {
     &[
         (
             libc::SYS_socket,
-            Action::ArgumentInOr {
+            Action::ArgumentIn {
                 // Ping sockets: every address is local in the sandbox, so
                 // every ping would get an answer.
                 arg: 2,
+                mask: u32::MAX,
                 values: ICMP_PROTOCOLS,
-                matched: errno(libc::EACCES),
-                // Session IPC sockets (D-Bus, ssh-agent, ...) are reachable
-                // by path, and unix sockets aren't brokered yet, so the
-                // command can't create them.
+                matched: &Action::Return(errno(libc::EACCES)),
                 otherwise: &Action::ArgumentIn {
                     arg: 0,
+                    mask: u32::MAX,
                     values: IP_FAMILIES,
-                    matched: ALLOW,
-                    otherwise: errno(libc::EPERM),
+                    matched: ALLOWED,
+                    otherwise: &Action::ArgumentIn {
+                        arg: 0,
+                        mask: u32::MAX,
+                        values: UNIX_FAMILY,
+                        matched: UNIX_UNLESS_DATAGRAM,
+                        otherwise: REFUSED,
+                    },
                 },
             },
         ),
@@ -272,9 +289,10 @@ const DENIED: &[(i64, Action)] = {
             libc::SYS_socketpair,
             Action::ArgumentIn {
                 arg: 0,
+                mask: u32::MAX,
                 values: UNIX_FAMILY,
-                matched: ALLOW,
-                otherwise: errno(libc::EPERM),
+                matched: UNIX_UNLESS_DATAGRAM,
+                otherwise: REFUSED,
             },
         ),
         // A nested user namespace could mount, creating new names for files
@@ -332,8 +350,8 @@ const JUMP_EQUAL_OPCODE: u32 = libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K;
 const JUMP_AT_LEAST_OPCODE: u32 = libc::BPF_JMP | libc::BPF_JGE | libc::BPF_K;
 /// `if A & k != 0` jump `jt`, else `jf`.
 const JUMP_ANY_BITS_OPCODE: u32 = libc::BPF_JMP | libc::BPF_JSET | libc::BPF_K;
-/// Jump `k` instructions forward.
-const JUMP_ALWAYS_OPCODE: u32 = libc::BPF_JMP | libc::BPF_JA;
+/// `A &= k`.
+const AND_OPCODE: u32 = libc::BPF_ALU | libc::BPF_AND | libc::BPF_K;
 /// Stop and return `k`: the seccomp verdict (allow, errno, notify, kill).
 const RETURN_OPCODE: u32 = libc::BPF_RET | libc::BPF_K;
 
@@ -352,37 +370,26 @@ fn compile_action(action: Action) -> Vec<libc::sock_filter> {
         Action::Return(value) => vec![statement(RETURN_OPCODE, value)],
         Action::ArgumentIn {
             arg,
+            mask,
             values,
             matched,
             otherwise,
         } => {
-            let count = values.len();
+            // Comparisons, then `otherwise` (reached by falling through
+            // them all), then `matched`. Both end in a return.
+            let otherwise = compile_action(*otherwise);
             let mut program = vec![statement(LOAD_OPCODE, argument_offset(arg))];
+            if mask != u32::MAX {
+                program.push(statement(AND_OPCODE, mask));
+            }
+            let count = values.len();
             for (index, value) in values.iter().enumerate() {
                 // Jump over the remaining comparisons and `otherwise`.
-                program.push(jump(JUMP_EQUAL_OPCODE, *value, (count - index) as u8, 0));
+                let skip = count - index - 1 + otherwise.len();
+                program.push(jump(JUMP_EQUAL_OPCODE, *value, skip as u8, 0));
             }
-            program.push(statement(RETURN_OPCODE, otherwise));
-            program.push(statement(RETURN_OPCODE, matched));
-            program
-        }
-        Action::ArgumentInOr {
-            arg,
-            values,
-            matched,
-            otherwise,
-        } => {
-            // Comparisons, a jump over `matched` (reached only when none
-            // matches), `matched`, then `otherwise`.
-            let count = values.len();
-            let mut program = vec![statement(LOAD_OPCODE, argument_offset(arg))];
-            for (index, value) in values.iter().enumerate() {
-                // Jump over the remaining comparisons and the jump.
-                program.push(jump(JUMP_EQUAL_OPCODE, *value, (count - index) as u8, 0));
-            }
-            program.push(statement(JUMP_ALWAYS_OPCODE, 1));
-            program.push(statement(RETURN_OPCODE, matched));
-            program.extend(compile_action(*otherwise));
+            program.extend(otherwise);
+            program.extend(compile_action(*matched));
             program
         }
         Action::ArgumentHasBits {

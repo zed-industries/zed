@@ -32,7 +32,12 @@ pub struct SandboxPolicy {
     /// - Read means opening a file for its contents. Listing directories,
     ///   `stat`, `readlink` and `execve` are never restricted.
     /// - Write means any modification: creating, deleting, renaming,
-    ///   linking, opening for writing, `chmod`, `truncate`, timestamps.
+    ///   linking, opening for writing, `chmod`, `truncate`, timestamps,
+    ///   binding a unix socket.
+    /// - Connect means connecting to a unix socket. Abstract sockets (which
+    ///   have no path) are local to the execution and always allowed.
+    ///
+    /// Every permission matches paths the same way.
     pub fs: Vec<FsRule>,
     /// Outgoing network access, by destination: TCP connections and UDP
     /// flows leaving the execution. Processes of one execution can always
@@ -44,13 +49,15 @@ pub struct SandboxPolicy {
 }
 
 impl SandboxPolicy {
-    /// Every path readable and writable, every destination reachable.
+    /// Every path readable, writable and connectable, every destination
+    /// reachable.
     pub fn unrestricted() -> Self {
         Self {
             fs: vec![FsRule {
                 path: PathPattern::root(),
                 read: Some(Access::Allow),
                 write: Some(Access::Allow),
+                connect: Some(Access::Allow),
             }],
             net: vec![NetRule::new(NetTarget::Any, Access::Allow)],
         }
@@ -71,6 +78,7 @@ pub struct FsRule {
     /// `None`: this rule has no opinion, and earlier rules still apply.
     pub read: Option<Access>,
     pub write: Option<Access>,
+    pub connect: Option<Access>,
 }
 
 impl FsRule {
@@ -79,7 +87,13 @@ impl FsRule {
             path: PathPattern::new(path)?,
             read: None,
             write: None,
+            connect: None,
         })
+    }
+
+    pub fn connect(mut self, access: Access) -> Self {
+        self.connect = Some(access);
+        self
     }
 
     pub fn read(mut self, access: Access) -> Self {
@@ -520,6 +534,12 @@ pub enum Protocol {
 pub enum Permission {
     Read,
     Write,
+    /// Connecting to a unix socket.
+    Connect,
+}
+
+impl Permission {
+    pub const ALL: [Permission; 3] = [Permission::Read, Permission::Write, Permission::Connect];
 }
 
 /// A handler's answer.
@@ -565,13 +585,17 @@ pub(crate) struct WireFsRule {
     pub path: PathPattern,
     pub read: Option<WireAccess>,
     pub write: Option<WireAccess>,
+    pub connect: Option<WireAccess>,
 }
 
 impl WireFsRule {
+    /// The only way to get at a rule's access: every permission is then
+    /// decided by the same path matching ([`WirePolicy::fs_access`]).
     fn sets(&self, permission: Permission) -> Option<WireAccess> {
         match permission {
             Permission::Read => self.read,
             Permission::Write => self.write,
+            Permission::Connect => self.connect,
         }
     }
 }
@@ -757,6 +781,7 @@ impl FsRule {
             path: self.path.clone(),
             read: convert(&self.read),
             write: convert(&self.write),
+            connect: convert(&self.connect),
         }
     }
 }

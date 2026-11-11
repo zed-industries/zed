@@ -451,8 +451,8 @@ impl Drop for ContextInner {
 /// policy (and its updates), but each gets its own namespaces.
 ///
 /// Each sandbox has a private temporary directory, passed to commands as
-/// `TMPDIR` and writable regardless of the policy. Device files commands
-/// commonly need (`/dev/null`, terminals, ...) are readable and writable
+/// `TMPDIR` and usable (read, write, connect) regardless of the policy.
+/// Device files commands commonly need (`/dev/null`, terminals, ...) are readable and writable
 /// unless the policy says otherwise.
 pub struct Sandbox {
     context: Arc<ContextInner>,
@@ -527,6 +527,7 @@ impl Sandbox {
             path,
             read: Some(WireAccess::Allow),
             write: Some(WireAccess::Allow),
+            connect: Some(WireAccess::Allow),
         };
         let mut fs = Vec::with_capacity(policy.fs.len() + DEFAULT_DEVICES.len() + 1);
         for device in DEFAULT_DEVICES {

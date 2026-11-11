@@ -368,8 +368,8 @@ mod imp {
             case("signal a host process", "kill -0 $HOST_PID", false),
             case("new user namespace", "unshare -r true", false),
             case(
-                "unix socket",
-                "python3 -c 'import socket; socket.socket(socket.AF_UNIX)'",
+                "datagram unix socket",
+                "python3 -c 'import socket; socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)'",
                 false,
             ),
         ];
@@ -545,6 +545,39 @@ def main(command, *args):
     if command == "ping-socket":
         socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
         return True
+    if command == "unix-echo":
+        stream = socket.socket(socket.AF_UNIX)
+        stream.settimeout(5)
+        stream.connect(args[0])
+        return echo(stream)
+    if command == "unix-error":
+        stream = socket.socket(socket.AF_UNIX)
+        try:
+            stream.connect(args[0])
+        except OSError as error:
+            print(error, file=sys.stderr)
+            return error.errno == getattr(errno, args[1])
+        return False
+    if command == "unix-server":
+        # A path, or a name starting with @ for an abstract address.
+        address = "\0" + args[0][1:] if args[0].startswith("@") else args[0]
+        server = socket.socket(socket.AF_UNIX)
+        server.bind(address)
+        server.listen()
+        client = socket.socket(socket.AF_UNIX)
+        client.settimeout(5)
+        client.connect(address)
+        connection, _ = server.accept()
+        client.sendall(b"hi")
+        return connection.recv(2) == b"hi"
+    if command == "unix-bind":
+        socket.socket(socket.AF_UNIX).bind(args[0])
+        return True
+    if command == "socketpair":
+        kind = getattr(socket, args[0])
+        first, second = socket.socketpair(socket.AF_UNIX, kind)
+        first.send(b"hi")
+        return second.recv(2) == b"hi"
     raise ValueError(command)
 
 sys.exit(0 if main(*sys.argv[1:]) else 1)
@@ -569,6 +602,23 @@ sys.exit(0 if main(*sys.argv[1:]) else 1)
         port
     }
 
+    fn unix_echo_server(path: &Path) {
+        use std::io::{Read as _, Write as _};
+        let listener = std::os::unix::net::UnixListener::bind(path).expect("binding");
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                std::thread::spawn(move || {
+                    let mut buffer = [0; 1024];
+                    while let Ok(length @ 1..) = stream.read(&mut buffer) {
+                        if stream.write_all(&buffer[..length]).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+    }
+
     fn udp_echo_server() -> u16 {
         let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("binding");
         let port = socket.local_addr().unwrap().port();
@@ -590,6 +640,12 @@ sys.exit(0 if main(*sys.argv[1:]) else 1)
         let unlisted = tcp_echo_server();
         let udp_allowed = udp_echo_server();
         let udp_unlisted = udp_echo_server();
+        let sockets = work.join("sockets");
+        std::fs::create_dir_all(&sockets).unwrap();
+        let allowed_socket = sockets.join("allowed.sock");
+        let denied_socket = sockets.join("denied.sock");
+        unix_echo_server(&allowed_socket);
+        unix_echo_server(&denied_socket);
 
         let net_prompts = Arc::new(Mutex::new(Vec::<RequestedAccess>::new()));
         let handler = Handler::new({
@@ -616,6 +672,9 @@ sys.exit(0 if main(*sys.argv[1:]) else 1)
             fs: vec![
                 FsRule::new("/").unwrap().read(Allow),
                 FsRule::new(work.to_str().unwrap()).unwrap().write(Allow),
+                FsRule::new(allowed_socket.to_str().unwrap())
+                    .unwrap()
+                    .connect(Allow),
             ],
             net: vec![
                 NetRule::new(host_loopback(), Allow)
@@ -721,8 +780,64 @@ sys.exit(0 if main(*sys.argv[1:]) else 1)
                 true,
             ),
             case("no ping sockets", client("ping-socket"), false),
+            case(
+                "unix: connect to an allowed host socket",
+                client(&format!("unix-echo {}", allowed_socket.display())),
+                true,
+            ),
+            case(
+                "unix: connect to another host socket is refused with EACCES",
+                client(&format!("unix-error {} EACCES", denied_socket.display())),
+                true,
+            ),
+            case(
+                "unix: connect through a symlink to a refused socket",
+                format!(
+                    "ln -s {} link.sock && {}",
+                    denied_socket.display(),
+                    client("unix-error link.sock EACCES")
+                ),
+                true,
+            ),
+            case(
+                "unix: server in TMPDIR",
+                client("unix-server \"$TMPDIR/server.sock\""),
+                true,
+            ),
+            case(
+                "unix: bind in a writable directory",
+                client("unix-bind bound.sock"),
+                true,
+            ),
+            case(
+                "unix: bind outside writable directories",
+                client("unix-bind /tmp/sandbox-escape-test-bound.sock"),
+                false,
+            ),
+            case(
+                "unix: server on an abstract address",
+                client("unix-server @zed-sandbox-test"),
+                true,
+            ),
+            case(
+                "unix: stream socketpair",
+                client("socketpair SOCK_STREAM"),
+                true,
+            ),
+            case(
+                "unix: datagram socketpair",
+                client("socketpair SOCK_DGRAM"),
+                false,
+            ),
         ];
         check(&sandbox, work, &cases, failures);
+        host_check(
+            "unix socket bound in the sandbox exists on the host",
+            std::fs::symlink_metadata(work.join("bound.sock")).is_ok_and(|metadata| {
+                std::os::unix::fs::FileTypeExt::is_socket(&metadata.file_type())
+            }) && !Path::new("/tmp/sandbox-escape-test-bound.sock").exists(),
+            failures,
+        );
         let prompts = net_prompts
             .lock()
             .map(|prompts| prompts.clone())

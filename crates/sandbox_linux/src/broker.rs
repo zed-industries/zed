@@ -12,6 +12,8 @@
 //! - `connect` on IP sockets is decided by [`crate::net`]. Continuing it is
 //!   always safe: nothing outside the sandbox's network namespace can be
 //!   reached by address from inside it.
+//! - `connect` and `bind` on unix sockets are checked against the
+//!   filesystem rules (sockets are found by path) and performed by us.
 
 use std::collections::HashSet;
 use std::ffi::{CString, OsStr};
@@ -207,6 +209,12 @@ enum View {
     Host,
 }
 
+#[derive(Clone, Copy)]
+enum UnixCall {
+    Connect,
+    Bind,
+}
+
 struct Broker<'a> {
     shared: &'a Arc<Shared>,
     execution: &'a Arc<Execution>,
@@ -281,34 +289,52 @@ impl Broker<'_> {
                 self.process_or_group(int(0), int(1), IOPRIO_WHO_PROCESS, IOPRIO_WHO_PGRP)
             }
             Brokered::Connect => self.connect(int(0), arg(1), arg(2) as u32),
+            Brokered::Bind => self.bind(int(0), arg(1), arg(2) as u32),
         }
     }
 
-    fn connect(&self, fd: i32, address: u64, length: u32) -> io::Result<Response> {
+    /// The target's socket `fd` and its address family, or `None` if `fd`
+    /// isn't an open socket (the kernel reports that itself).
+    fn target_socket(&self, fd: i32) -> io::Result<Option<(OwnedFd, i32)>> {
         let socket = match sys::pidfd_getfd(self.tgid()?, fd) {
             Ok(socket) => socket,
-            // Not open: the kernel reports it.
-            Err(error) if error.raw_os_error() == Some(libc::EBADF) => {
-                return Ok(Response::Continue);
-            }
+            Err(error) if error.raw_os_error() == Some(libc::EBADF) => return Ok(None),
             Err(error) => return Err(error),
         };
         if !self.request.still_valid() {
             return Err(errno(libc::ESRCH));
         }
-        let socket = socket.as_fd();
-        let Ok(domain) = sys::socket_option(socket, libc::SOL_SOCKET, libc::SO_DOMAIN) else {
-            // Not a socket: the kernel reports it.
+        Ok(
+            sys::socket_option(socket.as_fd(), libc::SOL_SOCKET, libc::SO_DOMAIN)
+                .ok()
+                .map(|domain| (socket, domain)),
+        )
+    }
+
+    fn bind(&self, fd: i32, address: u64, length: u32) -> io::Result<Response> {
+        match self.target_socket(fd)? {
+            Some((socket, libc::AF_UNIX)) => {
+                self.unix_address_call(&socket, address, length, UnixCall::Bind)
+            }
+            // Addresses of other families only mean something inside the
+            // sandbox's network namespace.
+            _ => Ok(Response::Continue),
+        }
+    }
+
+    fn connect(&self, fd: i32, address: u64, length: u32) -> io::Result<Response> {
+        let Some((socket, domain)) = self.target_socket(fd)? else {
             return Ok(Response::Continue);
         };
         match domain {
             libc::AF_INET | libc::AF_INET6 => {}
-            // Only `socketpair` makes these, and only a datagram pair can be
-            // pointed elsewhere: at a host socket, by path. Not brokered yet.
-            libc::AF_UNIX => return Err(errno(libc::EACCES)),
+            libc::AF_UNIX => {
+                return self.unix_address_call(&socket, address, length, UnixCall::Connect);
+            }
             // Netlink: within the namespace.
             _ => return Ok(Response::Continue),
         }
+        let socket = socket.as_fd();
         let length = (length as usize).min(size_of::<libc::sockaddr_storage>());
         if address == 0 || length == 0 {
             return Ok(Response::Continue);
@@ -341,18 +367,112 @@ impl Broker<'_> {
         }
     }
 
+    /// `connect` or `bind` of a unix socket. Never continued: the kernel
+    /// would read the address again, after the target had a chance to
+    /// change it. We make the call on our copy of the socket instead.
+    ///
+    /// - Abstract and unnamed addresses are looked up in the socket's own
+    ///   network namespace (the sandbox's), so they're used as they are.
+    /// - A path is resolved like any other: `connect` needs `Connect` on the
+    ///   socket it finds, `bind` needs `Write` on the entry it creates. The
+    ///   call then goes through `/proc/self/fd`, reaching exactly what was
+    ///   checked. (So `getsockname` on a bound socket shows that path.)
+    fn unix_address_call(
+        &self,
+        socket: &OwnedFd,
+        address: u64,
+        length: u32,
+        call: UnixCall,
+    ) -> io::Result<Response> {
+        let length = length as usize;
+        if address == 0 {
+            return Err(errno(libc::EFAULT));
+        }
+        if !(size_of::<libc::sa_family_t>()..=size_of::<libc::sockaddr_un>()).contains(&length) {
+            return Err(errno(libc::EINVAL));
+        }
+        let bytes = self.request.read_bytes(address, length)?;
+        if i32::from(u16::from_ne_bytes([bytes[0], bytes[1]])) != libc::AF_UNIX {
+            return Err(errno(libc::EINVAL));
+        }
+        let name = &bytes[2..];
+        let mut _held = None;
+        let address = match name.first() {
+            None | Some(0) => bytes.clone(),
+            Some(_) => {
+                let end = name
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .unwrap_or(name.len());
+                let path = &name[..end];
+                let through = match call {
+                    UnixCall::Connect => {
+                        let Resolved::Object(object) = self.resolve_bytes(
+                            View::Sandbox,
+                            libc::AT_FDCWD,
+                            path,
+                            Mode::Object { follow: true },
+                        )?
+                        else {
+                            return Err(errno(libc::ENOENT));
+                        };
+                        if sys::fstat(object.as_fd())?.st_mode & libc::S_IFMT != libc::S_IFSOCK {
+                            return Err(errno(libc::ECONNREFUSED));
+                        }
+                        let path = self
+                            .object_path(&object)?
+                            .ok_or_else(|| errno(libc::ECONNREFUSED))?;
+                        self.authorize(&[(Permission::Connect, &path)])?;
+                        let through = sys::proc_self_fd(object.as_fd());
+                        _held = Some(object);
+                        through
+                    }
+                    UnixCall::Bind => {
+                        let (parent, name, path) =
+                            self.entry_bytes(libc::AT_FDCWD, path, libc::EADDRINUSE)?;
+                        self.authorize(&[(Permission::Write, &path)])?;
+                        let through = sys::proc_self_fd(parent.as_fd())
+                            .join(OsStr::from_bytes(name.as_bytes()));
+                        _held = Some(parent);
+                        through
+                    }
+                };
+                let through = through.as_os_str().as_bytes();
+                if through.len() >= size_of::<libc::sockaddr_un>() - 2 {
+                    return Err(errno(libc::ENAMETOOLONG));
+                }
+                let mut address = bytes[..2].to_vec();
+                address.extend_from_slice(through);
+                address.push(0);
+                address
+            }
+        };
+        let (fd, pointer, length) = (
+            socket.as_raw_fd(),
+            address.as_ptr().cast(),
+            address.len() as libc::socklen_t,
+        );
+        // SAFETY: a sockaddr_un we built, with its length.
+        cvt(unsafe {
+            match call {
+                UnixCall::Connect => libc::connect(fd, pointer, length),
+                UnixCall::Bind => libc::bind(fd, pointer, length),
+            }
+        })?;
+        Ok(Response::Success)
+    }
+
     fn tgid(&self) -> io::Result<i32> {
         process::thread_group(self.request.tid).ok_or_else(|| errno(libc::ESRCH))
     }
 
     /// The absolute path (in the sandbox's view) the target means by
     /// `(dirfd, path argument)`.
-    fn absolute_path(&self, dirfd: i32, path_arg: usize) -> io::Result<PathBuf> {
-        let raw = self.request.read_string(path_arg)?;
+    fn absolute_path(&self, dirfd: i32, raw: &[u8]) -> io::Result<PathBuf> {
         if raw.is_empty() {
             return Err(errno(libc::ENOENT));
         }
-        let raw = Path::new(OsStr::from_bytes(&raw));
+        let raw = Path::new(OsStr::from_bytes(raw));
         if raw.is_absolute() {
             return Ok(raw.to_path_buf());
         }
@@ -373,7 +493,18 @@ impl Broker<'_> {
     }
 
     fn resolve(&self, view: View, dirfd: i32, path_arg: usize, mode: Mode) -> io::Result<Resolved> {
-        let path = self.absolute_path(dirfd, path_arg)?;
+        let raw = self.request.read_string(path_arg)?;
+        self.resolve_bytes(view, dirfd, &raw, mode)
+    }
+
+    fn resolve_bytes(
+        &self,
+        view: View,
+        dirfd: i32,
+        raw: &[u8],
+        mode: Mode,
+    ) -> io::Result<Resolved> {
+        let path = self.absolute_path(dirfd, raw)?;
         let root = match view {
             View::Sandbox => sys::open(
                 Path::new(&format!("/proc/{}/root", self.request.tid)),
@@ -430,7 +561,7 @@ impl Broker<'_> {
 
     fn authorize(&self, checks: &[(Permission, &Path)]) -> io::Result<()> {
         let denied = |permission| match permission {
-            Permission::Read => errno(libc::EACCES),
+            Permission::Read | Permission::Connect => errno(libc::EACCES),
             // Tools treat `EACCES` as "write-protected" and may prompt (e.g.
             // `rm`), but give up on `EROFS`.
             Permission::Write => errno(libc::EROFS),
@@ -593,12 +724,23 @@ impl Broker<'_> {
     }
 
     fn entry(&self, dirfd: i32, path_arg: usize) -> io::Result<(OwnedFd, CString, PathBuf)> {
-        match self.resolve(View::Host, dirfd, path_arg, Mode::Entry)? {
+        self.entry_bytes(dirfd, &self.request.read_string(path_arg)?, libc::EINVAL)
+    }
+
+    /// A directory entry to create or remove, as `(parent, name, path)`.
+    /// Fails with `exists` if `raw` names an existing object.
+    fn entry_bytes(
+        &self,
+        dirfd: i32,
+        raw: &[u8],
+        exists: i32,
+    ) -> io::Result<(OwnedFd, CString, PathBuf)> {
+        match self.resolve_bytes(View::Host, dirfd, raw, Mode::Entry)? {
             Resolved::Entry { parent, name } => {
                 let path = self.entry_path(&parent, &name)?;
                 Ok((parent, name, path))
             }
-            Resolved::Object(_) => Err(errno(libc::EINVAL)),
+            Resolved::Object(_) => Err(errno(exists)),
         }
     }
 
@@ -633,10 +775,13 @@ impl Broker<'_> {
     ) -> io::Result<()> {
         let fs = self.policy;
         let allowed = if is_directory_entry(parent, name)? {
-            fs.same_beneath(from, to, Permission::Read)
-                && fs.same_beneath(from, to, Permission::Write)
+            Permission::ALL
+                .iter()
+                .all(|permission| fs.same_beneath(from, to, *permission))
         } else {
-            !fs.widens(from, to, Permission::Read)
+            !Permission::ALL
+                .iter()
+                .any(|permission| fs.widens(from, to, *permission))
         };
         if allowed {
             Ok(())
@@ -680,8 +825,9 @@ impl Broker<'_> {
         let check_source = |source: &Path| {
             self.authorize(&[(Permission::Write, &new_path)])?;
             let fs = self.policy;
-            if fs.widens(source, &new_path, Permission::Read)
-                || fs.widens(source, &new_path, Permission::Write)
+            if Permission::ALL
+                .iter()
+                .any(|permission| fs.widens(source, &new_path, *permission))
             {
                 return Err(errno(libc::EACCES));
             }

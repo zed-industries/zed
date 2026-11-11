@@ -38,10 +38,12 @@ enum GrantMode {
     DenyWrite,
     DenyRead,
     DenyAll,
+    Connect,
+    AskConnect,
 }
 
 impl GrantMode {
-    const ALL: [GrantMode; 7] = [
+    const ALL: [GrantMode; 9] = [
         GrantMode::ReadOnly,
         GrantMode::ReadWrite,
         GrantMode::AskWrite,
@@ -49,6 +51,8 @@ impl GrantMode {
         GrantMode::DenyWrite,
         GrantMode::DenyRead,
         GrantMode::DenyAll,
+        GrantMode::Connect,
+        GrantMode::AskConnect,
     ];
 
     fn label(self) -> &'static str {
@@ -60,22 +64,26 @@ impl GrantMode {
             GrantMode::DenyWrite => "deny writes",
             GrantMode::DenyRead => "deny reads",
             GrantMode::DenyAll => "deny all",
+            GrantMode::Connect => "connect to sockets",
+            GrantMode::AskConnect => "ask to connect",
         }
     }
 
-    /// `(read, write)`. `None` leaves that permission to earlier grants.
-    /// `handler` decides `Ask`s.
-    fn access(self, handler: &Handler) -> (Option<Access>, Option<Access>) {
+    /// `(read, write, connect)`. `None` leaves that permission to earlier
+    /// grants. `handler` decides `Ask`s.
+    fn access(self, handler: &Handler) -> (Option<Access>, Option<Access>, Option<Access>) {
         use Access::*;
         let ask = || Some(Ask(handler.clone()));
         match self {
-            GrantMode::ReadOnly => (Some(Allow), Some(Deny)),
-            GrantMode::ReadWrite => (Some(Allow), Some(Allow)),
-            GrantMode::AskWrite => (Some(Allow), ask()),
-            GrantMode::AskReadWrite => (ask(), ask()),
-            GrantMode::DenyWrite => (None, Some(Deny)),
-            GrantMode::DenyRead => (Some(Deny), None),
-            GrantMode::DenyAll => (Some(Deny), Some(Deny)),
+            GrantMode::ReadOnly => (Some(Allow), Some(Deny), None),
+            GrantMode::ReadWrite => (Some(Allow), Some(Allow), None),
+            GrantMode::AskWrite => (Some(Allow), ask(), None),
+            GrantMode::AskReadWrite => (ask(), ask(), None),
+            GrantMode::DenyWrite => (None, Some(Deny), None),
+            GrantMode::DenyRead => (Some(Deny), None, None),
+            GrantMode::DenyAll => (Some(Deny), Some(Deny), Some(Deny)),
+            GrantMode::Connect => (None, None, Some(Allow)),
+            GrantMode::AskConnect => (None, None, ask()),
         }
     }
 }
@@ -241,7 +249,7 @@ impl Tester {
             }
             let mut rule =
                 FsRule::new(path).map_err(|error| format!("invalid grant `{path}`: {error:#}"))?;
-            (rule.read, rule.write) = grant.mode.access(handler);
+            (rule.read, rule.write, rule.connect) = grant.mode.access(handler);
             rules.push(rule);
         }
         let mut net = Vec::new();
@@ -815,6 +823,7 @@ fn verb(permission: Permission) -> &'static str {
     match permission {
         Permission::Read => "read",
         Permission::Write => "write",
+        Permission::Connect => "connect to",
     }
 }
 

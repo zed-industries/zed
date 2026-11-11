@@ -12,6 +12,7 @@
 //! - `--write PATTERN` allows writes, `--protect PATTERN` denies them;
 //! - `--hide PATTERN` denies reads;
 //! - `--ask PATTERN` asks on the terminal before each write;
+//! - `--connect PATTERN` allows connecting to unix sockets;
 //! - `--allow-net`, `--deny-net` and `--ask-net DESTINATION` for
 //!   connections, with destinations as `NetRule::parse` reads them, e.g.
 //!   `tcp/*.github.com:22,443`, `udp/10.0.0.0/8:53`, `loopback:5432`.
@@ -80,6 +81,9 @@ fn main() -> anyhow::Result<()> {
                                 Some(Rule::Fs(match permission {
                                     sandbox_linux::Permission::Read => rule.read(Access::Allow),
                                     sandbox_linux::Permission::Write => rule.write(Access::Allow),
+                                    sandbox_linux::Permission::Connect => {
+                                        rule.connect(Access::Allow)
+                                    }
                                 }))
                             }
                             RequestedAccess::Net {
@@ -127,6 +131,7 @@ fn main() -> anyhow::Result<()> {
             "--protect" => rules.push(FsRule::new(value()?)?.write(Access::Deny)),
             "--hide" => rules.push(FsRule::new(value()?)?.read(Access::Deny)),
             "--ask" => rules.push(FsRule::new(value()?)?.write(Access::Ask(ask.clone()))),
+            "--connect" => rules.push(FsRule::new(value()?)?.connect(Access::Allow)),
             "--allow-net" => net.push(NetRule::parse(&value()?, Access::Allow)?),
             "--deny-net" => net.push(NetRule::parse(&value()?, Access::Deny)?),
             "--ask-net" => net.push(NetRule::parse(&value()?, Access::Ask(ask.clone()))?),
@@ -136,7 +141,7 @@ fn main() -> anyhow::Result<()> {
     }
     let Some((cmd, args)) = command.split_first() else {
         bail!(
-            "usage: run [--write P] [--protect P] [--hide P] [--ask P] [--allow-net D] \
+            "usage: run [--write P] [--protect P] [--hide P] [--ask P] [--connect P] [--allow-net D] \
              [--deny-net D] [--ask-net D] -- COMMAND..."
         );
     };

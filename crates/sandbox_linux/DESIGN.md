@@ -96,4 +96,48 @@ Patterns are split on `/` first: `*` and `?` never match `/`, so every segment b
 
 The policy can be updated while commands run, so the compiled matcher is immutable and shared (`Arc`), and an update builds a new one rather than editing it in place.
 
+### Future improvements
+
+#### Synthetic IPv6 addresses for domains
+
+The sandbox's DNS only hands out synthetic IPv4 addresses (from `198.18.0.0/15`). A connection to a domain has two legs, joined by the supervisor's relay, which copies bytes rather than translating packets:
+
+1. app to relay, inside the sandbox, using the synthetic address;
+2. supervisor to the real server, on the host network, using whatever the name resolves to there (IPv6 included).
+
+So leg 1 is always IPv4, while the real server can still be IPv6-only. Queries for IPv6 addresses (`AAAA`) get an empty answer (`NOERROR`, no records) rather than `NXDOMAIN`, so resolvers fall back to the IPv4 answer cleanly.
+
+Raw IPv6 addresses (IPv6 grants, `curl http://[2606:4700::1]`) still work: the relay listens at the exact address the app connects to, with `IP_FREEBIND` set on the socket. Without it, IPv6 `bind()` only accepts addresses assigned to an interface and ignores the namespace's local routes, unlike IPv4.
+
+What this gives up, all uncommon:
+- explicitly IPv6-only invocations (`curl -6`, `ssh -6`) get no address for a domain;
+- tools in IPv6-only environments that query only `AAAA` records;
+- agents debugging IPv6 itself get a confusing result.
+
+If one of these matters, add a synthetic IPv6 range (a ULA `/64`) alongside the IPv4 one, using the same `IP_FREEBIND` relay path.
+
+#### Revoking network grants
+
+Narrowing the policy currently leaves existing TCP connections and UDP flows alive, just as already-open files keep working. If revoking a grant should cut access off, `update_policy` could report the connections and flows the new policy wouldn't allow (like `still_open` does for files) and offer to close them.
+
+#### Relaying DNS to real servers
+
+Port 53 of every address in the sandbox is answered by the supervisor's DNS. That's how queries reach it whatever server `resolv.conf` names, but it also means `dig @8.8.8.8` gets our answers: it's indistinguishable from the system resolver asking its configured server. Relaying instead has costs: real answers make later connections raw-IP requests, so domain rules no longer apply, and an allowed resolver is a channel for exfiltrating data in queries. A middle ground: relay port 53 only when an `Ip` rule names that exact address and port, and answer everything else ourselves (including under `Any` or `LocalNetwork` rules).
+
+#### Async supervisor
+
+Every relayed TCP connection takes two threads, and every UDP flow and DNS query one, so a busy `npm install` can mean hundreds of threads. An event loop in the supervisor (`smol`, which Zed already uses: `async-io` plus a small executor) would make these tasks instead. Seccomp notifications would stay on the worker pool, since prompts block. Measure first.
+
+#### Non-blocking connects that don't block
+
+A `connect` on a non-blocking socket is held until the host connection is made (up to 30s), stalling the app's event loop. The app's thread is stuck in the syscall until the notification is answered, and it can only be answered once, so returning early means faking success: connect the app's socket to a temporary listener straight away (the kernel completes the handshake without an `accept`), let its writes buffer, connect to the host in the background, then relay, or reset the connection if the host connect failed. The cost is error fidelity: refused and unreachable hosts look like resets after a successful connect, which confuses apps racing IPv6 against IPv4. Worth doing only for `O_NONBLOCK` sockets, and only after any prompt is answered; blocking sockets keep exact errors.
+
+#### Datagram unix sockets
+
+`socket` and `socketpair` refuse `SOCK_DGRAM` unix sockets: one could send to any socket by path with `sendmsg`, whose address is behind a pointer, and trapping every `sendmsg` would slow all UDP. This breaks `sd_notify`, syslog clients and datagram pairs used for IPC. If those matter, trap `sendmsg`/`sendmmsg` (continuing for IP sockets) and measure the cost.
+
+#### Unix socket peer credentials
+
+The supervisor makes brokered `connect` calls on its copy of the app's socket, so a server's `SO_PEERCRED` reports the supervisor's pid (the uid is the same). Servers that authorize by pid would see the wrong process.
+
 [^1]: Technically, the supervisor doesn't "allow or deny" the syscall, since this introduces a race condition, where a malicious program makes a syscall, then, in between approval and the kernel executing it, changes the contents of one of the arguments which is behind a pointer (e.g. file paths). Instead, the syscall arguments (including any data behind a pointer) are copied into the supervisor, and the supervisor *makes the syscall on behalf of the sandboxed program*, and returns the result.
