@@ -177,7 +177,8 @@ fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
                 .child(
                     DropdownMenu::new("provider-dropdown", current_provider_name, menu)
                         .tab_index(0)
-                        .style(DropdownStyle::Outlined),
+                        .style(DropdownStyle::Outlined)
+                        .attach(gpui::Anchor::BottomRight),
                 ),
         )
         .into_any_element()

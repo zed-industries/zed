@@ -17,12 +17,14 @@ use fs::Fs;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
-use remote::{RemoteConnectionOptions, same_remote_connection_identity};
+use remote::RemoteConnectionOptions;
 pub use remote_connection::{RemoteConnectionModal, connect, connect_with_modal};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
-use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
+use fuzzy_nucleo::{
+    MaxResults, StringMatch, StringMatchCandidate, StringMatchOptions, match_strings,
+};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, TaskExt, WeakEntity, Window, actions, px,
@@ -36,7 +38,7 @@ use project::{Worktree, git_store::Repository};
 pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::{DefaultOpenBehavior, Settings, WorktreeId};
-use workspace::ProjectGroupKey;
+use workspace::{OpenPathPromptMode, ProjectGroupKey};
 
 use dev_container::{DevContainerContext, find_devcontainer_configs};
 use ui::{
@@ -246,7 +248,7 @@ fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
                 path,
                 branch,
                 is_active,
-                connection_options: connection_options.clone(),
+                connection_options: connection_options.cloned(),
             }
         })
         .collect();
@@ -304,6 +306,7 @@ pub fn init(cx: &mut App) {
                     workspace.project().clone(),
                     workspace.app_state().fs.clone(),
                 ),
+                OpenPathPromptMode::SelectPath,
                 window,
                 cx,
             );
@@ -314,9 +317,10 @@ pub fn init(cx: &mut App) {
             cx.spawn_in(window, async move |workspace, cx| {
                 use util::paths::SanitizedPath;
 
-                let Some(paths) = paths.await.log_err().flatten() else {
+                let Some(result) = paths.await.log_err().flatten() else {
                     return;
                 };
+                let paths = result.paths;
 
                 let wsl_path = paths
                     .iter()
@@ -968,7 +972,10 @@ impl PickerDelegate for RecentProjectsDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
         let query = query.trim_start();
-        let case = fuzzy_nucleo::Case::smart_if_uppercase_in(query);
+        let match_options = StringMatchOptions {
+            max_results: MaxResults::limit::<100>(),
+            ..Default::default()
+        };
         let is_empty_query = query.is_empty();
 
         let folder_matches = if self.open_folders.is_empty() {
@@ -981,13 +988,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .map(|(id, folder)| StringMatchCandidate::new(id, folder.name.as_ref()))
                 .collect();
 
-            match_strings(
-                &candidates,
-                query,
-                case,
-                fuzzy_nucleo::LengthPenalty::On,
-                100,
-            )
+            match_strings(&candidates, query, match_options)
         };
 
         let project_group_candidates: Vec<_> = self
@@ -1005,13 +1006,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .collect();
 
-        let project_group_matches = match_strings(
-            &project_group_candidates,
-            query,
-            case,
-            fuzzy_nucleo::LengthPenalty::On,
-            100,
-        );
+        let project_group_matches = match_strings(&project_group_candidates, query, match_options);
 
         // Build candidates for recent projects (not current, not sibling, not open folder)
         let recent_candidates: Vec<_> = self
@@ -1030,13 +1025,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .collect();
 
-        let recent_matches = match_strings(
-            &recent_candidates,
-            query,
-            case,
-            fuzzy_nucleo::LengthPenalty::On,
-            100,
-        );
+        let recent_matches = match_strings(&recent_candidates, query, match_options);
 
         let mut entries = Vec::new();
 
@@ -1173,7 +1162,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .log_err();
                         } else {
                             let path_list = key.path_list().clone();
-                            let host = key.host();
+                            let host = key.host().cloned();
                             if let Some(task) = handle
                                 .update(cx, |multi_workspace, window, cx| {
                                     let modal_workspace = multi_workspace.workspace().clone();
@@ -1991,7 +1980,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
 fn icon_for_project_group(key: &ProjectGroupKey) -> IconName {
     let host = key.host();
-    icon_for_remote_connection(host.as_ref())
+    icon_for_remote_connection(host)
 }
 
 pub(crate) fn icon_for_remote_connection(options: Option<&RemoteConnectionOptions>) -> IconName {
@@ -2077,58 +2066,30 @@ fn open_local_project(
     cx: &mut App,
 ) {
     use gpui::PathPromptOptions;
-    use project::DirectoryLister;
 
     let Some(workspace) = workspace.upgrade() else {
         return;
     };
 
-    let paths = workspace.update(cx, |workspace, cx| {
-        workspace.prompt_for_open_path(
+    workspace.update(cx, |workspace, cx| {
+        workspace::prompt_for_open_path_and_open(
+            workspace,
+            workspace.app_state().clone(),
             PathPromptOptions {
                 files: true,
                 directories: true,
                 multiple: true,
                 prompt: None,
             },
-            DirectoryLister::Local(
-                workspace.project().clone(),
-                workspace.app_state().fs.clone(),
-            ),
+            if create_new_window {
+                OpenPathPromptMode::NewWindow
+            } else {
+                OpenPathPromptMode::CurrentWindow
+            },
             window,
             cx,
-        )
+        );
     });
-
-    let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>();
-    window
-        .spawn(cx, async move |cx| {
-            let Some(paths) = paths.await.log_err().flatten() else {
-                return;
-            };
-            if !create_new_window {
-                if let Some(handle) = multi_workspace_handle {
-                    if let Some(task) = handle
-                        .update(cx, |multi_workspace, window, cx| {
-                            multi_workspace.open_project(paths, OpenMode::Activate, window, cx)
-                        })
-                        .log_err()
-                    {
-                        task.await.log_err();
-                    }
-                    return;
-                }
-            }
-            if let Some(task) = workspace
-                .update_in(cx, |workspace, window, cx| {
-                    workspace.open_workspace_for_paths(OpenMode::NewWindow, paths, window, cx)
-                })
-                .log_err()
-            {
-                task.await.log_err();
-            }
-        })
-        .detach();
 }
 
 impl RecentProjectsDelegate {
@@ -2449,7 +2410,7 @@ impl RecentProjectsDelegate {
     fn is_in_current_window_groups(&self, workspace: &RecentWorkspace) -> bool {
         self.window_project_groups
             .iter()
-            .any(|key| key.matches(&workspace.project_group_key()))
+            .any(|key| key.matches_identity(&workspace.project_group_key()))
     }
 
     fn is_open_folder(&self, workspace: &RecentWorkspace) -> bool {
@@ -2465,10 +2426,11 @@ impl RecentProjectsDelegate {
         for workspace_path in workspace.paths.paths() {
             for open_folder in &self.open_folders {
                 if workspace_path == &open_folder.path
-                    && same_remote_connection_identity(
-                        workspace_host,
-                        open_folder.connection_options.as_ref(),
-                    )
+                    && workspace_host.map(|o| o.identity())
+                        == open_folder
+                            .connection_options
+                            .as_ref()
+                            .map(|o| o.identity())
                 {
                     return true;
                 }
@@ -2496,7 +2458,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::{AppState, PathList, open_paths};
+    use workspace::{AppState, OpenPathPromptResult, PathList, open_paths};
 
     use super::*;
 
@@ -2984,10 +2946,13 @@ mod tests {
 
         // Set up the prompt mock to return the new project path.
         workspace.update(cx, |workspace, _cx| {
-            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+            workspace.set_prompt_for_open_path(Box::new(|_, _, mode, _, _| {
                 let (tx, rx) = futures::channel::oneshot::channel();
-                tx.send(Some(vec![PathBuf::from(path!("/new-project"))]))
-                    .ok();
+                tx.send(Some(OpenPathPromptResult {
+                    paths: vec![PathBuf::from(path!("/new-project"))],
+                    open_in_new_window: mode == OpenPathPromptMode::NewWindow,
+                }))
+                .ok();
                 rx
             }));
         });
@@ -3060,10 +3025,13 @@ mod tests {
 
         // Set up the prompt mock to return the new project path.
         workspace.update(cx, |workspace, _cx| {
-            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+            workspace.set_prompt_for_open_path(Box::new(|_, _, mode, _, _| {
                 let (tx, rx) = futures::channel::oneshot::channel();
-                tx.send(Some(vec![PathBuf::from(path!("/new-project"))]))
-                    .ok();
+                tx.send(Some(OpenPathPromptResult {
+                    paths: vec![PathBuf::from(path!("/new-project"))],
+                    open_in_new_window: mode == OpenPathPromptMode::NewWindow,
+                }))
+                .ok();
                 rx
             }));
         });

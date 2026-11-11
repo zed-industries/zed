@@ -1,7 +1,7 @@
 use crate::{
     AppleActivity, AppleDispatcher, BoolExt, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
-    MacWindow, events::key_to_native, main_thread_marker, ns_string, pasteboard::Pasteboard,
-    renderer, set_active_window_cursor_style,
+    MacWindow, events::key_to_menu_equivalent, main_thread_marker, ns_string,
+    pasteboard::Pasteboard, renderer, set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -13,13 +13,13 @@ use gpui::{
     Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
     CursorStyle, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
     OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task,
-    ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, PowerMode, Result, SystemMenuType,
+    Task, ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
     popup::PopupNotSupportedError,
 };
 use gpui_apple::{
     keychain,
-    thermal::{self, ThermalObserver},
+    process_info::{self, ProcessInfoObserver},
 };
 use gpui_util::{ResultExt, new_std_command};
 use itertools::Itertools;
@@ -151,7 +151,6 @@ unsafe fn build_classes() {
                 sel!(onSystemSleep:),
                 on_system_sleep as extern "C-unwind" fn(_, Sel, *mut AnyObject),
             );
-
             decl.add_method(
                 sel!(onSystemWake:),
                 on_system_wake as extern "C-unwind" fn(_, Sel, *mut AnyObject),
@@ -172,11 +171,12 @@ pub(crate) struct MacPlatformState {
     headless: bool,
     activation_policy: ActivationPolicy,
     application_created: bool,
-    general_pasteboard: Pasteboard,
-    find_pasteboard: Pasteboard,
+    general_pasteboard: Option<Pasteboard>,
+    find_pasteboard: Option<Pasteboard>,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
-    thermal_observer: Option<ThermalObserver>,
+    thermal_observer: Option<ProcessInfoObserver>,
+    power_mode_observer: Option<ProcessInfoObserver>,
     on_displays_changed: Option<Box<dyn FnMut()>>,
     on_system_sleep: Option<Box<dyn FnMut()>>,
     on_system_wake: Option<Box<dyn FnMut()>>,
@@ -254,6 +254,7 @@ impl MacPlatform {
             dock_menu: None,
             on_keyboard_layout_change: None,
             thermal_observer: None,
+            power_mode_observer: None,
             on_displays_changed: None,
             on_system_sleep: None,
             on_system_wake: None,
@@ -400,7 +401,9 @@ impl MacPlatform {
                                 NSMenuItem::alloc(self.1),
                                 &NSString::from_str(name),
                                 Some(selector),
-                                &NSString::from_str(key_to_native(keystroke.key()).as_ref()),
+                                &NSString::from_str(
+                                    key_to_menu_equivalent(keystroke.key()).as_ref(),
+                                ),
                             );
                             if Self::os_version() >= Version::new(12, 0, 0) {
                                 item.setAllowsAutomaticKeyEquivalentLocalization(false);
@@ -770,7 +773,7 @@ impl Platform for MacPlatform {
             background_executor,
             renderer_context,
             self.1,
-        )))
+        )?))
     }
 
     fn window_appearance(&self) -> WindowAppearance {
@@ -863,11 +866,21 @@ impl Platform for MacPlatform {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
-        let marker = self.1;
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                let panel = NSOpenPanel::openPanel(marker);
+                // AppKit can return nil despite the nonnull annotation used by objc2's
+                // generated binding. This runs on the main thread via the foreground executor.
+                // TODO: Switch back to NSOpenPanel::openPanel when objc2-app-kit 0.4
+                // is published and adopted; it fixes the return type to be nullable:
+                // https://github.com/madsmtm/objc2/commit/b92857df57aa85dc41e9887534b1ccfa3fe902e4
+                let panel: Option<Retained<NSOpenPanel>> =
+                    unsafe { msg_send![class!(NSOpenPanel), openPanel] };
+                let Some(panel) = panel else {
+                    // The receiver may have been dropped while the panel was being created.
+                    _ = done_tx.send(Err(anyhow!("macOS could not create the open dialog")));
+                    return;
+                };
                 panel.setCanChooseDirectories(options.directories);
                 panel.setCanChooseFiles(options.files);
                 panel.setAllowsMultipleSelection(options.multiple);
@@ -913,10 +926,20 @@ impl Platform for MacPlatform {
         let url = NSURL::from_directory_path(directory);
         let suggested_name = suggested_name.map(NSString::from_str);
         let (done_tx, done_rx) = oneshot::channel();
-        let marker = self.1;
         self.foreground_executor()
             .spawn(async move {
-                let panel = NSSavePanel::savePanel(marker);
+                // Like openPanel, savePanel may return nil despite its nonnull annotation.
+                // The foreground executor ensures this call runs on the main thread.
+                // TODO: Switch back to NSSavePanel::savePanel when objc2-app-kit 0.4
+                // is published and adopted; it fixes the return type to be nullable:
+                // https://github.com/madsmtm/objc2/commit/b92857df57aa85dc41e9887534b1ccfa3fe902e4
+                let panel: Option<Retained<NSSavePanel>> =
+                    unsafe { msg_send![class!(NSSavePanel), savePanel] };
+                let Some(panel) = panel else {
+                    // The receiver may have been dropped while the panel was being created.
+                    _ = done_tx.send(Err(anyhow!("macOS could not create the save dialog")));
+                    return;
+                };
                 panel.setDirectoryURL(url.as_deref());
 
                 if let Some(suggested_name) = suggested_name {
@@ -1039,7 +1062,7 @@ impl Platform for MacPlatform {
     }
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
-        let observer = ThermalObserver::new(&self.foreground_executor(), callback);
+        let observer = process_info::observe_thermal_state(&self.foreground_executor(), callback);
         self.0.lock().thermal_observer = Some(observer);
     }
 
@@ -1048,13 +1071,18 @@ impl Platform for MacPlatform {
         self.ensure_system_power_observers();
     }
 
+    fn on_power_mode_change(&self, callback: Box<dyn FnMut()>) {
+        let observer = process_info::observe_power_mode(&self.foreground_executor(), callback);
+        self.0.lock().power_mode_observer = Some(observer);
+    }
+
     fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().on_system_wake = Some(callback);
         self.ensure_system_power_observers();
     }
 
     fn thermal_state(&self) -> ThermalState {
-        thermal::thermal_state()
+        process_info::thermal_state()
     }
 
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
@@ -1062,6 +1090,10 @@ impl Platform for MacPlatform {
             reason,
             NSActivityOptions::UserInitiated,
         )))
+    }
+
+    fn power_mode(&self) -> PowerMode {
+        process_info::power_mode()
     }
 
     fn show_system_notification(&self, notification: gpui::SystemNotification) {
@@ -1173,22 +1205,26 @@ impl Platform for MacPlatform {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
-        state.general_pasteboard.read()
+        state.general_pasteboard.as_ref()?.read()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         let state = self.0.lock();
-        state.general_pasteboard.write(item);
+        if let Some(pasteboard) = &state.general_pasteboard {
+            pasteboard.write(item);
+        }
     }
 
     fn read_from_find_pasteboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
-        state.find_pasteboard.read()
+        state.find_pasteboard.as_ref()?.read()
     }
 
     fn write_to_find_pasteboard(&self, item: ClipboardItem) {
         let state = self.0.lock();
-        state.find_pasteboard.write(item);
+        if let Some(pasteboard) = &state.find_pasteboard {
+            pasteboard.write(item);
+        }
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
@@ -1197,6 +1233,22 @@ impl Platform for MacPlatform {
         let password = password.to_vec();
         self.background_executor()
             .spawn(async move { Ok(keychain::write_credentials(&url, &username, &password)?) })
+    }
+
+    fn write_credentials_if_not_exists(
+        &self,
+        url: &str,
+        username: &str,
+        password: &[u8],
+    ) -> Task<Result<bool>> {
+        let url = url.to_string();
+        let username = username.to_string();
+        let password = password.to_vec();
+        self.background_executor().spawn(async move {
+            Ok(keychain::write_credentials_if_not_exists(
+                &url, &username, &password,
+            )?)
+        })
     }
 
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
@@ -1283,7 +1335,6 @@ extern "C-unwind" fn did_finish_launching(this: &AnyObject, _: Sel, _: *mut AnyO
             name: ns_string("NSApplicationDidChangeScreenParametersNotification"),
             object: ptr::null_mut::<AnyObject>()
         ];
-
         let platform = get_mac_platform(this);
         let callback = {
             let mut state = platform.0.lock();
