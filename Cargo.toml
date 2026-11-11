@@ -867,6 +867,7 @@ rand = { version = "0.9", default-features = false, features = ["std", "std_rng"
 raw-window-handle = "0.6"
 rayon = "1.8"
 regex = { version = "1.5", default-features = false, features = ["std", "perf"] }
+regex-automata = { version = "0.4", default-features = false, features = ["std"] }
 # WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", default-features = false, features = [
     "http2",

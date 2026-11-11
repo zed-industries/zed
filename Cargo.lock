@@ -13922,6 +13922,7 @@ dependencies = [
  "project",
  "rand 0.9.4",
  "regex",
+ "regex-automata",
  "release_channel",
  "remote",
  "rpc",
