@@ -723,19 +723,15 @@ async fn resolve_open_behavior(
     }
 
     if !paths.is_empty() {
-        let paths_as_pathbufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
         let paths_in_existing_workspace = cx.update(|cx| {
             for window in cx.windows() {
-                if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
-                    if let Ok(multi_workspace) = multi_workspace.read(cx) {
-                        for workspace in multi_workspace.workspaces() {
-                            let project = workspace.read(cx).project().read(cx);
-                            if project
-                                .visibility_for_paths(&paths_as_pathbufs, false, cx)
-                                .is_some()
-                            {
-                                return true;
-                            }
+                if let Some(multi_workspace) = window.downcast::<MultiWorkspace>()
+                    && let Ok(multi_workspace) = multi_workspace.read(cx)
+                {
+                    for workspace in multi_workspace.workspaces() {
+                        let project = workspace.read(cx).project().read(cx);
+                        if project.visibility_for_paths(&paths, false, cx).is_some() {
+                            return true;
                         }
                     }
                 }
@@ -746,9 +742,7 @@ async fn resolve_open_behavior(
         if paths_in_existing_workspace {
             return None;
         }
-    }
 
-    if !paths.is_empty() {
         let has_directory =
             futures::stream::iter(paths.iter().map(|p| app_state.fs.is_dir(Path::new(p))))
                 .any(|is_dir| is_dir)
@@ -2296,7 +2290,7 @@ mod tests {
 
         // Now test the reuse functionality - should replace the existing workspace
         let workspace_paths_reuse = vec![file1_path.to_string()];
-        let paths: Vec<PathBuf> = workspace_paths_reuse.iter().map(PathBuf::from).collect();
+        let paths: Vec<_> = workspace_paths_reuse.iter().map(PathBuf::from).collect();
         let window_to_replace = workspace::find_existing_workspace(
             &paths,
             &workspace::OpenOptions::default(),
