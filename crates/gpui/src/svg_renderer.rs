@@ -2,11 +2,14 @@ use crate::{
     AssetSource, DevicePixels, IsZero, RenderImage, Result, SharedString, Size,
     swap_rgba_pa_to_bgra,
 };
+use collections::HashMap;
 use image::Frame;
+use parking_lot::Mutex;
 use resvg::tiny_skia::Pixmap;
 use smallvec::SmallVec;
 use std::{
     hash::Hash,
+    path::Path,
     sync::{Arc, LazyLock, OnceLock},
 };
 
@@ -145,32 +148,36 @@ impl SvgRenderer {
         // eagerly at construction time. This avoids the expensive deep-clone
         // of the system font database for code paths that never render SVGs
         // (e.g. tests).
-        let enriched_fontdb: Arc<OnceLock<Arc<usvg::fontdb::Database>>> = Arc::new(OnceLock::new());
+        let enriched_fontdb = Arc::new(OnceLock::<Mutex<FontDatabase>>::new());
 
         let default_font_resolver = usvg::FontResolver::default_font_selector();
         let font_resolver = Box::new({
             let asset_source = asset_source.clone();
             move |font: &usvg::Font, db: &mut Arc<usvg::fontdb::Database>| {
+                let fontdb = enriched_fontdb.get_or_init(|| {
+                    let mut db = (**SYSTEM_FONT_DB).clone();
+                    load_bundled_fonts(&*asset_source, &mut db);
+                    fix_generic_font_families(&mut db);
+                    Mutex::new(FontDatabase {
+                        database: Arc::new(db),
+                        owned_faces: HashMap::default(),
+                        remaining_owned_bytes: MAX_OWNED_FONT_BYTES,
+                    })
+                });
                 if db.is_empty() {
-                    let fontdb = enriched_fontdb.get_or_init(|| {
-                        let mut db = (**SYSTEM_FONT_DB).clone();
-                        load_bundled_fonts(&*asset_source, &mut db);
-                        fix_generic_font_families(&mut db);
-                        Arc::new(db)
-                    });
-                    *db = fontdb.clone();
+                    *db = fontdb.lock().database.clone();
                 }
-                if let Some(id) = default_font_resolver(font, db) {
-                    return Some(id);
-                }
-                // fontdb doesn't recognize CSS system font keywords like "system-ui"
-                // or "ui-sans-serif", so fall back to sans-serif before any face.
-                let sans_query = usvg::fontdb::Query {
-                    families: &[usvg::fontdb::Family::SansSerif],
-                    ..Default::default()
-                };
-                db.query(&sans_query)
-                    .or_else(|| db.faces().next().map(|f| f.id))
+                let id = default_font_resolver(font, db).or_else(|| {
+                    // fontdb doesn't recognize CSS system font keywords like "system-ui"
+                    // or "ui-sans-serif", so fall back to sans-serif before any face.
+                    let sans_query = usvg::fontdb::Query {
+                        families: &[usvg::fontdb::Family::SansSerif],
+                        ..Default::default()
+                    };
+                    db.query(&sans_query)
+                        .or_else(|| db.faces().next().map(|f| f.id))
+                })?;
+                Some(fontdb.lock().owned_face(db, id))
             }
         });
         let default_fallback_selection = usvg::FontResolver::default_fallback_selector();
@@ -342,6 +349,77 @@ fn rasterize_tree(tree: &usvg::Tree, size: SvgSize) -> Result<Pixmap, usvg::Erro
     Ok(pixmap)
 }
 
+const MAX_OWNED_FONT_BYTES: u64 = 64 * 1024 * 1024;
+
+struct FontDatabase {
+    database: Arc<usvg::fontdb::Database>,
+    owned_faces: HashMap<usvg::fontdb::ID, usvg::fontdb::ID>,
+    remaining_owned_bytes: u64,
+}
+
+impl FontDatabase {
+    fn owned_face(
+        &mut self,
+        db: &mut Arc<usvg::fontdb::Database>,
+        id: usvg::fontdb::ID,
+    ) -> usvg::fontdb::ID {
+        let Some(usvg::fontdb::Source::File(path)) = db.face(id).map(|face| face.source.clone())
+        else {
+            return id;
+        };
+        if !self.owned_faces.contains_key(&id) {
+            self.own_font_file(&path);
+        }
+        *db = self.database.clone();
+        self.owned_faces.get(&id).copied().unwrap_or(id)
+    }
+
+    fn own_font_file(&mut self, path: &Path) {
+        let file_faces = self
+            .database
+            .faces()
+            .filter(|face| {
+                matches!(&face.source, usvg::fontdb::Source::File(face_path) if face_path == path)
+            })
+            .map(|face| (face.id, face.index))
+            .collect::<Vec<_>>();
+        let remaining_owned_bytes = self.remaining_owned_bytes;
+        let data = std::fs::metadata(path).and_then(|metadata| {
+            (metadata.len() <= remaining_owned_bytes)
+                .then(|| std::fs::read(path))
+                .transpose()
+        });
+        let owned_ids = match data {
+            Ok(Some(data)) if data.len() as u64 <= remaining_owned_bytes => {
+                let size = data.len() as u64;
+                let owned_ids = Arc::make_mut(&mut self.database)
+                    .load_font_source(usvg::fontdb::Source::Binary(Arc::new(data)));
+                if !owned_ids.is_empty() {
+                    self.remaining_owned_bytes -= size;
+                }
+                owned_ids
+            }
+            Ok(_) => Default::default(),
+            Err(error) => {
+                log::warn!("Failed to read font {path:?}: {error}");
+                Default::default()
+            }
+        };
+        for (id, index) in file_faces {
+            let owned_id = owned_ids
+                .iter()
+                .copied()
+                .find(|owned_id| {
+                    self.database
+                        .face(*owned_id)
+                        .is_some_and(|face| face.index == index)
+                })
+                .unwrap_or(id);
+            self.owned_faces.insert(id, owned_id);
+        }
+    }
+}
+
 fn underline_width(group: &usvg::Group) -> f32 {
     group.children().iter().fold(0., |width, node| {
         width
@@ -483,6 +561,44 @@ mod tests {
             renderer.measure_text_width("M", &font)?
         );
         assert!(renderer.measure_text_width("<&\"\u{1}>", &font)? > 0.);
+        Ok(())
+    }
+
+    #[test]
+    fn owns_font_bytes_within_budget() -> Result<()> {
+        let font_path = |name| {
+            std::env::temp_dir().join(format!(
+                "gpui-svg-renderer-{}-{name}.ttf",
+                std::process::id()
+            ))
+        };
+        let (plex_path, lilex_path) = (font_path("plex"), font_path("lilex"));
+        std::fs::write(&plex_path, IBM_PLEX_REGULAR)?;
+        std::fs::write(&lilex_path, LILEX_REGULAR)?;
+        let mut database = Database::new();
+        database.load_font_file(&plex_path)?;
+        database.load_font_file(&lilex_path)?;
+        let mut fonts = FontDatabase {
+            database: Arc::new(database),
+            owned_faces: HashMap::default(),
+            remaining_owned_bytes: IBM_PLEX_REGULAR.len() as u64,
+        };
+        let mut db = fonts.database.clone();
+        let face_ids = db.faces().map(|face| face.id).collect::<Vec<_>>();
+        let (plex_id, lilex_id) = (face_ids[0], face_ids[1]);
+
+        let owned_plex_id = fonts.owned_face(&mut db, plex_id);
+        let owned_lilex_id = fonts.owned_face(&mut db, lilex_id);
+        std::fs::write(&plex_path, b"changed")?;
+        let data_len = |id| db.with_face_data(id, |data, _| data.len());
+        let data_lens = (data_len(plex_id), data_len(owned_plex_id));
+        std::fs::remove_file(&plex_path)?;
+        std::fs::remove_file(&lilex_path)?;
+
+        assert_eq!(data_lens, (Some(7), Some(IBM_PLEX_REGULAR.len())));
+        assert_eq!(owned_lilex_id, lilex_id);
+        assert_eq!(fonts.remaining_owned_bytes, 0);
+        assert_eq!(fonts.owned_face(&mut db, plex_id), owned_plex_id);
         Ok(())
     }
 
