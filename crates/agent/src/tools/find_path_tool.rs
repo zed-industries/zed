@@ -1,6 +1,6 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use acp_thread::MentionUri;
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use anyhow::{Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, Entity, SharedString, Task};

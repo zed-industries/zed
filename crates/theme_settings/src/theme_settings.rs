@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use ::settings::{IntoGpui, Settings, SettingsStore};
 use anyhow::{Context as _, Result};
-use gpui::{App, Font, HighlightStyle, Pixels, Refineable, px};
+use gpui::{App, Font, HighlightStyle, Pixels, Refineable, ScrollDelta, px};
 use gpui_util::ResultExt;
 use theme::{
     AccentColors, Appearance, AppearanceContent, DEFAULT_DARK_THEME, DEFAULT_ICON_THEME_NAME,
@@ -431,6 +431,22 @@ pub fn merge_accent_colors(
 
     if !colors.is_empty() {
         accent_colors.0 = Arc::from(colors);
+    }
+}
+
+/// Increases or decreases the buffer font size based on the scroll delta,
+/// without persisting the result in the settings.
+/// This will be effective until the app is restarted.
+pub fn adjust_buffer_font_size_for_scroll(delta: ScrollDelta, cx: &mut App) {
+    let delta_y = match delta {
+        ScrollDelta::Pixels(pixels) => f32::from(pixels.y),
+        ScrollDelta::Lines(lines) => lines.y,
+    };
+
+    if delta_y > 0.0 {
+        increase_buffer_font_size(cx);
+    } else if delta_y < 0.0 {
+        decrease_buffer_font_size(cx);
     }
 }
 

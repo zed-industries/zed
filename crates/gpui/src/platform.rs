@@ -1,6 +1,7 @@
 mod app_menu;
 mod keyboard;
 mod keystroke;
+mod platform_info;
 
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 #[expect(missing_docs)]
@@ -36,7 +37,7 @@ pub(crate) type PlatformScreenCaptureFrame =
     objc2_core_foundation::CFRetained<objc2_core_video::CVImageBuffer>;
 
 use crate::{
-    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
+    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, Corners,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
@@ -52,8 +53,8 @@ use collections::FxHashMap;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use image::RgbaImage;
-use image::codecs::gif::GifDecoder;
-use image::{AnimationDecoder as _, DynamicImage, Frame};
+use image::codecs::{gif::GifDecoder, webp::WebPDecoder};
+use image::{DynamicImage, Frame, Rgba};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use scheduler::Instant;
 pub use scheduler::RunnableMeta;
@@ -208,7 +209,7 @@ impl ActivityGuard {
 #[inline]
 pub fn guess_compositor() -> &'static str {
     if std::env::var_os("ZED_HEADLESS").is_some() {
-        return "Headless";
+        return "headless";
     }
     GraphicalEnvironment::detect().guess_compositor()
 }
@@ -230,6 +231,11 @@ pub struct GraphicalEnvironment {
     pub x11_display: Option<OsString>,
     /// `XDG_RUNTIME_DIR`: the directory containing Wayland sockets.
     pub xdg_runtime_dir: Option<OsString>,
+    /// `XDG_CURRENT_DESKTOP`: the session's desktop environment, such as `ubuntu:GNOME`.
+    ///
+    /// Only reported by [`GraphicalEnvironment::desktop_environment`]; [`GraphicalEnvironment::apply_to`]
+    /// leaves it alone.
+    pub current_desktop: Option<OsString>,
     /// `XDG_ACTIVATION_TOKEN`: lets the first window take focus on Wayland.
     ///
     /// A platform takes this process's token from its environment when it's created, and uses
@@ -271,6 +277,11 @@ impl GraphicalEnvironment {
     /// Does nothing on this platform: programs inherit the session of the process that
     /// starts them.
     pub fn apply_to(&self, _command: &mut std::process::Command) {}
+
+    /// Returns `None`: this platform has no desktop environments to tell apart.
+    pub fn desktop_environment(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The graphical session to connect to. Carries nothing yet on this platform.
@@ -287,6 +298,11 @@ impl GraphicalEnvironment {
 
     /// Does nothing on this platform.
     pub fn apply_to(&self, _command: &mut std::process::Command) {}
+
+    /// Returns `None`: this platform has no desktop environments to tell apart.
+    pub fn desktop_environment(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A display mode for [`App::request_windowing`] to switch to.
@@ -309,6 +325,7 @@ impl GraphicalEnvironment {
             wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
             x11_display: std::env::var_os("DISPLAY"),
             xdg_runtime_dir: std::env::var_os("XDG_RUNTIME_DIR"),
+            current_desktop: std::env::var_os("XDG_CURRENT_DESKTOP"),
             activation_token: None,
         }
     }
@@ -329,6 +346,18 @@ impl GraphicalEnvironment {
         }
     }
 
+    /// Returns the session's desktop environment, if `XDG_CURRENT_DESKTOP` names one.
+    ///
+    /// The value is a colon-separated list ordered from most to least specific,
+    /// such as `ubuntu:GNOME`.
+    pub fn desktop_environment(&self) -> Option<String> {
+        self.current_desktop
+            .as_ref()
+            .and_then(|desktop| desktop.to_str())
+            .filter(|desktop| !desktop.is_empty())
+            .map(str::to_owned)
+    }
+
     /// Returns the compositor this environment selects: Wayland, then X11, then headless.
     ///
     /// Does not attempt to connect to the compositor.
@@ -340,7 +369,7 @@ impl GraphicalEnvironment {
         } else if cfg!(feature = "x11") && is_set(&self.x11_display) {
             "X11"
         } else {
-            "Headless"
+            "headless"
         }
     }
 }
@@ -359,8 +388,13 @@ bitflags::bitflags! {
     }
 }
 
+pub use platform_info::{OperatingSystem, PlatformInfo, PlatformTarget};
+
 #[expect(missing_docs)]
 pub trait Platform: 'static {
+    /// Returns the host OS and application target reported by this backend.
+    fn platform_info(&self) -> PlatformInfo;
+
     fn background_executor(&self) -> BackgroundExecutor;
     fn foreground_executor(&self) -> ForegroundExecutor;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
@@ -508,6 +542,14 @@ pub trait Platform: 'static {
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>);
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>>;
 
+    /// Returns the operating system's power mode, or [`PowerMode::Unknown`]
+    /// when the platform cannot determine it.
+    fn power_mode(&self) -> PowerMode {
+        PowerMode::Unknown
+    }
+    /// Registers a callback invoked when the reported power mode changes.
+    fn on_power_mode_change(&self, _callback: Box<dyn FnMut()>) {}
+
     /// Sets the application's process-wide identity and user-visible name.
     ///
     /// The identifier is used for platform identity mechanisms such as the
@@ -595,6 +637,22 @@ pub trait Platform: 'static {
     fn write_to_find_pasteboard(&self, item: ClipboardItem);
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
+
+    /// Atomically writes credentials unless an item with this URL and username exists.
+    ///
+    /// Returns `true` if written, or `false` if the existing item was left unchanged.
+    #[cfg(target_os = "macos")]
+    fn write_credentials_if_not_exists(
+        &self,
+        _url: &str,
+        _username: &str,
+        _password: &[u8],
+    ) -> Task<Result<bool>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "this platform does not support atomic credential writes"
+        )))
+    }
+
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
     fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
 
@@ -677,6 +735,20 @@ pub struct SystemNotificationResponse {
     /// The pressed action button's [`SystemNotificationAction::id`], or
     /// `None` when the user activated the notification body itself.
     pub action_id: Option<SharedString>,
+}
+
+/// The operating system's preference for energy use versus performance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PowerMode {
+    /// The platform cannot determine the mode, or cannot distinguish the
+    /// active mode from other non-low-power modes.
+    Unknown,
+    /// The system prioritizes reducing energy use.
+    LowPower,
+    /// The system balances energy use and performance.
+    Balanced,
+    /// The system prioritizes performance over energy use.
+    HighPower,
 }
 
 /// Thermal state of the system
@@ -1143,6 +1215,10 @@ pub enum AppLifecyclePhase {
     Background,
     /// Becoming visible again, before input is restored.
     Foreground,
+    /// The native scene has disconnected. Its windows may reconnect later.
+    /// This is not a process-termination notification or a guaranteed final
+    /// opportunity to save state.
+    Disconnected,
 }
 
 /// Regions of a window that are obscured or reserved by the system.
@@ -1162,6 +1238,11 @@ pub struct WindowInsets {
     /// (iOS: derived from `keyboardWillShow`/frame-change notifications.
     /// Android: `WindowInsets.Type.ime()`.)
     pub ime: Edges<Pixels>,
+    /// The radii of the window's visible corners where the display rounds
+    /// them, and zero where corners are square or the platform can't say.
+    /// Content inset from an edge by `d` lines up with the display by using a
+    /// radius of `radius - d`. (iOS 26+: a concentric `UICornerConfiguration`.)
+    pub corner_radii: Corners<Pixels>,
 }
 
 impl WindowInsets {
@@ -1345,6 +1426,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         WindowControls::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
+    fn set_client_corner_radii(&self, _radii: Corners<Pixels>) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
@@ -1983,6 +2065,7 @@ impl From<TileId> for etagere::AllocId {
 pub struct PlatformInputHandler {
     cx: AsyncWindowContext,
     handler: Box<dyn InputHandler>,
+    focus_id: Option<crate::FocusId>,
 }
 
 #[expect(missing_docs)]
@@ -1995,7 +2078,24 @@ pub struct PlatformInputHandler {
 )]
 impl PlatformInputHandler {
     pub fn new(cx: AsyncWindowContext, handler: Box<dyn InputHandler>) -> Self {
-        Self { cx, handler }
+        Self {
+            cx,
+            handler,
+            focus_id: None,
+        }
+    }
+
+    pub(crate) fn with_focus(mut self, focus_id: crate::FocusId) -> Self {
+        self.focus_id = Some(focus_id);
+        self
+    }
+
+    /// Identifies the input field registered through [`Window::handle_input`].
+    ///
+    /// This identity survives adapter replacement during repaint. Backends can
+    /// use it to detect a field change without restarting the keyboard session.
+    pub fn focus_id(&self) -> Option<crate::FocusId> {
+        self.focus_id
     }
 
     pub fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
@@ -2080,6 +2180,15 @@ impl PlatformInputHandler {
             .update(|window, cx| self.handler.bounds_for_range(range_utf16, window, cx))
             .ok()
             .flatten()
+    }
+
+    pub fn selection_bounds_for_range(&mut self, range_utf16: Range<usize>) -> Vec<Bounds<Pixels>> {
+        self.cx
+            .update(|window, cx| {
+                self.handler
+                    .selection_bounds_for_range(range_utf16, window, cx)
+            })
+            .unwrap_or_default()
     }
 
     #[allow(dead_code)]
@@ -2188,6 +2297,21 @@ impl PlatformInputHandler {
             .unwrap_or(true)
     }
 
+    /// Checks eligibility against the current focus, including before the next frame is drawn.
+    ///
+    /// Unlike the legacy acceptance query, this fails closed when the window cannot
+    /// be updated and requires registration through `Window::handle_input`.
+    pub fn query_accepts_focused_text_input(&mut self) -> bool {
+        let focus_id = self.focus_id;
+        self.cx
+            .update(|window, cx| {
+                focus_id.is_some()
+                    && window.focus == focus_id
+                    && self.handler.accepts_text_input(window, cx)
+            })
+            .unwrap_or(false)
+    }
+
     /// See [`InputHandler::prefers_ime_for_printable_keys`].
     ///
     /// This is not a pure delegation to the handler: while a multi-stroke binding is pending this
@@ -2233,10 +2357,10 @@ pub struct UTF16Selection {
     pub reversed: bool,
 }
 
-/// Zed's interface for handling text input from the platform's IME system
-/// This is currently a 1:1 exposure of the NSTextInputClient API:
+/// GPUI's interface for native text input, IME composition, and selection.
+/// Platform backends translate their native text protocols into these operations.
 ///
-/// <https://developer.apple.com/documentation/appkit/nstextinputclient>
+/// Text offsets and ranges use UTF-16 code units unless stated otherwise.
 pub trait InputHandler: 'static {
     /// Get the range of the user's currently selected text, if any
     /// Corresponds to [selectedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438242-selectedrange)
@@ -2310,7 +2434,7 @@ pub trait InputHandler: 'static {
         }
     }
 
-    /// Get the bounds of the given document range in screen coordinates
+    /// Get the bounds of the given document range in window coordinates.
     /// Corresponds to [firstRect(forCharacterRange:actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438240-firstrect)
     ///
     /// This is used for positioning the IME candidate window
@@ -2320,6 +2444,21 @@ pub trait InputHandler: 'static {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Bounds<Pixels>>;
+
+    /// Returns selection rectangles in document order, in window coordinates.
+    ///
+    /// Return line or shaped-run fragments, not one rectangle per character. The
+    /// first and last rectangles contain the range's start and end respectively.
+    /// Empty means native selection geometry is unavailable; caret/IME geometry can
+    /// still be supplied by `bounds_for_range`.
+    fn selection_bounds_for_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Vec<Bounds<Pixels>> {
+        Vec::new()
+    }
 
     /// Get the character offset for the given point in terms of UTF16 characters
     ///
@@ -2524,10 +2663,23 @@ pub struct WindowOptions {
     /// Leave this `false` for windows that rely on AppKit's native titlebar dragging.
     pub app_owns_titlebar_drag: bool,
 
-    /// The minimum interval between animation frames while the window is inactive.
+    /// The minimum frame interval while inactive without sustained high-rate input.
     ///
-    /// Set to `None` to disable inactive-window animation frame throttling.
+    /// Defaults to approximately 30 fps. Set to `None` to disable this limit.
+    /// The longest applicable interval wins; mandatory platform presentations bypass all limits.
     pub inactive_frame_interval: Option<Duration>,
+
+    /// The minimum frame interval while the platform reports Low Power Mode.
+    ///
+    /// Defaults to approximately 30 fps. Set to `None` to disable this limit.
+    /// The longest applicable interval wins; mandatory platform presentations bypass all limits.
+    pub low_power_frame_interval: Option<Duration>,
+
+    /// The minimum frame interval under serious or critical thermal pressure.
+    ///
+    /// Defaults to approximately 60 fps. Set to `None` to disable this limit.
+    /// The longest applicable interval wins; mandatory platform presentations bypass all limits.
+    pub thermal_frame_interval: Option<Duration>,
 
     /// Whether the window should be resizable by the user
     pub is_resizable: bool,
@@ -2557,6 +2709,9 @@ pub struct WindowOptions {
 
     /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
     pub tabbing_identifier: Option<String>,
+
+    /// Whether to render the window using the Display P3 color space on macOS.
+    pub use_display_p3: bool,
 }
 
 /// The variables that can be configured when creating a new window
@@ -2622,6 +2777,9 @@ pub struct WindowParams {
 
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
+
+    #[cfg(target_os = "macos")]
+    pub use_display_p3: bool,
 }
 
 /// Represents the status of how a window should be opened.
@@ -2674,6 +2832,8 @@ impl Default for WindowOptions {
             is_movable: true,
             app_owns_titlebar_drag: false,
             inactive_frame_interval: Some(Duration::from_micros(33_333)),
+            low_power_frame_interval: Some(Duration::from_micros(33_333)),
+            thermal_frame_interval: Some(Duration::from_micros(16_667)),
             is_resizable: true,
             is_minimizable: true,
             display_id: None,
@@ -2683,6 +2843,7 @@ impl Default for WindowOptions {
             window_min_size: None,
             window_decorations: None,
             tabbing_identifier: None,
+            use_display_p3: false,
         }
     }
 }
@@ -3254,6 +3415,50 @@ pub(crate) fn decode_static_image_from_decoder(
     Ok(SmallVec::from_elem(Frame::new(data), 1))
 }
 
+fn decode_animated_frames<'a>(
+    decoder: impl image::AnimationDecoder<'a>,
+    format_name: &str,
+) -> Result<SmallVec<[Frame; 1]>> {
+    let mut frames = SmallVec::new();
+
+    for frame in decoder.into_frames() {
+        match frame {
+            Ok(mut frame) => {
+                // Convert from RGBA to BGRA.
+                for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+                frames.push(frame);
+            }
+            Err(err) => {
+                log::debug!("Skipping {format_name} frame due to decode error: {err}");
+            }
+        }
+    }
+
+    if frames.is_empty() {
+        anyhow::bail!("{format_name} could not be decoded: all frames failed");
+    }
+
+    Ok(frames)
+}
+
+pub(crate) fn decode_gif_image(bytes: &[u8]) -> Result<SmallVec<[Frame; 1]>> {
+    let decoder = GifDecoder::new(Cursor::new(bytes))?;
+    decode_animated_frames(decoder, "GIF")
+}
+
+pub(crate) fn decode_webp_image(bytes: &[u8]) -> Result<SmallVec<[Frame; 1]>> {
+    let mut decoder = WebPDecoder::new(Cursor::new(bytes))?;
+
+    if decoder.has_animation() {
+        let _ = decoder.set_background_color(Rgba([0, 0, 0, 0]));
+        decode_animated_frames(decoder, "WebP")
+    } else {
+        decode_static_image_from_decoder(decoder)
+    }
+}
+
 impl Hash for Image {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_u64(self.id);
@@ -3317,34 +3522,10 @@ impl Image {
     /// Convert the clipboard image to an `ImageData` object.
     pub fn to_image_data(&self, svg_renderer: SvgRenderer) -> Result<Arc<RenderImage>> {
         let frames = match self.format {
-            ImageFormat::Gif => {
-                let decoder = GifDecoder::new(Cursor::new(&self.bytes))?;
-                let mut frames = SmallVec::new();
-
-                for frame in decoder.into_frames() {
-                    match frame {
-                        Ok(mut frame) => {
-                            // Convert from RGBA to BGRA.
-                            for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                                pixel.swap(0, 2);
-                            }
-                            frames.push(frame);
-                        }
-                        Err(err) => {
-                            log::debug!("Skipping GIF frame due to decode error: {err}");
-                        }
-                    }
-                }
-
-                if frames.is_empty() {
-                    anyhow::bail!("GIF could not be decoded: all frames failed");
-                }
-
-                frames
-            }
+            ImageFormat::Gif => decode_gif_image(&self.bytes)?,
             ImageFormat::Png => decode_static_image(&self.bytes, image::ImageFormat::Png)?,
             ImageFormat::Jpeg => decode_static_image(&self.bytes, image::ImageFormat::Jpeg)?,
-            ImageFormat::Webp => decode_static_image(&self.bytes, image::ImageFormat::WebP)?,
+            ImageFormat::Webp => decode_webp_image(&self.bytes)?,
             ImageFormat::Bmp => decode_static_image(&self.bytes, image::ImageFormat::Bmp)?,
             ImageFormat::Tiff => decode_static_image(&self.bytes, image::ImageFormat::Tiff)?,
             ImageFormat::Ico => decode_static_image(&self.bytes, image::ImageFormat::Ico)?,
@@ -3470,6 +3651,36 @@ mod image_tests {
         for pixel in bytes.chunks_exact(4) {
             assert_eq!(pixel, &[0xF8, 0xBD, 0x38, 0xFF]);
         }
+    }
+
+    #[test]
+    fn test_animated_webp_image_to_image_data_decodes_frames() {
+        // 1x1 2-frame animated WebP (frame 0: red, frame 1: blue, 100ms delay each).
+        const ANIMATED_WEBP: &[u8] = &[
+            82, 73, 70, 70, 192, 0, 0, 0, 87, 69, 66, 80, 86, 80, 56, 88, 10, 0, 0, 0, 2, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 65, 78, 73, 77, 6, 0, 0, 0, 255, 255, 255, 255, 0, 0, 65, 78, 77, 70,
+            72, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 2, 86, 80, 56, 32, 48, 0,
+            0, 0, 208, 1, 0, 157, 1, 42, 1, 0, 1, 0, 2, 0, 52, 37, 160, 2, 116, 186, 1, 248, 0, 3,
+            176, 0, 254, 240, 196, 11, 255, 32, 185, 97, 117, 200, 215, 255, 32, 63, 228, 7, 252,
+            128, 255, 248, 242, 0, 0, 0, 65, 78, 77, 70, 68, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 100, 0, 0, 0, 86, 80, 56, 32, 44, 0, 0, 0, 148, 1, 0, 157, 1, 42, 1, 0, 1, 0, 0,
+            0, 52, 37, 160, 2, 116, 186, 0, 3, 152, 0, 254, 249, 147, 111, 255, 144, 31, 255, 144,
+            31, 255, 144, 31, 255, 32, 63, 226, 23, 123, 32, 48, 0,
+        ];
+
+        let image = Image::from_bytes(ImageFormat::Webp, ANIMATED_WEBP.to_vec());
+        let render_image = image.to_image_data(SvgRenderer::new(Arc::new(()))).unwrap();
+
+        assert_eq!(render_image.frame_count(), 2);
+        assert_eq!(render_image.size(0), size(1.into(), 1.into()));
+        assert_eq!(
+            Duration::from(render_image.delay(0)),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            Duration::from(render_image.delay(1)),
+            Duration::from_millis(100)
+        );
     }
 }
 

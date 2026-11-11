@@ -66,6 +66,20 @@ pub enum LanguageModelCompletionEvent {
     ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
     Compaction(CompactionUpdate),
+    /// Transformations the provider applied or flagged while processing the request.
+    InputTransformations(Vec<InputTransformation>),
+}
+
+/// A provider-reported transformation or mismatch affecting request content.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct InputTransformation {
+    /// Provider-specific transformation type, including unrecognized future types.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Provider-specific location, such as `messages.1.content.0`.
+    pub path: String,
+    /// Provider-specific reason, such as `prefix_binding_mismatch`.
+    pub reason: String,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -92,7 +106,9 @@ impl LanguageModelCompletionEvent {
                 Ok(Some(LanguageModelCompletionEvent::Queued { position }))
             }
             CompletionRequestStatus::Started => Ok(Some(LanguageModelCompletionEvent::Started)),
-            CompletionRequestStatus::Unknown | CompletionRequestStatus::StreamEnded => Ok(None),
+            CompletionRequestStatus::KeepAlive
+            | CompletionRequestStatus::Unknown
+            | CompletionRequestStatus::StreamEnded => Ok(None),
             CompletionRequestStatus::Failed {
                 code,
                 message,
@@ -694,6 +710,7 @@ pub struct LanguageModelEffortLevel {
     pub name: SharedString,
     pub value: SharedString,
     pub is_default: bool,
+    pub supports_disabling_thinking: Option<bool>,
 }
 
 /// An error that occurred when trying to authenticate the language model provider.

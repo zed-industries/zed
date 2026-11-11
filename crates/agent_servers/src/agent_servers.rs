@@ -12,7 +12,7 @@ use http_client::read_no_proxy_from_env;
 use project::{AgentId, Project, agent_server_store::AgentServerStore};
 
 use acp_thread::AgentConnection;
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::Result;
 use gpui::{App, AppContext, Entity, Task};
 use settings::{AgentConfigOptionValue, SettingsStore};
@@ -24,8 +24,8 @@ pub use acp::test_support::{
 };
 pub use acp::{
     AcpConnection, AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection,
-    DecodedTerminalNotification, DecodedTerminalUpdate, GEMINI_TERMINAL_AUTH_METHOD_ID,
-    v2_terminal_client_builder,
+    AcpV2Connection, DecodedTerminalNotification, DecodedTerminalUpdate,
+    GEMINI_TERMINAL_AUTH_METHOD_ID, v2_terminal_client_builder,
 };
 
 pub struct AgentServerDelegate {

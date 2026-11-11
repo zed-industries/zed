@@ -8,7 +8,7 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
-    AsyncReadExt as _, FutureExt as _,
+    AsyncReadExt as _, AsyncWriteExt as _, FutureExt as _,
     channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender},
     select_biased,
 };
@@ -21,6 +21,7 @@ use semver::Version;
 pub use settings_content::SshPortForwardOption;
 use smol::fs;
 use std::{
+    borrow::Cow,
     fmt::Write as _,
     net::IpAddr,
     path::{Path, PathBuf},
@@ -31,7 +32,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
-use util::command::{Child, Stdio};
+use util::command::{Child, Command, Stdio};
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
@@ -74,9 +75,13 @@ impl SshConnectionHost {
     }
 
     pub fn to_string(&self) -> String {
+        self.to_cow().into_owned()
+    }
+
+    pub fn to_cow(&self) -> Cow<'_, str> {
         match self {
-            Self::IpAddr(ip) => ip.to_string(),
-            Self::Hostname(hostname) => hostname.clone(),
+            Self::IpAddr(ip) => Cow::Owned(ip.to_string()),
+            Self::Hostname(hostname) => Cow::Borrowed(hostname),
         }
     }
 }
@@ -305,7 +310,7 @@ impl MasterProcess {
         askpass_script_path: &std::ffi::OsStr,
         additional_args: Vec<String>,
         socket_path: &std::path::Path,
-        destination: &str,
+        destination_args: Vec<String>,
     ) -> Result<Self> {
         let args = [
             "-N",
@@ -329,7 +334,7 @@ impl MasterProcess {
 
         master_process.arg(format!("ControlPath={}", socket_path.display()));
 
-        let process = master_process.arg(&destination).spawn()?;
+        let process = master_process.args(destination_args).spawn()?;
 
         Ok(MasterProcess { process })
     }
@@ -353,7 +358,7 @@ impl MasterProcess {
         askpass_script_path: &std::ffi::OsStr,
         askpass_socket_path: &std::ffi::OsStr,
         additional_args: Vec<String>,
-        destination: &str,
+        destination_args: Vec<String>,
     ) -> Result<Self> {
         // On Windows, `ControlMaster` and `ControlPath` are not supported:
         // https://github.com/PowerShell/Win32-OpenSSH/issues/405
@@ -361,10 +366,7 @@ impl MasterProcess {
         //
         // Using an ugly workaround to detect connection establishment
         // -N doesn't work with JumpHosts as windows openssh never closes stdin in that case
-        let args = [
-            "-t",
-            &format!("echo '{}'; exec $0", Self::CONNECTION_ESTABLISHED_MAGIC),
-        ];
+        let remote_command = format!("echo '{}'; exec $0", Self::CONNECTION_ESTABLISHED_MAGIC);
 
         let mut master_process = util::command::new_command("ssh");
         master_process
@@ -376,8 +378,9 @@ impl MasterProcess {
             .env("SSH_ASKPASS", askpass_script_path)
             .env("ZED_ASKPASS_SOCKET", askpass_socket_path)
             .args(additional_args)
-            .arg(destination)
-            .args(args);
+            .arg("-t")
+            .args(destination_args)
+            .arg(remote_command);
 
         let process = master_process.spawn()?;
 
@@ -479,7 +482,7 @@ impl RemoteConnection for SshRemoteConnection {
                 ssh_shell,
                 *ssh_shell_kind,
                 socket.ssh_command_options(),
-                &socket.connection_options.ssh_destination(),
+                socket.connection_options.ssh_destination_args(),
                 interactive,
             )
         } else {
@@ -494,7 +497,7 @@ impl RemoteConnection for SshRemoteConnection {
                 ssh_shell,
                 *ssh_shell_kind,
                 socket.ssh_command_options(),
-                &socket.connection_options.ssh_destination(),
+                socket.connection_options.ssh_destination_args(),
                 interactive,
             )
         }
@@ -534,7 +537,7 @@ impl RemoteConnection for SshRemoteConnection {
             self.socket.ssh_command_options(),
             None,
             Interactive::No,
-            &self.socket.connection_options.ssh_destination(),
+            self.socket.connection_options.ssh_destination_args(),
             exec,
             self.socket.envs.clone(),
         );
@@ -557,7 +560,7 @@ impl RemoteConnection for SshRemoteConnection {
                 remote_port
             ));
         }
-        args.push(socket.connection_options.ssh_destination());
+        args.extend(socket.connection_options.ssh_destination_args());
         Ok(CommandTemplate {
             program: "ssh".into(),
             args,
@@ -721,15 +724,16 @@ impl RemoteConnection for SshRemoteConnection {
 /// given destination. See: https://github.com/zed-industries/zed/issues/45271
 #[cfg(not(windows))]
 async fn find_existing_control_master(
-    destination: &str,
-    additional_args: &[String],
+    connection_options: &SshConnectionOptions,
 ) -> Option<PathBuf> {
+    let additional_args = connection_options.additional_args();
+    let destination_args = connection_options.ssh_destination_args();
     // Use `ssh -G` to resolve the user's effective SSH config for this host.
     // This expands ControlPath tokens (%h, %p, %r, %C, etc.) into actual paths.
     let output = match util::command::new_command("ssh")
-        .args(additional_args)
+        .args(&additional_args)
         .arg("-G")
-        .arg(destination)
+        .args(&destination_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -744,7 +748,10 @@ async fn find_existing_control_master(
     };
 
     if !output.status.success() {
-        log::debug!("ssh -G failed for {destination}, skipping ControlMaster reuse");
+        log::debug!(
+            "ssh -G failed for {}, skipping ControlMaster reuse",
+            connection_options.connection_string()
+        );
         return None;
     }
 
@@ -764,7 +771,7 @@ async fn find_existing_control_master(
         .args(["-O", "check"])
         .arg("-o")
         .arg(format!("ControlPath={}", control_path.display()))
-        .arg(destination)
+        .args(&destination_args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -802,8 +809,6 @@ impl SshRemoteConnection {
     ) -> Result<Self> {
         use askpass::AskPassResult;
 
-        let destination = connection_options.ssh_destination();
-
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-ssh-session")
             .tempdir()?;
@@ -811,8 +816,7 @@ impl SshRemoteConnection {
         // On non-Windows, check if the user already has an active ControlMaster
         // session for this host. If so, reuse it instead of prompting for auth.
         #[cfg(not(windows))]
-        let reused_socket =
-            find_existing_control_master(&destination, &connection_options.additional_args()).await;
+        let reused_socket = find_existing_control_master(&connection_options).await;
 
         #[cfg(not(windows))]
         let (socket, master_process_option) = if let Some(reused_path) = reused_socket {
@@ -842,7 +846,7 @@ impl SshRemoteConnection {
                 askpass.script_path().as_ref(),
                 connection_options.additional_args(),
                 &socket_path,
-                &destination,
+                connection_options.ssh_destination_args(),
             )?;
 
             let result = select_biased! {
@@ -902,7 +906,7 @@ impl SshRemoteConnection {
                 askpass.script_path().as_ref(),
                 askpass.socket_path().as_ref(),
                 connection_options.additional_args(),
-                &destination,
+                connection_options.ssh_destination_args(),
             )?;
 
             let result = select_biased! {
@@ -1395,7 +1399,9 @@ impl SshRemoteConnection {
         if let Some(args) = additional_args {
             command.args(args);
         }
-        command.arg(src_path).arg(format!(
+        // scp and sftp have no option for the username, so `--` keeps a destination beginning
+        // with `-` from being parsed as an option. They pass the username on to ssh via `-l`.
+        command.arg("--").arg(src_path).arg(format!(
             "{}:{}",
             self.socket.connection_options.scp_destination(),
             dest_path_str
@@ -1418,7 +1424,9 @@ impl SshRemoteConnection {
                     .unwrap_or_default(),
             );
         command.arg("-b").arg("-");
-        command.arg(self.socket.connection_options.scp_destination());
+        command
+            .arg("--")
+            .arg(self.socket.connection_options.scp_destination());
         command.stdin(Stdio::piped());
         command
     }
@@ -1555,12 +1563,13 @@ impl SshSocket {
             let separator = shell_kind.sequential_commands_separator();
             format!("cd{separator} {to_run}")
         };
-        self.ssh_options(&mut command, true, None)
-            .arg(self.connection_options.ssh_destination());
+        self.ssh_options(&mut command, true, None);
         if !allow_pseudo_tty {
             command.arg("-T");
         }
-        command.arg(to_run);
+        command
+            .args(self.connection_options.ssh_destination_args())
+            .arg(to_run);
         log::debug!("ssh {:?}", command);
         command
     }
@@ -1572,15 +1581,8 @@ impl SshSocket {
         args: &[impl AsRef<str>],
         allow_pseudo_tty: bool,
     ) -> Result<String> {
-        let mut command = self.ssh_command(shell_kind, program, args, allow_pseudo_tty);
-        let output = command.output().await?;
-        log::debug!("{:?}: {:?}", command, output);
-        anyhow::ensure!(
-            output.status.success(),
-            "failed to run command {command:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        let command = self.ssh_command(shell_kind, program, args, allow_pseudo_tty);
+        command_output(command, None).await
     }
 
     fn ssh_options<'a>(
@@ -1637,14 +1639,22 @@ impl SshSocket {
         arguments
     }
 
+    fn environment_posix_command(&self) -> Command {
+        self.ssh_command(ShellKind::Posix, "sh", &["-s"], false)
+    }
+
+    fn environment_posix_argument_command(&self, script: &str) -> Command {
+        self.ssh_command(ShellKind::Posix, "sh", &["-c", script], false)
+    }
+
     async fn environment_posix(&self) -> Result<RemoteEnvironment> {
         let script = RemoteEnvironment::posix_script();
-
-        let output = self
-            .run_command(ShellKind::Posix, "sh", &["-c", &script], false)
-            .await
-            .context("Failed to determine remote environment")?;
-        RemoteEnvironment::parse_posix(&output)
+        probe_environment_posix(
+            self.environment_posix_command(),
+            || self.environment_posix_argument_command(&script),
+            &script,
+        )
+        .await
     }
 
     /// Best-effort detection of the remote OS version. Failures are logged and
@@ -1755,6 +1765,55 @@ impl SshSocket {
     }
 }
 
+async fn command_output(mut command: Command, input: Option<&[u8]>) -> Result<String> {
+    let (output, write_result) = if let Some(input) = input {
+        let mut child = command.kill_on_drop(true).spawn()?;
+        let mut stdin = child.stdin.take().context("Command did not expose stdin")?;
+        futures::join!(child.output(), async move {
+            let result = async {
+                stdin.write_all(input).await?;
+                stdin.flush().await
+            }
+            .await;
+            drop(stdin);
+            result
+        })
+    } else {
+        (command.output().await, Ok(()))
+    };
+    let output = output?;
+    log::debug!("{command:?}: {output:?}");
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to run command {command:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    write_result.with_context(|| format!("writing stdin for command {command:?}"))?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+async fn probe_environment_posix(
+    stdin_command: Command,
+    argument_command: impl FnOnce() -> Command,
+    script: &str,
+) -> Result<RemoteEnvironment> {
+    let output = command_output(stdin_command, Some(script.as_bytes()))
+        .await
+        .context("determining remote environment")?;
+    match RemoteEnvironment::parse_posix(&output) {
+        Ok(environment) => Ok(environment),
+        Err(error) => {
+            log::warn!(
+                "Failed to parse the remote environment probed via stdin, retrying with the script as an argument: {error:#}"
+            );
+            let output = command_output(argument_command(), None)
+                .await
+                .context("determining remote environment")?;
+            RemoteEnvironment::parse_posix(&output)
+        }
+    }
+}
+
 fn parse_port_number(port_str: &str) -> Result<u16> {
     port_str
         .parse()
@@ -1831,7 +1890,6 @@ fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
 
 impl SshConnectionOptions {
     pub fn parse_command_line(input: &str) -> Result<Self> {
-        let input = input.trim_start_matches("ssh ");
         let mut hostname: Option<String> = None;
         let mut username: Option<String> = None;
         let mut port: Option<u16> = None;
@@ -1847,10 +1905,14 @@ impl SshConnectionOptions {
             "-w",
         ];
 
-        let mut tokens = ShellKind::Posix
-            .split(input)
-            .context("invalid input")?
-            .into_iter();
+        let mut tokens = ShellKind::Posix.split(input).context("invalid input")?;
+        // The input may be a full command such as `ssh -p 2222 host`, possibly with
+        // shell-quoted tokens. Strip the executable after tokenizing so that `'ssh'`
+        // is recognized too, while a lone `ssh` is still treated as a hostname.
+        if tokens.len() > 1 && tokens[0] == "ssh" {
+            tokens.remove(0);
+        }
+        let mut tokens = tokens.into_iter();
 
         'outer: while let Some(arg) = tokens.next() {
             if ALLOWED_OPTS.contains(&(&arg as &str)) {
@@ -1949,17 +2011,19 @@ impl SshConnectionOptions {
         })
     }
 
-    pub fn ssh_destination(&self) -> String {
-        let mut result = String::default();
+    /// Arguments identifying the remote for `ssh`, which must come after all other options.
+    ///
+    /// The username is passed via `-l` and the host after `--` so that neither is parsed as
+    /// an option when it begins with `-`.
+    fn ssh_destination_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
         if let Some(username) = &self.username {
-            // Username might be: username1@username2@ip2
-            let username = urlencoding::encode(username);
-            result.push_str(&username);
-            result.push('@');
+            args.push("-l".to_string());
+            args.push(username.clone());
         }
-
-        result.push_str(&self.host.to_string());
-        result
+        args.push("--".to_string());
+        args.push(self.host.to_string());
+        args
     }
 
     pub fn additional_args_for_scp(&self) -> Vec<String> {
@@ -2036,7 +2100,7 @@ fn build_command_posix(
     ssh_shell: &str,
     ssh_shell_kind: ShellKind,
     ssh_options: Vec<String>,
-    ssh_destination: &str,
+    ssh_destination_args: Vec<String>,
     interactive: Interactive,
 ) -> Result<CommandTemplate> {
     let mut exec = posix_working_dir_prefix(working_dir, ssh_path_style, ssh_shell_kind)?;
@@ -2070,7 +2134,7 @@ fn build_command_posix(
         ssh_options,
         port_forward,
         interactive,
-        ssh_destination,
+        ssh_destination_args,
         exec,
         ssh_env,
     ))
@@ -2121,7 +2185,7 @@ fn ssh_command_template(
     ssh_options: Vec<String>,
     port_forward: Option<(u16, String, u16)>,
     interactive: Interactive,
-    ssh_destination: &str,
+    ssh_destination_args: Vec<String>,
     exec: String,
     ssh_env: HashMap<String, String>,
 ) -> CommandTemplate {
@@ -2148,7 +2212,7 @@ fn ssh_command_template(
         Interactive::No => args.push("-T".into()),
     }
     // The destination must come after all options but before the command
-    args.push(ssh_destination.into());
+    args.extend(ssh_destination_args);
     args.push(exec);
 
     CommandTemplate {
@@ -2169,7 +2233,7 @@ fn build_command_windows(
     ssh_shell: &str,
     _ssh_shell_kind: ShellKind,
     ssh_options: Vec<String>,
-    ssh_destination: &str,
+    ssh_destination_args: Vec<String>,
     interactive: Interactive,
 ) -> Result<CommandTemplate> {
     use base64::Engine as _;
@@ -2244,7 +2308,7 @@ fn build_command_windows(
     }
 
     // The destination must come after all options but before the command
-    args.push(ssh_destination.into());
+    args.extend(ssh_destination_args);
 
     // Windows OpenSSH server incorrectly escapes the command string when the PTY is used.
     // The simplest way to work around this is to use a base64 encoded command, which doesn't require escaping.
@@ -2252,7 +2316,13 @@ fn build_command_windows(
     let byte_slice: Vec<u8> = utf16_bytes.iter().flat_map(|&u| u.to_le_bytes()).collect();
     let base64_encoded = base64::engine::general_purpose::STANDARD.encode(&byte_slice);
 
-    args.push(format!("powershell.exe -E {}", base64_encoded));
+    // Windows OpenSSH server automatically quotes the command for `ssh -T` (non-PTY),
+    // but leaves it unquoted for `ssh -t` (PTY).
+    // Related issue: https://github.com/PowerShell/Win32-OpenSSH/issues/2478
+    match interactive {
+        Interactive::Yes => args.push(format!("\"powershell.exe -E {}\"", base64_encoded)),
+        Interactive::No => args.push(format!("powershell.exe -E {}", base64_encoded)),
+    }
 
     Ok(CommandTemplate {
         program: "ssh".into(),
@@ -2397,7 +2467,10 @@ mod tests {
                     "-o",
                     "LogLevel=ERROR",
                     "-T",
-                    "user@host",
+                    "-l",
+                    "user",
+                    "--",
+                    "host",
                     expected_exec,
                 ]
             );
@@ -2477,22 +2550,94 @@ mod tests {
 
         #[cfg(unix)]
         {
-            let output = smol::block_on(
-                util::command::new_command("/bin/sh")
-                    .args(["-c", &RemoteEnvironment::posix_script()])
-                    .env("SHELL", "/bin/sh")
-                    .output(),
-            )?;
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-
-            let environment = RemoteEnvironment::parse_posix(std::str::from_utf8(&output.stdout)?)?;
-            assert_eq!(environment.shell, "/bin/sh");
-            assert!(environment.os_version.is_some());
+            let socket = smol::block_on(SshSocket::new(
+                SshConnectionOptions::default(),
+                PathBuf::from("/tmp/zed-test.sock"),
+            ))?;
+            let command = socket.environment_posix_command();
+            let remote_command = command
+                .get_args()
+                .last()
+                .context("Missing remote command")?;
+            let mut shells = vec![(PathBuf::from("/bin/sh"), &["-c"][..])];
+            if let Ok(powershell) = which::which("pwsh") {
+                shells.push((powershell, &["-NoProfile", "-NonInteractive", "-Command"]));
+            }
+            for (shell, args) in shells {
+                let mut command = util::command::new_command(&shell);
+                command
+                    .args(args)
+                    .arg(remote_command)
+                    .env("SHELL", "/usr/bin/pwsh")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                let output = smol::block_on(command_output(
+                    command,
+                    Some(RemoteEnvironment::posix_script().as_bytes()),
+                ))?;
+                let environment = RemoteEnvironment::parse_posix(&output)?;
+                assert_eq!(environment.shell, "/usr/bin/pwsh");
+                assert_eq!(environment.platform.arch.as_str(), std::env::consts::ARCH);
+                assert!(environment.os_version.is_some());
+            }
+            assert_eq!(remote_command, "cd; sh -s");
         }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_output_drains_output_while_writing_input() -> Result<()> {
+        let input = vec![b'x'; 1024 * 1024];
+        let mut command = util::command::new_command("/bin/sh");
+        command
+            .args(["-c", "head -c 1048576 /dev/zero; cat"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let output = smol::block_on(command_output(command, Some(&input)))?;
+        let mut expected = vec![0; 1024 * 1024];
+        expected.extend_from_slice(&input);
+        assert_eq!(output.as_bytes(), expected);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_output_preserves_stderr_when_input_fails() -> Result<()> {
+        let input = vec![b'x'; 1024 * 1024];
+        let mut command = util::command::new_command("/bin/sh");
+        command
+            .args(["-c", "exec 0<&-; printf 'probe failed' >&2; exit 7"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let expected = format!("failed to run command {command:?}: probe failed");
+        let error = smol::block_on(command_output(command, Some(&input))).unwrap_err();
+        assert_eq!(error.to_string(), expected);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn environment_posix_probe_retries_when_stdin_is_consumed() -> Result<()> {
+        let socket = smol::block_on(SshSocket::new(
+            SshConnectionOptions::default(),
+            PathBuf::from("/tmp/zed-test.sock"),
+        ))?;
+        let script = RemoteEnvironment::posix_script();
+        let stdin_command = stdin_consuming_remote_shell(&socket.environment_posix_command())?;
+        let argument_command =
+            stdin_consuming_remote_shell(&socket.environment_posix_argument_command(&script))?;
+        let environment = smol::block_on(probe_environment_posix(
+            stdin_command,
+            move || argument_command,
+            &script,
+        ))?;
+        assert_eq!(environment.shell, "/bin/bash");
+        assert_eq!(environment.platform.arch.as_str(), std::env::consts::ARCH);
         Ok(())
     }
 
@@ -2700,7 +2845,12 @@ mod tests {
             "/bin/bash",
             ShellKind::Posix,
             vec!["-o".to_string(), "ControlMaster=auto".to_string()],
-            "user@host",
+            vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "--".to_string(),
+                "host".to_string(),
+            ],
             Interactive::No,
         )?;
         assert_eq!(command.program, "ssh");
@@ -2720,7 +2870,12 @@ mod tests {
             "/bin/fish",
             ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
-            "user@host",
+            vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "--".to_string(),
+                "host".to_string(),
+            ],
             Interactive::Yes,
         )?;
 
@@ -2733,7 +2888,10 @@ mod tests {
                 "-o",
                 "LogLevel=ERROR",
                 "-t",
-                "user@host",
+                "-l",
+                "user",
+                "--",
+                "host",
                 "cd \"$HOME\"/work && exec env 'INPUT_VA=val' remote_program arg1 arg2"
             ]
         );
@@ -2755,7 +2913,12 @@ mod tests {
             "/bin/fish",
             ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
-            "user@host",
+            vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "--".to_string(),
+                "host".to_string(),
+            ],
             Interactive::Yes,
         )?;
 
@@ -2770,8 +2933,119 @@ mod tests {
                 "-o",
                 "LogLevel=ERROR",
                 "-t",
-                "user@host",
+                "-l",
+                "user",
+                "--",
+                "host",
                 "cd && exec env 'INPUT_VA=val' /bin/fish -l"
+            ]
+        );
+        assert_eq!(command.env, env);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_build_command_windows() -> Result<()> {
+        use base64::Engine as _;
+
+        let encode_utf16_base64 = |script: &str| {
+            let utf16_bytes: Vec<u16> = script.encode_utf16().collect();
+            let byte_slice: Vec<u8> = utf16_bytes.iter().flat_map(|&u| u.to_le_bytes()).collect();
+            base64::engine::general_purpose::STANDARD.encode(&byte_slice)
+        };
+
+        let mut input_env = HashMap::default();
+        input_env.insert("INPUT_VAR".to_string(), "val".to_string());
+        let mut env = HashMap::default();
+        env.insert("SSH_VAR".to_string(), "ssh-val".to_string());
+
+        // Non-interactive command (Interactive::No should use -T and keep the command unquoted,
+        // because Windows OpenSSH already quotes the command in non-PTY mode)
+        let command = build_command_windows(
+            Some("remote_program".to_string()),
+            &["arg1".to_string(), "arg2".to_string()],
+            &input_env,
+            Some(r"C:\work".to_string()),
+            None,
+            env.clone(),
+            PathStyle::Windows,
+            "nu.exe",
+            ShellKind::Nushell,
+            vec!["-p".to_string(), "2222".to_string()],
+            vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "--".to_string(),
+                "host".to_string(),
+            ],
+            Interactive::No,
+        )?;
+
+        let expected_non_interactive_exec = format!(
+            "powershell.exe -E {}",
+            encode_utf16_base64(r"Set-Location -Path C:\work ; &remote_program arg1 arg2")
+        );
+        assert_eq!(command.program, "ssh");
+        assert_eq!(
+            command.args.iter().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "-p",
+                "2222",
+                "-o",
+                "LogLevel=ERROR",
+                "-T",
+                "-l",
+                "user",
+                "--",
+                "host",
+                &expected_non_interactive_exec,
+            ]
+        );
+        assert_eq!(command.env, env);
+
+        // Interactive command (Interactive::Yes should use -t and wrap the command in quotes,
+        // because Windows OpenSSH concatenates the command unquoted in PTY mode)
+        let command = build_command_windows(
+            None,
+            &[],
+            &input_env,
+            Some(r"D:\code\test_python".to_string()),
+            Some((1, "foo".to_owned(), 2)),
+            env.clone(),
+            PathStyle::Windows,
+            "nu.exe",
+            ShellKind::Nushell,
+            vec!["-p".to_string(), "2222".to_string()],
+            vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "--".to_string(),
+                "host".to_string(),
+            ],
+            Interactive::Yes,
+        )?;
+
+        let expected_interactive_exec = format!(
+            "\"powershell.exe -E {}\"",
+            encode_utf16_base64(r"Set-Location -Path D:\code\test_python ; nu.exe")
+        );
+        assert_eq!(command.program, "ssh");
+        assert_eq!(
+            command.args.iter().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "-p",
+                "2222",
+                "-L",
+                "1:foo:2",
+                "-o",
+                "LogLevel=ERROR",
+                "-t",
+                "-l",
+                "user",
+                "--",
+                "host",
+                &expected_interactive_exec,
             ]
         );
         assert_eq!(command.env, env);
@@ -2795,7 +3069,12 @@ mod tests {
             "/bin/bash",
             ShellKind::Posix,
             vec![],
-            "user@host",
+            vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "--".to_string(),
+                "host".to_string(),
+            ],
             Interactive::No,
         )?;
 
@@ -2941,6 +3220,45 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_command_line_with_ssh_executable() -> Result<()> {
+        let opts = SshConnectionOptions::parse_command_line("ssh -p 2222 user@example.com")?;
+        assert_eq!(opts.host, "example.com".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(2222));
+
+        let opts = SshConnectionOptions::parse_command_line(
+            "'ssh' '-i' '/Users/test/Library/Application Support/key' '-p' '64042' '-o' 'ControlMaster=auto' 'user@127.0.0.1'",
+        )?;
+        assert_eq!(opts.host, "127.0.0.1".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(64042));
+        assert_eq!(
+            opts.args,
+            Some(vec![
+                "-i".to_string(),
+                "/Users/test/Library/Application Support/key".to_string(),
+                "-o".to_string(),
+                "ControlMaster=auto".to_string(),
+            ])
+        );
+
+        let opts = SshConnectionOptions::parse_command_line("\"ssh\" user@example.com")?;
+        assert_eq!(opts.host, "example.com".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+
+        // A bare `ssh` is a hostname, not the executable.
+        let opts = SshConnectionOptions::parse_command_line("ssh")?;
+        assert_eq!(opts.host, "ssh".into());
+        assert_eq!(opts.username, None);
+
+        let opts = SshConnectionOptions::parse_command_line("ssh user@ssh")?;
+        assert_eq!(opts.host, "ssh".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_port_forward_spec_ipv6() -> Result<()> {
         let pf = parse_port_forward_spec("[::1]:8080:[::1]:80")?;
         assert_eq!(pf.local_host, Some("::1".to_string()));
@@ -3002,7 +3320,12 @@ mod tests {
             "/bin/bash",
             ShellKind::Posix,
             vec![],
-            "user@host",
+            vec![
+                "-l".to_string(),
+                "user".to_string(),
+                "--".to_string(),
+                "host".to_string(),
+            ],
             Interactive::No,
         )?;
 
@@ -3013,5 +3336,66 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_ssh_destination_args_pass_username_verbatim() {
+        let args_for = |username: &str| {
+            SshConnectionOptions {
+                host: "192.168.1.50".into(),
+                username: Some(username.to_string()),
+                ..Default::default()
+            }
+            .ssh_destination_args()
+        };
+
+        assert_eq!(
+            args_for(r"DOMAIN\user"),
+            ["-l", r"DOMAIN\user", "--", "192.168.1.50"]
+        );
+        assert_eq!(
+            args_for("DOMAIN/user"),
+            ["-l", "DOMAIN/user", "--", "192.168.1.50"]
+        );
+        assert_eq!(
+            args_for("user@jumphost"),
+            ["-l", "user@jumphost", "--", "192.168.1.50"]
+        );
+        assert_eq!(
+            args_for("-oProxyCommand=touch /tmp/pwned"),
+            [
+                "-l",
+                "-oProxyCommand=touch /tmp/pwned",
+                "--",
+                "192.168.1.50"
+            ]
+        );
+
+        let options = SshConnectionOptions {
+            host: "-oProxyCommand=touch /tmp/pwned".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            options.ssh_destination_args(),
+            ["--", "-oProxyCommand=touch /tmp/pwned"]
+        );
+    }
+
+    #[cfg(unix)]
+    fn stdin_consuming_remote_shell(ssh_command: &Command) -> Result<Command> {
+        let remote_command = ssh_command
+            .get_args()
+            .last()
+            .context("Missing remote command")?
+            .to_string_lossy();
+        let mut command = util::command::new_command("/bin/sh");
+        command
+            .arg("-c")
+            .arg(format!("cat > /dev/null; {remote_command}"))
+            .env("SHELL", "/bin/bash")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        Ok(command)
     }
 }

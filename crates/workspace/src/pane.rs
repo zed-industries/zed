@@ -1167,6 +1167,8 @@ impl Pane {
                 {
                     if already_open_view.is_none()
                         && existing_error_view.read(cx).error == invalid_buffer_view.read(cx).error
+                        && existing_error_view.read(cx).active_project_path(cx)
+                            == invalid_buffer_view.read(cx).active_project_path(cx)
                     {
                         already_open_view = Some(existing_error_view);
                     } else {
@@ -1239,6 +1241,8 @@ impl Pane {
             .iter()
             .any(|existing_item| existing_item.item_id() == item.item_id());
 
+        let mut replaces_existing_item_in_pane = false;
+
         if !item_already_exists {
             self.close_items_on_item_open(window, cx);
         }
@@ -1305,7 +1309,7 @@ impl Pane {
                 if existing_item_is_active && destination_index.is_none() {
                     insertion_index = existing_item_index;
                 } else {
-                    self.items.remove(existing_item_index);
+                    let removed_item = self.items.remove(existing_item_index);
                     if existing_item_index < self.active_item_index {
                         self.active_item_index -= 1;
                     }
@@ -1317,6 +1321,10 @@ impl Pane {
                         self.active_item_index = insertion_index;
                     } else if insertion_index <= self.active_item_index {
                         self.active_item_index += 1;
+                    }
+
+                    if removed_item.item_id() != item.item_id() {
+                        replaces_existing_item_in_pane = true;
                     }
                 }
 
@@ -1341,7 +1349,11 @@ impl Pane {
             }
         }
 
-        cx.emit(Event::AddItem { item });
+        // only new adds or replaced items should be treated as "added". treating existing items as "added" would cause listeners
+        // like markdown auto preview to treat a pane move as a new item / fresh open.
+        if existing_item_index.is_none() || replaces_existing_item_in_pane {
+            cx.emit(Event::AddItem { item: item.clone() });
+        }
     }
 
     pub fn add_item(
@@ -2600,6 +2612,30 @@ impl Pane {
         &self.toolbar
     }
 
+    pub fn remove_navigation_history_paths(
+        &mut self,
+        project_paths: &HashSet<ProjectPath>,
+        cx: &mut Context<Self>,
+    ) {
+        let open_item_ids = self
+            .items
+            .iter()
+            .map(|item| item.item_id())
+            .collect::<HashSet<_>>();
+        let mut item_ids = HashSet::default();
+        self.nav_history
+            .for_each_entry(cx, &mut |entry, (path, _)| {
+                if project_paths.contains(&path) && !open_item_ids.contains(&entry.item.id()) {
+                    item_ids.insert(entry.item.id());
+                }
+            });
+        if item_ids.is_empty() {
+            return;
+        }
+        self.nav_history.remove_items(&item_ids);
+        self.history_updated(cx);
+    }
+
     pub fn handle_deleted_project_item(
         &mut self,
         entry_id: ProjectEntryId,
@@ -2905,6 +2941,7 @@ impl Pane {
         let has_file_icon = icon.is_some();
 
         let capability = item.capability(cx);
+        let can_toggle_read_only = item.read_only_toggle_buffer(cx).is_some();
         let tab = Tab::new(ix)
             .position(if is_first_item {
                 TabPosition::First
@@ -3056,7 +3093,7 @@ impl Pane {
                     .gap_1()
                     .children(if let Some(icon) = icon {
                         Some(icon)
-                    } else if !capability.editable() {
+                    } else if can_toggle_read_only && !capability.editable() {
                         Some(read_only_toggle(capability == Capability::Read).into_any_element())
                     } else {
                         None
@@ -3078,9 +3115,10 @@ impl Pane {
                         }
                         None => this,
                     })
-                    .when(capability == Capability::Read && has_file_icon, |this| {
-                        this.child(read_only_toggle(true))
-                    }),
+                    .when(
+                        can_toggle_read_only && capability == Capability::Read && has_file_icon,
+                        |this| this.child(read_only_toggle(true)),
+                    ),
             );
 
         let single_entry_to_resolve = (self.items[ix].buffer_kind(cx) == ItemBufferKind::Singleton)
@@ -3249,7 +3287,7 @@ impl Pane {
                             })
                         };
 
-                        if capability != Capability::ReadOnly {
+                        if can_toggle_read_only && capability != Capability::ReadOnly {
                             let read_only_label = if capability.editable() {
                                 "Make Tab Read-Only"
                             } else {
@@ -3687,7 +3725,7 @@ impl Pane {
             .overflow_x_scroll()
             .w_full()
             .track_scroll(&self.tab_bar_scroll_handle)
-            .on_scroll_wheel(cx.listener(|this, _, _, _| {
+            .on_scroll(cx.listener(|this, _, _, _| {
                 this.suppress_scroll = true;
             }))
             .children(unpinned_tabs)
@@ -4408,7 +4446,7 @@ impl Focusable for Pane {
 
 impl Render for Pane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("Pane");
         if self.active_item().is_none() {
             key_context.add("EmptyPane");
@@ -4774,6 +4812,20 @@ impl ItemNavHistory {
     pub fn pop_forward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
         self.history.pop(NavigationMode::GoingForward, cx)
     }
+
+    pub(crate) fn push_path(
+        &mut self,
+        project_path: ProjectPath,
+        absolute_path: PathBuf,
+        cx: &mut App,
+    ) {
+        self.history
+            .0
+            .lock()
+            .paths_by_item
+            .insert(self.item.id(), (project_path, Some(absolute_path)));
+        self.push::<()>(None, None, cx);
+    }
 }
 
 impl NavHistory {
@@ -4939,18 +4991,15 @@ impl NavHistory {
     pub fn remove_item(&mut self, item_id: EntityId) {
         let mut state = self.0.lock();
         state.paths_by_item.remove(&item_id);
-        state
-            .backward_stack
-            .retain(|entry| entry.item.id() != item_id);
-        state
-            .forward_stack
-            .retain(|entry| entry.item.id() != item_id);
-        state
-            .closed_stack
-            .retain(|entry| entry.item.id() != item_id);
-        state
-            .tag_stack
-            .retain(|entry| entry.origin.item.id() != item_id && entry.target.item.id() != item_id);
+        state.retain_entries(|id| id != item_id);
+    }
+
+    pub fn remove_items(&mut self, item_ids: &HashSet<EntityId>) {
+        let mut state = self.0.lock();
+        for item_id in item_ids {
+            state.paths_by_item.remove(item_id);
+        }
+        state.retain_entries(|id| !item_ids.contains(&id));
     }
 
     pub fn rename_item(
@@ -5014,6 +5063,22 @@ impl NavHistoryState {
                 pane.update(cx, |pane, cx| pane.history_updated(cx));
             });
         }
+    }
+
+    fn retain_entries(&mut self, retain: impl Fn(EntityId) -> bool) {
+        self.backward_stack.retain(|entry| retain(entry.item.id()));
+        self.forward_stack.retain(|entry| retain(entry.item.id()));
+        self.closed_stack.retain(|entry| retain(entry.item.id()));
+        let old_position = self.tag_stack_pos;
+        let mut index = 0;
+        self.tag_stack.retain(|entry| {
+            let keep = retain(entry.origin.item.id()) && retain(entry.target.item.id());
+            if index < old_position && !keep {
+                self.tag_stack_pos -= 1;
+            }
+            index += 1;
+            keep
+        });
     }
 }
 
@@ -5155,6 +5220,162 @@ mod tests {
             }
             is_dragged_tab
         }
+    }
+
+    #[gpui::test]
+    async fn test_invalid_item_identity_deduplication(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(util::path!("/root"), serde_json::json!({ "file.bin": "" }))
+            .await;
+        let project = Project::test(fs, [util::path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let mut original_item_id = None;
+
+        for replace_identity in [false, false, true] {
+            if replace_identity {
+                project.update(cx, |project, cx| {
+                    let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+                    project.remove_worktree(worktree_id, cx);
+                });
+                project
+                    .update(cx, |project, cx| {
+                        project.find_or_create_worktree(util::path!("/root"), true, cx)
+                    })
+                    .await
+                    .unwrap();
+            }
+
+            let (item, expected_item_id, project_path) = pane.update_in(cx, |pane, window, cx| {
+                let absolute_path = util::path!("/root/file.bin").as_ref();
+                let (worktree, path) = project.read(cx).find_worktree(absolute_path, cx).unwrap();
+                let project_path = ProjectPath {
+                    worktree_id: worktree.read(cx).id(),
+                    path,
+                };
+                let new_item = cx.new(|cx| {
+                    InvalidItemView::new(
+                        absolute_path,
+                        true,
+                        &anyhow::anyhow!("binary file"),
+                        window,
+                        cx,
+                    )
+                    .with_project_path(worktree, project_path.clone())
+                });
+                let expected_item_id = if replace_identity {
+                    new_item.entity_id()
+                } else {
+                    *original_item_id.get_or_insert(new_item.entity_id())
+                };
+                let item = pane.open_item(
+                    None,
+                    project_path.clone(),
+                    true,
+                    false,
+                    true,
+                    None,
+                    window,
+                    cx,
+                    Box::new(move |_, _, _| new_item.boxed_clone()),
+                );
+                (item, expected_item_id, project_path)
+            });
+            assert_eq!(item.item_id(), expected_item_id);
+            cx.run_until_parked();
+            pane.read_with(cx, |pane, cx| {
+                assert_eq!(
+                    pane.items().map(|item| item.item_id()).collect::<Vec<_>>(),
+                    vec![expected_item_id],
+                );
+                assert_eq!(
+                    pane.active_item().unwrap().project_path(cx),
+                    Some(project_path)
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_remove_navigation_history_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let [live, first_removed, second_removed, retained] = std::array::from_fn(|index| {
+            cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(
+                    index as u64,
+                    &format!("{index}.rs"),
+                    cx,
+                )])
+            })
+        });
+        pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(live.clone()), false, false, None, window, cx);
+        });
+        let entry = |item: &Entity<TestItem>| NavigationEntry {
+            item: Arc::new(item.downgrade()),
+            data: None,
+            timestamp: 0,
+            is_preview: false,
+            row: None,
+        };
+        pane.update(cx, |pane, cx| {
+            {
+                let mut state = pane.nav_history.0.lock();
+                let items = [&live, &first_removed, &second_removed, &retained];
+                state.backward_stack = items.map(entry).into();
+                state.forward_stack = state.backward_stack.clone();
+                state.closed_stack = state.backward_stack.clone();
+                for item in items {
+                    state
+                        .paths_by_item
+                        .insert(item.entity_id(), (item.project_path(cx).unwrap(), None));
+                }
+            }
+            let history = pane.nav_history_mut();
+            history.push_tag(entry(&first_removed), entry(&second_removed));
+            history.push_tag(entry(&live), entry(&retained));
+            assert_eq!(
+                history.pop_tag(TagNavigationMode::Older).unwrap().item.id(),
+                live.entity_id()
+            );
+            let paths = [&live, &first_removed, &second_removed]
+                .map(|item| item.project_path(cx).unwrap())
+                .into_iter()
+                .collect::<HashSet<_>>();
+            pane.remove_navigation_history_paths(&paths, cx);
+            {
+                let state = pane.nav_history.0.lock();
+                for stack in [
+                    &state.backward_stack,
+                    &state.forward_stack,
+                    &state.closed_stack,
+                ] {
+                    assert_eq!(
+                        stack
+                            .iter()
+                            .map(|entry| entry.item.id())
+                            .collect::<Vec<_>>(),
+                        vec![live.entity_id(), retained.entity_id()]
+                    );
+                }
+                assert_eq!(state.paths_by_item.len(), 2);
+            }
+            assert_eq!(
+                pane.nav_history_mut()
+                    .pop_tag(TagNavigationMode::Newer)
+                    .unwrap()
+                    .item
+                    .id(),
+                retained.entity_id()
+            );
+        });
     }
 
     #[gpui::test]
@@ -7354,6 +7575,116 @@ mod tests {
             pane.add_item(a, false, false, None, window, cx);
         });
         assert_item_labels(&pane, ["A*", "B", "C"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_move_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let [first_item, _, _] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
+
+        let add_item_event_count = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&pane, {
+                let add_item_event_count = add_item_event_count.clone();
+                move |_pane, event: &Event, _cx| {
+                    if matches!(event, Event::AddItem { .. }) {
+                        add_item_event_count.set(add_item_event_count.get() + 1);
+                    }
+                }
+            })
+        });
+
+        pane.update_in(cx, |pane, window, cx| {
+            // move pane
+            pane.add_item(first_item, false, false, Some(1), window, cx)
+        });
+
+        assert_item_labels(&pane, ["B", "A*", "C"], cx);
+        assert_eq!(add_item_event_count.get(), 0);
+
+        add_labeled_item(&pane, "D", false, cx);
+        assert_eq!(add_item_event_count.get(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_move_item_to_different_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane1 = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let pane2 = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane1.clone(), SplitDirection::Right, window, cx)
+        });
+
+        let item_a = pane1.update_in(cx, |pane, window, cx| {
+            let item = Box::new(cx.new(|cx| {
+                TestItem::new(cx)
+                    .with_buffer_kind(ItemBufferKind::Singleton)
+                    .with_label("a")
+                    .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+            }));
+            pane.add_item(item.clone(), false, false, None, window, cx);
+            item
+        });
+
+        pane2.update_in(cx, |pane, window, cx| {
+            let item = Box::new(cx.new(|cx| {
+                TestItem::new(cx)
+                    .with_buffer_kind(ItemBufferKind::Singleton)
+                    .with_label("b")
+                    .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+            }));
+            pane.add_item(item.clone(), false, false, None, window, cx);
+            item
+        });
+
+        assert_item_labels(&pane1, ["a*"], cx);
+        assert_item_labels(&pane2, ["b*"], cx);
+
+        let add_item_event_count = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&pane2, {
+                let add_item_event_count = add_item_event_count.clone();
+                move |_pane, event: &Event, _cx| {
+                    if matches!(event, Event::AddItem { .. }) {
+                        add_item_event_count.set(add_item_event_count.get() + 1);
+                    }
+                }
+            })
+        });
+        workspace.update_in(cx, |_, window, cx| {
+            move_item(
+                &pane1,
+                &pane2,
+                item_a.clone().entity_id(),
+                2,
+                true,
+                window,
+                cx,
+            );
+        });
+
+        assert_item_labels(&pane1, [], cx);
+        assert_item_labels(&pane2, ["a*"], cx);
+
+        assert_eq!(add_item_event_count.get(), 1);
+
+        let pane_holding_item_a = workspace.read_with(cx, |workspace, _| {
+            let pane_id = workspace.pane_for_item_id(item_a.item_id()).unwrap();
+            pane_id
+        });
+        assert_eq!(pane_holding_item_a.entity_id(), pane2.entity_id());
     }
 
     #[gpui::test]

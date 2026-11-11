@@ -69,6 +69,15 @@ pub struct MockRemoteConnection {
     options: MockConnectionOptions,
     server_channel: Arc<ChannelClient>,
     server_cx: SendableCx,
+    message_interceptors: parking_lot::Mutex<Option<MessageInterceptors>>,
+    pub(crate) proxy_tx: parking_lot::Mutex<
+        Option<
+            mpsc::UnboundedSender<(
+                mpsc::UnboundedSender<Envelope>,
+                mpsc::UnboundedReceiver<Envelope>,
+            )>,
+        >,
+    >,
 }
 
 /// Wrapper to pass `AsyncApp` across thread boundaries in tests.
@@ -126,6 +135,26 @@ pub struct MockConnection;
 pub type ConnectGuard = oneshot::Sender<()>;
 
 impl MockConnection {
+    pub fn intercept_messages(
+        options: &RemoteConnectionOptions,
+        cx: &mut App,
+        client_to_server: impl Fn(&mut Envelope) + Send + Sync + 'static,
+        server_to_client: impl Fn(&mut Envelope) + Send + Sync + 'static,
+    ) {
+        let RemoteConnectionOptions::Mock(options) = options else {
+            panic!("message interception requires a mock connection");
+        };
+        let (_, connection) = cx
+            .global::<MockConnectionRegistry>()
+            .pending
+            .get(&options.id)
+            .expect("message interceptors must be installed before connecting");
+        *connection.message_interceptors.lock() = Some(MessageInterceptors {
+            client_to_server: Arc::new(client_to_server),
+            server_to_client: Arc::new(server_to_client),
+        });
+    }
+
     /// Creates a new mock connection pair for testing.
     ///
     /// This function:
@@ -172,6 +201,8 @@ impl MockConnection {
             options: opts.clone(),
             server_channel: server_client.clone(),
             server_cx: SendableCx::new(server_cx),
+            message_interceptors: parking_lot::Mutex::new(None),
+            proxy_tx: Default::default(),
         });
 
         let (tx, rx) = oneshot::channel();
@@ -184,6 +215,12 @@ impl MockConnection {
 
         (server_client.into(), tx)
     }
+}
+
+#[derive(Clone)]
+struct MessageInterceptors {
+    client_to_server: Arc<dyn Fn(&mut Envelope) + Send + Sync>,
+    server_to_client: Arc<dyn Fn(&mut Envelope) + Send + Sync>,
 }
 
 #[async_trait(?Send)]
@@ -203,10 +240,14 @@ impl RemoteConnection for MockRemoteConnection {
         env: &HashMap<String, String>,
         _working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
-        _interactive: Interactive,
+        interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let shell_program = program.unwrap_or_else(|| "sh".to_string());
         let mut shell_args = Vec::new();
+        match interactive {
+            Interactive::Yes => shell_args.push("-t".to_string()),
+            Interactive::No => shell_args.push("-T".to_string()),
+        }
         shell_args.push(shell_program);
         shell_args.extend(args.iter().cloned());
         Ok(CommandTemplate {
@@ -251,8 +292,10 @@ impl RemoteConnection for MockRemoteConnection {
     fn simulate_disconnect(&self, cx: &AsyncApp) {
         let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
         let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
-        self.server_channel
-            .reconnect(incoming_rx, outgoing_tx, &self.server_cx.get(cx));
+        drop(
+            self.server_channel
+                .reconnect(incoming_rx, outgoing_tx, &self.server_cx.get(cx)),
+        );
     }
 
     fn start_proxy(
@@ -265,29 +308,46 @@ impl RemoteConnection for MockRemoteConnection {
         _delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
+        if let Some(proxy_tx) = self.proxy_tx.lock().as_ref() {
+            proxy_tx
+                .unbounded_send((client_incoming_tx, client_outgoing_rx))
+                .unwrap();
+            return cx.background_spawn(async move {
+                let _connection_activity_tx = connection_activity_tx;
+                futures::future::pending().await
+            });
+        }
+
         let (mut server_incoming_tx, server_incoming_rx) = mpsc::unbounded::<Envelope>();
         let (server_outgoing_tx, mut server_outgoing_rx) = mpsc::unbounded::<Envelope>();
 
-        self.server_channel.reconnect(
+        drop(self.server_channel.reconnect(
             server_incoming_rx,
             server_outgoing_tx,
             &self.server_cx.get(cx),
-        );
+        ));
 
+        let message_interceptors = self.message_interceptors.lock().clone();
         cx.background_spawn(async move {
             loop {
                 select_biased! {
                     server_to_client = server_outgoing_rx.next().fuse() => {
-                        let Some(server_to_client) = server_to_client else {
+                        let Some(mut server_to_client) = server_to_client else {
                             return Ok(1)
                         };
+                        if let Some(interceptors) = &message_interceptors {
+                            (interceptors.server_to_client)(&mut server_to_client);
+                        }
                         connection_activity_tx.try_send(()).ok();
                         client_incoming_tx.send(server_to_client).await.ok();
                     }
                     client_to_server = client_outgoing_rx.next().fuse() => {
-                        let Some(client_to_server) = client_to_server else {
+                        let Some(mut client_to_server) = client_to_server else {
                             return Ok(1)
                         };
+                        if let Some(interceptors) = &message_interceptors {
+                            (interceptors.client_to_server)(&mut client_to_server);
+                        }
                         server_incoming_tx.send(client_to_server).await.ok();
                     }
                 }
