@@ -20734,6 +20734,7 @@ dependencies = [
  "collections",
  "command_palette",
  "gpui",
+ "project",
  "settings",
  "theme",
  "theme_settings",
