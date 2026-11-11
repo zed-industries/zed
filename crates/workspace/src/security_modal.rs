@@ -39,6 +39,7 @@ pub struct SecurityModal {
     focus_handle: FocusHandle,
     project_list_scroll_handle: ScrollHandle,
     trusted: Option<bool>,
+    restriction_inherited: bool,
     /// Editable trust scope shown inline with the checkbox when a single
     /// project is being prompted for; read-only until the checkbox is ticked.
     trust_path_input: Entity<InputField>,
@@ -65,6 +66,9 @@ impl ModalView for SecurityModal {
     }
 
     fn on_before_dismiss(&mut self, _: &mut Window, cx: &mut Context<Self>) -> DismissDecision {
+        if self.restriction_inherited {
+            return DismissDecision::Dismiss(true);
+        }
         match self.trusted {
             Some(false) => {
                 telemetry::event!("Open in Restricted", source = "Worktree Trust Modal");
@@ -328,6 +332,7 @@ impl SecurityModal {
             home_dir: None,
             _home_dir_task: task,
             trusted: None,
+            restriction_inherited: false,
             trust_path_input,
         };
         this.refresh_restricted_paths(cx);
@@ -463,7 +468,12 @@ impl SecurityModal {
         cx.emit(DismissEvent);
     }
 
-    pub(crate) fn stay_restricted_and_dismiss(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn dismiss_inherited_restriction(&mut self, cx: &mut Context<Self>) {
+        self.restriction_inherited = true;
+        self.dismiss(cx);
+    }
+
+    fn stay_restricted_and_dismiss(&mut self, cx: &mut Context<Self>) {
         self.trusted = Some(false);
         self.dismiss(cx);
     }

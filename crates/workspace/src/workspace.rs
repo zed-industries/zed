@@ -9467,7 +9467,7 @@ impl Workspace {
                     workspace.worktree_trust_prompt_check = None;
                     if let Some(security_modal) = workspace.active_modal::<SecurityModal>(cx) {
                         security_modal.update(cx, |security_modal, cx| {
-                            security_modal.stay_restricted_and_dismiss(cx);
+                            security_modal.dismiss_inherited_restriction(cx);
                         });
                     }
                 })
