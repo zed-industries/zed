@@ -36,6 +36,19 @@ pub use crate::settings::*;
 
 pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     language_model::set_credentials_read_gate::<SettingsStore>(ai_disabled, cx);
+    let mut initialized = false;
+    let mut initialize = move |cx: &mut App| {
+        if initialized || ai_disabled(cx) {
+            return;
+        }
+        initialized = true;
+        init_providers(user_store.clone(), client.clone(), cx);
+    };
+    initialize(cx);
+    cx.observe_global::<SettingsStore>(initialize).detach();
+}
+
+fn init_providers(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     let credentials_provider = client.credentials_provider();
     let registry = LanguageModelRegistry::global(cx);
     registry.update(cx, |registry, cx| {
@@ -119,6 +132,9 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
 
     let registry = registry.downgrade();
     cx.observe_global::<SettingsStore>(move |cx| {
+        if ai_disabled(cx) {
+            return;
+        }
         let Some(registry) = registry.upgrade() else {
             return;
         };
@@ -369,9 +385,10 @@ mod tests {
     use anyhow::Result;
     use clock::FakeSystemClock;
     use feature_flags::FeatureFlagAppExt as _;
-    use gpui::{AppContext as _, AsyncApp, BorrowAppContext as _};
+    use gpui::{AppContext as _, AsyncApp, BorrowAppContext as _, TestAppContext};
     use http_client::FakeHttpClient;
     use language_model::IconOrSvg;
+    use parking_lot::Mutex;
     use release_channel::AppVersion;
     use std::future::Future;
     use std::pin::Pin;
@@ -415,13 +432,150 @@ mod tests {
         release_channel::init_test(app_version, release_channel::ReleaseChannel::Dev, cx);
         gpui_tokio::init(cx);
         cx.update_flags(false, Vec::new());
+        <dyn fs::Fs>::set_global(fs::FakeFs::new(cx.background_executor().clone()), cx);
+        let credentials_provider: Arc<dyn CredentialsProvider> = Arc::new(FakeCredentialsProvider);
+        cx.set_global(zed_credentials_provider::ZedCredentialsProvider(
+            credentials_provider.clone(),
+        ));
 
         let client = Client::new(
             Arc::new(FakeSystemClock::new()),
             FakeHttpClient::with_404_response(),
             cx,
         );
-        (client, Arc::new(FakeCredentialsProvider))
+        (client, credentials_provider)
+    }
+
+    #[gpui::test]
+    fn test_disabled_ai_defers_provider_initialization(cx: &mut TestAppContext) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let registry = cx.update(|cx| {
+            let (client, _) = init_test(cx);
+            client.http_client().as_fake().replace_handler({
+                let requests = requests.clone();
+                move |handler, request| {
+                    requests.lock().push(request.uri().to_string());
+                    handler(request)
+                }
+            });
+            language_model::init(cx);
+            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+            client::RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.disable_ai = Some(true.into());
+                });
+            });
+            init(user_store, client, cx);
+            LanguageModelRegistry::global(cx)
+        });
+        cx.run_until_parked();
+        assert!(requests.lock().is_empty());
+        assert!(registry.read_with(cx, |registry, _| registry.providers().is_empty()));
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store
+                .set_user_settings(
+                    r#"{
+                        "disable_ai": true,
+                        "language_models": {
+                            "openai_compatible": {
+                                "custom-openai": {
+                                    "api_url": "https://example.com",
+                                    "available_models": []
+                                }
+                            },
+                            "anthropic_compatible": {
+                                "custom-anthropic": {
+                                    "api_url": "https://example.com",
+                                    "available_models": []
+                                }
+                            }
+                        }
+                    }"#,
+                    cx,
+                )
+                .expect("failed to parse provider settings");
+        });
+        cx.run_until_parked();
+        assert!(requests.lock().is_empty());
+        assert!(registry.read_with(cx, |registry, _| registry.providers().is_empty()));
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        cx.run_until_parked();
+
+        let providers = registry.read_with(cx, |registry, _| registry.providers());
+        for provider_id in ["lmstudio", "llama.cpp", "custom-openai", "custom-anthropic"] {
+            assert!(
+                providers
+                    .iter()
+                    .any(|provider| provider.id().0.as_ref() == provider_id),
+                "{provider_id} should be registered after enabling AI"
+            );
+        }
+        for url in [
+            "http://localhost:1234/api/v0/models",
+            "http://localhost:8080/v1/models",
+        ] {
+            assert!(
+                requests.lock().iter().any(|request| request == url),
+                "model discovery should request {url} after enabling AI"
+            );
+        }
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
+        });
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        cx.run_until_parked();
+
+        registry.read_with(cx, |registry, _| {
+            let current_providers = registry.providers();
+            assert_eq!(current_providers.len(), providers.len());
+            for provider in providers {
+                assert!(
+                    current_providers
+                        .iter()
+                        .any(|current| Arc::ptr_eq(&provider, current)),
+                    "{} should not be reinitialized on settings changes",
+                    provider.id()
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_enabled_ai_initializes_providers_immediately(cx: &mut App) {
+        let (client, _) = init_test(cx);
+        language_model::init(cx);
+        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        client::RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
+
+        init(user_store, client, cx);
+
+        let registry = LanguageModelRegistry::read_global(cx);
+        assert!(
+            registry
+                .providers()
+                .iter()
+                .any(|provider| provider.id().0.as_ref() == "lmstudio")
+        );
+        assert!(
+            registry
+                .providers()
+                .iter()
+                .any(|provider| provider.id().0.as_ref() == "llama.cpp")
+        );
     }
 
     fn update_compatible_provider_settings(

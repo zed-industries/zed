@@ -77,11 +77,13 @@ cloud_llm_client.workspace = true
 credentials_provider = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 feature_flags.workspace = true
+fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+zed_credentials_provider.workspace = true
 
 [package.metadata.cargo-shear]
 ignored = ["component"]
