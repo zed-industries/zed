@@ -2,15 +2,28 @@ mod matcher;
 mod paths;
 mod strings;
 
+use std::{
+    num::NonZeroUsize,
+    sync::atomic::{self, AtomicBool},
+};
+
 use fuzzy::CharBag;
 use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 
 pub use paths::{
-    PathMatch, PathMatchCandidate, PathMatchCandidateSet, match_fixed_path_set, match_path_sets,
+    PathMatch, PathMatchCandidate, PathMatchCandidateSet, PathMatchOptions, match_fixed_path_set,
+    match_path_sets,
 };
-pub use strings::{StringMatch, StringMatchCandidate, match_strings, match_strings_async};
+pub use strings::{
+    StringMatch, StringMatchCandidate, StringMatchOptions, match_strings, match_strings_async,
+};
 
 pub(crate) struct Cancelled;
+
+#[inline]
+pub(crate) fn is_cancelled(cancel_flag: Option<&AtomicBool>, ordering: atomic::Ordering) -> bool {
+    cancel_flag.is_some_and(|flag| flag.load(ordering))
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Case {
@@ -29,6 +42,29 @@ impl Case {
 
     pub fn is_smart(self) -> bool {
         matches!(self, Self::Smart)
+    }
+}
+
+/// How many of the best matches to return.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum MaxResults {
+    /// Every match.
+    #[default]
+    All,
+    /// At most this many.
+    Limit(NonZeroUsize),
+}
+
+impl MaxResults {
+    pub const fn limit<const LIMIT: usize>() -> Self {
+        Self::Limit(const { NonZeroUsize::new(LIMIT).expect("limit must be non-zero") })
+    }
+
+    pub(crate) fn resolve(self, candidate_count: usize) -> usize {
+        match self {
+            Self::All => candidate_count,
+            Self::Limit(limit) => limit.get().min(candidate_count),
+        }
     }
 }
 

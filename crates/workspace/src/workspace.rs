@@ -68,6 +68,7 @@ use gpui::{
     transparent_black,
 };
 pub use history_manager::*;
+use invalid_item_view::InvalidItemView;
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
@@ -903,7 +904,11 @@ fn prompt_and_open_paths(
                         workspace,
                         app_state,
                         options,
-                        create_new_window,
+                        if create_new_window {
+                            OpenPathPromptMode::NewWindow
+                        } else {
+                            OpenPathPromptMode::CurrentWindow
+                        },
                         window,
                         cx,
                     );
@@ -930,7 +935,7 @@ fn prompt_and_open_paths(
                         workspace,
                         app_state,
                         options,
-                        create_new_window,
+                        OpenPathPromptMode::SelectPath,
                         window,
                         cx,
                     );
@@ -946,40 +951,91 @@ pub fn prompt_for_open_path_and_open(
     workspace: &mut Workspace,
     app_state: Arc<AppState>,
     options: PathPromptOptions,
-    create_new_window: bool,
+    mode: OpenPathPromptMode,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     let paths = workspace.prompt_for_open_path(
         options,
         DirectoryLister::Local(workspace.project().clone(), app_state.fs.clone()),
+        mode,
         window,
         cx,
     );
     let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>();
-    cx.spawn_in(window, async move |this, cx| {
-        let Some(paths) = paths.await.log_err().flatten() else {
+    cx.spawn_in(window, async move |workspace, cx| {
+        let Some(OpenPathPromptResult {
+            paths,
+            open_in_new_window,
+        }) = paths.await.log_err().flatten()
+        else {
             return;
         };
-        if !create_new_window {
+        if !open_in_new_window {
+            let is_local = workspace
+                .read_with(cx, |workspace, cx| workspace.project().read(cx).is_local())
+                .unwrap_or(false);
+            if is_local
+                && !futures::future::join_all(paths.iter().map(|path| app_state.fs.is_dir(path)))
+                    .await
+                    .into_iter()
+                    .any(|is_directory| is_directory)
+            {
+                let Ok(task) = workspace.update_in(cx, |workspace, window, cx| {
+                    let visible = if workspace
+                        .project()
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .next()
+                        .is_none()
+                    {
+                        OpenVisible::All
+                    } else {
+                        OpenVisible::None
+                    };
+                    workspace.open_paths(
+                        paths,
+                        OpenOptions {
+                            visible: Some(visible),
+                            ..OpenOptions::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                }) else {
+                    return;
+                };
+                for result in task.await.into_iter().flatten() {
+                    if let Err(error) = result {
+                        workspace
+                            .update(cx, |workspace, cx| workspace.show_error(error, cx))
+                            .ok();
+                    }
+                }
+                return;
+            }
             if let Some(handle) = multi_workspace_handle {
-                if let Some(task) = handle
-                    .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.open_project(paths, OpenMode::Activate, window, cx)
-                    })
-                    .log_err()
-                {
+                if let Ok(task) = handle.update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.open_project(paths, OpenMode::Activate, window, cx)
+                }) {
                     task.await.log_err();
                 }
                 return;
             }
         }
-        if let Some(task) = this
-            .update_in(cx, |this, window, cx| {
-                this.open_workspace_for_paths(OpenMode::NewWindow, paths, window, cx)
-            })
-            .log_err()
-        {
+        if let Ok(task) = workspace.update_in(cx, |_, _, cx| {
+            open_paths(
+                &paths,
+                app_state,
+                OpenOptions {
+                    open_mode: OpenMode::NewWindow,
+                    workspace_matching: WorkspaceMatching::None,
+                    ..OpenOptions::default()
+                },
+                cx,
+            )
+        }) {
             task.await.log_err();
         }
     })
@@ -1026,7 +1082,8 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                     multiple: true,
                     prompt: None,
                 },
-                true,
+                WorkspaceSettings::get_global(cx).default_open_behavior
+                    == DefaultOpenBehavior::NewWindow,
                 cx,
             );
         });
@@ -1068,6 +1125,7 @@ impl ProjectItemRegistry {
                     .is_some_and(|entry| entry.is_file());
                 let entry_abs_path = project.read(cx).absolute_path(&project_path, cx);
                 let is_local = project.read(cx).is_local();
+                let worktree = project.read(cx).worktree_for_id(project_path.worktree_id, cx);
                 let project_item =
                     <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
                 let project = project.clone();
@@ -1110,6 +1168,11 @@ impl ProjectItemRegistry {
                                             )
                                         })?
                                     {
+                                        let broken_project_item_view = if let Some(worktree) = worktree {
+                                            broken_project_item_view.with_project_path(worktree, project_path)
+                                        } else {
+                                            broken_project_item_view
+                                        };
                                         let build_workspace_item = Box::new(
                                             move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
                                                 cx.new(|_| broken_project_item_view).boxed_clone()
@@ -1535,6 +1598,19 @@ pub enum OpenVisible {
     OnlyDirectories,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum OpenPathPromptMode {
+    SelectPath,
+    CurrentWindow,
+    NewWindow,
+}
+
+#[derive(Debug)]
+pub struct OpenPathPromptResult {
+    pub paths: Vec<PathBuf>,
+    pub open_in_new_window: bool,
+}
+
 enum WorkspaceLocation {
     // Valid local paths or SSH project to serialize
     Location(SerializedWorkspaceLocation, PathList),
@@ -1556,9 +1632,10 @@ type PromptForOpenPath = Box<
     dyn Fn(
         &mut Workspace,
         DirectoryLister,
+        OpenPathPromptMode,
         &mut Window,
         &mut Context<Workspace>,
-    ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
+    ) -> oneshot::Receiver<Option<OpenPathPromptResult>>,
 >;
 
 #[derive(Default)]
@@ -2166,6 +2243,10 @@ impl Workspace {
         open_mode: OpenMode,
         cx: &mut App,
     ) -> Task<anyhow::Result<OpenResult>> {
+        #[cfg(target_os = "windows")]
+        let wsl_path = abs_paths
+            .iter()
+            .find_map(|path| util::paths::WslPath::from_path(path));
         let project_handle = Project::local(
             app_state.client.clone(),
             app_state.node_runtime.clone(),
@@ -2361,6 +2442,10 @@ impl Workspace {
                 };
 
             notify_if_database_failed(window, cx);
+            #[cfg(target_os = "windows")]
+            if let Some(wsl_path) = wsl_path {
+                workspace.update(cx, |workspace, cx| workspace.notify_wsl_path(wsl_path, cx));
+            }
             // Check if this is an empty workspace (no paths to open)
             // An empty workspace is one where project_paths is empty
             let is_empty_workspace = project_paths.is_empty();
@@ -3470,21 +3555,30 @@ impl Workspace {
 
     pub fn prompt_for_open_path(
         &mut self,
-        path_prompt_options: PathPromptOptions,
+        mut path_prompt_options: PathPromptOptions,
         lister: DirectoryLister,
+        mode: OpenPathPromptMode,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+    ) -> oneshot::Receiver<Option<OpenPathPromptResult>> {
         // TODO: If `on_prompt_for_open_path` is set, we should always use it
         // rather than gating on `use_system_path_prompts`. This would let tests
         // inject a mock without also having to disable the setting.
         if !lister.is_local(cx) || !WorkspaceSettings::get_global(cx).use_system_path_prompts {
             let prompt = self.on_prompt_for_open_path.take().unwrap();
-            let rx = prompt(self, lister, window, cx);
+            let rx = prompt(self, lister, mode, window, cx);
             self.on_prompt_for_open_path = Some(prompt);
             rx
         } else {
             let (tx, rx) = oneshot::channel();
+            if path_prompt_options.prompt.is_none() {
+                path_prompt_options.prompt = match mode {
+                    OpenPathPromptMode::SelectPath => None,
+                    OpenPathPromptMode::CurrentWindow => Some("Open in This Window"),
+                    OpenPathPromptMode::NewWindow => Some("Open in New Window"),
+                }
+                .map(SharedString::from);
+            }
             let abs_path = cx.prompt_for_paths(path_prompt_options);
 
             cx.spawn_in(window, async move |workspace, cx| {
@@ -3494,14 +3588,18 @@ impl Workspace {
 
                 match result {
                     Ok(result) => {
-                        tx.send(result).ok();
+                        tx.send(result.map(|paths| OpenPathPromptResult {
+                            paths,
+                            open_in_new_window: mode == OpenPathPromptMode::NewWindow,
+                        }))
+                        .ok();
                     }
                     Err(err) => {
                         let rx = workspace.update_in(cx, |workspace, window, cx| {
                             workspace
                                 .show_error(workspace_error::PortalError::new(err.to_string()), cx);
                             let prompt = workspace.on_prompt_for_open_path.take().unwrap();
-                            let rx = prompt(workspace, lister, window, cx);
+                            let rx = prompt(workspace, lister, mode, window, cx);
                             workspace.on_prompt_for_open_path = Some(prompt);
                             rx
                         })?;
@@ -4122,6 +4220,14 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>> {
+        #[cfg(target_os = "windows")]
+        if self.project.read(cx).is_local()
+            && let Some(wsl_path) = abs_paths
+                .iter()
+                .find_map(|path| util::paths::WslPath::from_path(path))
+        {
+            self.notify_wsl_path(wsl_path, cx);
+        }
         let fs = self.app_state.fs.clone();
 
         let caller_ordered_abs_paths = abs_paths.clone();
@@ -4350,15 +4456,16 @@ impl Workspace {
                 prompt: None,
             },
             DirectoryLister::Project(self.project.clone()),
+            OpenPathPromptMode::SelectPath,
             window,
             cx,
         );
         cx.spawn_in(window, async move |this, cx| {
-            if let Some(paths) = paths.await.log_err().flatten() {
+            if let Some(result) = paths.await.log_err().flatten() {
                 let results = this
                     .update_in(cx, |this, window, cx| {
                         this.open_paths(
-                            paths,
+                            result.paths,
                             OpenOptions {
                                 visible: Some(OpenVisible::All),
                                 ..Default::default()
@@ -6353,6 +6460,9 @@ impl Workspace {
                 if item
                     .project_path(cx)
                     .is_some_and(|path| self.is_deleted_history_path(&path, cx))
+                    || item
+                        .downcast::<InvalidItemView>()
+                        .is_some_and(|view| view.read(cx).has_deleted_file(cx))
                 {
                     pane.update(cx, |pane, _| {
                         pane.nav_history_mut().remove_item(item.item_id())
@@ -7822,6 +7932,30 @@ impl Workspace {
             .visible_worktrees(cx)
             .map(|worktree| worktree.read(cx).abs_path())
             .collect::<Vec<_>>()
+    }
+
+    #[cfg(target_os = "windows")]
+    fn notify_wsl_path(&mut self, wsl_path: util::paths::WslPath, cx: &mut Context<Self>) {
+        struct OpenInWsl;
+        let util::paths::WslPath { distro, path } = wsl_path;
+        self.show_notification(NotificationId::unique::<OpenInWsl>(), cx, move |cx| {
+            let display_path = util::markdown::MarkdownInlineCode(&path.to_string_lossy());
+            let msg = format!("{display_path} is inside a WSL filesystem, some features may not work unless you open it with WSL remote");
+            cx.new(move |cx| {
+                MessageNotification::new(msg, cx)
+                    .primary_message("Open in WSL")
+                    .primary_icon(IconName::FolderOpen)
+                    .primary_on_click(move |window, cx| {
+                        window.dispatch_action(Box::new(remote::OpenWslPath {
+                            distro: remote::WslConnectionOptions {
+                                distro_name: distro.clone(),
+                                user: None,
+                            },
+                            paths: vec![path.clone().into()],
+                        }), cx)
+                    })
+            })
+        });
     }
 
     fn remove_panes(&mut self, member: Member, window: &mut Window, cx: &mut Context<Workspace>) {
@@ -11115,7 +11249,11 @@ pub fn workspace_windows_for_location<'a>(
         })
 }
 
-fn preferred_target_for_files(host: &ProjectHost<'_>, cx: &App) -> Option<WorkspaceOpenTarget> {
+fn preferred_workspace_target(
+    host: &ProjectHost<'_>,
+    visible: OpenVisible,
+    cx: &App,
+) -> Option<WorkspaceOpenTarget> {
     let target_for_window = |window: WindowHandle<MultiWorkspace>| {
         let multi_workspace = window.read(cx).ok()?;
         let active_workspace = multi_workspace.workspace();
@@ -11134,7 +11272,7 @@ fn preferred_target_for_files(host: &ProjectHost<'_>, cx: &App) -> Option<Worksp
         Some(WorkspaceOpenTarget {
             window,
             workspace: workspace.clone(),
-            visible: OpenVisible::None,
+            visible: visible.clone(),
         })
     };
 
@@ -11164,6 +11302,7 @@ pub fn find_existing_workspace(
     cx.update(|cx| {
         let mut existing = None;
         let mut best_match = None;
+        let active_window = cx.active_window();
 
         if open_options.workspace_matching != WorkspaceMatching::None {
             for window in cx
@@ -11172,7 +11311,12 @@ pub fn find_existing_workspace(
                 .filter_map(|window| window.downcast::<MultiWorkspace>())
             {
                 if let Ok(multi_workspace) = window.read(cx) {
-                    for workspace in multi_workspace.workspaces() {
+                    let active_workspace = multi_workspace.workspace();
+                    for workspace in std::iter::once(active_workspace).chain(
+                        multi_workspace
+                            .workspaces()
+                            .filter(|workspace| *workspace != active_workspace),
+                    ) {
                         let workspace_ref = workspace.read(cx);
                         let project = workspace_ref.project.read(cx);
 
@@ -11193,25 +11337,24 @@ pub fn find_existing_workspace(
                             }
                         };
 
-                        if visibility > best_match {
+                        let match_priority = visibility
+                            .map(|visible| (visible, Some(window.into()) == active_window));
+                        if match_priority > best_match {
                             existing = Some(WorkspaceOpenTarget {
                                 window,
                                 workspace: workspace.clone(),
                                 visible: OpenVisible::All,
                             });
-                            best_match = visibility;
-                        } else if best_match.is_none()
-                            && open_options.workspace_matching
-                                == WorkspaceMatching::MatchSubdirectory
-                        {
-                            existing = Some(WorkspaceOpenTarget {
-                                window,
-                                workspace: workspace.clone(),
-                                visible: OpenVisible::All,
-                            });
+                            best_match = match_priority;
                         }
                     }
                 }
+            }
+
+            if existing.is_none()
+                && open_options.workspace_matching == WorkspaceMatching::MatchSubdirectory
+            {
+                existing = preferred_workspace_target(host, OpenVisible::All, cx);
             }
 
             let all_paths_are_files = existing.as_ref().is_some_and(|target| {
@@ -11240,7 +11383,7 @@ pub fn find_existing_workspace(
             });
 
             if open_options.wait && existing.is_some() && all_paths_are_files {
-                existing = preferred_target_for_files(host, cx).or(existing);
+                existing = preferred_workspace_target(host, OpenVisible::None, cx).or(existing);
             }
         }
 
@@ -11261,10 +11404,8 @@ pub enum WorkspaceMatching {
     /// worktree roots themselves.
     MatchSubpaths,
     /// Match paths against existing worktrees including subdirectories, and
-    /// fall back to any existing window if no worktree matched.
-    ///
-    /// For example, `zed -a foo/bar` will activate the `bar` workspace if it
-    /// exists, otherwise it will open a new window with `foo/bar` as the root.
+    /// fall back to a workspace on the requested host if none match, preferring
+    /// the focused window and its active workspace.
     MatchSubdirectory,
 }
 
@@ -11440,10 +11581,6 @@ pub fn open_paths(
     cx: &mut App,
 ) -> Task<anyhow::Result<OpenResult>> {
     let abs_paths = abs_paths.to_vec();
-    #[cfg(target_os = "windows")]
-    let wsl_path = abs_paths
-        .iter()
-        .find_map(|p| util::paths::WslPath::from_path(p));
 
     cx.spawn(async move |cx| {
         let mut reuse_target =
@@ -11462,7 +11599,9 @@ pub fn open_paths(
 
             if all_metadatas.into_iter().all(|file| !file.is_dir) {
                 reuse_target = cx
-                    .update(|cx| preferred_target_for_files(&ProjectHost::Local, cx))
+                    .update(|cx| {
+                        preferred_workspace_target(&ProjectHost::Local, OpenVisible::None, cx)
+                    })
                     .or(reuse_target);
             }
         }
@@ -11514,11 +11653,12 @@ pub fn open_paths(
 
         let open_in_dev_container = open_options.open_in_dev_container;
 
-        let result = if let Some(WorkspaceOpenTarget {
+        if let Some(WorkspaceOpenTarget {
             window: target_window,
             workspace: target_workspace,
             visible: open_visible,
-        }) = reuse_target {
+        }) = reuse_target
+        {
             let open_task = target_window
                 .update(cx, |multi_workspace, window, cx| {
                     window.activate_window();
@@ -11552,12 +11692,23 @@ pub fn open_paths(
                 });
             });
 
-            Ok(OpenResult { window: target_window, workspace: target_workspace, opened_items: open_task })
+            Ok(OpenResult {
+                window: target_window,
+                workspace: target_workspace,
+                opened_items: open_task,
+            })
         } else {
             let init = if open_in_dev_container {
-                Some(Box::new(|workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>| {
-                    workspace.set_open_in_dev_container(true);
-                }) as Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>)
+                Some(Box::new(
+                    |workspace: &mut Workspace,
+                     _window: &mut Window,
+                     _cx: &mut Context<Workspace>| {
+                        workspace.set_open_in_dev_container(true);
+                    },
+                )
+                    as Box<
+                        dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send,
+                    >)
             } else {
                 None
             };
@@ -11576,7 +11727,8 @@ pub fn open_paths(
                 .await;
 
             if let Ok(ref result) = result {
-                result.window
+                result
+                    .window
                     .update(cx, |_, window, _cx| {
                         window.activate_window();
                     })
@@ -11584,40 +11736,7 @@ pub fn open_paths(
             }
 
             result
-        };
-
-        #[cfg(target_os = "windows")]
-        if let Some(util::paths::WslPath{distro, path}) = wsl_path
-            && let Ok(ref result) = result
-        {
-            result.window
-                .update(cx, move |multi_workspace, _window, cx| {
-                    struct OpenInWsl;
-                    let workspace = multi_workspace.workspace().clone();
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.show_notification(NotificationId::unique::<OpenInWsl>(), cx, move |cx| {
-                            let display_path = util::markdown::MarkdownInlineCode(&path.to_string_lossy());
-                            let msg = format!("{display_path} is inside a WSL filesystem, some features may not work unless you open it with WSL remote");
-                            cx.new(move |cx| {
-                                MessageNotification::new(msg, cx)
-                                    .primary_message("Open in WSL")
-                                    .primary_icon(IconName::FolderOpen)
-                                    .primary_on_click(move |window, cx| {
-                                        window.dispatch_action(Box::new(remote::OpenWslPath {
-                                                distro: remote::WslConnectionOptions {
-                                                        distro_name: distro.clone(),
-                                                    user: None,
-                                                },
-                                                paths: vec![path.clone().into()],
-                                            }), cx)
-                                    })
-                            })
-                        });
-                    });
-                })
-                .unwrap();
-        };
-        result
+        }
     })
 }
 

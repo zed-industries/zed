@@ -108,6 +108,7 @@ pub async fn collect_compaction_result(
             | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
             | LanguageModelCompletionEvent::StartMessage { .. }
             | LanguageModelCompletionEvent::ReasoningDetails(_)
+            | LanguageModelCompletionEvent::InputTransformations(_)
             | LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started)
             | LanguageModelCompletionEvent::Compaction(CompactionUpdate::SummaryDelta(_)) => {}
         }
@@ -292,7 +293,11 @@ pub fn into_anthropic(
 ) -> Result<crate::Request> {
     let requires_adaptive_thinking = matches!(
         model.as_str(),
-        "claude-opus-5-5" | "claude-sonnet-5-5" | "claude-haiku-5-5"
+        "claude-fable-5-2"
+            | "claude-mythos-5-2"
+            | "claude-opus-5-5"
+            | "claude-sonnet-5-5"
+            | "claude-haiku-5-5"
     );
     let mode = if requires_adaptive_thinking {
         AnthropicModelMode::AdaptiveThinking
@@ -724,14 +729,20 @@ impl AnthropicEventMapper {
             }
             Event::MessageStart { message } => {
                 update_usage(&mut self.usage, &message.usage);
-                vec![
+                let mut events = vec![
                     Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
                         &self.usage,
                     ))),
                     Ok(LanguageModelCompletionEvent::StartMessage {
                         message_id: message.id,
                     }),
-                ]
+                ];
+                if !message.input_transformations.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::InputTransformations(
+                        message.input_transformations,
+                    )));
+                }
+                events
             }
             Event::MessageDelta { delta, usage } => {
                 update_usage(&mut self.usage, &usage);
@@ -1139,6 +1150,8 @@ mod tests {
         // its requests opt into dropping invalidated blocks instead. Models
         // without the prefix-binding check must not receive the beta field.
         for (model, expects_block_binding) in [
+            ("claude-fable-5-2", true),
+            ("claude-mythos-5-2", true),
             ("claude-opus-5-5", true),
             ("claude-fable-5-1", true),
             ("claude-fable-5", false),
@@ -1213,6 +1226,8 @@ mod tests {
         // outright, so those models must keep omitting the field.
         for (model, expects_explicit_opt_out) in [
             ("claude-opus-5", true),
+            ("claude-fable-5-2", false),
+            ("claude-mythos-5-2", false),
             ("claude-opus-5-5", false),
             ("claude-opus-4-8", false),
             ("claude-fable-5", false),
@@ -1267,7 +1282,10 @@ mod tests {
                     "{model} should omit the thinking field entirely"
                 );
             }
-            if model == "claude-opus-5-5" {
+            if matches!(
+                model,
+                "claude-opus-5-5" | "claude-fable-5-2" | "claude-mythos-5-2"
+            ) {
                 assert!(
                     anthropic_request.temperature.is_none(),
                     "{model} must omit temperature because adaptive thinking is always on"
@@ -1838,6 +1856,67 @@ mod tests {
             vec![LanguageModelCompletionEvent::Compaction(
                 CompactionUpdate::Failed
             )]
+        );
+    }
+
+    #[test]
+    fn test_event_mapper_preserves_all_input_transformations() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "message_start",
+            "message": {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "claude-fable-5-1",
+                "usage": { "input_tokens": 10, "output_tokens": 0 },
+                "input_transformations": [
+                    {
+                        "type": "thinking_dropped",
+                        "path": "messages.1.content.0",
+                        "reason": "prefix_binding_mismatch"
+                    },
+                    {
+                        "type": "thinking_mismatch_allowed",
+                        "path": "messages.3.content.0",
+                        "reason": "prefix_binding_mismatch"
+                    },
+                    {
+                        "type": "some_future_transformation",
+                        "path": "messages.5.content.0",
+                        "reason": "some_future_reason"
+                    }
+                ]
+            }
+        }))
+        .unwrap();
+
+        let events = mapper
+            .map_event(start_event)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(
+            events.last(),
+            Some(&LanguageModelCompletionEvent::InputTransformations(vec![
+                crate::InputTransformation {
+                    kind: "thinking_dropped".into(),
+                    path: "messages.1.content.0".into(),
+                    reason: "prefix_binding_mismatch".into(),
+                },
+                crate::InputTransformation {
+                    kind: "thinking_mismatch_allowed".into(),
+                    path: "messages.3.content.0".into(),
+                    reason: "prefix_binding_mismatch".into(),
+                },
+                crate::InputTransformation {
+                    kind: "some_future_transformation".into(),
+                    path: "messages.5.content.0".into(),
+                    reason: "some_future_reason".into(),
+                },
+            ]))
         );
     }
 

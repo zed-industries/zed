@@ -13,8 +13,8 @@ use std::{sync::Arc, time::Duration};
 
 use async_dispatcher::{Dispatcher, Runnable, set_dispatcher};
 use gpui::{App, PlatformDispatcher, Priority, RunnableMeta};
+pub use jupyter_protocol::ExecutionState;
 use project::Fs;
-pub use runtimelib::ExecutionState;
 
 pub use crate::jupyter_settings::JupyterSettings;
 pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus, PythonEnvKernelSpecification};
