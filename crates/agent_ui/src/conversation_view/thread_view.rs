@@ -6626,16 +6626,20 @@ impl ThreadView {
                         let enable_thinking = !thread.thinking_enabled();
                         thread.set_thinking_enabled(enable_thinking, cx);
 
-                        let favorite_key = thread
+                        let model_key = thread
                             .model()
                             .map(|model| (model.provider_id.0.to_string(), model.id.0.to_string()));
                         let fs = thread.project().read(cx).fs().clone();
                         update_settings_file(fs, cx, move |settings, _| {
                             if let Some(agent) = settings.agent.as_mut() {
-                                if let Some(default_model) = agent.default_model.as_mut() {
-                                    default_model.enable_thinking = enable_thinking;
-                                }
-                                if let Some((provider_id, model_id)) = &favorite_key {
+                                if let Some((provider_id, model_id)) = &model_key {
+                                    agent.update_default_model(
+                                        provider_id,
+                                        model_id,
+                                        |default_model| {
+                                            default_model.enable_thinking = enable_thinking
+                                        },
+                                    );
                                     agent.update_favorite_model(
                                         provider_id,
                                         model_id,
@@ -6767,7 +6771,7 @@ impl ThreadView {
                                                     cx,
                                                 );
 
-                                                let favorite_key = thread.model().map(|model| {
+                                                let model_key = thread.model().map(|model| {
                                                     (
                                                         model.provider_id().0.to_string(),
                                                         model.id().0.to_string(),
@@ -6776,15 +6780,17 @@ impl ThreadView {
                                                 let fs = thread.project().read(cx).fs().clone();
                                                 update_settings_file(fs, cx, move |settings, _| {
                                                     if let Some(agent) = settings.agent.as_mut() {
-                                                        if let Some(default_model) =
-                                                            agent.default_model.as_mut()
-                                                        {
-                                                            default_model.effort =
-                                                                Some(effort.to_string());
-                                                        }
                                                         if let Some((provider_id, model_id)) =
-                                                            &favorite_key
+                                                            &model_key
                                                         {
+                                                            agent.update_default_model(
+                                                                provider_id,
+                                                                model_id,
+                                                                |default_model| {
+                                                                    default_model.effort =
+                                                                        Some(effort.to_string())
+                                                                },
+                                                            );
                                                             agent.update_favorite_model(
                                                                 provider_id,
                                                                 model_id,
@@ -14021,16 +14027,16 @@ impl ThreadView {
         thread.update(cx, |thread, cx| {
             thread.set_speed(speed, cx);
 
-            let favorite_key = thread
+            let model_key = thread
                 .model()
                 .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
             let fs = thread.project().read(cx).fs().clone();
             update_settings_file(fs, cx, move |settings, _| {
                 if let Some(agent) = settings.agent.as_mut() {
-                    if let Some(default_model) = agent.default_model.as_mut() {
-                        default_model.speed = Some(speed);
-                    }
-                    if let Some((provider_id, model_id)) = &favorite_key {
+                    if let Some((provider_id, model_id)) = &model_key {
+                        agent.update_default_model(provider_id, model_id, |default_model| {
+                            default_model.speed = Some(speed)
+                        });
                         agent.update_favorite_model(provider_id, model_id, |favorite| {
                             favorite.speed = Some(speed)
                         });
@@ -14079,16 +14085,16 @@ impl ThreadView {
         thread.update(cx, |thread, cx| {
             thread.set_thinking_effort(Some(next_effort.clone()), cx);
 
-            let favorite_key = thread
+            let model_key = thread
                 .model()
                 .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
             let fs = thread.project().read(cx).fs().clone();
             update_settings_file(fs, cx, move |settings, _| {
                 if let Some(agent) = settings.agent.as_mut() {
-                    if let Some(default_model) = agent.default_model.as_mut() {
-                        default_model.effort = Some(next_effort.clone());
-                    }
-                    if let Some((provider_id, model_id)) = &favorite_key {
+                    if let Some((provider_id, model_id)) = &model_key {
+                        agent.update_default_model(provider_id, model_id, |default_model| {
+                            default_model.effort = Some(next_effort.clone())
+                        });
                         agent.update_favorite_model(provider_id, model_id, |favorite| {
                             favorite.effort = Some(next_effort)
                         });
