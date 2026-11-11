@@ -276,6 +276,13 @@
     "context": "AcpThread > ModeSelector",
     "bindings": {
       "cmd-enter": "menu::Confirm",
+      "shift-enter": "menu::Confirm",
+    },
+  },
+  {
+    "context": "AcpThread > Picker",
+    "bindings": {
+      "shift-enter": "menu::Confirm",
     },
   },
   {
