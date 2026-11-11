@@ -1158,31 +1158,34 @@ fn handle_v2_complete_elicitation(
     })
 }
 
+#[cfg(test)]
+fn set_acp_beta(enabled: bool, cx: &mut App) {
+    use gpui::UpdateGlobal as _;
+
+    cx.update_flags(
+        false,
+        if enabled {
+            vec!["acp-beta".into()]
+        } else {
+            vec![]
+        },
+    );
+    settings::SettingsStore::update_global(cx, |store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings
+                .feature_flags
+                .get_or_insert_default()
+                .insert("acp-beta".into(), if enabled { "on" } else { "off" }.into());
+        });
+    });
+    assert_eq!(cx.has_flag::<AcpBetaFeatureFlag>(), enabled);
+}
+
 #[cfg(all(test, unix))]
 mod selection_tests {
     use super::*;
-    use gpui::{TestAppContext, UpdateGlobal as _};
+    use gpui::TestAppContext;
     use serde_json::json;
-
-    pub(super) fn set_beta(enabled: bool, cx: &mut App) {
-        cx.update_flags(
-            false,
-            if enabled {
-                vec!["acp-beta".into()]
-            } else {
-                vec![]
-            },
-        );
-        settings::SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings
-                    .feature_flags
-                    .get_or_insert_default()
-                    .insert("acp-beta".into(), if enabled { "on" } else { "off" }.into());
-            });
-        });
-        assert_eq!(cx.has_flag::<AcpBetaFeatureFlag>(), enabled);
-    }
 
     #[gpui::test]
     async fn beta_selection_uses_fresh_v1_fallback_only_for_version_mismatch(
@@ -1262,7 +1265,7 @@ mod selection_tests {
             (true, "", true, None, "2"),
         ] {
             cx.update(|cx| {
-                set_beta(beta, cx);
+                set_acp_beta(beta, cx);
             });
             let trace = directory.path().join("connections");
             std::fs::write(&trace, "").expect("clear trace");
@@ -1326,7 +1329,7 @@ done
                     connection.clone().downcast::<AcpV2Connection>().is_some(),
                     v2
                 );
-                cx.update(|cx| set_beta(false, cx));
+                cx.update(|cx| set_acp_beta(false, cx));
                 assert_eq!(
                     connection.clone().downcast::<AcpV2Connection>().is_some(),
                     v2
@@ -1433,7 +1436,7 @@ done
             (true, true, true),
             (true, false, false),
         ] {
-            cx.update(|cx| set_beta(beta, cx));
+            cx.update(|cx| set_acp_beta(beta, cx));
             let command = AgentServerCommand {
                 path: "npx".into(),
                 args: vec![

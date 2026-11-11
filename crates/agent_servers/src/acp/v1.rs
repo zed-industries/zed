@@ -28,9 +28,7 @@ use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::channel::mpsc;
 use futures::future::Shared;
 use futures::{Future, FutureExt as _};
-use project::agent_server_store::{
-    AgentServerCommand, AgentServerStore, AllAgentServersSettings, CustomAgentServerSettings,
-};
+use project::agent_server_store::{AgentServerCommand, AgentServerStore, AllAgentServersSettings};
 use project::{AgentId, Project};
 use serde::Deserialize;
 use settings::{AgentConfigOptionValue, SettingsStore};
@@ -120,6 +118,26 @@ impl AcpConnectionDefaults {
         self.config_options.borrow().get(config_id).cloned()
     }
 
+    fn initial_config_options(&self) -> Vec<acp::InitialSessionConfigOption> {
+        let config_options = self.config_options.borrow();
+        let mut entries = config_options.iter().collect::<Vec<_>>();
+        entries.sort_by_key(|(config_id, _)| *config_id);
+        entries
+            .into_iter()
+            .map(|(config_id, value)| {
+                let value = match value {
+                    AgentConfigOptionValue::ValueId(value_id) => {
+                        acp::SessionConfigOptionValue::value_id(value_id.clone())
+                    }
+                    AgentConfigOptionValue::Boolean(value) => {
+                        acp::SessionConfigOptionValue::boolean(*value)
+                    }
+                };
+                acp::InitialSessionConfigOption::new(config_id.clone(), value)
+            })
+            .collect()
+    }
+
     fn set(
         &self,
         mode: Option<acp_v2::SessionConfigValueId>,
@@ -140,21 +158,11 @@ impl AcpConnectionDefaults {
             return;
         };
 
-        let default_config_options = match agent_settings {
-            CustomAgentServerSettings::Custom {
-                default_config_options,
-                ..
-            }
-            | CustomAgentServerSettings::Registry {
-                default_config_options,
-                ..
-            } => default_config_options.clone(),
-        };
         self.set(
             agent_settings
                 .default_mode()
                 .map(acp_v2::SessionConfigValueId::new),
-            default_config_options,
+            agent_settings.default_config_options().clone(),
         );
     }
 
@@ -913,6 +921,16 @@ impl AcpConnection {
         self.agent_capabilities.session_capabilities.close.is_some()
     }
 
+    /// `session/options` is still a draft, so Zed only uses it with the ACP beta flag.
+    fn agent_supports_initial_config_options(&self, cx: &App) -> bool {
+        cx.has_flag::<AcpBetaFeatureFlag>()
+            && self
+                .agent_capabilities
+                .session_capabilities
+                .options
+                .is_some()
+    }
+
     /// `rpc_call` gets a receiver that resolves once its response has been applied, and
     /// holds the agent's later messages until then (see `ordered_response`). With
     /// `replays_history`, the response ends a history replay.
@@ -1326,13 +1344,18 @@ impl AgentConnection for AcpConnection {
         };
         let name = self.id.0.clone();
         let mcp_servers = mcp_servers_for_project(&project, cx);
+        let sends_initial_config_options = self.agent_supports_initial_config_options(cx);
 
         cx.spawn(async move |cx| {
             let (response_sender, response_received) = futures::channel::oneshot::channel();
             let (registered, registration_finished) = futures::channel::oneshot::channel();
-            let request = self
-                .connection
-                .prepare_request(directories.into_new_session_request(mcp_servers));
+            let mut request = directories.into_new_session_request(mcp_servers);
+            if sends_initial_config_options {
+                // The default-application pass below still runs, so defaults the agent ignored
+                // here (for example, ones that depend on another option) get another chance.
+                request = request.config_options(self.defaults.initial_config_options());
+            }
+            let request = self.connection.prepare_request(request);
             let cancellation = request.cancellation_handle();
             request
                 .on_receiving_result({
@@ -6426,6 +6449,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn initial_config_options_are_sorted_and_typed() {
+        let defaults = AcpConnectionDefaults::new(
+            None,
+            HashMap::from_iter([
+                (
+                    "model".to_string(),
+                    AgentConfigOptionValue::ValueId("large".to_string()),
+                ),
+                ("fast".to_string(), AgentConfigOptionValue::Boolean(true)),
+            ]),
+        );
+        assert_eq!(
+            serde_json::to_value(defaults.initial_config_options()).expect("serialize"),
+            serde_json::json!([
+                {"configId": "fast", "type": "boolean", "value": true},
+                {"configId": "model", "value": "large"},
+            ])
+        );
+    }
+
     #[gpui::test]
     async fn settings_changes_refresh_active_connection_defaults(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
@@ -7307,7 +7351,7 @@ exec cat >/dev/null
         );
 
         for enabled in [false, true] {
-            cx.update(|cx| crate::acp::selection_tests::set_beta(enabled, cx));
+            cx.update(|cx| crate::acp::set_acp_beta(enabled, cx));
             let command = AgentServerCommand {
                 path: "/bin/sh".into(),
                 args: vec!["-c".into(), script.clone()],

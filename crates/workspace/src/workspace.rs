@@ -8103,6 +8103,7 @@ impl Workspace {
                 let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
                 let identity_paths_hint = self.project_group_key(cx).path_list().clone();
                 let recent_navigation_history = self.persisted_recent_navigation_history.clone();
+                let path_style = self.path_style(cx);
 
                 let serialized_workspace = SerializedWorkspace {
                     id: database_id,
@@ -8120,6 +8121,7 @@ impl Workspace {
                     window_id: Some(window.window_handle().window_id().as_u64()),
                     user_toolchains,
                     recent_navigation_history,
+                    path_style,
                 };
 
                 let db = WorkspaceDb::global(cx);
