@@ -1128,11 +1128,22 @@ impl DirectoryLister {
         project
             .visible_worktrees(cx)
             .next()
-            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().into_owned())
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                let abs_path = worktree.abs_path();
+                let directory = if worktree.root_entry().is_some_and(|entry| entry.is_file()) {
+                    path_style.parent(&abs_path).unwrap_or(&abs_path)
+                } else {
+                    &abs_path
+                };
+                directory.to_string_lossy().into_owned()
+            })
             .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned()))
-            .map(|mut s| {
-                s.push_str(path_style.primary_separator());
-                s
+            .map(|mut query| {
+                if !query.ends_with(path_style.separators_ch()) {
+                    query.push_str(path_style.primary_separator());
+                }
+                query
             })
             .unwrap_or_else(|| {
                 if path_style.is_windows() {
@@ -5272,6 +5283,40 @@ impl Project {
             })
         } else {
             Task::ready(None)
+        }
+    }
+
+    /// Like [`Self::resolve_abs_path`], but reports errors. Returns `None` for collab guests,
+    /// who can't check the host.
+    pub fn host_path_is_dir(
+        &self,
+        abs_path: &Path,
+        cx: &App,
+    ) -> Option<Task<Result<Option<bool>>>> {
+        if self.is_local() {
+            let fs = self.fs.clone();
+            let abs_path = abs_path.to_path_buf();
+            Some(cx.background_spawn(async move {
+                Ok(fs
+                    .metadata(&abs_path)
+                    .await?
+                    .map(|metadata| metadata.is_dir))
+            }))
+        } else if let Some(remote_client) = self.remote_client.as_ref() {
+            let request = remote_client
+                .read(cx)
+                .proto_client()
+                .request(proto::GetPathMetadata {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    path: abs_path.to_string_lossy().into_owned(),
+                    canonicalize: false,
+                });
+            Some(cx.background_spawn(async move {
+                let response = request.await?;
+                Ok(response.exists.then_some(response.is_dir))
+            }))
+        } else {
+            None
         }
     }
 

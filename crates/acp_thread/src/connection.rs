@@ -1,5 +1,5 @@
 use crate::{AcpThread, ElicitationStore, ReceiptSubmission};
-use agent_client_protocol::schema::{MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::{schema::MaybeUndefined, v1::schema as acp_v1, v2::schema as acp_v2};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
@@ -141,6 +141,12 @@ pub trait AgentConnection {
         false
     }
 
+    /// Whether cancelling a session's work answers its pending permission requests with
+    /// `cancelled` locally instead of waiting for the agent to cancel them.
+    fn answers_permission_requests_on_cancel(&self) -> bool {
+        true
+    }
+
     /// Whether conversation teardown should invoke `close_session`.
     /// The default preserves existing UI cleanup; backend-owned release hooks are separate.
     /// Autonomous backends can opt out without disabling explicit close support.
@@ -253,6 +259,32 @@ pub trait AgentConnection {
 
     /// Requests cancellation; success does not establish that execution stopped.
     fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Result<()>;
+
+    /// Asks the agent to stop one tool call. Success means the agent accepted the request;
+    /// the tool call's own updates report when it stops.
+    fn cancel_tool_call(
+        &self,
+        _session_id: &acp_v2::SessionId,
+        _tool_call_id: &acp_v2::ToolCallId,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Cancelling tool calls is not supported"
+        )))
+    }
+
+    /// Asks the agent to stop one terminal's process. Success means the agent accepted the
+    /// request; the terminal's exit status reports when it stops.
+    fn cancel_terminal(
+        &self,
+        _session_id: &acp_v2::SessionId,
+        _terminal_id: &acp_v2::TerminalId,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Cancelling terminals is not supported"
+        )))
+    }
 
     /// Request-scoped elicitations are connection-level because they can arrive before a session
     /// thread exists. Session-scoped elicitations stay in the thread timeline, but use
@@ -583,6 +615,13 @@ pub struct ProtocolErrorInfo<'a> {
 
 impl<'a> ProtocolErrorInfo<'a> {
     pub fn from_error(error: &'a anyhow::Error) -> Option<Self> {
+        if let Some(error) = error.downcast_ref::<agent_client_protocol::Error>() {
+            return Some(Self {
+                code: error.code.into(),
+                message: &error.message,
+                data: error.data.as_ref(),
+            });
+        }
         if let Some(error) = error.downcast_ref::<acp_v1::Error>() {
             return Some(Self {
                 code: error.code.into(),

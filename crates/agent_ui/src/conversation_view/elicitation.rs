@@ -1,5 +1,5 @@
 use acp_thread::{Elicitation, ElicitationEntryId, ElicitationStatus};
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use collections::{HashMap, HashSet};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use editor::Editor;

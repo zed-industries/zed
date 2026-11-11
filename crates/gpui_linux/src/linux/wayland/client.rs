@@ -41,6 +41,9 @@ use wayland_client::{
         wl_shm_pool, wl_surface,
     },
 };
+use wayland_protocols::ext::background_effect::v1::client::{
+    ext_background_effect_manager_v1, ext_background_effect_surface_v1,
+};
 use wayland_protocols::wp::pointer_gestures::zv1::client::{
     zwp_pointer_gesture_pinch_v1, zwp_pointer_gestures_v1,
 };
@@ -253,7 +256,9 @@ pub struct Globals {
         Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
-    pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
+    pub kde_blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
+    pub background_effects_manager:
+        Option<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>,
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
@@ -303,7 +308,8 @@ impl Globals {
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             layer_shell: globals.bind(&qh, 1..=5, ()).ok(),
-            blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            kde_blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            background_effects_manager: globals.bind(&qh, 1..=1, ()).ok(),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
             gesture_manager: globals.bind(&qh, 1..=3, ()).ok(),
             dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
@@ -1668,6 +1674,8 @@ delegate_noop!(WaylandClientStatePtr: ignore zxdg_decoration_manager_v1::ZxdgDec
 delegate_noop!(WaylandClientStatePtr: ignore zwlr_layer_shell_v1::ZwlrLayerShellV1);
 delegate_noop!(WaylandClientStatePtr: ignore xdg_positioner::XdgPositioner);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur_manager::OrgKdeKwinBlurManager);
+delegate_noop!(WaylandClientStatePtr: ignore ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1);
+delegate_noop!(WaylandClientStatePtr: ignore ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1);
 delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextInputManagerV3);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
@@ -1689,45 +1697,12 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
         };
         drop(state);
 
-        if let wl_callback::Event::Done { callback_data } = event {
-            window.frame_callback_fired(PlatformFrameSignal::capture(|| {
-                frame_callback_signal_at(callback_data)
-            }));
+        // The callback's timestamp uses a clock the protocol leaves unspecified,
+        // so frame timing measures from receipt, as the other platforms do.
+        if let wl_callback::Event::Done { .. } = event {
+            window.frame_callback_fired(PlatformFrameSignal::capture(Instant::now));
         }
     }
-}
-
-fn frame_callback_signal_at(callback_data: u32) -> Instant {
-    let mut monotonic = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // wl_surface.frame specifies an unspecified epoch. Mutter and Sway use
-    // CLOCK_MONOTONIC, but reject implausible ages for other compositor clocks.
-    let result = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut monotonic) };
-    let received_at = Instant::now();
-    if result != 0 || monotonic.tv_sec < 0 || !(0..1_000_000_000).contains(&monotonic.tv_nsec) {
-        return received_at;
-    }
-    let monotonic_millis =
-        (monotonic.tv_sec as u64 * 1_000 + monotonic.tv_nsec as u64 / 1_000_000) as u32;
-    frame_callback_instant(callback_data, monotonic_millis, received_at)
-}
-
-fn frame_callback_instant(
-    callback_data: u32,
-    monotonic_millis: u32,
-    received_at: Instant,
-) -> Instant {
-    // The wire timestamp wraps every ~49 days. A future timestamp also wraps
-    // when subtracted, so the bound rejects it without guessing another epoch.
-    let age_millis = monotonic_millis.wrapping_sub(callback_data);
-    if age_millis > 60_000 {
-        return received_at;
-    }
-    received_at
-        .checked_sub(Duration::from_millis(u64::from(age_millis)))
-        .unwrap_or(received_at)
 }
 
 pub(crate) fn get_window(
@@ -3216,43 +3191,6 @@ mod tests {
         assert!(wl_output_version(1).is_err());
         assert_eq!(wl_seat_version(5).expect("minimum seat version"), 5);
         assert_eq!(wl_output_version(2).expect("minimum output version"), 2);
-    }
-
-    #[test]
-    fn frame_callback_timestamp_preserves_queue_delay() {
-        let received_at = Instant::now();
-        assert_eq!(
-            frame_callback_instant(1_000, 1_025, received_at),
-            received_at - Duration::from_millis(25),
-        );
-        assert_eq!(
-            frame_callback_instant(1_000, 1_000, received_at),
-            received_at,
-        );
-    }
-
-    #[test]
-    fn frame_callback_timestamp_wraps() {
-        let received_at = Instant::now();
-        assert_eq!(
-            frame_callback_instant(u32::MAX - 9, 15, received_at),
-            received_at - Duration::from_millis(25),
-        );
-    }
-
-    #[test]
-    fn frame_callback_timestamp_rejects_implausible_clock() {
-        let received_at = Instant::now();
-        for (callback_data, monotonic_millis) in [(1_001, 1_000), (0, 60_001), (0, u32::MAX)] {
-            assert_eq!(
-                frame_callback_instant(callback_data, monotonic_millis, received_at),
-                received_at,
-            );
-        }
-        assert_eq!(
-            frame_callback_instant(0, 60_000, received_at),
-            received_at - Duration::from_secs(60),
-        );
     }
 
     #[derive(Clone)]

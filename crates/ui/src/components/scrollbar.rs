@@ -2,12 +2,12 @@ use std::{any::Any, fmt::Debug, ops::Not, time::Duration};
 use web_time::Instant;
 
 use gpui::{
-    Along, Anchor, AnyElement, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds,
-    ContentMask, Context, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId,
-    Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement,
-    IntoElement, IsZero, LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Point, Position, Render, ScrollEvent, ScrollHandle, Size,
-    Stateful, StatefulInteractiveElement, Style, StyleRefinement, Styled, Subscription, Task,
+    Along, Anchor, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask,
+    Context, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId, Entity, EntityId,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
+    LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    Pixels, Point, Position, Render, ScrollEvent, ScrollHandle, Size, Stateful,
+    StatefulInteractiveElement, Style, StyleRefinement, Styled, Subscription, Task,
     UniformListDecoration, UniformListScrollHandle, Window, ease_in_out, fill,
     prelude::FluentBuilder as _, px, quad, relative, size,
 };
@@ -355,8 +355,8 @@ impl ScrollAxes {
         T: Debug + Default + PartialEq + Clone,
     {
         match self {
-            Self::Horizontal => point.apply_along(ScrollbarAxis::Horizontal, |_| value),
-            Self::Vertical => point.apply_along(ScrollbarAxis::Vertical, |_| value),
+            Self::Horizontal => point.apply_along(ScrollbarAxis::Horizontal, |_| value.clone()),
+            Self::Vertical => point.apply_along(ScrollbarAxis::Vertical, |_| value.clone()),
             Self::Both => Point::new(value.clone(), value),
         }
     }
@@ -1011,11 +1011,6 @@ impl ThumbState {
 }
 
 impl ScrollableHandle for UniformListScrollHandle {
-    #[inline(never)]
-    fn into_scrollbar_element(element: ScrollbarElement<Self>) -> AnyElement {
-        element.into_any()
-    }
-
     fn max_offset(&self) -> Point<Pixels> {
         self.0.borrow().base_handle.max_offset()
     }
@@ -1034,11 +1029,6 @@ impl ScrollableHandle for UniformListScrollHandle {
 }
 
 impl ScrollableHandle for ListState {
-    #[inline(never)]
-    fn into_scrollbar_element(element: ScrollbarElement<Self>) -> AnyElement {
-        element.into_any()
-    }
-
     fn max_offset(&self) -> Point<Pixels> {
         self.max_offset_for_scrollbar()
     }
@@ -1065,11 +1055,6 @@ impl ScrollableHandle for ListState {
 }
 
 impl ScrollableHandle for ScrollHandle {
-    #[inline(never)]
-    fn into_scrollbar_element(element: ScrollbarElement<Self>) -> AnyElement {
-        element.into_any()
-    }
-
     fn max_offset(&self) -> Point<Pixels> {
         self.max_offset()
     }
@@ -1088,10 +1073,6 @@ impl ScrollableHandle for ScrollHandle {
 }
 
 pub trait ScrollableHandle: 'static + Any + Sized + Clone {
-    fn into_scrollbar_element(element: ScrollbarElement<Self>) -> AnyElement {
-        element.into_any()
-    }
-
     fn max_offset(&self) -> Point<Pixels>;
     fn set_offset(&self, point: Point<Pixels>);
     fn offset(&self) -> Point<Pixels>;
@@ -1748,18 +1729,6 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                 }
             });
         })
-    }
-}
-
-impl<T: ScrollableHandle> IntoElement for ScrollbarElement<T> {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-
-    fn into_any_element(self) -> AnyElement {
-        T::into_scrollbar_element(self)
     }
 }
 
