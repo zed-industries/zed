@@ -187,7 +187,12 @@ mod tests {
     use std::cell::Cell;
 
     use collections::HashMap;
-    use gpui::{BorrowAppContext, InteractiveElement, PlatformKeyboardMapper};
+    use gpui::{
+        BorrowAppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+        InteractiveElement, IntoElement, KeyBinding, PlatformKeyboardMapper, Render,
+        TestAppContext, VisualTestContext, actions, div,
+    };
+    use workspace::{AppState, ModalView, MultiWorkspace};
 
     use super::*;
 
@@ -269,15 +274,15 @@ mod tests {
         assert_eq!(binding_label(&action), "lazygit");
     }
 
-    gpui::actions!(which_key_test, [TestChordAction]);
+    actions!(which_key_test, [TestChordAction]);
 
     struct TestModal {
-        focus_handle: gpui::FocusHandle,
+        focus_handle: FocusHandle,
         chord_action_count: usize,
     }
 
     impl TestModal {
-        fn new(_: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
+        fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
             Self {
                 focus_handle: cx.focus_handle(),
                 chord_action_count: 0,
@@ -285,23 +290,19 @@ mod tests {
         }
     }
 
-    impl gpui::EventEmitter<gpui::DismissEvent> for TestModal {}
+    impl EventEmitter<DismissEvent> for TestModal {}
 
-    impl gpui::Focusable for TestModal {
-        fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+    impl Focusable for TestModal {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
             self.focus_handle.clone()
         }
     }
 
-    impl workspace::ModalView for TestModal {}
+    impl ModalView for TestModal {}
 
-    impl gpui::Render for TestModal {
-        fn render(
-            &mut self,
-            _window: &mut Window,
-            cx: &mut gpui::Context<Self>,
-        ) -> impl gpui::IntoElement {
-            gpui::div().track_focus(&self.focus_handle).on_action(cx.listener(
+    impl Render for TestModal {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().track_focus(&self.focus_handle).on_action(cx.listener(
                 |this, _: &TestChordAction, _, _| {
                     this.chord_action_count += 1;
                 },
@@ -310,10 +311,10 @@ mod tests {
     }
 
     async fn init_workspace_test(
-        cx: &mut gpui::TestAppContext,
-    ) -> (gpui::Entity<Workspace>, &mut gpui::VisualTestContext) {
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, &mut VisualTestContext) {
         let app_state = cx.update(|cx| {
-            let app_state = workspace::AppState::test(cx);
+            let app_state = AppState::test(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             workspace::init(app_state.clone(), cx);
             init(cx);
@@ -322,24 +323,19 @@ mod tests {
                     .set_user_settings(r#"{ "which_key": { "enabled": true, "delay_ms": 0 } }"#, cx)
                     .expect("valid test settings");
             });
-            cx.bind_keys([gpui::KeyBinding::new(
-                "ctrl-k ctrl-x",
-                TestChordAction,
-                None,
-            )]);
+            cx.bind_keys([KeyBinding::new("ctrl-k ctrl-x", TestChordAction, None)]);
             app_state
         });
         let project = project::Project::test(app_state.fs.clone(), [], cx).await;
-        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
-        });
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         (workspace, cx)
     }
 
     #[gpui::test]
-    async fn test_which_key_shows_for_pending_chord(cx: &mut gpui::TestAppContext) {
+    async fn test_which_key_shows_for_pending_chord(cx: &mut TestAppContext) {
         let (workspace, cx) = init_workspace_test(cx).await;
 
         cx.simulate_keystrokes("ctrl-k");
@@ -351,7 +347,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_which_key_does_not_replace_open_modal(cx: &mut gpui::TestAppContext) {
+    async fn test_which_key_does_not_replace_open_modal(cx: &mut TestAppContext) {
         let (workspace, cx) = init_workspace_test(cx).await;
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.toggle_modal(window, cx, TestModal::new);
