@@ -4641,6 +4641,90 @@ async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
 }
 
 #[gpui::test]
+async fn test_elicitation_marks_sidebar_thread_waiting_until_responded(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    open_thread_with_connection(&panel, StubAgentConnection::new(), cx);
+    send_message(&panel, cx);
+    let session_id = active_session_id(&panel, cx);
+    save_test_thread_metadata(&session_id, &project, cx).await;
+    let thread = cx.update(|_, cx| panel.read(cx).active_agent_thread(cx).unwrap());
+    let thread_status = |cx: &mut VisualTestContext| {
+        sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar
+                .contents
+                .entries
+                .iter()
+                .find_map(|entry| match entry {
+                    ListEntry::Thread(thread)
+                        if thread.metadata.session_id.as_ref() == Some(&session_id) =>
+                    {
+                        Some(thread.status)
+                    }
+                    _ => None,
+                })
+                .expect("Expected thread entry in sidebar")
+        })
+    };
+    assert_eq!(thread_status(cx), AgentThreadStatus::Running);
+
+    for action in [
+        acp_v2::ElicitationAction::Accept(acp_v2::ElicitationAcceptAction::new().content(
+            std::collections::BTreeMap::from([(
+                "choice".to_string(),
+                acp_v2::ElicitationContentValue::from("first"),
+            )]),
+        )),
+        acp_v2::ElicitationAction::Decline,
+        acp_v2::ElicitationAction::Cancel,
+    ] {
+        let (elicitation_id, response_task) = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation_with_id(
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(session_id.clone()),
+                            serde_json::from_value(serde_json::json!({
+                                "type": "object",
+                                "required": ["choice"],
+                                "properties": {
+                                    "choice": {
+                                        "type": "string",
+                                        "oneOf": [
+                                            { "const": "first", "title": "First" },
+                                            { "const": "second", "title": "Second" }
+                                        ]
+                                    }
+                                }
+                            }))
+                            .expect("Valid single-select schema"),
+                        ),
+                        "Choose one",
+                    ),
+                    cx,
+                )
+                .expect("Elicitation should be accepted")
+        });
+        cx.run_until_parked();
+        assert_eq!(thread_status(cx), AgentThreadStatus::WaitingForConfirmation);
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp_v2::CreateElicitationResponse::new(action),
+                cx,
+            );
+        });
+        response_task.await;
+        cx.run_until_parked();
+        assert_eq!(thread_status(cx), AgentThreadStatus::Running);
+    }
+}
+
+#[gpui::test]
 async fn test_background_thread_completion_triggers_notification(cx: &mut TestAppContext) {
     let project_a = init_test_project_with_agent_panel("/project-a", cx).await;
     let (multi_workspace, cx) =
