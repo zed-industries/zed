@@ -5076,6 +5076,27 @@ impl Window {
         font_size: Pixels,
         color: Hsla,
     ) -> Result<()> {
+        self.paint_glyph_transformed(
+            origin,
+            font_id,
+            glyph_id,
+            font_size,
+            color,
+            TransformationMatrix::unit(),
+        )
+    }
+
+    /// Like [`Window::paint_glyph`], but applies `transformation` (in scaled pixels,
+    /// relative to the window origin) to the glyph quad.
+    pub(crate) fn paint_glyph_transformed(
+        &mut self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        color: Hsla,
+        transformation: TransformationMatrix,
+    ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
@@ -5093,7 +5114,11 @@ impl Window {
             (quantized_origin.y.fract() * SUBPIXEL_VARIANTS_Y as f32) as u8,
         );
         let integer_origin = quantized_origin.map(|c| ScaledPixels(c.trunc()));
-        let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size);
+        // Subpixel antialiasing bakes in the display's horizontal RGB layout, which no
+        // longer lines up once the glyph is rotated or skewed, so transformed glyphs are
+        // rendered in grayscale.
+        let subpixel_rendering = transformation == TransformationMatrix::unit()
+            && self.should_use_subpixel_rendering(font_id, font_size);
         let dilation = self.text_system().glyph_dilation_for_color(color);
         let params = RenderGlyphParams {
             font_id,
@@ -5129,7 +5154,7 @@ impl Window {
                     content_mask,
                     color: color.opacity(element_opacity),
                     tile,
-                    transformation: TransformationMatrix::unit(),
+                    transformation,
                 });
             } else {
                 self.next_frame.scene.insert_primitive(MonochromeSprite {
@@ -5139,7 +5164,7 @@ impl Window {
                     content_mask,
                     color: color.opacity(element_opacity),
                     tile,
-                    transformation: TransformationMatrix::unit(),
+                    transformation,
                 });
             }
         }
@@ -5181,6 +5206,25 @@ impl Window {
         font_id: FontId,
         glyph_id: GlyphId,
         font_size: Pixels,
+    ) -> Result<()> {
+        self.paint_emoji_transformed(
+            origin,
+            font_id,
+            glyph_id,
+            font_size,
+            TransformationMatrix::unit(),
+        )
+    }
+
+    /// Like [`Window::paint_emoji`], but applies `transformation` (in scaled pixels,
+    /// relative to the window origin) to the emoji quad.
+    pub(crate) fn paint_emoji_transformed(
+        &mut self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        transformation: TransformationMatrix,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
@@ -5224,6 +5268,7 @@ impl Window {
                 content_mask,
                 tile,
                 opacity,
+                transformation,
             });
         }
         Ok(())
@@ -5396,6 +5441,7 @@ impl Window {
             corner_radii,
             tile: sub_tile,
             opacity,
+            transformation: TransformationMatrix::unit(),
         });
         Ok(())
     }

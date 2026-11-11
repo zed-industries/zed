@@ -1,7 +1,8 @@
 use crate::{
     App, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point, RenderGlyphParams, Result,
-    SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
-    WrappedLineLayout, black, fill, point, px, size, underline_y_offset,
+    SharedString, StrikethroughStyle, TextAlign, Transformation, TransformationMatrix,
+    UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black, fill, point, px, size,
+    underline_y_offset,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -150,9 +151,48 @@ impl ShapedLine {
             align_width,
             &self.decoration_runs,
             &[],
+            TransformationMatrix::unit(),
             window,
             cx,
             &mut paint_underline,
+        )
+    }
+
+    /// Paint the line with `transformation` applied, e.g. rotated for a vertical label.
+    ///
+    /// The transformation pivots on the centre of the line's bounds (as with
+    /// [`svg`](crate::svg)'s [`Transformation`]), so laying the line out centred in an
+    /// element and rotating it by 90° keeps it centred in that element.
+    ///
+    /// Transformed text is drawn without subpixel antialiasing, which depends on the
+    /// display's horizontal pixel layout. Underlines and strikethroughs aren't drawn,
+    /// and [`Self::paint_background`] stays unrotated, since those primitives can't be
+    /// transformed yet. Glyphs are rasterized at the line's font size before the
+    /// transformation, so scaling up makes them soft.
+    pub fn paint_transformed(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        align_width: Option<Pixels>,
+        transformation: Transformation,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
+        let bounds = line_paint_bounds(origin, &self.layout, line_height, align, align_width, &[]);
+        let matrix = line_transformation(bounds, transformation, window.scale_factor());
+        paint_line(
+            origin,
+            &self.layout,
+            line_height,
+            align,
+            align_width,
+            &self.decoration_runs,
+            &[],
+            matrix,
+            window,
+            cx,
+            &mut |_, _, _, _, _| {},
         )
     }
 
@@ -406,6 +446,7 @@ impl LineLayout {
             align_width,
             decoration_runs,
             &[],
+            TransformationMatrix::unit(),
             window,
             cx,
             &mut |_, origin, width, style, window| window.paint_underline(origin, width, style),
@@ -485,6 +526,7 @@ impl WrappedLine {
             align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
+            TransformationMatrix::unit(),
             window,
             cx,
             &mut |_, origin, width, style, window| window.paint_underline(origin, width, style),
@@ -535,6 +577,7 @@ fn paint_line(
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
+    transformation: TransformationMatrix,
     window: &mut Window,
     cx: &mut App,
     paint_underline: &mut dyn FnMut(
@@ -553,7 +596,10 @@ fn paint_line(
         align_width,
         wrap_boundaries,
     );
-    window.paint_layer(line_bounds, |window| {
+    let is_transformed = transformation != TransformationMatrix::unit();
+    let scale_factor = window.scale_factor();
+    let layer_bounds = transformed_bounds(line_bounds, transformation, scale_factor);
+    window.paint_layer(layer_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let underline_y_offset = underline_y_offset(line_height, layout.ascent, layout.descent);
@@ -615,7 +661,9 @@ fn paint_line(
                         if glyph_origin.x == strikethrough_origin.x {
                             strikethrough_origin.x -= max_glyph_size.width.half();
                         };
-                        window.paint_strikethrough(
+                        paint_strikethrough_unless(
+                            is_transformed,
+                            window,
                             *strikethrough_origin,
                             glyph_origin.x - strikethrough_origin.x,
                             strikethrough_style,
@@ -725,7 +773,9 @@ fn paint_line(
                     if strikethrough_origin.x == glyph_origin.x {
                         strikethrough_origin.x -= max_glyph_size.width.half();
                     };
-                    window.paint_strikethrough(
+                    paint_strikethrough_unless(
+                        is_transformed,
+                        window,
                         strikethrough_origin,
                         glyph_origin.x - strikethrough_origin.x,
                         &strikethrough_style,
@@ -738,22 +788,26 @@ fn paint_line(
                 };
 
                 let content_mask = window.content_mask();
-                if max_glyph_bounds.intersects(&content_mask.bounds) {
+                if transformed_bounds(max_glyph_bounds, transformation, scale_factor)
+                    .intersects(&content_mask.bounds)
+                {
                     let vertical_offset = point(px(0.0), glyph.position.y);
                     if glyph.is_emoji {
-                        window.paint_emoji(
+                        window.paint_emoji_transformed(
                             glyph_origin + baseline_offset + vertical_offset,
                             run.font_id,
                             glyph.id,
                             layout.font_size,
+                            transformation,
                         )?;
                     } else {
-                        window.paint_glyph(
+                        window.paint_glyph_transformed(
                             glyph_origin + baseline_offset + vertical_offset,
                             run.font_id,
                             glyph.id,
                             layout.font_size,
                             color,
+                            transformation,
                         )?;
                     }
                 }
@@ -786,7 +840,9 @@ fn paint_line(
             if last_line_end_x == strikethrough_start.x {
                 strikethrough_start.x -= max_glyph_size.width.half()
             };
-            window.paint_strikethrough(
+            paint_strikethrough_unless(
+                is_transformed,
+                window,
                 strikethrough_start,
                 last_line_end_x - strikethrough_start.x,
                 &strikethrough_style,
@@ -803,6 +859,50 @@ fn has_background(decoration_runs: &[DecorationRun]) -> bool {
     decoration_runs
         .iter()
         .any(|run| run.background_color.is_some())
+}
+
+/// Where `bounds` lands on screen once `transformation` (a device-space matrix)
+/// is applied, so layers and culling follow the rotated text, not its layout box.
+fn transformed_bounds(
+    bounds: Bounds<Pixels>,
+    transformation: TransformationMatrix,
+    scale_factor: f32,
+) -> Bounds<Pixels> {
+    if transformation == TransformationMatrix::unit() {
+        return bounds;
+    }
+    transformation
+        .transform_bounds(bounds.scale(scale_factor))
+        .map(|p| px(p.0 / scale_factor))
+}
+
+/// The device-space matrix for `transformation` pivoting on the centre of `bounds`.
+///
+/// Glyphs are placed on whole device pixels; pivoting on a half pixel would put every
+/// glyph of a 90° rotation between pixels and blur it, so the pivot is snapped.
+fn line_transformation(
+    bounds: Bounds<Pixels>,
+    transformation: Transformation,
+    scale_factor: f32,
+) -> TransformationMatrix {
+    let center = bounds
+        .center()
+        .map(|c| px((c.0 * scale_factor).round() / scale_factor));
+    transformation.into_matrix(center, scale_factor)
+}
+
+/// Strikethroughs are quads that can't be transformed yet, so a transformed line
+/// skips them rather than drawing them in the unrotated position.
+fn paint_strikethrough_unless(
+    skip: bool,
+    window: &mut Window,
+    origin: Point<Pixels>,
+    width: Pixels,
+    style: &StrikethroughStyle,
+) {
+    if !skip {
+        window.paint_strikethrough(origin, width, style);
+    }
 }
 
 fn paint_line_background(
@@ -1028,7 +1128,7 @@ mod tests {
     use super::*;
     use crate::{
         AppContext as _, Context, FontId, GlyphId, IntoElement, Render, ShapedGlyph, ShapedRun,
-        Styled, TestAppContext, TextRun, Underline, canvas, font, hsla,
+        Styled, TestAppContext, TextRun, Underline, canvas, font, hsla, radians,
     };
     use std::rc::Rc;
 
@@ -1413,6 +1513,7 @@ mod tests {
                     Some(px(16.)),
                     &wrapped.decoration_runs,
                     &wrapped.wrap_boundaries,
+                    TransformationMatrix::unit(),
                     window,
                     cx,
                     &mut |range, origin, width, style, window| {
@@ -1661,6 +1762,84 @@ mod tests {
         assert_eq!(right.decoration_runs[0].color, green);
         assert_eq!(right.decoration_runs[1].len, 1);
         assert_eq!(right.decoration_runs[1].color, blue);
+    }
+
+    #[test]
+    fn test_line_transformation_pivots_on_snapped_center() {
+        // Bounds whose centre is off the device pixel grid at every scale below.
+        let bounds = Bounds::new(point(px(10.3), px(20.7)), size(px(31.), px(16.)));
+        let quarter_turn = Transformation::rotate(radians(-std::f32::consts::FRAC_PI_2));
+        for scale_factor in [1., 1.25, 1.5, 2., 3.] {
+            let matrix = line_transformation(bounds, quarter_turn, scale_factor);
+            // Solve (I - R) p = t for the fixed point of the transform.
+            let [[a, b], [c, d]] = matrix.rotation_scale;
+            let [tx, ty] = matrix.translation;
+            let det = (1. - a) * (1. - d) - b * c;
+            let pivot = (
+                ((1. - d) * tx + b * ty) / det,
+                (c * tx + (1. - a) * ty) / det,
+            );
+            let center = bounds.center().scale(scale_factor);
+            assert!(
+                (pivot.0 - center.x.0).abs() <= 0.5,
+                "{scale_factor}: {pivot:?}"
+            );
+            assert!(
+                (pivot.1 - center.y.0).abs() <= 0.5,
+                "{scale_factor}: {pivot:?}"
+            );
+            assert!(
+                (pivot.0 - pivot.0.round()).abs() < 1e-3,
+                "{scale_factor}: {pivot:?}"
+            );
+            assert!(
+                (pivot.1 - pivot.1.round()).abs() < 1e-3,
+                "{scale_factor}: {pivot:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_paint_transformed_skips_decorations(cx: &mut TestAppContext) {
+        test_underline_handler_at_scales(cx, |window, cx| {
+            let underlined = DecorationRun {
+                len: 3,
+                color: black(),
+                background_color: None,
+                underline: Some(UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(black()),
+                    wavy: false,
+                }),
+                strikethrough: Some(StrikethroughStyle {
+                    thickness: px(1.),
+                    color: Some(black()),
+                }),
+            };
+            let line = underline_test_line("abc", &[underlined], false, window);
+            let origin = point(px(10.), px(20.));
+
+            window.next_frame.scene.clear();
+            line.paint(origin, px(16.), TextAlign::Left, None, window, cx)
+                .unwrap();
+            // One underline and one strikethrough, both drawn as underline primitives.
+            assert_eq!(window.next_frame.scene.underlines.len(), 2);
+
+            // Underline quads can't be rotated, so a transformed line leaves them out
+            // instead of drawing them where the unrotated text would be.
+            window.next_frame.scene.clear();
+            line.paint_transformed(
+                origin,
+                px(16.),
+                TextAlign::Left,
+                None,
+                Transformation::rotate(radians(-std::f32::consts::FRAC_PI_2)),
+                window,
+                cx,
+            )
+            .unwrap();
+            assert!(window.next_frame.scene.underlines.is_empty());
+        });
     }
 
     struct UnderlineHandlerTestView(Rc<dyn Fn(&mut Window, &mut App)>);

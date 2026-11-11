@@ -86,8 +86,11 @@ impl Scene {
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
+        // Visible bounds, not layout bounds: a sprite rotated into the content mask
+        // from outside it must not be culled, and must take part in ordering where
+        // it actually lands.
         let clipped_bounds = primitive
-            .bounds()
+            .painted_bounds()
             .intersect(&primitive.content_mask().bounds);
 
         if clipped_bounds.is_empty() {
@@ -243,6 +246,18 @@ impl Primitive {
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
         }
+    }
+
+    /// The area the primitive covers once its transformation (if any) is applied,
+    /// as an axis-aligned box.
+    pub(crate) fn painted_bounds(&self) -> Bounds<ScaledPixels> {
+        let transformation = match self {
+            Primitive::MonochromeSprite(sprite) => sprite.transformation,
+            Primitive::SubpixelSprite(sprite) => sprite.transformation,
+            Primitive::PolychromeSprite(sprite) => sprite.transformation,
+            _ => return *self.bounds(),
+        };
+        transformation.transform_bounds(*self.bounds())
     }
 
     pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {
@@ -651,6 +666,33 @@ impl TransformationMatrix {
         })
     }
 
+    /// The axis-aligned box around `bounds` after this transformation, using the
+    /// same convention as the sprite shaders.
+    pub fn transform_bounds(&self, bounds: Bounds<ScaledPixels>) -> Bounds<ScaledPixels> {
+        if *self == Self::unit() {
+            return bounds;
+        }
+        let [[a, b], [c, d]] = self.rotation_scale;
+        let [tx, ty] = self.translation;
+        let corners = [
+            bounds.origin,
+            bounds.top_right(),
+            bounds.bottom_left(),
+            bounds.bottom_right(),
+        ]
+        .map(|p| (a * p.x.0 + b * p.y.0 + tx, c * p.x.0 + d * p.y.0 + ty));
+        let (min_x, max_x, min_y, max_y) = corners.iter().fold(
+            (f32::MAX, f32::MIN, f32::MAX, f32::MIN),
+            |(min_x, max_x, min_y, max_y), &(x, y)| {
+                (min_x.min(x), max_x.max(x), min_y.min(y), max_y.max(y))
+            },
+        );
+        Bounds::from_corners(
+            point(ScaledPixels(min_x), ScaledPixels(min_y)),
+            point(ScaledPixels(max_x), ScaledPixels(max_y)),
+        )
+    }
+
     /// Perform matrix multiplication with another transformation
     /// to produce a new transformation that is the result of
     /// applying both transformations: first, `other`, then `self`.
@@ -755,6 +797,7 @@ pub struct PolychromeSprite {
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
+    pub transformation: TransformationMatrix,
 }
 
 impl From<PolychromeSprite> for Primitive {
@@ -945,5 +988,79 @@ impl PathVertex<Pixels> {
             st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AtlasTextureId, AtlasTextureKind, AtlasTile, TileId, black, size};
+
+    fn sprite(
+        bounds: Bounds<ScaledPixels>,
+        mask: Bounds<ScaledPixels>,
+        t: TransformationMatrix,
+    ) -> MonochromeSprite {
+        MonochromeSprite {
+            order: 0,
+            pad: 0,
+            tile: AtlasTile {
+                texture_id: AtlasTextureId {
+                    index: 0,
+                    kind: AtlasTextureKind::Monochrome,
+                },
+                tile_id: TileId(0),
+                padding: 0,
+                bounds: Default::default(),
+            },
+            bounds,
+            content_mask: ContentMask { bounds: mask },
+            color: black(),
+            transformation: t,
+        }
+    }
+
+    fn sp(x: f32, y: f32, w: f32, h: f32) -> Bounds<ScaledPixels> {
+        Bounds::new(
+            point(ScaledPixels(x), ScaledPixels(y)),
+            size(ScaledPixels(w), ScaledPixels(h)),
+        )
+    }
+
+    #[test]
+    fn transform_bounds_of_quarter_turn() {
+        // Rotate a 40x10 box a quarter turn around its centre (20, 5).
+        let t = TransformationMatrix::unit()
+            .translate(point(ScaledPixels(20.), ScaledPixels(5.)))
+            .rotate(Radians(-std::f32::consts::FRAC_PI_2))
+            .translate(point(ScaledPixels(-20.), ScaledPixels(-5.)));
+        let b = t.transform_bounds(sp(0., 0., 40., 10.));
+        assert!((b.origin.x.0 - 15.).abs() < 1e-3, "{b:?}");
+        assert!((b.origin.y.0 + 15.).abs() < 1e-3, "{b:?}");
+        assert!((b.size.width.0 - 10.).abs() < 1e-3, "{b:?}");
+        assert!((b.size.height.0 - 40.).abs() < 1e-3, "{b:?}");
+    }
+
+    #[test]
+    fn sprite_rotated_into_the_content_mask_is_kept() {
+        // A narrow, tall mask, like a vertical label strip. Unrotated, the glyph
+        // sits to the right of it; rotated a quarter turn around (10, 50) it lands
+        // inside. Culling on layout bounds used to drop it.
+        let mask = sp(0., 0., 20., 100.);
+        let glyph = sp(30., 45., 10., 10.);
+        let t = TransformationMatrix::unit()
+            .translate(point(ScaledPixels(10.), ScaledPixels(50.)))
+            .rotate(Radians(-std::f32::consts::FRAC_PI_2))
+            .translate(point(ScaledPixels(-10.), ScaledPixels(-50.)));
+
+        let mut scene = Scene::default();
+        scene.insert_primitive(sprite(glyph, mask, TransformationMatrix::unit()));
+        assert!(
+            scene.monochrome_sprites.is_empty(),
+            "outside the mask, untransformed"
+        );
+
+        scene.insert_primitive(sprite(glyph, mask, t));
+        assert_eq!(scene.monochrome_sprites.len(), 1);
     }
 }
