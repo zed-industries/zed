@@ -2424,7 +2424,10 @@ mod repository_activation_tests {
         .await;
         let project = Project::test(
             fs.clone(),
-            [path!("/root/first").as_ref(), path!("/root/second").as_ref()],
+            [
+                path!("/root/first").as_ref(),
+                path!("/root/second").as_ref(),
+            ],
             cx,
         )
         .await;
