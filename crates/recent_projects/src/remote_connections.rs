@@ -16,7 +16,7 @@ use remote::{
 };
 pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
-use util::paths::PathWithPosition;
+use util::paths::{PathStyle, PathWithPosition};
 use workspace::{AppState, MultiWorkspace, OpenOptions, Workspace, find_existing_workspace};
 
 pub use remote_connection::{
@@ -456,7 +456,9 @@ pub(crate) async fn determine_paths_with_positions(
     mut paths: Vec<PathBuf>,
 ) -> (Vec<PathBuf>, Vec<PathWithPosition>) {
     let mut paths_with_positions = Vec::<PathWithPosition>::new();
+    let path_style = remote_connection.path_style();
     for path in &mut paths {
+        strip_slash_before_drive_letter(path, path_style);
         if let Some(path_str) = path.to_str() {
             let path_with_position = PathWithPosition::parse_str(&path_str);
             if path_with_position.row.is_some() {
@@ -470,6 +472,23 @@ pub(crate) async fn determine_paths_with_positions(
         paths_with_positions.push(PathWithPosition::from_path(path.clone()))
     }
     (paths, paths_with_positions)
+}
+
+/// `ssh://` URL paths keep a `/` before a Windows drive letter (`/C:/x`), which a Windows host
+/// cannot open. The remote's path style is only known once connected, so this cannot happen
+/// while the URL is parsed.
+fn strip_slash_before_drive_letter(path: &mut PathBuf, path_style: PathStyle) {
+    if path_style != PathStyle::Windows {
+        return;
+    }
+    let Some(stripped) = path.to_str().and_then(|path| path.strip_prefix('/')) else {
+        return;
+    };
+    if let [drive, b':', b'/' | b'\\', ..] = stripped.as_bytes()
+        && drive.is_ascii_alphabetic()
+    {
+        *path = PathBuf::from(stripped);
+    }
 }
 
 async fn path_exists(connection: &Arc<dyn RemoteConnection>, path: &Path) -> bool {
@@ -508,6 +527,47 @@ mod tests {
     use serde_json::json;
     use util::path;
     use workspace::find_existing_workspace;
+
+    #[test]
+    fn test_strip_slash_before_drive_letter() {
+        let strip = |path: &str, path_style| {
+            let mut path = PathBuf::from(path);
+            strip_slash_before_drive_letter(&mut path, path_style);
+            path
+        };
+
+        assert_eq!(
+            strip("/C:/project/main.rs", PathStyle::Windows),
+            PathBuf::from("C:/project/main.rs")
+        );
+        assert_eq!(
+            strip("/d:\\project", PathStyle::Windows),
+            PathBuf::from("d:\\project")
+        );
+        assert_eq!(
+            strip("/C:/project/main.rs:12", PathStyle::Windows),
+            PathBuf::from("C:/project/main.rs:12")
+        );
+        // Not a drive path: left as it is.
+        assert_eq!(
+            strip("/~/project", PathStyle::Windows),
+            PathBuf::from("/~/project")
+        );
+        assert_eq!(strip("/C:", PathStyle::Windows), PathBuf::from("/C:"));
+        assert_eq!(
+            strip("/1:/project", PathStyle::Windows),
+            PathBuf::from("/1:/project")
+        );
+        assert_eq!(
+            strip("C:/project", PathStyle::Windows),
+            PathBuf::from("C:/project")
+        );
+        // On a Unix host `/C:/x` is a valid absolute path.
+        assert_eq!(
+            strip("/C:/project", PathStyle::Unix),
+            PathBuf::from("/C:/project")
+        );
+    }
 
     #[gpui::test]
     async fn test_open_remote_project_with_mock_connection(
