@@ -19,6 +19,31 @@ EOF
 # Ubuntu, Debian, Mint, Kali, Pop!_OS, Raspbian, etc.
 apt=$(command -v apt-get || true)
 if [[ -n $apt ]]; then
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    # Namespace images may use mirror lists or direct Ubuntu URLs. Keep the
+    # original sources preferred, with Clarkson available during outages.
+    for mirror_file in /etc/apt/apt-mirrors.txt /etc/apt/apt-security-mirrors.txt; do
+      if [[ -f "$mirror_file" ]] && ! grep -Fxq 'https://mirror.clarkson.edu/ubuntu/' "$mirror_file"; then
+        printf '\n%s\n' 'https://mirror.clarkson.edu/ubuntu/' | \
+          $maysudo tee -a "$mirror_file" > /dev/null
+      fi
+    done
+    for host in archive.ubuntu.com security.ubuntu.com; do
+      mirror_file="/etc/apt/zed-$host.mirrors"
+      for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+        if [[ -f "$source_file" ]] && grep -Eq "https?://${host//./\\.}/ubuntu/?([[:space:]]|$)" "$source_file"; then
+          printf '%s\tpriority:%s\n' \
+            "https://$host/ubuntu/" 1 \
+            'https://mirror.clarkson.edu/ubuntu/' 2 | \
+            $maysudo tee "$mirror_file" > /dev/null
+          $maysudo sed -i -E \
+            "s@https?://${host//./\\.}/ubuntu/?([[:space:]]|$)@mirror+file:$mirror_file\\1@g" \
+            "$source_file"
+        fi
+      done
+    done
+  fi
+
   deps=(
     gcc
     g++
