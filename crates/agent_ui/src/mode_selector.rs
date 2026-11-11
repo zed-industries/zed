@@ -54,7 +54,7 @@ impl ModeSelector {
             .unwrap_or(0);
 
         if let Some(next_mode) = all_modes.get((current_index + 1) % all_modes.len()) {
-            self.set_mode(next_mode.value.clone(), cx);
+            self.set_mode(next_mode.value.clone(), true, cx);
         }
     }
 
@@ -62,9 +62,16 @@ impl ModeSelector {
         self.connection.current_mode()
     }
 
-    pub fn set_mode(&mut self, mode: acp::SessionConfigValueId, cx: &mut Context<Self>) {
-        self.agent_server
-            .set_default_mode(Some(mode.clone()), self.fs.clone(), cx);
+    pub fn set_mode(
+        &mut self,
+        mode: acp::SessionConfigValueId,
+        save_to_settings: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if save_to_settings {
+            self.agent_server
+                .set_default_mode(Some(mode.clone()), self.fs.clone(), cx);
+        }
 
         let task = self.connection.set_mode(mode, cx);
         self.setting_mode = true;
@@ -114,10 +121,11 @@ impl ModeSelector {
                 menu.push_item(entry.handler({
                     let mode_id = mode.value.clone();
                     let weak_self = weak_self.clone();
-                    move |_window, cx| {
+                    move |window, cx| {
+                        let save_to_settings = !window.modifiers().shift;
                         weak_self
                             .update(cx, |this, cx| {
-                                this.set_mode(mode_id.clone(), cx);
+                                this.set_mode(mode_id.clone(), save_to_settings, cx);
                             })
                             .ok();
                     }
@@ -217,7 +225,7 @@ mod tests {
             let selector = cx.new(|_| ModeSelector::new(session_modes, agent_server, fs));
 
             selector.update(cx, |selector, cx| {
-                selector.set_mode(acp::SessionConfigValueId::new("manual"), cx);
+                selector.set_mode(acp::SessionConfigValueId::new("manual"), true, cx);
             });
         });
 
@@ -225,6 +233,29 @@ mod tests {
             agent_server.saved_defaults.lock().as_slice(),
             &[Some(acp::SessionConfigValueId::new("manual"))]
         );
+        assert_eq!(
+            session_modes.set_modes.borrow().as_slice(),
+            &[acp::SessionConfigValueId::new("manual")]
+        );
+    }
+
+    #[gpui::test]
+    fn setting_mode_without_saving_leaves_default_unchanged(cx: &mut TestAppContext) {
+        let agent_server = Rc::new(TestAgentServer::default());
+        let session_modes = Rc::new(TestSessionModes::new());
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            let session_modes: Rc<dyn AgentSessionModes> = session_modes.clone();
+            let agent_server: Rc<dyn AgentServer> = agent_server.clone();
+            let selector = cx.new(|_| ModeSelector::new(session_modes, agent_server, fs));
+
+            selector.update(cx, |selector, cx| {
+                selector.set_mode(acp::SessionConfigValueId::new("manual"), false, cx);
+            });
+        });
+
+        assert!(agent_server.saved_defaults.lock().is_empty());
         assert_eq!(
             session_modes.set_modes.borrow().as_slice(),
             &[acp::SessionConfigValueId::new("manual")]

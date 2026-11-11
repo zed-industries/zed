@@ -114,11 +114,12 @@ impl ConfigOptionsView {
         let Some(next_value) = self.next_value_for_config(&config_id, favorites_only, cx) else {
             return false;
         };
-        set_config_option_and_default(
+        set_config_option(
             self.config_options.clone(),
             self.agent_server.clone(),
             config_id,
             next_value,
+            true,
             self.fs.clone(),
             cx,
         )
@@ -629,11 +630,12 @@ impl Render for ConfigOptionSelector {
                             }
 
                             let next_value = matches!(state, ToggleState::Selected);
-                            set_config_option_and_default(
+                            set_config_option(
                                 config_options.clone(),
                                 agent_server.clone(),
                                 config_id.clone(),
                                 acp::SessionConfigOptionValue::boolean(next_value),
+                                true,
                                 fs.clone(),
                                 cx,
                             )
@@ -809,7 +811,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(ConfigOptionPickerEntry::Option(option)) =
             self.filtered_entries.get(self.selected_index)
         {
@@ -821,11 +823,12 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                 return;
             }
 
-            set_config_option_and_default(
+            set_config_option(
                 self.config_options.clone(),
                 self.agent_server.clone(),
                 self.config_id.clone(),
                 acp::SessionConfigOptionValue::id(option.value.clone()),
+                !window.modifiers().shift,
                 self.fs.clone(),
                 cx,
             )
@@ -1013,11 +1016,12 @@ fn get_current_select_value(
         })
 }
 
-fn set_config_option_and_default(
+fn set_config_option(
     config_options: Rc<dyn AgentSessionConfigOptions>,
     agent_server: Rc<dyn AgentServer>,
     config_id: acp::SessionConfigId,
     value: acp::SessionConfigOptionValue,
+    save_to_settings: bool,
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) -> Task<anyhow::Result<()>> {
@@ -1028,10 +1032,11 @@ fn set_config_option_and_default(
     cx.spawn(async move |cx| {
         let options = response.await?;
         // Saving the request would make rejected or normalized choices future defaults.
-        if let Some(value) = options
-            .iter()
-            .find(|option| option.config_id == config_id)
-            .and_then(setting_value_for_config_option)
+        if save_to_settings
+            && let Some(value) = options
+                .iter()
+                .find(|option| option.config_id == config_id)
+                .and_then(setting_value_for_config_option)
         {
             cx.update(|cx| {
                 agent_server.set_default_config_option(config_id.0.as_ref(), Some(value), fs, cx);
@@ -1432,6 +1437,49 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn setting_config_option_without_saving_leaves_default_unchanged(
+        cx: &mut TestAppContext,
+    ) {
+        let agent_server = Rc::new(TestAgentServer::default());
+        let config_options = Rc::new(TestSessionConfigOptions::new(vec![
+            acp::SessionConfigOption::select(
+                "mode",
+                "Mode",
+                "auto",
+                vec![
+                    acp::SessionConfigSelectOption::new("auto", "Auto"),
+                    acp::SessionConfigSelectOption::new("manual", "Manual"),
+                ],
+            )
+            .category(acp::SessionConfigOptionCategory::Mode),
+        ]));
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            set_config_option(
+                config_options.clone(),
+                agent_server.clone(),
+                "mode".into(),
+                acp::SessionConfigOptionValue::id("manual"),
+                false,
+                fs,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        assert!(agent_server.saved_defaults.lock().is_empty());
+        assert_eq!(
+            config_options.set_values.borrow().as_slice(),
+            &[(
+                "mode".to_string(),
+                acp::SessionConfigOptionValue::id("manual")
+            )]
+        );
+    }
+
+    #[gpui::test]
     fn cycling_boolean_config_option_saves_selected_value_as_default(cx: &mut TestAppContext) {
         let agent_server = Rc::new(TestAgentServer::default());
         let config_options = Rc::new(TestSessionConfigOptions::new(vec![
@@ -1700,11 +1748,12 @@ mod tests {
         });
         let error = cx
             .update(|_, cx| {
-                set_config_option_and_default(
+                set_config_option(
                     config_options.clone(),
                     agent_server.clone(),
                     "fast".into(),
                     acp::SessionConfigOptionValue::boolean(false),
+                    true,
                     fs,
                     cx,
                 )
