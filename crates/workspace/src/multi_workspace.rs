@@ -316,6 +316,7 @@ pub struct MultiWorkspace {
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
     sidebar_overlay: Option<AnyView>,
+    pending_bindings_popup: Option<AnyView>,
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -377,6 +378,7 @@ impl MultiWorkspace {
             sidebar: None,
             sidebar_open: false,
             sidebar_overlay: None,
+            pending_bindings_popup: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
             _subscriptions: vec![release_subscription, settings_subscription],
@@ -405,6 +407,22 @@ impl MultiWorkspace {
     pub fn set_sidebar_overlay(&mut self, overlay: Option<AnyView>, cx: &mut Context<Self>) {
         self.sidebar_overlay = overlay;
         cx.notify();
+    }
+
+    /// Shows the which-key popup for the pending key sequence. It is drawn above the modal layer
+    /// instead of in it, so the chord can still complete in an open modal.
+    pub fn set_pending_bindings_popup(&mut self, popup: Option<AnyView>, cx: &mut Context<Self>) {
+        // Which-key clears the popup on every keystroke that leaves no pending input, and
+        // observers of this entity, like the agent panel's terminal notification, react to notify.
+        if popup.is_none() && self.pending_bindings_popup.is_none() {
+            return;
+        }
+        self.pending_bindings_popup = popup;
+        cx.notify();
+    }
+
+    pub fn pending_bindings_popup(&self) -> Option<&AnyView> {
+        self.pending_bindings_popup.as_ref()
     }
 
     pub fn sidebar_open(&self) -> bool {
@@ -2273,7 +2291,13 @@ impl Render for MultiWorkspace {
                         ),
                     ))
                     .with_priority(2)
-                })),
+                }))
+                // Above the sidebar overlay, since a chord can be pending inside it too.
+                .children(
+                    self.pending_bindings_popup
+                        .clone()
+                        .map(|popup| deferred(popup).with_priority(3)),
+                ),
             rounded_corners,
             window,
             cx,

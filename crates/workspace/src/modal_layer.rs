@@ -114,10 +114,10 @@ pub struct ModalLayer {
     // can reveal it again with its exact prior state. Left intact across
     // non-reopenable modals (e.g. the command palette), which may trigger the reopen.
     stashed_modal: Option<Box<dyn ModalViewHandle>>,
-    // Set when a reveal was requested while another modal was still active (e.g. the
-    // which-key popup that is dismissed only after the reopen action fires). The reveal
-    // then happens once that modal closes, so it doesn't matter whether the triggering
-    // modal is dismissed before or after the action dispatches.
+    // Set when a reveal was requested while another modal was still active (e.g. one
+    // that is dismissed only after the reopen action fires). The reveal then happens
+    // once that modal closes, so it doesn't matter whether the triggering modal is
+    // dismissed before or after the action dispatches.
     reveal_stash_when_free: bool,
     dismiss_on_focus_lost: bool,
 }
@@ -209,8 +209,8 @@ impl ModalLayer {
             return false;
         }
         if self.active_modal.is_some() {
-            // Another modal is still closing (e.g. the which-key popup that dismisses
-            // only after this action fires). Reveal once it is gone; see `hide_modal`.
+            // Another modal is still closing (e.g. one that dismisses only after this
+            // action fires). Reveal once it is gone; see `hide_modal`.
             self.reveal_stash_when_free = true;
             return false;
         }

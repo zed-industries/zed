@@ -17539,9 +17539,8 @@ mod tests {
         });
         cx.executor().run_until_parked();
 
-        // A non-reopenable modal (e.g. the which-key popup) is already
-        // active when the reopen fires, and it dismisses *after* the action rather
-        // than before it (which-key dismisses when pending input clears).
+        // A non-reopenable modal is already active when the reopen fires, and it
+        // dismisses *after* the action rather than before it.
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.toggle_modal(window, cx, TestModal::new);
         });
