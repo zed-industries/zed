@@ -1665,6 +1665,37 @@ impl PlatformWindow for MacWindow {
         state.move_traffic_light();
     }
 
+    fn set_borderless(&self, borderless: bool) {
+        // AppKit calls back into the window delegate while the style mask changes, and
+        // those callbacks take the state lock, so it must be released first.
+        let (native_window, native_view) = {
+            let this = self.0.lock();
+            (this.native_window, this.native_view.as_ptr())
+        };
+        // SAFETY: `MacWindow::open` initializes this pointer with an `NSWindow` or `NSPanel`
+        // instance that stays alive as long as the window state does.
+        let native_window = unsafe { &*native_window.cast::<NSWindow>() };
+        let was_key = native_window.isKeyWindow();
+        let mut style_mask = native_window.styleMask();
+        style_mask.set(NSWindowStyleMask::Titled, !borderless);
+        native_window.setStyleMask(style_mask);
+        // Changing the style mask makes AppKit resign the window's key status and first
+        // responder, so keyboard input would stop reaching the GPUI view.
+        if was_key {
+            native_window.makeKeyWindow();
+        }
+        // SAFETY: `MacWindow::open` added this live GPUI view to the window's content view.
+        let native_view = unsafe { &*native_view.cast::<NSView>() };
+        native_window.makeFirstResponder(Some(native_view));
+    }
+
+    fn set_has_shadow(&self, has_shadow: bool) {
+        let native_window = self.0.lock().native_window;
+        unsafe {
+            let _: () = msg_send![native_window, setHasShadow: has_shadow.to_objc()];
+        }
+    }
+
     fn scale_factor(&self) -> f32 {
         self.0.as_ref().lock().scale_factor()
     }
