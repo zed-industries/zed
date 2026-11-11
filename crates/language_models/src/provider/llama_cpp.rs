@@ -267,6 +267,12 @@ impl State {
 
         self.model_event_task = Some(cx.spawn(async move |this, cx| {
             loop {
+                if this
+                    .update(cx, |_, cx| crate::ai_disabled(cx))
+                    .unwrap_or(true)
+                {
+                    return;
+                }
                 match stream_model_events(
                     http_client.as_ref(),
                     &api_url,
@@ -327,9 +333,6 @@ impl State {
                 cx.background_executor()
                     .timer(MODEL_EVENT_RECONNECT_INTERVAL)
                     .await;
-                if this.update(cx, |_, _| ()).is_err() {
-                    return;
-                }
             }
         }));
     }
@@ -337,6 +340,7 @@ impl State {
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
         if crate::ai_disabled(cx) {
             self.fetch_model_task = None;
+            self.model_event_task = None;
             return;
         }
         let fetch_task = self.fetch_models(cx);
@@ -480,6 +484,7 @@ impl LlamaCppLanguageModelProvider {
             state: cx.new(|cx| {
                 cx.observe_global::<SettingsStore>({
                     let mut last_settings = LlamaCppLanguageModelProvider::settings(cx).clone();
+                    let mut last_disable_ai = crate::ai_disabled(cx);
                     move |this: &mut State, cx| {
                         let current_settings = LlamaCppLanguageModelProvider::settings(cx);
                         let settings_changed = current_settings != &last_settings;
@@ -503,6 +508,11 @@ impl LlamaCppLanguageModelProvider {
                                 this.authenticate(cx).detach();
                             }
                             cx.notify();
+                        }
+                        let disable_ai = crate::ai_disabled(cx);
+                        if disable_ai != last_disable_ai {
+                            last_disable_ai = disable_ai;
+                            this.restart_fetch_models_task(cx);
                         }
                     }
                 })
@@ -1939,11 +1949,18 @@ mod tests {
         });
 
         let request_count = Arc::new(AtomicUsize::new(0));
+        let (release_first_fetch, first_fetch_released) = futures::channel::oneshot::channel();
+        let first_fetch_released = Arc::new(Mutex::new(Some(first_fetch_released)));
         let http_client = FakeHttpClient::create({
             let request_count = request_count.clone();
             move |request| {
                 request_count.fetch_add(1, Ordering::SeqCst);
+                let first_fetch_released = first_fetch_released.clone();
                 async move {
+                    let first_fetch_released = first_fetch_released.lock().take();
+                    if let Some(first_fetch_released) = first_fetch_released {
+                        first_fetch_released.await.ok();
+                    }
                     let (status, body) = match request.uri().path() {
                         "/v1/models" => (200, r#"{"data":[{"id":"test-model"}]}"#),
                         "/props" => (200, "{}"),
@@ -1970,13 +1987,28 @@ mod tests {
                 settings.project.disable_ai = Some(false.into());
             });
         });
-        cx.update(|cx| {
-            provider
-                .state
-                .update(cx, |state, cx| state.restart_fetch_models_task(cx))
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert!(cx.update(|cx| provider.provided_models(cx)).is_empty());
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
         });
         cx.run_until_parked();
-        assert!(request_count.load(Ordering::SeqCst) >= 1);
+        release_first_fetch.send(()).ok();
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert!(cx.update(|cx| provider.provided_models(cx)).is_empty());
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 3);
         assert_eq!(
             cx.update(|cx| provider
                 .provided_models(cx)
@@ -1985,6 +2017,81 @@ mod tests {
                 .collect::<Vec<_>>()),
             ["test-model"]
         );
+    }
+
+    #[gpui::test]
+    async fn disables_model_event_stream_when_ai_is_disabled(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+
+        let model_event_request_count = Arc::new(AtomicUsize::new(0));
+        let (release_event_stream, event_stream_released) = futures::channel::oneshot::channel();
+        let event_stream_released = Arc::new(Mutex::new(Some(event_stream_released)));
+        let http_client = FakeHttpClient::create({
+            let model_event_request_count = model_event_request_count.clone();
+            move |request| {
+                let model_event_request_count = model_event_request_count.clone();
+                let event_stream_released = event_stream_released.clone();
+                async move {
+                    if request.uri().path() == "/models/sse" {
+                        model_event_request_count.fetch_add(1, Ordering::SeqCst);
+                        let event_stream_released = event_stream_released.lock().take();
+                        if let Some(event_stream_released) = event_stream_released {
+                            event_stream_released.await.ok();
+                        }
+                    }
+                    let (status, body) = match request.uri().path() {
+                        "/v1/models" => (
+                            200,
+                            r#"{"data":[{"id":"test-model","status":{"value":"loaded"}}]}"#,
+                        ),
+                        "/props" => (200, "{}"),
+                        "/models/sse" => (200, ""),
+                        path => anyhow::bail!("unexpected request: {path}"),
+                    };
+                    Ok(http_client::Response::builder()
+                        .status(status)
+                        .body(http_client::AsyncBody::from(body))?)
+                }
+            }
+        });
+        let provider = cx.update(|cx| {
+            LlamaCppLanguageModelProvider::new(
+                http_client,
+                Arc::new(FakeCredentialsProvider::default()),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|cx| provider
+                .provided_models(cx)
+                .into_iter()
+                .map(|model| model.id.0.to_string())
+                .collect::<Vec<_>>()),
+            ["test-model"]
+        );
+        assert_eq!(model_event_request_count.load(Ordering::SeqCst), 1);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
+        });
+        cx.run_until_parked();
+        release_event_stream.send(()).ok();
+        cx.run_until_parked();
+        assert_eq!(model_event_request_count.load(Ordering::SeqCst), 1);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(model_event_request_count.load(Ordering::SeqCst), 2);
     }
 
     #[gpui::test]

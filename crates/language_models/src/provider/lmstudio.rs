@@ -195,6 +195,7 @@ impl LmStudioLanguageModelProvider {
             state: cx.new(|cx| {
                 let subscription = cx.observe_global::<SettingsStore>({
                     let mut settings = AllLanguageModelSettings::get_global(cx).lmstudio.clone();
+                    let mut old_disable_ai = crate::ai_disabled(cx);
                     move |this: &mut State, cx| {
                         let new_settings =
                             AllLanguageModelSettings::get_global(cx).lmstudio.clone();
@@ -210,6 +211,11 @@ impl LmStudioLanguageModelProvider {
                             settings = new_settings;
                             this.restart_fetch_models_task(cx);
                             cx.notify();
+                        }
+                        let new_disable_ai = crate::ai_disabled(cx);
+                        if new_disable_ai != old_disable_ai {
+                            old_disable_ai = new_disable_ai;
+                            this.restart_fetch_models_task(cx);
                         }
                     }
                 });
@@ -924,6 +930,7 @@ mod tests {
     use credentials_provider::test_support::FakeCredentialsProvider;
     use gpui::TestAppContext;
     use http_client::{AsyncBody, FakeHttpClient, Response};
+    use parking_lot::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[gpui::test]
@@ -1001,11 +1008,18 @@ mod tests {
         });
 
         let request_count = Arc::new(AtomicUsize::new(0));
+        let (release_first_fetch, first_fetch_released) = futures::channel::oneshot::channel();
+        let first_fetch_released = Arc::new(Mutex::new(Some(first_fetch_released)));
         let http_client = FakeHttpClient::create({
             let request_count = request_count.clone();
             move |_request| {
                 request_count.fetch_add(1, Ordering::SeqCst);
+                let first_fetch_released = first_fetch_released.clone();
                 async move {
+                    let first_fetch_released = first_fetch_released.lock().take();
+                    if let Some(first_fetch_released) = first_fetch_released {
+                        first_fetch_released.await.ok();
+                    }
                     Ok(Response::builder().status(200).body(AsyncBody::from(
                         r#"{"data":[{"id":"test-model","object":"model","type":"llm","publisher":"test","compatibility_type":"gguf","state":"loaded"}]}"#,
                     ))?)
@@ -1027,13 +1041,28 @@ mod tests {
                 settings.project.disable_ai = Some(false.into());
             });
         });
-        cx.update(|cx| {
-            provider
-                .state
-                .update(cx, |state, cx| state.restart_fetch_models_task(cx))
-        });
         cx.run_until_parked();
         assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert!(cx.update(|cx| provider.provided_models(cx)).is_empty());
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
+        });
+        cx.run_until_parked();
+        release_first_fetch.send(()).ok();
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert!(cx.update(|cx| provider.provided_models(cx)).is_empty());
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 2);
         assert_eq!(
             cx.update(|cx| provider
                 .provided_models(cx)
