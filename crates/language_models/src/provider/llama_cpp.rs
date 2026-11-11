@@ -335,6 +335,10 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        if crate::ai_disabled(cx) {
+            self.fetch_model_task = None;
+            return;
+        }
         let fetch_task = self.fetch_models(cx);
         let task = cx.spawn(async move |this, cx| {
             let result = fetch_task.await;
@@ -1922,6 +1926,65 @@ mod tests {
         cx.update(|_| ());
         cx.run_until_parked();
         assert!(pending_credentials.is_canceled());
+    }
+
+    #[gpui::test]
+    async fn does_not_fetch_models_when_ai_is_disabled(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::test(cx);
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
+            cx.set_global(store);
+        });
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let http_client = FakeHttpClient::create({
+            let request_count = request_count.clone();
+            move |request| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    let (status, body) = match request.uri().path() {
+                        "/v1/models" => (200, r#"{"data":[{"id":"test-model"}]}"#),
+                        "/props" => (200, "{}"),
+                        path => anyhow::bail!("unexpected request: {path}"),
+                    };
+                    Ok(http_client::Response::builder()
+                        .status(status)
+                        .body(http_client::AsyncBody::from(body))?)
+                }
+            }
+        });
+        let provider = cx.update(|cx| {
+            LlamaCppLanguageModelProvider::new(
+                http_client,
+                Arc::new(FakeCredentialsProvider::default()),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 0);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        cx.update(|cx| {
+            provider
+                .state
+                .update(cx, |state, cx| state.restart_fetch_models_task(cx))
+        });
+        cx.run_until_parked();
+        assert!(request_count.load(Ordering::SeqCst) >= 1);
+        assert_eq!(
+            cx.update(|cx| provider
+                .provided_models(cx)
+                .into_iter()
+                .map(|model| model.id.0.to_string())
+                .collect::<Vec<_>>()),
+            ["test-model"]
+        );
     }
 
     #[gpui::test]

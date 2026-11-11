@@ -124,6 +124,10 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        if crate::ai_disabled(cx) {
+            self.fetch_model_task = None;
+            return;
+        }
         let fetch_task = self.fetch_models(cx);
         let task = cx.spawn(async move |this, cx| {
             let result = fetch_task.await;
@@ -920,6 +924,7 @@ mod tests {
     use credentials_provider::test_support::FakeCredentialsProvider;
     use gpui::TestAppContext;
     use http_client::{AsyncBody, FakeHttpClient, Response};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[gpui::test]
     async fn enabling_ai_discovers_models_with_stored_credentials(cx: &mut TestAppContext) {
@@ -983,6 +988,60 @@ mod tests {
             ["stored-model"]
         );
         credentials.assert_reads(&[LMSTUDIO_API_URL]);
+    }
+
+    #[gpui::test]
+    async fn does_not_fetch_models_when_ai_is_disabled(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::test(cx);
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
+            cx.set_global(store);
+        });
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let http_client = FakeHttpClient::create({
+            let request_count = request_count.clone();
+            move |_request| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    Ok(Response::builder().status(200).body(AsyncBody::from(
+                        r#"{"data":[{"id":"test-model","object":"model","type":"llm","publisher":"test","compatibility_type":"gguf","state":"loaded"}]}"#,
+                    ))?)
+                }
+            }
+        });
+        let provider = cx.update(|cx| {
+            LmStudioLanguageModelProvider::new(
+                http_client,
+                Arc::new(FakeCredentialsProvider::default()),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 0);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        cx.update(|cx| {
+            provider
+                .state
+                .update(cx, |state, cx| state.restart_fetch_models_task(cx))
+        });
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            cx.update(|cx| provider
+                .provided_models(cx)
+                .into_iter()
+                .map(|model| model.id.0.to_string())
+                .collect::<Vec<_>>()),
+            ["test-model"]
+        );
     }
 
     #[gpui::test]
