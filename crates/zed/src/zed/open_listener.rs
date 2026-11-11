@@ -750,10 +750,9 @@ async fn resolve_open_behavior(
 
     if !paths.is_empty() {
         let has_directory =
-            futures::future::join_all(paths.iter().map(|p| app_state.fs.is_dir(Path::new(p))))
-                .await
-                .into_iter()
-                .any(|is_dir| is_dir);
+            futures::stream::iter(paths.iter().map(|p| app_state.fs.is_dir(Path::new(p))))
+                .any(|is_dir| is_dir)
+                .await;
 
         if !has_directory {
             return None;
