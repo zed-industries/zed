@@ -15,6 +15,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
+collections.workspace = true
 const_format.workspace = true
 fs.workspace = true
 futures.workspace = true

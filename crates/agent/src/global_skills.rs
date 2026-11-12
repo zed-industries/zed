@@ -355,7 +355,7 @@ impl GlobalSkillFiles {
                     GlobalSkillFileOperation::Move {
                         source,
                         destination,
-                    } => operation_proto::Operation::Rename(operation_proto::Rename {
+                    } => operation_proto::Operation::Move(operation_proto::Move {
                         source: path(source),
                         destination: path(destination),
                     }),

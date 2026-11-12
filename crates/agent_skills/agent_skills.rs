@@ -1,13 +1,13 @@
 mod global_skill_paths;
 
 use anyhow::{Context as _, Result, anyhow};
+use collections::HashMap;
 use const_format::{concatcp, formatcp};
 use fs::Fs;
 use futures::StreamExt;
 pub use global_skill_paths::*;
 use gpui::{App, EntityId, Global, SharedString};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -828,7 +828,7 @@ pub async fn watch_skills_dir(
 /// name.
 pub async fn write_skill_to_disk(
     fs: &dyn Fs,
-    skills_dir: &std::path::Path,
+    skills_dir: &Path,
     name: &str,
     description: &str,
     body: &str,
@@ -863,11 +863,7 @@ pub async fn write_skill_to_disk(
     Ok(skill_file_path)
 }
 
-pub fn existing_skill_path_error(
-    name: &str,
-    skill_dir: &std::path::Path,
-    is_dir: bool,
-) -> anyhow::Error {
+pub fn existing_skill_path_error(name: &str, skill_dir: &Path, is_dir: bool) -> anyhow::Error {
     if is_dir {
         anyhow!(
             "A skill named \"{name}\" already exists at {}. Pick a different name.",
