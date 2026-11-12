@@ -464,7 +464,8 @@ pub fn into_open_router(
     // we need this distinction, we're just using this less invasive check instead.
     // If we ever have a more formal distionction between the models in the future,
     // we should revise this to use that instead.
-    let is_anthropic_model = model.id().starts_with("anthropic/");
+    // OpenRouter aliases are prefixed with `~` (e.g. `~anthropic/claude-sonnet-latest`).
+    let is_anthropic_model = model.id().trim_start_matches('~').starts_with("anthropic/");
     let session_id = open_router_session_id(request.thread_id);
 
     let mut messages = Vec::new();
@@ -1109,6 +1110,83 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_anthropic_alias_model_uses_anthropic_request_handling() {
+        let model = open_router::Model::new(
+            "~anthropic/claude-sonnet-latest",
+            None,
+            Some(200000),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+
+        let request = LanguageModelRequest {
+            messages: vec![
+                language_model::LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("You are helpful.".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                language_model::LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Text("Hi there!".to_string())],
+                    cache: false,
+                    reasoning_details: Some(Arc::new(serde_json::json!([{
+                        "type": "reasoning.text"
+                    }]))),
+                },
+                language_model::LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("What is 2+2?".to_string())],
+                    cache: true,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let result = into_open_router(request, &model, None).unwrap();
+
+        let has_cache_control = result.messages.iter().any(|message| match message {
+            open_router::RequestMessage::System {
+                content: open_router::MessageContent::Multipart(parts),
+            }
+            | open_router::RequestMessage::User {
+                content: open_router::MessageContent::Multipart(parts),
+            } => parts.iter().any(|part| {
+                matches!(
+                    part,
+                    open_router::MessagePart::Text {
+                        cache_control: Some(_),
+                        ..
+                    }
+                )
+            }),
+            _ => false,
+        });
+        assert!(has_cache_control, "Alias should get cache_control");
+
+        let echoes_reasoning_details = result.messages.iter().any(|message| {
+            matches!(
+                message,
+                open_router::RequestMessage::Assistant {
+                    reasoning_details: Some(_),
+                    ..
+                }
+            )
+        });
+        assert!(
+            !echoes_reasoning_details,
+            "Alias should not echo reasoning_details back"
+        );
     }
 
     #[gpui::test]

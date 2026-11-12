@@ -8189,37 +8189,43 @@ mod tests {
                 });
                 cx.run_until_parked();
                 cx.update(|window, cx| {
+                    // Quads are drawn in this order: by draw order, then in paint
+                    // order. At an equal draw order, quads are drawn before underlines.
                     let quads = window.painted_quads();
                     let selection_bounds = quads
                         .iter()
                         .find(|quad| quad.background == Background::from(gpui::red()))
                         .expect("selection is painted")
                         .bounds;
-                    let order_for_color = |color| {
-                        let orders = quads
+                    // A quad can be painted as several pieces.
+                    let positions_for_color = |color| {
+                        let positions = quads
                             .iter()
-                            .filter(|quad| {
+                            .enumerate()
+                            .filter(|(_, quad)| {
                                 quad.background == Background::from(color)
                                     && quad.bounds.intersects(&selection_bounds)
                             })
-                            .map(|quad| quad.order)
+                            .map(|(position, _)| position)
                             .collect::<Vec<_>>();
-                        assert_eq!(orders.len(), 1);
-                        orders[0]
+                        let first = *positions.first().expect("quad is painted");
+                        let last = *positions.last().expect("quad is painted");
+                        first..=last
                     };
-                    let chip_order = order_for_color(gpui::green());
-                    let search_order = order_for_color(cx.theme().colors().search_match_background);
-                    let selection_order = order_for_color(gpui::red());
+                    let chip = positions_for_color(gpui::green());
+                    let search = positions_for_color(cx.theme().colors().search_match_background);
+                    let selection = positions_for_color(gpui::red());
+                    let selection_order = quads[*selection.end()].order;
                     let text_order = window
                         .painted_underlines()
                         .iter()
                         .map(|underline| underline.order)
                         .min()
                         .expect("strikethrough is painted");
-                    assert!(chip_order < search_order);
-                    assert!(search_order < selection_order);
+                    assert!(chip.end() < search.start());
+                    assert!(search.end() < selection.start());
                     assert!(
-                        selection_order < text_order,
+                        selection_order <= text_order,
                         "alignment={alignment}, text={text}, selection={selection_order}, glyphs={text_order}",
                     );
                 });
@@ -8259,17 +8265,22 @@ mod tests {
 
         let highlight_color = cx.update(|_, cx| cx.theme().colors().search_match_background);
         cx.update(|window, _| {
+            // Quads are drawn in this order: by draw order, then in paint order.
+            // At an equal draw order, quads are drawn before underlines.
             let quads = window.painted_quads();
-            let order_of_quad_with = |color: Hsla| {
-                quads
-                    .iter()
-                    .find(|quad| quad.background == color.into())
-                    .map(|quad| quad.order)
-            };
-            let run_background_order =
-                order_of_quad_with(run_background_color).expect("link background should be painted");
-            let highlight_order =
-                order_of_quad_with(highlight_color).expect("search highlight should be painted");
+            let has_color = |color: Hsla| move |quad: &gpui::Quad| quad.background == color.into();
+            let last_run_background = quads
+                .iter()
+                .rposition(has_color(run_background_color))
+                .expect("link background should be painted");
+            let first_highlight = quads
+                .iter()
+                .position(has_color(highlight_color))
+                .expect("search highlight should be painted");
+            let last_highlight = quads
+                .iter()
+                .rposition(has_color(highlight_color))
+                .expect("search highlight should be painted");
             // Strikethroughs are painted in the same layer as the glyphs
             let text_order = window
                 .painted_underlines()
@@ -8278,11 +8289,11 @@ mod tests {
                 .min()
                 .expect("strikethrough should be painted");
             assert!(
-                run_background_order < highlight_order,
+                last_run_background < first_highlight,
                 "text run backgrounds must not cover search highlights"
             );
             assert!(
-                highlight_order < text_order,
+                quads[last_highlight].order <= text_order,
                 "search highlight must be drawn below the text, otherwise opaque theme colors hide it"
             );
         });
