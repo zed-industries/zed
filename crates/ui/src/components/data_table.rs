@@ -14,8 +14,8 @@ use crate::{
 };
 use gpui::{
     AbsoluteLength, DefiniteLength, DragMoveEvent, Entity, EntityId, FocusHandle, Length,
-    ListHorizontalSizingBehavior, ListSizingBehavior, ListState, Point, ScrollHandle, Stateful,
-    UniformListScrollHandle, WeakEntity, list, transparent_black, uniform_list,
+    ListHorizontalSizingBehavior, ListSizingBehavior, ListState, Point, Rems, ScrollHandle,
+    Stateful, UniformListScrollHandle, WeakEntity, list, transparent_black, uniform_list,
 };
 
 pub mod table_row;
@@ -106,6 +106,21 @@ impl ResizableColumnsState {
 
     pub fn reset_column_to_initial_width(&mut self, col_idx: usize) {
         self.widths[col_idx] = self.initial_widths[col_idx];
+    }
+
+    /// Multiplies the current and initial width of every column by `factor`.
+    pub fn scale_widths(&mut self, factor: f32) {
+        for width in self
+            .widths
+            .as_mut_slice()
+            .iter_mut()
+            .chain(self.initial_widths.as_mut_slice())
+        {
+            *width = match *width {
+                AbsoluteLength::Pixels(pixels) => AbsoluteLength::Pixels(pixels * factor),
+                AbsoluteLength::Rems(rems) => AbsoluteLength::Rems(Rems(rems.0 * factor)),
+            };
+        }
     }
 
     pub fn pinned_width(&self, pinned_cols: usize, rem_size: Pixels) -> Pixels {

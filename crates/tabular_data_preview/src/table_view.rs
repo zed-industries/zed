@@ -13,9 +13,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+use editor::EditorSettings;
 use gpui::{
-    App, AppContext, Entity, FocusHandle, Focusable, ListAlignment, ListState, Point, Task, Window,
+    App, AppContext, Entity, FocusHandle, Focusable, ListAlignment, ListState, Point, ScrollEvent,
+    Task, Window,
 };
+use settings::Settings as _;
+use theme_settings::ThemeSettings;
 use ui::{
     AbsoluteLength, ResizableColumnsState, SharedString, TableInteractionState,
     TableResizeBehavior, prelude::*,
@@ -114,6 +118,8 @@ pub struct TableView {
     pub(crate) focus_handle: FocusHandle,
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
     pub(crate) column_widths: Entity<ResizableColumnsState>,
+    /// The buffer font size that `column_widths` are sized for.
+    pub(crate) column_widths_font_size: Pixels,
     /// Background task computing the display-to-data mapping after a filter/sort change.
     /// Stored here so that a new change cancels the previous in-flight computation.
     pub(crate) filter_sort_task: Option<Task<()>>,
@@ -140,7 +146,7 @@ impl TableView {
                 editor::EditorSettingsScrollbarProxy,
             >())
         });
-        let row_height = window.pixel_snap(window.line_height());
+        let row_height = buffer_line_height(window, cx);
 
         Self {
             engine: TableDataEngine::default(),
@@ -153,6 +159,7 @@ impl TableView {
                     vec![TableResizeBehavior::Resizable],
                 )
             }),
+            column_widths_font_size: ThemeSettings::get_global(cx).buffer_font_size(cx),
             filter_sort_task: None,
             settings: TableViewSettings::default(),
             performance_metrics: PerformanceMetrics::default(),
@@ -184,12 +191,18 @@ impl TableView {
         cx.notify();
     }
 
-    pub(crate) fn sync_column_widths(&self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_column_widths(&mut self, cx: &mut Context<Self>) {
         // plus 1 for the row identifier column
         let cols = self.engine.contents.headers.cols() + 1;
-        let line_number_width = self.calculate_row_identifier_column_width();
+        let font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
+        let zoom = font_size / self.column_widths_font_size;
+        self.column_widths_font_size = font_size;
+        // TODO: get real width of the characters
+        let char_width_px = 0.6 * f32::from(font_size);
+        let line_number_width = self.calculate_row_identifier_column_width(char_width_px);
 
-        let mut widths: Vec<AbsoluteLength> = vec![AbsoluteLength::Pixels(px(150.)); cols];
+        // 150px at the default buffer font size
+        let mut widths: Vec<AbsoluteLength> = vec![AbsoluteLength::Pixels(font_size * 10.); cols];
         widths[0] = AbsoluteLength::Pixels(px(line_number_width));
 
         let mut resize_behaviors = vec![TableResizeBehavior::Resizable; cols];
@@ -199,6 +212,7 @@ impl TableView {
             if state.cols() != cols {
                 *state = ResizableColumnsState::new(cols, widths, resize_behaviors);
             } else {
+                state.scale_widths(zoom);
                 state.set_column_configuration(
                     0,
                     AbsoluteLength::Pixels(px(line_number_width)),
@@ -206,6 +220,11 @@ impl TableView {
                 );
             }
         });
+        let scroll_handle = &self
+            .table_interaction_state
+            .read(cx)
+            .horizontal_scroll_handle;
+        scroll_handle.set_offset(scroll_handle.offset() * zoom);
     }
 
     pub fn clear_filters(&mut self, col: AnyColumn, cx: &mut Context<Self>) {
@@ -473,14 +492,31 @@ impl Focusable for TableView {
     }
 }
 
+pub(crate) fn buffer_line_height(window: &Window, cx: &App) -> Pixels {
+    let mut text_style = window.text_style();
+    text_style.font_size = ThemeSettings::get_global(cx).buffer_font_size(cx).into();
+    window.pixel_snap(text_style.line_height_in_pixels(window.rem_size()))
+}
+
+pub(crate) fn zoom_on_secondary_scroll(event: &ScrollEvent, _: &mut Window, cx: &mut App) {
+    if event.modifiers.secondary(cx) && EditorSettings::get_global(cx).mouse_wheel_zoom {
+        theme_settings::adjust_buffer_font_size_for_scroll(event.delta, cx);
+        cx.stop_propagation();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use gpui::{Action, TestAppContext, VisualTestContext};
+    use gpui::{
+        Action, ListOffset, Modifiers, ScrollDelta, TestAppContext, UpdateGlobal as _,
+        VisualTestContext, point,
+    };
+    use settings::SettingsStore;
 
     use super::*;
-    use crate::types::{DataRow, TableCell, TableLikeContent};
+    use crate::types::{DataRow, LineNumber, TableCell, TableLikeContent};
     use ui::table_row::TableRow;
 
     fn setup_test_view(
@@ -640,5 +676,117 @@ mod tests {
         // 5. Clear selection
         dispatch(&view, &ClearSelection, cx);
         assert_eq!(selection_bounds(&view, cx), None);
+    }
+
+    #[gpui::test]
+    fn test_mouse_wheel_zoom(cx: &mut TestAppContext) {
+        let (view, cx) = setup_test_view(cx, 100, 3);
+
+        let set_mouse_wheel_zoom = |enabled: bool, cx: &mut VisualTestContext| {
+            cx.update(|_, cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.editor.mouse_wheel_zoom = Some(enabled);
+                    });
+                });
+            });
+        };
+        let scroll = |position: Point<Pixels>,
+                      lines: f32,
+                      modifiers: Modifiers,
+                      cx: &mut VisualTestContext| {
+            cx.simulate_event(ScrollEvent {
+                position,
+                delta: ScrollDelta::Lines(point(0., lines)),
+                modifiers,
+                ..Default::default()
+            });
+        };
+        let buffer_font_size = |cx: &VisualTestContext| {
+            cx.read(|cx| ThemeSettings::get_global(cx).buffer_font_size(cx))
+        };
+        let scroll_top = |cx: &VisualTestContext| {
+            view.read_with(cx, |view, _| view.list_state.logical_scroll_top())
+        };
+
+        set_mouse_wheel_zoom(true, cx);
+        let secondary = cx.read(Modifiers::secondary_key);
+        let rows_bounds = view.read_with(cx, |view, _| view.list_state.viewport_bounds());
+        let rows = rows_bounds.center();
+        let header = point(rows.x, rows_bounds.top() / 2.);
+        let initial_font_size = buffer_font_size(cx);
+
+        // Zooming out first, because that direction would also scroll the rows if the list
+        // got the event. Zooming in wouldn't, the list is already at the top.
+        scroll(rows, -1., secondary, cx);
+        assert!(buffer_font_size(cx) < initial_font_size);
+        assert_eq!(scroll_top(cx), ListOffset::default());
+
+        scroll(header, 1., secondary, cx);
+        assert_eq!(buffer_font_size(cx), initial_font_size);
+
+        scroll(rows, -1., Modifiers::default(), cx);
+        assert_eq!(buffer_font_size(cx), initial_font_size);
+        assert_ne!(scroll_top(cx), ListOffset::default());
+
+        set_mouse_wheel_zoom(false, cx);
+        scroll(rows, -1., secondary, cx);
+        assert_eq!(buffer_font_size(cx), initial_font_size);
+    }
+
+    #[gpui::test]
+    fn test_table_scales_with_buffer_font_size(cx: &mut TestAppContext) {
+        let (view, cx) = setup_test_view(cx, 100, 30);
+
+        let buffer_font_size = |cx: &VisualTestContext| {
+            cx.read(|cx| ThemeSettings::get_global(cx).buffer_font_size(cx))
+        };
+        let layout = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let view = view.read(cx);
+                let column_widths = view.column_widths.read(cx);
+                let rem_size = window.rem_size();
+                let scroll_handle = &view
+                    .table_interaction_state
+                    .read(cx)
+                    .horizontal_scroll_handle;
+                (
+                    view.row_height,
+                    column_widths.pinned_width(1, rem_size),
+                    column_widths.scrollable_width(column_widths.cols() - 1, rem_size),
+                    scroll_handle.offset().x,
+                )
+            })
+        };
+
+        view.update(cx, |view, cx| {
+            // Wide enough that the line number column isn't held at its minimum width.
+            Arc::make_mut(&mut view.engine.contents).line_numbers =
+                vec![LineNumber::Line(1_000_000)];
+            view.sync_column_widths(cx);
+            let scroll_handle = &view
+                .table_interaction_state
+                .read(cx)
+                .horizontal_scroll_handle;
+            scroll_handle.set_offset(point(px(-300.), px(0.)));
+            cx.notify();
+        });
+        let font_size = buffer_font_size(cx);
+        let (row_height, line_number_width, last_column_width, scroll_x) = layout(cx);
+        // The offset is clamped to zero if all columns fit in the window.
+        assert_eq!(scroll_x, px(-300.));
+
+        cx.update(|_, cx| theme_settings::increase_buffer_font_size(cx));
+        let zoom = buffer_font_size(cx) / font_size;
+        let (
+            zoomed_row_height,
+            zoomed_line_number_width,
+            zoomed_last_column_width,
+            zoomed_scroll_x,
+        ) = layout(cx);
+        assert!(zoomed_row_height > row_height);
+        assert!(zoomed_line_number_width > line_number_width);
+        assert_eq!(zoomed_last_column_width, last_column_width * zoom);
+        assert_eq!(zoomed_scroll_x, scroll_x * zoom);
     }
 }

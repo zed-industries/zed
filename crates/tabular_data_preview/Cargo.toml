@@ -21,7 +21,9 @@ indexmap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
+settings.workspace = true
 text.workspace = true
+theme_settings.workspace = true
 util.workspace = true
 
 [dev-dependencies]
