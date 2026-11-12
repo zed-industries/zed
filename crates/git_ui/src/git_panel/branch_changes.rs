@@ -208,25 +208,16 @@ impl GitPanel {
         else {
             return;
         };
-        match row {
-            GitListEntry::Directory(directory) => {
-                let expanded = branch_changes
-                    .tree_state
-                    .expanded_dirs
-                    .entry(directory.key.clone())
-                    .or_insert(true);
-                *expanded = !*expanded;
-                self.rebuild_branch_changes(cx);
-            }
-            GitListEntry::Status(entry) => {
-                let entry = entry.clone();
-                self.open_branch_diff(Some(entry), window, cx);
-            }
-            GitListEntry::TreeStatus(entry) => {
-                let entry = entry.entry.clone();
-                self.open_branch_diff(Some(entry), window, cx);
-            }
-            GitListEntry::Header(_) | GitListEntry::EmptySection(_) => {}
+        if let GitListEntry::Directory(directory) = row {
+            let expanded = branch_changes
+                .tree_state
+                .expanded_dirs
+                .entry(directory.key.clone())
+                .or_insert(true);
+            *expanded = !*expanded;
+            self.rebuild_branch_changes(cx);
+        } else if let Some(entry) = row.status_entry().cloned() {
+            self.open_branch_diff(Some(entry), window, cx);
         }
     }
 
