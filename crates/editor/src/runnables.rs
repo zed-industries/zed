@@ -727,7 +727,14 @@ impl Editor {
             let mut runnable_rows = Vec::with_capacity(runnable_ranges.len());
             for (run_range, mut runnable) in runnable_ranges {
                 let Some(tasks) = cx
-                    .update(|_, cx| Self::templates_with_tags(&project, &mut runnable.runnable, cx))
+                    .update(|_, cx| {
+                        Self::templates_with_tags(
+                            &project,
+                            &mut runnable.runnable,
+                            &runnable.extra_captures,
+                            cx,
+                        )
+                    })
                     .ok()
                 else {
                     continue;
@@ -771,6 +778,7 @@ impl Editor {
     fn templates_with_tags(
         project: &Entity<Project>,
         runnable: &mut Runnable,
+        captures: &HashMap<String, String>,
         cx: &mut App,
     ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
         let (inventory, worktree_id, buffer) = project.read_with(cx, |project, cx| {
@@ -789,6 +797,11 @@ impl Editor {
 
         let tags = mem::take(&mut runnable.tags);
         let language = runnable.language.clone();
+        let captured_variables = captures
+            .iter()
+            .map(|(name, value)| (VariableName::Custom(name.clone().into()), value.clone()))
+            .collect::<TaskVariables>();
+
         cx.spawn(async move |cx| {
             let mut templates_with_tags = Vec::new();
             if let Some(inventory) = inventory {
@@ -801,11 +814,11 @@ impl Editor {
                             cx,
                         )
                     });
-                    templates_with_tags.extend(new_tasks.await.into_iter().filter(
-                        move |(_, template)| {
-                            template.tags.iter().any(|source_tag| source_tag == &tag)
-                        },
-                    ));
+                    templates_with_tags.extend(
+                        new_tasks.await.into_iter().filter(|(_, template)| {
+                            template.binds_to_tag(&tag, &captured_variables)
+                        }),
+                    );
                 }
             }
             templates_with_tags.sort_by_key(|(kind, _)| kind.to_owned());
@@ -869,7 +882,7 @@ mod tests {
         },
     };
     use serde_json::json;
-    use task::{TaskTemplate, TaskTemplates};
+    use task::{TagCondition, TaskTemplate, TaskTemplates, VariableName};
     use text::Point;
     use util::path;
     use util::rel_path::rel_path;
@@ -927,6 +940,39 @@ mod tests {
 
         fn lsp_task_source(&self) -> Option<LanguageServerName> {
             Some(LanguageServerName::new_static(FAKE_LSP_NAME))
+        }
+    }
+
+    struct TestRustContextProviderWithTagConditions;
+
+    impl ContextProvider for TestRustContextProviderWithTagConditions {
+        fn associated_tasks(
+            &self,
+            _: Option<Entity<language::Buffer>>,
+            _: &gpui::App,
+        ) -> Task<Option<TaskTemplates>> {
+            let single_test_template = |test_name: &str| TaskTemplate {
+                label: format!("Run {test_name}"),
+                command: "cargo".into(),
+                args: vec!["test".into(), test_name.into()],
+                tags: vec!["rust-test".into()],
+                tag_condition: Some(TagCondition {
+                    variable: VariableName::Custom("_test_name".into()),
+                    value: test_name.into(),
+                }),
+                ..TaskTemplate::default()
+            };
+            Task::ready(Some(TaskTemplates(vec![
+                TaskTemplate {
+                    label: "Run any test".into(),
+                    command: "cargo".into(),
+                    args: vec!["test".into()],
+                    tags: vec!["rust-test".into()],
+                    ..TaskTemplate::default()
+                },
+                single_test_template("test_one"),
+                single_test_template("test_two"),
+            ])))
         }
     }
 
@@ -1322,6 +1368,85 @@ mod tests {
         assert!(
             !labels.is_empty(),
             "Runnables should appear after the buffer is saved to disk"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tag_conditions_bind_templates_to_matching_runnables(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "main.rs": indoc! {"
+                    #[test]
+                    fn test_one() {
+                        assert!(true);
+                    }
+
+                    #[test]
+                    fn test_two() {
+                        assert!(true);
+                    }
+
+                    #[test]
+                    fn test_three() {
+                        assert!(true);
+                    }
+                "},
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(
+            Arc::try_unwrap(rust_lang())
+                .unwrap()
+                .with_context_provider(Some(Arc::new(TestRustContextProviderWithTagConditions))),
+        ));
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let editor = cx.add_window(|window, cx| {
+            build_editor_with_project(project.clone(), multi_buffer, window, cx)
+        });
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.refresh_runnables(None, window, cx);
+            })
+            .expect("editor update");
+        cx.executor().advance_clock(UPDATE_DEBOUNCE);
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            editor
+                .update(cx, |editor, _, _| collect_runnable_labels(editor))
+                .expect("editor update"),
+            vec![
+                (
+                    buffer_id,
+                    1,
+                    vec!["Run any test".to_string(), "Run test_one".to_string()]
+                ),
+                (
+                    buffer_id,
+                    6,
+                    vec!["Run any test".to_string(), "Run test_two".to_string()]
+                ),
+                (buffer_id, 11, vec!["Run any test".to_string()]),
+            ],
+            "Conditional templates should bind only to the runnable whose capture matches, \
+                      unconditional ones should bind to every runnable with their tag"
         );
     }
 

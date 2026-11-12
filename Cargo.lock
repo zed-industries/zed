@@ -9820,6 +9820,7 @@ dependencies = [
  "tree-sitter-css",
  "tree-sitter-gitcommit",
  "tree-sitter-go",
+ "tree-sitter-json",
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",

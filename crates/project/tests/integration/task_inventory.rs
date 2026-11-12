@@ -608,6 +608,53 @@ async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_fresh_resolved_tasks_include_used_tasks(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Global(tasks_file()),
+                Some(&mock_tasks_from_names(["used_task", "unused_task"])),
+            )
+            .unwrap();
+    });
+    register_task_used(&inventory, "used_task", cx).await;
+
+    let task_contexts = Arc::new(TaskContexts::default());
+    let (used, current) = inventory
+        .update(cx, |inventory, cx| {
+            inventory.used_and_current_resolved_tasks(task_contexts.clone(), cx)
+        })
+        .await;
+    assert_eq!(resolved_labels(used), vec!["used_task"]);
+    assert_eq!(
+        resolved_labels(current),
+        vec!["unused_task"],
+        "the task picker should list a used task once, among the used tasks"
+    );
+
+    let fresh = inventory
+        .update(cx, |inventory, cx| {
+            inventory.fresh_resolved_tasks(task_contexts, cx)
+        })
+        .await;
+    assert_eq!(
+        resolved_labels(fresh),
+        vec!["unused_task", "used_task"],
+        "fresh tasks, used by debug locators, should include the tasks used before"
+    );
+}
+
+fn resolved_labels(tasks: Vec<(TaskSourceKind, task::ResolvedTask)>) -> Vec<String> {
+    tasks
+        .into_iter()
+        .map(|(_, task)| task.resolved_label)
+        .sorted()
+        .collect()
+}
+
 fn init_test(_cx: &mut TestAppContext) {
     zlog::init_test();
     TaskStore::init(None);

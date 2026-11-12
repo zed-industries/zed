@@ -7,7 +7,6 @@
         (#eq? @_name "scripts"))
       value: (object
         (pair
-          key: (string
-            (string_content) @run @script))))))
+          key: (string) @run) @run_item))))
   (#set! tag package-script)
   (#set! tag composer-script))

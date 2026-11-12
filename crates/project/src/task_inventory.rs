@@ -487,6 +487,32 @@ impl Inventory {
         })
     }
 
+    /// Resolves the task templates relevant to the worktree and the language given with the [`TaskContexts`] given,
+    /// in the same order as the current tasks of [`Inventory::used_and_current_resolved_tasks`],
+    /// but without removing the tasks that were used before.
+    pub fn fresh_resolved_tasks(
+        &self,
+        task_contexts: Arc<TaskContexts>,
+        cx: &App,
+    ) -> Task<Vec<(TaskSourceKind, ResolvedTask)>> {
+        let location = task_contexts.location();
+        let buffer = location.map(|location| location.buffer.clone());
+        let language = location.and_then(|location| location.buffer.read(cx).language().cloned());
+        let templates = self.list_tasks(buffer, language, task_contexts.worktree(), cx);
+        cx.background_spawn(async move {
+            templates
+                .await
+                .into_iter()
+                .filter_map(|(kind, template)| {
+                    let task = task_contexts.resolve_task(&kind, &template)?;
+                    Some((kind, task, 0))
+                })
+                .sorted_unstable_by(task_lru_comparator)
+                .map(|(kind, task, _)| (kind, task))
+                .collect()
+        })
+    }
+
     /// Pulls its task sources relevant to the worktree and the language given and resolves them with the [`TaskContexts`] given.
     /// Joins the new resolutions with the resolved tasks that were used (spawned) before,
     /// orders them so that the most recently used come first, all equally used ones are ordered so that the most specific tasks come first.

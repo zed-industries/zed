@@ -10,7 +10,7 @@ use util::{ResultExt, truncate_and_remove_front};
 
 use crate::{
     AttachRequest, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TaskContext, TaskId,
-    VariableName, ZED_VARIABLE_NAME_PREFIX, serde_helpers::non_empty_string_vec,
+    TaskVariables, VariableName, ZED_VARIABLE_NAME_PREFIX, serde_helpers::non_empty_string_vec,
 };
 
 /// A template definition of a Zed task to run.
@@ -78,6 +78,20 @@ pub struct TaskTemplate {
     /// Hooks that this task runs when emitted.
     #[serde(default)]
     pub hooks: HashSet<TaskHook>,
+    /// Restricts binding to this template's tags to runnables that captured the given value.
+    /// Set by language task providers only, it is not a part of the `tasks.json` format.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub tag_condition: Option<TagCondition>,
+}
+
+/// A runnable capture value that a [`TaskTemplate`] requires to bind to its tags.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagCondition {
+    /// The variable holding the runnable capture, e.g. `ZED_CUSTOM_script` for a `@script` capture.
+    pub variable: VariableName,
+    /// The value the capture must have, as decoded by the language's runnable resolver.
+    pub value: String,
 }
 
 #[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
@@ -155,6 +169,16 @@ impl TaskTemplates {
 }
 
 impl TaskTemplate {
+    /// Whether this template is bound to the tag given, for a runnable whose captures are in `variables`.
+    ///
+    /// Only runnables and spawning by tag check this: listing and resolving tasks ignore [`TaskTemplate::tag_condition`].
+    pub fn binds_to_tag(&self, tag: &str, variables: &TaskVariables) -> bool {
+        self.tags.iter().any(|template_tag| template_tag == tag)
+            && self.tag_condition.as_ref().is_none_or(|condition| {
+                variables.get(&condition.variable) == Some(condition.value.as_ref())
+            })
+    }
+
     /// Replaces all `VariableName` task variables in the task template string fields.
     ///
     /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
@@ -1234,6 +1258,47 @@ mod tests {
             vec!["run", "--bin", "test_bin", "", "--config="],
             "args that consist entirely of variables resolved to empty strings should be omitted, \
             while literal empty args and partially substituted args should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_tag_condition_restricts_tag_binding() {
+        let script_variable = VariableName::Custom("script".into());
+        let unconditional = TaskTemplate {
+            label: "any script".to_owned(),
+            command: "npm".to_owned(),
+            tags: vec!["package-script".to_owned()],
+            ..TaskTemplate::default()
+        };
+        let dev_only = TaskTemplate {
+            label: "package.json > dev".to_owned(),
+            tag_condition: Some(TagCondition {
+                variable: script_variable.clone(),
+                value: "dev".to_owned(),
+            }),
+            ..unconditional.clone()
+        };
+
+        let on_dev = TaskVariables::from_iter([(script_variable.clone(), "dev".to_owned())]);
+        let on_build = TaskVariables::from_iter([(script_variable, "build".to_owned())]);
+        let outside_scripts = TaskVariables::default();
+
+        assert!(unconditional.binds_to_tag("package-script", &on_dev));
+        assert!(
+            unconditional.binds_to_tag("package-script", &outside_scripts),
+            "templates without a condition should keep binding to their tags everywhere"
+        );
+        assert!(!unconditional.binds_to_tag("composer-script", &on_dev));
+        assert!(dev_only.binds_to_tag("package-script", &on_dev));
+        assert!(!dev_only.binds_to_tag("package-script", &on_build));
+        assert!(!dev_only.binds_to_tag("package-script", &outside_scripts));
+        assert!(!dev_only.binds_to_tag("composer-script", &on_dev));
+
+        assert!(
+            dev_only
+                .resolve_task(TEST_ID_BASE, &TaskContext::default())
+                .is_some(),
+            "the condition should only affect tag binding, not task resolution"
         );
     }
 }

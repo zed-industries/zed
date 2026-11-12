@@ -429,7 +429,7 @@ fn spawn_task_or_modal(
             });
             let name = task_name.clone();
             tasks_ui::spawn_tasks_filtered(
-                move |(_, task)| task.label.eq(&name),
+                move |(_, task, _)| task.label.eq(&name),
                 overrides,
                 window,
                 cx,
@@ -445,7 +445,9 @@ fn spawn_task_or_modal(
             });
             let tag = task_tag.clone();
             tasks_ui::spawn_tasks_filtered(
-                move |(_, task)| task.tags.contains(&tag),
+                move |(_, task, task_context)| {
+                    task.binds_to_tag(&tag, &task_context.task_variables)
+                },
                 overrides,
                 window,
                 cx,
