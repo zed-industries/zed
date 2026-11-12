@@ -427,6 +427,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
+    use indoc::indoc;
     use language::{AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
@@ -749,11 +750,11 @@ mod tests {
         let query = tree_sitter::Query::new(&language, query_source)
             .expect("C highlights query should compile");
 
-        let source = r#"
-#pragma pack(push, 4)
-#undef FOO
-#define BAR 42
-"#;
+        let source = indoc! {"
+            #pragma pack(push, 4)
+            #undef FOO
+            #define BAR 42
+        "};
 
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&language).unwrap();
