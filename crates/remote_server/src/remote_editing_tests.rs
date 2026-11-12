@@ -5838,8 +5838,11 @@ async fn test_create_and_trash_remote_global_skills(
     assert_eq!(test.global_skills(cx), ["new-skill"]);
 
     let error = create("new-skill", cx).await.unwrap_err();
+    // The skill creator shows this message as is.
     assert!(
-        error.to_string().contains("already exists"),
+        error
+            .to_string()
+            .starts_with("A skill named \"new-skill\" already exists"),
         "got: {error:#}"
     );
     let error = create("../escape", cx).await.unwrap_err();

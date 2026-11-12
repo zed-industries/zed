@@ -87,7 +87,10 @@ pub fn create_remote_global_skill(
         body: body.to_string(),
         disable_model_invocation,
     });
-    cx.background_spawn(async move { Ok(PathBuf::from(request.await?.skill_file_path)) })
+    cx.background_spawn(async move {
+        let response = request.await.map_err(without_rpc_request_name)?;
+        Ok(PathBuf::from(response.skill_file_path))
+    })
 }
 
 /// Moves a skill directory in the remote's `~/.agents/skills` to the trash.
@@ -115,9 +118,21 @@ pub fn trash_remote_global_skill(
         directory_name,
     });
     cx.background_spawn(async move {
-        request.await?;
+        request.await.map_err(without_rpc_request_name)?;
         Ok(())
     })
+}
+
+/// The remote's own error message, which the UI shows, without the "RPC request
+/// ... failed" wrapper around it.
+fn without_rpc_request_name(error: anyhow::Error) -> anyhow::Error {
+    match error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<proto::RpcError>())
+    {
+        Some(rpc_error) => anyhow!(rpc_error.raw_message().to_string()),
+        None => error,
+    }
 }
 
 /// The files of a project's global skills, on whichever machine they're on.
