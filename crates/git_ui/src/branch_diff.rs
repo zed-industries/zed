@@ -1,6 +1,7 @@
 use crate::{
     branch_picker,
     diff_multibuffer::DiffMultibuffer,
+    git_panel::GitStatusEntry,
     project_diff::{
         self, CompareWithBranch, DeployBranchDiff, ProjectDiff, ReviewDiff,
         render_send_review_to_agent_button,
@@ -125,6 +126,7 @@ impl BranchDiff {
                         intended_repo,
                         base_ref,
                         branch_diff,
+                        None,
                         window,
                         cx,
                     );
@@ -172,6 +174,7 @@ impl BranchDiff {
                             repository.clone(),
                             base_ref,
                             None,
+                            None,
                             window,
                             cx,
                         );
@@ -198,6 +201,7 @@ impl BranchDiff {
         intended_repo: Entity<Repository>,
         base_ref: SharedString,
         branch_diff: Option<Entity<diff_buffer_list::DiffBufferList>>,
+        entry: Option<GitStatusEntry>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -215,6 +219,9 @@ impl BranchDiff {
         });
         if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
+            if let Some(entry) = entry {
+                existing.update(cx, |this, cx| this.move_to_entry(entry, window, cx));
+            }
             return;
         }
 
@@ -237,7 +244,16 @@ impl BranchDiff {
                     .await?;
                 workspace
                     .update_in(cx, |workspace, window, cx| {
-                        workspace.add_item_to_active_pane(Box::new(this), None, true, window, cx);
+                        workspace.add_item_to_active_pane(
+                            Box::new(this.clone()),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                        if let Some(entry) = entry {
+                            this.update(cx, |this, cx| this.move_to_entry(entry, window, cx));
+                        }
                     })
                     .ok();
                 anyhow::Ok(())
@@ -378,6 +394,16 @@ impl BranchDiff {
 
     pub(crate) fn repo(&self, cx: &App) -> Option<Entity<Repository>> {
         self.diff.read(cx).repo(cx)
+    }
+
+    fn move_to_entry(
+        &mut self,
+        entry: GitStatusEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.diff
+            .update(cx, |diff, cx| diff.move_to_entry(entry, window, cx));
     }
 
     fn set_merge_base(&mut self, base_ref: SharedString, cx: &mut Context<Self>) {
@@ -837,6 +863,7 @@ impl Render for BranchDiffToolbar {
                                                 project.clone(),
                                                 repository,
                                                 base_ref,
+                                                None,
                                                 None,
                                                 window,
                                                 cx,

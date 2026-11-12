@@ -1138,7 +1138,7 @@
     },
   },
   {
-    "context": "GitPanel && (ChangesList || HistoryList) && !GitBranchSelector && !GitRepositorySelector",
+    "context": "GitPanel && (ChangesList || HistoryList || BranchChangesList) && !GitBranchSelector && !GitRepositorySelector",
     "use_key_equivalents": true,
     "bindings": {
       "j": "menu::SelectNext",
