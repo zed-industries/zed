@@ -370,8 +370,6 @@ pub enum Event {
         /// Optional link to display as a button in the toast.
         link: Option<ToastLink>,
     },
-    /// The remote server's `~/.agents/skills` changed.
-    GlobalSkillsChanged,
     HideToast {
         notification_id: SharedString,
     },
@@ -449,6 +447,8 @@ pub enum Event {
     },
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
+    /// The remote server's `~/.agents/skills` changed.
+    GlobalSkillsChanged,
     BufferEdited {
         source: BufferEditSource,
     },
