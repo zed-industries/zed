@@ -959,6 +959,8 @@ struct PathTile {
     float2 top_left;
     float2 bottom_right;
     float2 reference;
+    float2 curves_top_left;
+    float2 curves_bottom_right;
 };
 
 struct PathPaint {
@@ -976,6 +978,7 @@ StructuredBuffer<PathPaint> path_paints: register(t3);
 struct PathTileFragmentInput {
     float4 position: SV_Position;
     nointerpolation uint tile_id: TEXCOORD0;
+    nointerpolation float4 curve_box: TEXCOORD1;
     PreparedBackground background;
 };
 
@@ -998,6 +1001,7 @@ PathTileFragmentInput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id
     PathTileFragmentInput output;
     output.position = to_device_position_impl(position);
     output.tile_id = tile_index;
+    output.curve_box = float4(tile.curves_top_left, tile.curves_bottom_right);
     output.background = prepare_background(paint.color);
     return output;
 }
@@ -1068,9 +1072,13 @@ void correct_for_endpoint(float2 endpoint, float step, float2 reference, float2 
 }
 
 float4 path_tile_fragment(PathTileFragmentInput input): SV_Target {
+    float2 center = floor(input.position.xy) + 0.5;
+    if (input.background.tag == 0u
+        && (any(center < input.curve_box.xy) || any(center > input.curve_box.zw))) {
+        return input.background.color0;
+    }
     PathTile tile = path_tiles[input.tile_id];
     PathPaint paint = path_paints[tile.paint];
-    float2 center = floor(input.position.xy) + 0.5;
 
     float2 winding = float(tile.backdrop);
     float2 weight = float2(0.0, 0.0);

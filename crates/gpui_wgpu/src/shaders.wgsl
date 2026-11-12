@@ -1066,6 +1066,8 @@ struct PathTile {
     top_left: vec2<f32>,
     bottom_right: vec2<f32>,
     reference: vec2<f32>,
+    curves_top_left: vec2<f32>,
+    curves_bottom_right: vec2<f32>,
 }
 
 struct PathCurve {
@@ -1092,6 +1094,7 @@ struct PathTileVarying {
     @location(1) @interpolate(flat) background_color0: vec4<f32>,
     @location(2) @interpolate(flat) background_color1: vec4<f32>,
     @location(3) @interpolate(flat) background_tag: u32,
+    @location(4) @interpolate(flat) curve_box: vec4<f32>,
 }
 
 @vertex
@@ -1111,6 +1114,7 @@ fn vs_path_tile(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
     var out = PathTileVarying();
     out.position = to_device_position_impl(position);
     out.tile_id = instance_id;
+    out.curve_box = vec4<f32>(tile.curves_top_left, tile.curves_bottom_right);
     let background = prepare_background(paint.color);
     out.background_color0 = background.color0;
     out.background_color1 = background.color1;
@@ -1182,9 +1186,13 @@ fn correct_for_endpoint(endpoint: vec2<f32>, step: f32, reference: vec2<f32>, ce
 
 @fragment
 fn fs_path_tile(input: PathTileVarying) -> @location(0) vec4<f32> {
+    let center = floor(input.position.xy) + 0.5;
+    if (input.background_tag == 0u
+        && (any(center < input.curve_box.xy) || any(center > input.curve_box.zw))) {
+        return blend_color(input.background_color0, 1.0);
+    }
     let tile = load_path_tile(input.tile_id);
     let paint = load_path_paint(tile.paint);
-    let center = floor(input.position.xy) + 0.5;
 
     var winding = vec2<f32>(f32(tile.backdrop));
     var weight = vec2<f32>(0.0);

@@ -688,6 +688,7 @@ fragment float4 polychrome_sprite_fragment(
 struct PathTileFragmentInput {
   float4 position [[position]];
   uint tile_id [[flat]];
+  float4 curve_box [[flat]];
   PreparedBackground background;
 };
 
@@ -716,6 +717,8 @@ vertex PathTileFragmentInput path_tile_vertex(
   return PathTileFragmentInput{
       to_device_position_impl(position, viewport_size),
       tile_id,
+      float4(tile.curves_top_left.x, tile.curves_top_left.y,
+             tile.curves_bottom_right.x, tile.curves_bottom_right.y),
       prepare_background(paint.color)};
 }
 
@@ -792,9 +795,13 @@ fragment float4 path_tile_fragment(
     constant PathTile *tiles [[buffer(PathTileInputIndex_Tiles)]],
     constant PathCurve *curves [[buffer(PathTileInputIndex_Curves)]],
     constant PathPaint *paints [[buffer(PathTileInputIndex_Paints)]]) {
+  float2 center = floor(input.position.xy) + 0.5;
+  if (input.background.tag == 0u &&
+      (any(center < input.curve_box.xy) || any(center > input.curve_box.zw))) {
+    return input.background.color0;
+  }
   PathTile tile = tiles[input.tile_id];
   PathPaint paint = paints[tile.paint];
-  float2 center = floor(input.position.xy) + 0.5;
   float2 reference = float2(tile.reference.x, tile.reference.y);
 
   float2 winding = float2(float(tile.backdrop));

@@ -2637,7 +2637,7 @@ mod tests {
     fn webgl_record_sizes_match_shader_word_strides() {
         assert_eq!(std::mem::size_of::<Quad>(), 40 * 4);
         assert_eq!(std::mem::size_of::<Shadow>(), 28 * 4);
-        assert_eq!(std::mem::size_of::<PathTile>(), 10 * 4);
+        assert_eq!(std::mem::size_of::<PathTile>(), 14 * 4);
         assert_eq!(std::mem::size_of::<PathCurve>(), 10 * 4);
         assert_eq!(std::mem::size_of::<PathPaint>(), 28 * 4);
         assert_eq!(std::mem::size_of::<Underline>(), 16 * 4);

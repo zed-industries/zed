@@ -207,12 +207,14 @@ fn load_shadow(instance_id: u32) -> Shadow {
 }
 
 fn load_path_tile(instance_id: u32) -> PathTile {
-    var cursor = instance_cursor(instance_id * 10u);
+    var cursor = instance_cursor(instance_id * 14u);
     return PathTile(
         read_word(&cursor),
         read_word(&cursor),
         read_word(&cursor),
         read_i32(&cursor),
+        read_vec2_f32(&cursor),
+        read_vec2_f32(&cursor),
         read_vec2_f32(&cursor),
         read_vec2_f32(&cursor),
         read_vec2_f32(&cursor),
