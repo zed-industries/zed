@@ -1,14 +1,16 @@
 use std::{
+    f32::consts::TAU,
     fs,
     hash::{Hash, Hasher},
     path::Path,
     sync::Arc,
+    time::Duration,
 };
 
 use crate::{
     App, Asset, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
-    Interactivity, LayoutId, Pixels, Point, Radians, SharedString, Size, StyleRefinement, Styled,
-    TransformationMatrix, Window, point, px, radians, size,
+    Interactivity, LayoutId, Pixels, Point, Radians, SharedString, Size, SpriteAnimation,
+    StyleRefinement, Styled, TransformationMatrix, Window, point, px, radians, size,
 };
 use gpui_util::ResultExt;
 
@@ -16,6 +18,7 @@ use gpui_util::ResultExt;
 pub struct Svg {
     interactivity: Interactivity,
     transformation: Option<Transformation>,
+    rotation_period: Option<Duration>,
     path: Option<SharedString>,
     external_path: Option<SharedString>,
     data: Option<Arc<[u8]>>,
@@ -28,6 +31,7 @@ pub fn svg() -> Svg {
     Svg {
         interactivity: Interactivity::new(),
         transformation: None,
+        rotation_period: None,
         path: None,
         external_path: None,
         data: None,
@@ -65,6 +69,20 @@ impl Svg {
     /// Note that this won't effect the hitbox or layout of the element, only the rendering.
     pub fn with_transformation(mut self, transformation: Transformation) -> Self {
         self.transformation = Some(transformation);
+        self
+    }
+
+    /// Continuously rotate the SVG clockwise, one full turn per `period`, phase-locked
+    /// to the app's shared animation clock like [`crate::Animation::repeat_synced`].
+    ///
+    /// Where the window's renderer supports it, the rotation is evaluated on the GPU:
+    /// the SVG is painted once, and the window presents the same scene on later frames
+    /// instead of re-rendering this view. Otherwise this re-renders the view every frame.
+    ///
+    /// Like [`Self::with_transformation`], this doesn't affect layout or hit testing.
+    /// The rotation is applied after any transformation.
+    pub fn with_rotation_animation(mut self, period: Duration) -> Self {
+        self.rotation_period = Some(period);
         self
     }
 }
@@ -138,9 +156,28 @@ impl Element for Svg {
             window,
             cx,
             |style, window, cx| {
-                let transformation = self
-                    .transformation
-                    .as_ref()
+                let mut transformation = self.transformation;
+                let mut animation = SpriteAnimation::NONE;
+                if let Some(period) = self.rotation_period
+                    && !period.is_zero()
+                    && !cx.reduce_motion()
+                {
+                    let gpu_animation = SpriteAnimation::rotation(period);
+                    if window.supports_gpu_animations() && gpu_animation.is_animated() {
+                        animation = gpu_animation;
+                    } else {
+                        let elapsed = cx.background_executor().now() - cx.synced_animation_epoch;
+                        let phase =
+                            Duration::from_nanos((elapsed.as_nanos() % period.as_nanos()) as u64)
+                                .as_secs_f32()
+                                / period.as_secs_f32();
+                        let base = transformation.unwrap_or_default();
+                        transformation =
+                            Some(base.with_rotation(radians(base.rotate.0 + phase * TAU)));
+                        window.request_animation_frame();
+                    }
+                }
+                let transformation = transformation
                     .map(|transformation| {
                         transformation.into_matrix(bounds.center(), window.scale_factor())
                     })
@@ -149,11 +186,12 @@ impl Element for Svg {
                 if let Some((data, path)) = self.data.as_ref().zip(self.data_path.as_ref()) {
                     if let Some(color) = style.text.color {
                         window
-                            .paint_svg(
+                            .paint_animated_svg(
                                 bounds,
                                 path.clone(),
                                 Some(&**data),
                                 transformation,
+                                animation,
                                 color,
                                 cx,
                             )
@@ -170,18 +208,27 @@ impl Element for Svg {
                     };
 
                     window
-                        .paint_svg(
+                        .paint_animated_svg(
                             bounds,
                             path.clone(),
                             Some(&bytes),
                             transformation,
+                            animation,
                             color,
                             cx,
                         )
                         .log_err();
                 } else if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
                     window
-                        .paint_svg(bounds, path.clone(), None, transformation, color, cx)
+                        .paint_animated_svg(
+                            bounds,
+                            path.clone(),
+                            None,
+                            transformation,
+                            animation,
+                            color,
+                            cx,
+                        )
                         .log_err();
                 }
             },
@@ -291,5 +338,80 @@ impl Asset for SvgAsset {
             let bytes = Arc::from(bytes);
             Ok(bytes)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, rc::Rc, time::Duration};
+
+    use crate::{
+        Context, IntoElement, Render, Styled, TestAppContext, Window, div, prelude::*, px, red,
+        size, svg,
+    };
+
+    const SQUARE_SVG: &[u8] =
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="8" height="16"/></svg>"#;
+
+    struct SpinnerView {
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for SpinnerView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div().child(
+                svg()
+                    .data(SQUARE_SVG)
+                    .size(px(16.))
+                    .text_color(red())
+                    .with_rotation_animation(Duration::from_secs(1)),
+            )
+        }
+    }
+
+    fn render_spinner(cx: &mut TestAppContext, supports_gpu_animations: bool) -> (usize, bool) {
+        let renders = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(100.), px(100.)), {
+            let renders = renders.clone();
+            move |_, _| SpinnerView { renders }
+        });
+        cx.test_window(window.into())
+            .0
+            .lock()
+            .supports_gpu_animations = supports_gpu_animations;
+        // The window's first draw happened before the flag was set, so it may
+        // have scheduled a fallback frame; let that run before counting.
+        window
+            .update(cx, |_, window, cx| {
+                window.refresh();
+                window.simulate_next_frame(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let renders_before_frames = renders.get();
+
+        let mut has_animations = false;
+        for _ in 0..3 {
+            cx.executor().advance_clock(Duration::from_millis(16));
+            has_animations = window
+                .update(cx, |_, window, cx| {
+                    window.simulate_next_frame(cx);
+                    window.rendered_frame.scene.has_animations()
+                })
+                .unwrap();
+            cx.run_until_parked();
+        }
+        (renders.get() - renders_before_frames, has_animations)
+    }
+
+    #[crate::test]
+    fn test_rotation_animation_runs_on_gpu_without_rerendering(cx: &mut TestAppContext) {
+        assert_eq!(render_spinner(cx, true), (0, true));
+    }
+
+    #[crate::test]
+    fn test_rotation_animation_falls_back_to_rerendering(cx: &mut TestAppContext) {
+        assert_eq!(render_spinner(cx, false), (3, false));
     }
 }

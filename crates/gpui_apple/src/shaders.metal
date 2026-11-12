@@ -17,6 +17,9 @@ float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           TransformationMatrix transformation,
                           constant Size_DevicePixels *input_viewport_size);
+TransformationMatrix rotate_around_center(TransformationMatrix transform,
+                                          Bounds_ScaledPixels bounds,
+                                          uint period_ms, uint time_ms);
 
 float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
                         constant Size_DevicePixels *atlas_size);
@@ -680,13 +683,20 @@ vertex MonochromeSpriteFragmentInput monochrome_sprite_vertex(
     constant Size_DevicePixels *viewport_size
     [[buffer(GlobalInputIndex_ViewportSize)]],
     constant Size_DevicePixels *atlas_size
-    [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
+    [[buffer(SpriteInputIndex_AtlasTextureSize)]],
+    constant uint *animation_time_ms
+    [[buffer(SpriteInputIndex_AnimationTime)]]) {
   float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
   MonochromeSprite sprite = sprites[sprite_id];
+  TransformationMatrix transformation = sprite.transformation;
+  if (sprite.animation != 0) {
+    transformation = rotate_around_center(transformation, sprite.bounds,
+                                          sprite.animation, *animation_time_ms);
+  }
   float4 device_position =
-      to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
+      to_device_position_transformed(unit_vertex, sprite.bounds, transformation, viewport_size);
   float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
-                                                 sprite.content_mask.bounds, sprite.transformation);
+                                                 sprite.content_mask.bounds, transformation);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   float4 color = hsla_to_rgba(sprite.color);
   return MonochromeSpriteFragmentInput{
@@ -1109,6 +1119,39 @@ float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bo
   return float4(device_position, 0., 1.);
 }
 
+// Applies a clockwise rotation, one turn per `period_ms` of `time_ms`, around
+// the transformed center of `bounds`, after `transform`. Matches
+// `rotate_around_center` in the wgpu shaders.
+TransformationMatrix rotate_around_center(TransformationMatrix transform,
+                                          Bounds_ScaledPixels bounds,
+                                          uint period_ms, uint time_ms) {
+  // Integer modulo keeps the phase exact no matter how large the time gets.
+  float phase = float(time_ms % period_ms) / float(period_ms);
+  float angle = phase * 2. * M_PI_F;
+  float cosine = cos(angle);
+  float sine = sin(angle);
+  float2x2 rotation = float2x2(float2(cosine, sine), float2(-sine, cosine));
+  // `rotation_scale` is row-major and Metal matrices are column-major, so the
+  // transpose of the stored rows is the math matrix.
+  float2x2 linear = transpose(float2x2(
+      float2(transform.rotation_scale[0][0], transform.rotation_scale[0][1]),
+      float2(transform.rotation_scale[1][0], transform.rotation_scale[1][1])));
+  float2 translation = float2(transform.translation[0], transform.translation[1]);
+  float2 local_center = float2(bounds.origin.x + bounds.size.width * 0.5,
+                               bounds.origin.y + bounds.size.height * 0.5);
+  float2 center = linear * local_center + translation;
+  float2x2 rotated = rotation * linear;
+  float2 rotated_translation = rotation * (translation - center) + center;
+
+  TransformationMatrix result;
+  result.rotation_scale[0][0] = rotated[0][0];
+  result.rotation_scale[0][1] = rotated[1][0];
+  result.rotation_scale[1][0] = rotated[0][1];
+  result.rotation_scale[1][1] = rotated[1][1];
+  result.translation[0] = rotated_translation.x;
+  result.translation[1] = rotated_translation.y;
+  return result;
+}
 
 float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
                         constant Size_DevicePixels *atlas_size) {

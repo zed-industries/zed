@@ -83,7 +83,8 @@ struct GlobalParams {
     path_curve_base: u32,
     depth_scale: f32,
     quad_count: u32,
-    pad: vec2<u32>,
+    animation_time_ms: u32,
+    pad: u32,
 }
 
 override PREMULTIPLIED_ALPHA: bool = false;
@@ -189,6 +190,24 @@ fn to_device_position_transformed(unit_vertex: vec2<f32>, bounds: Bounds, transf
     //Note: Rust side stores it as row-major, so transposing here
     let transformed = transpose(transform.rotation_scale) * position + transform.translation;
     return to_device_position_impl(transformed);
+}
+
+// Applies a clockwise rotation, one turn per `period_ms` of `globals.animation_time_ms`,
+// around the transformed center of `bounds`, after `transform`.
+fn rotate_around_center(transform: TransformationMatrix, bounds: Bounds, period_ms: u32) -> TransformationMatrix {
+    // Integer modulo keeps the phase exact no matter how large the time gets.
+    let phase = f32(globals.animation_time_ms % period_ms) / f32(period_ms);
+    let angle = phase * 2.0 * M_PI_F;
+    let cosine = cos(angle);
+    let sine = sin(angle);
+    let rotation = mat2x2<f32>(vec2<f32>(cosine, sine), vec2<f32>(-sine, cosine));
+    // Rust stores `rotation_scale` row-major, so its transpose is the math matrix.
+    let linear = transpose(transform.rotation_scale);
+    let center = linear * (bounds.origin + bounds.size * 0.5) + transform.translation;
+    return TransformationMatrix(
+        transpose(rotation * linear),
+        rotation * (transform.translation - center) + center,
+    );
 }
 
 fn to_tile_position(unit_vertex: vec2<f32>, tile: AtlasTile) -> vec2<f32> {
@@ -1370,7 +1389,7 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
 
 struct MonochromeSprite {
     order: u32,
-    pad: u32,
+    rotation_period_ms: u32,
     tile: AtlasTile,
     bounds: Bounds,
     content_mask: Bounds,
@@ -1391,12 +1410,17 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = load_mono_sprite(instance_id);
 
+    var transformation = sprite.transformation;
+    if (sprite.rotation_period_ms != 0u) {
+        transformation = rotate_around_center(transformation, sprite.bounds, sprite.rotation_period_ms);
+    }
+
     var out = MonoSpriteVarying();
-    out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+    out.position = to_device_position_transformed(unit_vertex, sprite.bounds, transformation);
 
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
-    out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
+    out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, transformation);
     return out;
 }
 

@@ -57,6 +57,8 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    pub animation_time_ms: u32,
+    has_animations: bool,
 }
 
 #[expect(missing_docs)]
@@ -74,6 +76,13 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.has_animations = false;
+    }
+
+    /// Whether any primitive in this scene animates on the GPU, meaning the
+    /// scene must keep being presented even when nothing is redrawn.
+    pub fn has_animations(&self) -> bool {
+        self.has_animations
     }
 
     pub fn len(&self) -> usize {
@@ -156,9 +165,11 @@ impl Scene {
             Primitive::Underline(underline) => {
                 self.underlines.push(Underline { order, ..underline })
             }
-            Primitive::MonochromeSprite(sprite) => self
-                .monochrome_sprites
-                .push(MonochromeSprite { order, ..sprite }),
+            Primitive::MonochromeSprite(sprite) => {
+                self.has_animations |= sprite.animation.is_animated();
+                self.monochrome_sprites
+                    .push(MonochromeSprite { order, ..sprite });
+            }
             Primitive::SubpixelSprite(sprite) => self
                 .subpixel_sprites
                 .push(SubpixelSprite { order, ..sprite }),
@@ -827,12 +838,45 @@ impl Default for TransformationMatrix {
 #[expect(missing_docs)]
 pub struct MonochromeSprite {
     pub order: DrawOrder,
-    pub pad: u32,
+    pub animation: SpriteAnimation,
     pub tile: AtlasTile,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
     pub transformation: TransformationMatrix,
+}
+
+/// An animation the renderer evaluates from [`Scene::animation_time_ms`], so
+/// the scene can be presented again without being redrawn.
+///
+/// Packed into a single `u32` so it fits the sprite's existing padding and
+/// leaves the instance layout unchanged on every backend. Today it only
+/// encodes a repeating, linear, clockwise rotation around the sprite's center,
+/// phase-locked to the app's synced animation clock.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct SpriteAnimation {
+    rotation_period_ms: u32,
+}
+
+impl SpriteAnimation {
+    /// No animation.
+    pub const NONE: Self = Self {
+        rotation_period_ms: 0,
+    };
+
+    /// One full clockwise turn per `period`. Periods are rounded to whole
+    /// milliseconds; a period under one millisecond produces no animation.
+    pub fn rotation(period: std::time::Duration) -> Self {
+        Self {
+            rotation_period_ms: u32::try_from(period.as_millis()).unwrap_or(u32::MAX),
+        }
+    }
+
+    /// Whether this animates at all.
+    pub fn is_animated(&self) -> bool {
+        self.rotation_period_ms != 0
+    }
 }
 
 impl From<MonochromeSprite> for Primitive {

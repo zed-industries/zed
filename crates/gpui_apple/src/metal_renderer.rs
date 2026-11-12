@@ -828,6 +828,7 @@ impl MetalRenderer {
                         texture_id,
                         range,
                         instance_bindings,
+                        scene.animation_time_ms,
                         &command_encoder,
                     ),
                 PrimitiveBatch::PolychromeSprites { texture_id, range } => self
@@ -1083,6 +1084,7 @@ impl MetalRenderer {
         texture_id: AtlasTextureId,
         sprites: Range<usize>,
         instance_bindings: &InstanceBindings,
+        animation_time_ms: u32,
         command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) {
         if sprites.is_empty() {
@@ -1109,6 +1111,11 @@ impl MetalRenderer {
                 ptr::NonNull::from(&texture_size).cast(),
                 mem::size_of_val(&texture_size),
                 SpriteInputIndex::AtlasTextureSize as usize,
+            );
+            command_encoder.setVertexBytes_length_atIndex(
+                ptr::NonNull::from(&animation_time_ms).cast(),
+                mem::size_of_val(&animation_time_ms),
+                SpriteInputIndex::AnimationTime as usize,
             );
             command_encoder.setFragmentBuffer_offset_atIndex(
                 Some(&instance_bindings.monochrome_sprites.buffer),
@@ -1612,6 +1619,7 @@ enum SpriteInputIndex {
     Sprites = 2,
     AtlasTextureSize = 3,
     AtlasTexture = 4,
+    AnimationTime = 5,
 }
 
 #[repr(C)]
@@ -1838,5 +1846,86 @@ mod tests {
         command_buffer.waitUntilCompleted();
         assert_eq!(command_buffer.status(), MTLCommandBufferStatus::Completed);
         assert_eq!(read_texture_to_image(&target_texture).unwrap(), image);
+    }
+
+    #[test]
+    fn rotates_animated_sprites_from_scene_time() -> Result<()> {
+        use gpui::{
+            AtlasKey, MonochromeSprite, PlatformAtlas, RenderSvgParams, SharedString,
+            SpriteAnimation, TransformationMatrix,
+        };
+        use std::{borrow::Cow, time::Duration};
+
+        let mut renderer = MetalRenderer::new_headless(Default::default())?;
+        let tile_size = size(DevicePixels(16), DevicePixels(16));
+        // Opaque left half, transparent right half, so rotation is visible.
+        let mask: Vec<u8> = (0..16 * 16)
+            .map(|index| if index % 16 < 8 { 255 } else { 0 })
+            .collect();
+        let tile = renderer
+            .sprite_atlas
+            .get_or_insert_with(
+                AtlasKey::Svg(RenderSvgParams {
+                    path: SharedString::from("rotating-half-mask"),
+                    size: tile_size,
+                }),
+                &mut || Ok(Some((tile_size, Cow::Borrowed(mask.as_slice())))),
+            )?
+            .context("tile should be inserted")?;
+        let bounds = Bounds {
+            origin: Point {
+                x: ScaledPixels(8.0),
+                y: ScaledPixels(8.0),
+            },
+            size: size(ScaledPixels(16.0), ScaledPixels(16.0)),
+        };
+        let mut scene = Scene::default();
+        scene.insert_primitive(MonochromeSprite {
+            order: 0,
+            animation: SpriteAnimation::rotation(Duration::from_secs(1)),
+            tile,
+            bounds,
+            content_mask: ContentMask {
+                bounds: Bounds {
+                    origin: Point::default(),
+                    size: size(ScaledPixels(32.0), ScaledPixels(32.0)),
+                },
+            },
+            color: gpui::white(),
+            transformation: TransformationMatrix::unit(),
+        });
+        scene.finish();
+        assert!(scene.has_animations());
+
+        let mut lit_sides = Vec::new();
+        for time_ms in [0, 250, 500, 750, 1000] {
+            scene.animation_time_ms = time_ms;
+            let image =
+                renderer.render_scene_to_image(&scene, size(DevicePixels(32), DevicePixels(32)))?;
+            let is_lit = |x: u32, y: u32| image.get_pixel(x, y).0[0] > 200;
+            // One probe per quadrant of the 16px sprite centered at (16, 16).
+            let lit: Vec<&str> = [
+                ("top_left", is_lit(11, 11)),
+                ("top_right", is_lit(20, 11)),
+                ("bottom_right", is_lit(20, 20)),
+                ("bottom_left", is_lit(11, 20)),
+            ]
+            .into_iter()
+            .filter_map(|(quadrant, lit)| lit.then_some(quadrant))
+            .collect();
+            lit_sides.push((time_ms, lit));
+        }
+        // Clockwise on screen, matching `TransformationMatrix::rotate` and the wgpu renderer.
+        assert_eq!(
+            lit_sides,
+            vec![
+                (0, vec!["top_left", "bottom_left"]),
+                (250, vec!["top_left", "top_right"]),
+                (500, vec!["top_right", "bottom_right"]),
+                (750, vec!["bottom_right", "bottom_left"]),
+                (1000, vec!["top_left", "bottom_left"]),
+            ]
+        );
+        Ok(())
     }
 }

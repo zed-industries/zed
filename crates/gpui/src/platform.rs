@@ -1364,6 +1364,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
+    /// Whether this window's renderer evaluates [`crate::SpriteAnimation`]s from
+    /// [`Scene::animation_time_ms`], so a scene can be presented again to
+    /// advance its animations.
+    fn supports_gpu_animations(&self) -> bool {
+        false
+    }
     fn schedule_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
