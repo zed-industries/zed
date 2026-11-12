@@ -1004,10 +1004,6 @@ impl PlatformWindow for IosWindow {
         self.appearance_changed_callback.set(callback);
     }
 
-    fn supports_gpu_animations(&self) -> bool {
-        true
-    }
-
     fn draw(&self, scene: &Scene) {
         self.renderer.lock().draw(scene);
     }

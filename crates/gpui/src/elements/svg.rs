@@ -18,6 +18,7 @@ use gpui_util::ResultExt;
 pub struct Svg {
     interactivity: Interactivity,
     transformation: Option<Transformation>,
+    timed_transformation: Option<TimedTransformation>,
     rotation_period: Option<Duration>,
     path: Option<SharedString>,
     external_path: Option<SharedString>,
@@ -31,6 +32,7 @@ pub fn svg() -> Svg {
     Svg {
         interactivity: Interactivity::new(),
         transformation: None,
+        timed_transformation: None,
         rotation_period: None,
         path: None,
         external_path: None,
@@ -75,14 +77,26 @@ impl Svg {
     /// Continuously rotate the SVG clockwise, one full turn per `period`, phase-locked
     /// to the app's shared animation clock like [`crate::Animation::repeat_synced`].
     ///
-    /// Where the window's renderer supports it, the rotation is evaluated on the GPU:
-    /// the SVG is painted once, and the window presents the same scene on later frames
-    /// instead of re-rendering this view. Otherwise this re-renders the view every frame.
+    /// The SVG is painted once. On later frames the window rotates it in the scene it
+    /// already has and presents that again, instead of re-rendering this view.
     ///
     /// Like [`Self::with_transformation`], this doesn't affect layout or hit testing.
     /// The rotation is applied after any transformation.
     pub fn with_rotation_animation(mut self, period: Duration) -> Self {
         self.rotation_period = Some(period);
+        self
+    }
+
+    /// Continuously animate the SVG between two transformations, phase-locked to the
+    /// app's shared animation clock like [`crate::Animation::repeat_synced`].
+    ///
+    /// The SVG is painted once. On later frames the window moves it in the scene it
+    /// already has and presents that again, instead of re-rendering this view.
+    ///
+    /// This replaces [`Self::with_transformation`] and [`Self::with_rotation_animation`],
+    /// and like them doesn't affect layout or hit testing.
+    pub fn with_timed_transformation(mut self, transformation: TimedTransformation) -> Self {
+        self.timed_transformation = Some(transformation);
         self
     }
 }
@@ -156,32 +170,31 @@ impl Element for Svg {
             window,
             cx,
             |style, window, cx| {
-                let mut transformation = self.transformation;
-                let mut animation = SpriteAnimation::NONE;
-                if let Some(period) = self.rotation_period
-                    && !period.is_zero()
-                    && !cx.reduce_motion()
-                {
-                    let gpu_animation = SpriteAnimation::rotation(period);
-                    if window.supports_gpu_animations() && gpu_animation.is_animated() {
-                        animation = gpu_animation;
-                    } else {
-                        let elapsed = cx.background_executor().now() - cx.synced_animation_epoch;
-                        let phase =
-                            Duration::from_nanos((elapsed.as_nanos() % period.as_nanos()) as u64)
-                                .as_secs_f32()
-                                / period.as_secs_f32();
-                        let base = transformation.unwrap_or_default();
-                        transformation =
-                            Some(base.with_rotation(radians(base.rotate.0 + phase * TAU)));
-                        window.request_animation_frame();
-                    }
-                }
-                let transformation = transformation
-                    .map(|transformation| {
-                        transformation.into_matrix(bounds.center(), window.scale_factor())
-                    })
+                let timed_transformation = self.timed_transformation.or_else(|| {
+                    let base = self.transformation.unwrap_or_default();
+                    Some(
+                        TimedTransformation::new(self.rotation_period?)
+                            .from(base)
+                            .to(base.with_rotation(radians(base.rotate.0 + TAU))),
+                    )
+                });
+                let center = bounds.center();
+                let scale_factor = window.scale_factor();
+                let animation = timed_transformation
+                    .filter(|timed| !timed.period.is_zero() && !cx.reduce_motion())
+                    .map(|timed| SpriteAnimation::new(timed, center, scale_factor));
+                // With reduced motion, an animated SVG rests at its starting pose.
+                let pose = timed_transformation
+                    .map(|timed| timed.from)
+                    .or(self.transformation);
+                let transformation = pose
+                    .map(|pose| pose.into_matrix(center, scale_factor))
                     .unwrap_or_default();
+                // An animated sprite gets its alpha when the window advances the scene.
+                let alpha = match animation {
+                    Some(_) => 1.,
+                    None => pose.map_or(1., |pose| pose.alpha_factor()),
+                };
 
                 if let Some((data, path)) = self.data.as_ref().zip(self.data_path.as_ref()) {
                     if let Some(color) = style.text.color {
@@ -192,7 +205,7 @@ impl Element for Svg {
                                 Some(&**data),
                                 transformation,
                                 animation,
-                                color,
+                                color.opacity(alpha),
                                 cx,
                             )
                             .log_err();
@@ -214,7 +227,7 @@ impl Element for Svg {
                             Some(&bytes),
                             transformation,
                             animation,
-                            color,
+                            color.opacity(alpha),
                             cx,
                         )
                         .log_err();
@@ -226,7 +239,7 @@ impl Element for Svg {
                             None,
                             transformation,
                             animation,
-                            color,
+                            color.opacity(alpha),
                             cx,
                         )
                         .log_err();
@@ -254,6 +267,7 @@ pub struct Transformation {
     scale: Size<f32>,
     translate: Point<Pixels>,
     rotate: Radians,
+    alpha: f32,
 }
 
 impl Default for Transformation {
@@ -262,6 +276,7 @@ impl Default for Transformation {
             scale: size(1.0, 1.0),
             translate: point(px(0.0), px(0.0)),
             rotate: radians(0.0),
+            alpha: 1.0,
         }
     }
 }
@@ -271,17 +286,15 @@ impl Transformation {
     pub fn scale(scale: Size<f32>) -> Self {
         Self {
             scale,
-            translate: point(px(0.0), px(0.0)),
-            rotate: radians(0.0),
+            ..Self::default()
         }
     }
 
     /// Create a new Transformation with the specified translation.
     pub fn translate(translate: Point<Pixels>) -> Self {
         Self {
-            scale: size(1.0, 1.0),
             translate,
-            rotate: radians(0.0),
+            ..Self::default()
         }
     }
 
@@ -289,10 +302,28 @@ impl Transformation {
     pub fn rotate(rotate: impl Into<Radians>) -> Self {
         let rotate = rotate.into();
         Self {
-            scale: size(1.0, 1.0),
-            translate: point(px(0.0), px(0.0)),
             rotate,
+            ..Self::default()
         }
+    }
+
+    /// Create a new Transformation that multiplies the SVG's alpha by `alpha`.
+    pub fn alpha(alpha: f32) -> Self {
+        Self {
+            alpha,
+            ..Self::default()
+        }
+    }
+
+    /// Update the alpha factor of this transformation. Unlike an element's
+    /// opacity, this only applies to the SVG itself.
+    pub fn with_alpha(mut self, alpha: f32) -> Self {
+        self.alpha = alpha;
+        self
+    }
+
+    pub(crate) fn alpha_factor(&self) -> f32 {
+        self.alpha
     }
 
     /// Update the scaling factor of this transformation.
@@ -313,13 +344,193 @@ impl Transformation {
         self
     }
 
-    fn into_matrix(self, center: Point<Pixels>, scale_factor: f32) -> TransformationMatrix {
+    pub(crate) fn into_matrix(
+        self,
+        center: Point<Pixels>,
+        scale_factor: f32,
+    ) -> TransformationMatrix {
         //Note: if you read this as a sequence of matrix multiplications, start from the bottom
         TransformationMatrix::unit()
             .translate(center.scale(scale_factor) + self.translate.scale(scale_factor))
             .rotate(self.rotate)
             .scale(self.scale)
             .translate(center.scale(-scale_factor))
+    }
+}
+
+/// How a value's rate of change varies over one pass of a [`TimedTransformation`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Easing {
+    /// A constant rate.
+    #[default]
+    Linear,
+    /// Starts slowly and accelerates.
+    Quadratic,
+    /// Starts and ends slowly, and speeds up in the middle.
+    EaseInOut,
+    /// Starts quickly and decelerates to a stop.
+    EaseOutQuint,
+}
+
+impl Easing {
+    fn apply(self, delta: f32) -> f32 {
+        match self {
+            Easing::Linear => delta,
+            Easing::Quadratic => delta * delta,
+            Easing::EaseInOut => {
+                if delta < 0.5 {
+                    2.0 * delta * delta
+                } else {
+                    let x = -2.0 * delta + 2.0;
+                    1.0 - x * x / 2.0
+                }
+            }
+            Easing::EaseOutQuint => 1.0 - (1.0 - delta).powi(5),
+        }
+    }
+}
+
+/// A [`Transformation`] that repeatedly moves from one pose to another over a
+/// period, for [`Svg::with_timed_transformation`].
+///
+/// Each value of the transformation has its own [`Easing`], so for example an
+/// SVG can grow quickly at first while fading at a constant rate.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimedTransformation {
+    period: Duration,
+    from: Transformation,
+    to: Transformation,
+    scale_easing: Easing,
+    translation_easing: Easing,
+    rotation_easing: Easing,
+    alpha_easing: Easing,
+    alternate: bool,
+    min_frame_interval: Option<Duration>,
+}
+
+impl TimedTransformation {
+    /// Create a timed transformation that repeats every `period`. Until
+    /// [`Self::from`] and [`Self::to`] are set, it has no effect.
+    pub fn new(period: Duration) -> Self {
+        Self {
+            period,
+            from: Transformation::default(),
+            to: Transformation::default(),
+            scale_easing: Easing::Linear,
+            translation_easing: Easing::Linear,
+            rotation_easing: Easing::Linear,
+            alpha_easing: Easing::Linear,
+            alternate: false,
+            min_frame_interval: None,
+        }
+    }
+
+    /// Set the transformation at the start of each period.
+    pub fn from(mut self, transformation: Transformation) -> Self {
+        self.from = transformation;
+        self
+    }
+
+    /// Set the transformation reached at the end of each period.
+    pub fn to(mut self, transformation: Transformation) -> Self {
+        self.to = transformation;
+        self
+    }
+
+    /// Set the easing of every value.
+    pub fn with_easing(mut self, easing: Easing) -> Self {
+        self.scale_easing = easing;
+        self.translation_easing = easing;
+        self.rotation_easing = easing;
+        self.alpha_easing = easing;
+        self
+    }
+
+    /// Set the easing of the scale.
+    pub fn with_scale_easing(mut self, easing: Easing) -> Self {
+        self.scale_easing = easing;
+        self
+    }
+
+    /// Set the easing of the translation.
+    pub fn with_translation_easing(mut self, easing: Easing) -> Self {
+        self.translation_easing = easing;
+        self
+    }
+
+    /// Set the easing of the rotation.
+    pub fn with_rotation_easing(mut self, easing: Easing) -> Self {
+        self.rotation_easing = easing;
+        self
+    }
+
+    /// Set the easing of the alpha.
+    pub fn with_alpha_easing(mut self, easing: Easing) -> Self {
+        self.alpha_easing = easing;
+        self
+    }
+
+    /// Move from the start to the end and back again within each period,
+    /// instead of jumping back to the start.
+    pub fn alternate(mut self) -> Self {
+        self.alternate = true;
+        self
+    }
+
+    /// Present at most `max_fps` frames per second while nothing but timed
+    /// transformations needs a frame. The least restrictive limit in a window
+    /// wins. Values that are not finite and positive are ignored.
+    pub fn with_max_fps(mut self, max_fps: f32) -> Self {
+        if max_fps.is_finite() && max_fps > 0.0 {
+            self.min_frame_interval = Some(Duration::from_secs_f64(1.0 / max_fps as f64));
+        }
+        self
+    }
+
+    pub(crate) fn min_frame_interval(&self) -> Option<Duration> {
+        self.min_frame_interval
+    }
+
+    /// The transformation `elapsed` time after the animation clock started.
+    pub(crate) fn at(&self, elapsed: Duration) -> Transformation {
+        let period_nanos = self.period.as_nanos();
+        if period_nanos == 0 {
+            return self.from;
+        }
+        let mut delta = Duration::from_nanos((elapsed.as_nanos() % period_nanos) as u64)
+            .as_secs_f32()
+            / self.period.as_secs_f32();
+        if self.alternate {
+            delta = 1.0 - (2.0 * delta - 1.0).abs();
+        }
+
+        let interpolate =
+            |from: f32, to: f32, easing: Easing| from + (to - from) * easing.apply(delta);
+        let (from, to) = (self.from, self.to);
+        Transformation {
+            scale: size(
+                interpolate(from.scale.width, to.scale.width, self.scale_easing),
+                interpolate(from.scale.height, to.scale.height, self.scale_easing),
+            ),
+            translate: point(
+                px(interpolate(
+                    from.translate.x.0,
+                    to.translate.x.0,
+                    self.translation_easing,
+                )),
+                px(interpolate(
+                    from.translate.y.0,
+                    to.translate.y.0,
+                    self.translation_easing,
+                )),
+            ),
+            rotate: radians(interpolate(
+                from.rotate.0,
+                to.rotate.0,
+                self.rotation_easing,
+            )),
+            alpha: interpolate(from.alpha, to.alpha, self.alpha_easing),
+        }
     }
 }
 
@@ -346,8 +557,8 @@ mod tests {
     use std::{cell::Cell, rc::Rc, time::Duration};
 
     use crate::{
-        Context, IntoElement, Render, Styled, TestAppContext, Window, div, prelude::*, px, red,
-        size, svg,
+        Context, Easing, IntoElement, Render, SpriteAnimationId, Styled, TestAppContext,
+        TimedTransformation, Transformation, Window, div, prelude::*, px, red, size, svg,
     };
 
     const SQUARE_SVG: &[u8] =
@@ -370,48 +581,125 @@ mod tests {
         }
     }
 
-    fn render_spinner(cx: &mut TestAppContext, supports_gpu_animations: bool) -> (usize, bool) {
+    #[crate::test]
+    fn test_rotation_animation_advances_without_rerendering(cx: &mut TestAppContext) {
         let renders = Rc::new(Cell::new(0));
         let window = cx.open_window(size(px(100.), px(100.)), {
             let renders = renders.clone();
             move |_, _| SpinnerView { renders }
         });
-        cx.test_window(window.into())
-            .0
-            .lock()
-            .supports_gpu_animations = supports_gpu_animations;
-        // The window's first draw happened before the flag was set, so it may
-        // have scheduled a fallback frame; let that run before counting.
-        window
-            .update(cx, |_, window, cx| {
-                window.refresh();
-                window.simulate_next_frame(cx);
-            })
-            .unwrap();
         cx.run_until_parked();
         let renders_before_frames = renders.get();
 
-        let mut has_animations = false;
-        for _ in 0..3 {
-            cx.executor().advance_clock(Duration::from_millis(16));
-            has_animations = window
+        // The sprite's linear part at each quarter of the one second period:
+        // a clockwise rotation by 0, 90, 180 and 270 degrees.
+        let expected = [
+            [[1., 0.], [0., 1.]],
+            [[0., -1.], [1., 0.]],
+            [[-1., 0.], [0., -1.]],
+            [[0., 1.], [-1., 0.]],
+        ];
+        for (quarter, expected) in expected.into_iter().enumerate() {
+            let elapsed = window
                 .update(cx, |_, window, cx| {
-                    window.simulate_next_frame(cx);
-                    window.rendered_frame.scene.has_animations()
+                    window.advance_scene_animations(cx);
+                    cx.background_executor().now() - cx.synced_animation_epoch
                 })
+                .unwrap();
+            assert_eq!(elapsed, Duration::from_millis(250 * quarter as u64));
+
+            let (rotation_scale, center) = window
+                .update(cx, |_, window, _| {
+                    let scene = &window.rendered_frame.scene;
+                    assert!(scene.has_animations());
+                    let sprite = scene
+                        .monochrome_sprites
+                        .iter()
+                        .find(|sprite| sprite.animation != SpriteAnimationId::NONE)
+                        .expect("the spinner should be painted as an animated sprite");
+                    let center = sprite.bounds.center();
+                    let [[a, b], [c, d]] = sprite.transformation.rotation_scale;
+                    let [x, y] = sprite.transformation.translation;
+                    (
+                        sprite.transformation.rotation_scale,
+                        [
+                            a * center.x.0 + b * center.y.0 + x - center.x.0,
+                            c * center.x.0 + d * center.y.0 + y - center.y.0,
+                        ],
+                    )
+                })
+                .unwrap();
+            for (actual, expected) in rotation_scale
+                .as_flattened()
+                .iter()
+                .zip(expected.as_flattened())
+            {
+                assert!((actual - expected).abs() < 1e-5, "quarter {quarter}");
+            }
+            // The sprite's center stays where it is.
+            assert!(center[0].abs() < 1e-3 && center[1].abs() < 1e-3);
+
+            cx.executor().advance_clock(Duration::from_millis(250));
+            window
+                .update(cx, |_, window, cx| window.simulate_next_frame(cx))
                 .unwrap();
             cx.run_until_parked();
         }
-        (renders.get() - renders_before_frames, has_animations)
+        assert_eq!(renders.get(), renders_before_frames);
+    }
+
+    struct PulseView;
+
+    impl Render for PulseView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().child(
+                svg()
+                    .data(SQUARE_SVG)
+                    .size(px(16.))
+                    .text_color(red())
+                    .with_timed_transformation(
+                        TimedTransformation::new(Duration::from_secs(1))
+                            .from(Transformation::alpha(0.4))
+                            .to(Transformation::scale(size(1.5, 1.5)).with_alpha(0.))
+                            .with_scale_easing(Easing::EaseOutQuint)
+                            .with_max_fps(20.),
+                    ),
+            )
+        }
     }
 
     #[crate::test]
-    fn test_rotation_animation_runs_on_gpu_without_rerendering(cx: &mut TestAppContext) {
-        assert_eq!(render_spinner(cx, true), (0, true));
-    }
+    fn test_timed_transformation_eases_each_value_separately(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(100.), px(100.)), |_, _| PulseView);
+        cx.run_until_parked();
 
-    #[crate::test]
-    fn test_rotation_animation_falls_back_to_rerendering(cx: &mut TestAppContext) {
-        assert_eq!(render_spinner(cx, false), (3, false));
+        let sample = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |_, window, cx| {
+                    window.advance_scene_animations(cx);
+                    let scene = &window.rendered_frame.scene;
+                    assert_eq!(
+                        scene.animation_frame_interval(),
+                        Some(Duration::from_millis(50))
+                    );
+                    let sprite = scene
+                        .monochrome_sprites
+                        .iter()
+                        .find(|sprite| sprite.animation != SpriteAnimationId::NONE)
+                        .expect("the pulse should be painted as an animated sprite");
+                    (sprite.transformation.rotation_scale[0][0], sprite.color.a)
+                })
+                .unwrap()
+        };
+
+        let (scale, alpha) = sample(cx);
+        assert!((scale - 1.).abs() < 1e-5 && (alpha - 0.4).abs() < 1e-5);
+
+        // Halfway through, the scale has eased most of the way out while the
+        // alpha has faded exactly half.
+        cx.executor().advance_clock(Duration::from_millis(500));
+        let (scale, alpha) = sample(cx);
+        assert!((scale - (1. + 0.5 * (1. - 0.5f32.powi(5)))).abs() < 1e-5);
+        assert!((alpha - 0.2).abs() < 1e-5);
     }
 }

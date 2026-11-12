@@ -1,11 +1,12 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-//! Compares spinners animated on the GPU with [`Svg::with_rotation_animation`]
-//! against the same spinners animated by re-rendering with `with_animation`.
+//! Compares spinners animated with [`Svg::with_rotation_animation`], which
+//! rotates them in the already painted scene, against the same spinners
+//! animated by re-rendering with `with_animation`.
 //!
-//! The header counts how many times the view has rendered. With GPU animation
-//! the count stays put while the spinners keep turning; with CPU animation it
-//! climbs once per frame. Pass `--cpu` to start in CPU mode.
+//! The header counts how many times the view has rendered. With the retained
+//! scene the count stays put while the spinners keep turning; when re-rendering
+//! it climbs once per frame. Pass `--rerender` to start in that mode.
 
 #[path = "example_support/fonts.rs"]
 mod example_support;
@@ -28,24 +29,24 @@ const PERIOD: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
-    Gpu,
-    Cpu,
+    RetainedScene,
+    Rerender,
 }
 
-struct GpuAnimationExample {
+struct RotationAnimationExample {
     mode: Mode,
     render_count: Cell<u64>,
 }
 
-impl GpuAnimationExample {
+impl RotationAnimationExample {
     fn spinner(&self, index: usize) -> impl IntoElement {
         let spinner = svg()
             .size_6()
             .external_path(ARROW_CIRCLE_SVG)
             .text_color(rgb(0x3b82f6));
         match self.mode {
-            Mode::Gpu => spinner.with_rotation_animation(PERIOD).into_any_element(),
-            Mode::Cpu => spinner
+            Mode::RetainedScene => spinner.with_rotation_animation(PERIOD).into_any_element(),
+            Mode::Rerender => spinner
                 .with_animation(
                     ("spinner", index),
                     Animation::new(PERIOD).repeat_synced(),
@@ -56,13 +57,13 @@ impl GpuAnimationExample {
     }
 }
 
-impl Render for GpuAnimationExample {
+impl Render for RotationAnimationExample {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.render_count.set(self.render_count.get() + 1);
         let mode = self.mode;
         let mode_label = match mode {
-            Mode::Gpu => "GPU (with_rotation_animation)",
-            Mode::Cpu => "CPU (with_animation)",
+            Mode::RetainedScene => "retained scene (with_rotation_animation)",
+            Mode::Rerender => "re-render (with_animation)",
         };
 
         div()
@@ -90,8 +91,8 @@ impl Render for GpuAnimationExample {
                             .child(format!("Mode: {mode_label}"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.mode = match this.mode {
-                                    Mode::Gpu => Mode::Cpu,
-                                    Mode::Cpu => Mode::Gpu,
+                                    Mode::RetainedScene => Mode::Rerender,
+                                    Mode::Rerender => Mode::RetainedScene,
                                 };
                                 cx.notify();
                             })),
@@ -124,12 +125,12 @@ fn run_example() {
         };
         cx.open_window(options, |_, cx| {
             cx.activate(false);
-            let mode = if std::env::args().any(|arg| arg == "--cpu") {
-                Mode::Cpu
+            let mode = if std::env::args().any(|arg| arg == "--rerender") {
+                Mode::Rerender
             } else {
-                Mode::Gpu
+                Mode::RetainedScene
             };
-            cx.new(|_| GpuAnimationExample {
+            cx.new(|_| RotationAnimationExample {
                 mode,
                 render_count: Cell::new(0),
             })

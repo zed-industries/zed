@@ -340,7 +340,7 @@ fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
                         + point(glyph_size * (glyph as f32 * 0.6), gpui::ScaledPixels(0.));
                     scene.insert_primitive(gpui::MonochromeSprite {
                         order: 0,
-                        animation: gpui::SpriteAnimation::NONE,
+                        animation: gpui::SpriteAnimationId::NONE,
                         tile: glyph_tile(index + glyph),
                         bounds: Bounds::new(origin, size(glyph_size * 0.6, glyph_size)),
                         content_mask,

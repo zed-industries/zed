@@ -8,8 +8,7 @@ use crate::traits::transformable::Transformable;
 pub trait CommonAnimationExt: AnimationExt {
     /// Render this component as rotating, one full turn every `period` seconds.
     ///
-    /// The rotation runs on the GPU where the renderer supports it, so the view
-    /// isn't re-rendered every frame. All spinners share one phase.
+    /// The view isn't re-rendered to advance the rotation. All spinners share one phase.
     fn with_rotate_animation(self, period: u64) -> Self
     where
         Self: Transformable + Sized,

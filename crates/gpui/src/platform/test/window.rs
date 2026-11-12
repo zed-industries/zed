@@ -44,7 +44,6 @@ pub(crate) struct TestWindowState {
     insets_callback: Option<Box<dyn FnMut(WindowInsets)>>,
     virtual_keyboard_requests: usize,
     virtual_keyboard_dismissals: usize,
-    pub(crate) supports_gpu_animations: bool,
     moved_callback: Option<Box<dyn FnMut()>>,
     display_changed_callback: Option<Box<dyn FnMut()>>,
     appearance_change_callback: Option<Box<dyn FnMut()>>,
@@ -121,7 +120,6 @@ impl TestWindow {
             insets_callback: None,
             virtual_keyboard_requests: 0,
             virtual_keyboard_dismissals: 0,
-            supports_gpu_animations: false,
             moved_callback: None,
             display_changed_callback: None,
             appearance_change_callback: None,
@@ -581,10 +579,6 @@ impl PlatformWindow for TestWindow {
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().appearance_change_callback = Some(callback);
-    }
-
-    fn supports_gpu_animations(&self) -> bool {
-        self.0.lock().supports_gpu_animations
     }
 
     fn draw(&self, scene: &Scene) {

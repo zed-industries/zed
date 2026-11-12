@@ -6,10 +6,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Path,
-    PathTiles, Pixels, Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree,
+    PathTiles, Pixels, Point, Radians, ScaledPixels, Size, TimedTransformation,
+    bounds_tree::BoundsTree,
 };
 use smallvec::SmallVec;
-use std::{collections::VecDeque, fmt::Debug, iter::Peekable, ops::Range, rc::Rc, slice};
+use std::{
+    collections::VecDeque, fmt::Debug, iter::Peekable, ops::Range, rc::Rc, slice, time::Duration,
+};
 
 #[expect(missing_docs)]
 pub type DrawOrder = u32;
@@ -57,8 +60,15 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
-    pub animation_time_ms: u32,
-    has_animations: bool,
+    animations: Vec<SpriteAnimation>,
+    animated_sprites: Vec<AnimatedSprite>,
+    animation_frame_interval: Option<Duration>,
+}
+
+struct AnimatedSprite {
+    index: usize,
+    animation: SpriteAnimation,
+    base_color: Hsla,
 }
 
 #[expect(missing_docs)]
@@ -76,13 +86,50 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
-        self.has_animations = false;
+        self.animations.clear();
+        self.animated_sprites.clear();
+        self.animation_frame_interval = None;
     }
 
-    /// Whether any primitive in this scene animates on the GPU, meaning the
-    /// scene must keep being presented even when nothing is redrawn.
-    pub fn has_animations(&self) -> bool {
-        self.has_animations
+    /// Registers an animation that sprites inserted into this scene can refer to.
+    pub fn insert_animation(&mut self, animation: SpriteAnimation) -> SpriteAnimationId {
+        self.animations.push(animation);
+        SpriteAnimationId(self.animations.len() as u32)
+    }
+
+    fn animation(&self, id: SpriteAnimationId) -> Option<SpriteAnimation> {
+        let index = (id.0 as usize).checked_sub(1)?;
+        self.animations.get(index).copied()
+    }
+
+    /// Whether any primitive in this scene animates, meaning the scene must
+    /// keep being presented even when nothing is redrawn.
+    pub(crate) fn has_animations(&self) -> bool {
+        !self.animated_sprites.is_empty()
+    }
+
+    /// The longest time between presents that every animation in this scene
+    /// allows, or `None` when one of them wants every frame.
+    pub(crate) fn animation_frame_interval(&self) -> Option<Duration> {
+        self.animation_frame_interval
+    }
+
+    /// Moves every animated primitive to its pose at `elapsed` time on the
+    /// app's synced animation clock, without the scene being rebuilt.
+    pub(crate) fn advance_animations(&mut self, elapsed: Duration) {
+        for animated in &self.animated_sprites {
+            let Some(sprite) = self.monochrome_sprites.get_mut(animated.index) else {
+                continue;
+            };
+            let SpriteAnimation {
+                transformation,
+                center,
+                scale_factor,
+            } = animated.animation;
+            let pose = transformation.at(elapsed);
+            sprite.transformation = pose.into_matrix(center, scale_factor);
+            sprite.color = animated.base_color.opacity(pose.alpha_factor());
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -165,11 +212,9 @@ impl Scene {
             Primitive::Underline(underline) => {
                 self.underlines.push(Underline { order, ..underline })
             }
-            Primitive::MonochromeSprite(sprite) => {
-                self.has_animations |= sprite.animation.is_animated();
-                self.monochrome_sprites
-                    .push(MonochromeSprite { order, ..sprite });
-            }
+            Primitive::MonochromeSprite(sprite) => self
+                .monochrome_sprites
+                .push(MonochromeSprite { order, ..sprite }),
             Primitive::SubpixelSprite(sprite) => self
                 .subpixel_sprites
                 .push(SubpixelSprite { order, ..sprite }),
@@ -186,7 +231,16 @@ impl Scene {
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
         for operation in &prev_scene.paint_operations[range] {
             match operation {
-                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
+                PaintOperation::Primitive(primitive) => {
+                    let mut primitive = primitive.clone();
+                    // Animation ids index the scene they were registered with.
+                    if let Primitive::MonochromeSprite(sprite) = &mut primitive
+                        && let Some(animation) = prev_scene.animation(sprite.animation)
+                    {
+                        sprite.animation = self.insert_animation(animation);
+                    }
+                    self.insert_primitive(primitive)
+                }
                 PaintOperation::StartLayer => self.push_layer(),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
@@ -206,6 +260,24 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
         self.surfaces.sort_by_key(|surface| surface.order);
+
+        if !self.animations.is_empty() {
+            for (index, sprite) in self.monochrome_sprites.iter().enumerate() {
+                if let Some(animation) = self.animation(sprite.animation) {
+                    self.animated_sprites.push(AnimatedSprite {
+                        index,
+                        animation,
+                        base_color: sprite.color,
+                    });
+                }
+            }
+            self.animation_frame_interval = self
+                .animated_sprites
+                .iter()
+                .map(|animated| animated.animation.transformation.min_frame_interval())
+                .min()
+                .flatten();
+        }
     }
 
     #[cfg_attr(
@@ -838,7 +910,7 @@ impl Default for TransformationMatrix {
 #[expect(missing_docs)]
 pub struct MonochromeSprite {
     pub order: DrawOrder,
-    pub animation: SpriteAnimation,
+    pub animation: SpriteAnimationId,
     pub tile: AtlasTile,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
@@ -846,36 +918,41 @@ pub struct MonochromeSprite {
     pub transformation: TransformationMatrix,
 }
 
-/// An animation the renderer evaluates from [`Scene::animation_time_ms`], so
-/// the scene can be presented again without being redrawn.
+/// Refers to a [`SpriteAnimation`] registered with [`Scene::insert_animation`].
 ///
-/// Packed into a single `u32` so it fits the sprite's existing padding and
-/// leaves the instance layout unchanged on every backend. Today it only
-/// encodes a repeating, linear, clockwise rotation around the sprite's center,
-/// phase-locked to the app's synced animation clock.
+/// A single `u32` so it fits the sprite's existing padding and leaves the
+/// instance layout unchanged on every backend; renderers ignore it.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[repr(transparent)]
+pub struct SpriteAnimationId(u32);
+
+impl SpriteAnimationId {
+    /// No animation.
+    pub const NONE: Self = Self(0);
+}
+
+/// A [`TimedTransformation`] the window applies to a sprite right before
+/// every present, so the scene can be presented again without being redrawn.
+#[derive(Copy, Clone, Debug)]
 pub struct SpriteAnimation {
-    rotation_period_ms: u32,
+    transformation: TimedTransformation,
+    center: Point<Pixels>,
+    scale_factor: f32,
 }
 
 impl SpriteAnimation {
-    /// No animation.
-    pub const NONE: Self = Self {
-        rotation_period_ms: 0,
-    };
-
-    /// One full clockwise turn per `period`. Periods are rounded to whole
-    /// milliseconds; a period under one millisecond produces no animation.
-    pub fn rotation(period: std::time::Duration) -> Self {
+    /// Animates a sprite with `transformation`, around `center` in a window
+    /// with the given scale factor.
+    pub fn new(
+        transformation: TimedTransformation,
+        center: Point<Pixels>,
+        scale_factor: f32,
+    ) -> Self {
         Self {
-            rotation_period_ms: u32::try_from(period.as_millis()).unwrap_or(u32::MAX),
+            transformation,
+            center,
+            scale_factor,
         }
-    }
-
-    /// Whether this animates at all.
-    pub fn is_animated(&self) -> bool {
-        self.rotation_period_ms != 0
     }
 }
 
