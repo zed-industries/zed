@@ -35,8 +35,14 @@ message GetGlobalSkills {
 }
 
 message GetGlobalSkillsResponse {
-  repeated GlobalSkill skills = 1;
-  repeated GlobalSkillLoadError errors = 2;
+  repeated GlobalSkillLoadResult results = 1;
+}
+
+message GlobalSkillLoadResult {
+  oneof variant {
+    GlobalSkill skill = 1;
+    GlobalSkillLoadError error = 2;
+  }
 }
 
 message GlobalSkill {
