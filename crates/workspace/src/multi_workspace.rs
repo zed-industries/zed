@@ -2,9 +2,9 @@ use anyhow::{Context as _, Result};
 use fs::Fs;
 
 use gpui::{
-    AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, WeakEntity, Window,
-    WindowId, actions, deferred, px,
+    AnyView, App, Context, Corners, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, WeakEntity,
+    Window, WindowId, actions, deferred, px,
 };
 pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};
@@ -28,8 +28,8 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 use crate::open_remote_project_with_existing_connection;
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
-    Panel, Workspace, WorkspaceId, client_side_decorations,
-    persistence::model::MultiWorkspaceState,
+    OpenOptions, OpenVisible, Panel, Workspace, WorkspaceId,
+    client_side_decorations_with_rounded_corners, persistence::model::MultiWorkspaceState,
 };
 
 actions!(
@@ -544,11 +544,9 @@ impl MultiWorkspace {
             self.previous_focus_handle.clone()
         };
 
-        if let Some(previous_focus) = focus_handle {
-            previous_focus.focus(window, cx);
-        } else {
-            let pane = self.workspace().read(cx).active_pane().clone();
-            window.focus(&pane.read(cx).focus_handle(cx), cx);
+        match focus_handle.filter(|focus_handle| focus_handle.is_rendered(window)) {
+            Some(previous_focus) => previous_focus.focus(window, cx),
+            None => self.focus_active_workspace(window, cx),
         }
     }
 
@@ -593,7 +591,8 @@ impl MultiWorkspace {
                             .read(cx)
                             .project()
                             .read(cx)
-                            .remote_connection_options(cx);
+                            .remote_connection_options(cx)
+                            .cloned();
                         let old_key =
                             ProjectGroupKey::from_worktree_paths(old_worktree_paths, host);
                         this.handle_project_group_key_change(&workspace, &old_key, cx);
@@ -851,7 +850,10 @@ impl MultiWorkspace {
             .iter()
             .map(|group| ProjectGroup {
                 key: group.key.clone(),
-                workspaces: self.workspaces_for_project_group(&group.key, cx),
+                workspaces: self
+                    .workspaces_for_project_group(&group.key, cx)
+                    .cloned()
+                    .collect(),
                 expanded: group.expanded,
             })
             .collect()
@@ -929,17 +931,16 @@ impl MultiWorkspace {
         true
     }
 
-    pub fn workspaces_for_project_group(
-        &self,
-        key: &ProjectGroupKey,
-        cx: &App,
-    ) -> Vec<Entity<Workspace>> {
+    pub fn workspaces_for_project_group<'a>(
+        &'a self,
+        key: &'a ProjectGroupKey,
+        cx: &'a App,
+    ) -> impl Iterator<Item = &'a Entity<Workspace>> {
         self.held
             .iter()
             .filter(|held| held.pinned)
-            .map(|held| held.workspace.clone())
-            .filter(|workspace| workspace.read(cx).project_group_key(cx) == *key)
-            .collect()
+            .map(|held| &held.workspace)
+            .filter(move |workspace| workspace.read(cx).project_group_key(cx) == *key)
     }
 
     pub fn remove_project_group(
@@ -961,14 +962,23 @@ impl MultiWorkspace {
             self.pin(index, group_key.clone(), cx);
         }
 
-        let workspaces = self.workspaces_for_project_group(group_key, cx);
+        let workspaces = self
+            .workspaces_for_project_group(group_key, cx)
+            .cloned()
+            .collect::<Vec<_>>();
+        if workspaces.is_empty() {
+            let previous_group_count = self.project_groups.len();
+            self.project_groups.retain(|group| group.key != *group_key);
+            if self.project_groups.len() != previous_group_count {
+                cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+                self.serialize(cx);
+                cx.notify();
+                return Task::ready(Ok(true));
+            }
+            return Task::ready(Ok(false));
+        }
 
-        let task = self.remove(workspaces, RemovalIntent::CloseProject, window, cx);
-
-        self.project_groups.retain(|group| group.key != *group_key);
-        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
-
-        task
+        self.remove(workspaces, RemovalIntent::CloseProject, window, cx)
     }
 
     /// Returns the nearest retained workspace outside the project group at
@@ -1029,7 +1039,10 @@ impl MultiWorkspace {
 
         let app_state = self.workspace().read(cx).app_state().clone();
 
-        let workspaces: Vec<_> = self.workspaces_for_project_group(key, cx);
+        let workspaces: Vec<_> = self
+            .workspaces_for_project_group(key, cx)
+            .cloned()
+            .collect();
         let mut serialization_tasks = Vec::new();
         for workspace in &workspaces {
             serialization_tasks.push(workspace.update(cx, |workspace, inner_cx| {
@@ -1063,17 +1076,13 @@ impl MultiWorkspace {
         host: Option<&RemoteConnectionOptions>,
         cx: &App,
     ) -> Option<Entity<Workspace>> {
-        for workspace in self.workspaces() {
-            let root_paths = PathList::new(&workspace.read(cx).root_paths(cx));
-            let key = workspace.read(cx).project_group_key(cx);
-            let host_matches = key.host().as_ref() == host;
-            let paths_match = root_paths == *path_list;
-            if host_matches && paths_match {
-                return Some(workspace.clone());
-            }
-        }
-
-        None
+        self.workspaces()
+            .find(|workspace| {
+                let workspace = workspace.read(cx);
+                workspace.project().read(cx).remote_connection_options(cx) == host
+                    && PathList::new(&workspace.root_paths(cx)) == *path_list
+            })
+            .cloned()
     }
 
     /// Finds an existing workspace whose paths match, or creates a new one.
@@ -1209,7 +1218,18 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        if let Some(workspace) = self.workspace_for_paths(&path_list, None, cx) {
+        let local_workspace_for_paths = |multi_workspace: &Self, path_list: &PathList, cx: &App| {
+            multi_workspace
+                .workspaces()
+                .find(|workspace| {
+                    let workspace = workspace.read(cx);
+                    workspace.project().read(cx).is_local()
+                        && PathList::new(&workspace.root_paths(cx)) == *path_list
+                })
+                .cloned()
+        };
+
+        if let Some(workspace) = local_workspace_for_paths(self, &path_list, cx) {
             self.activate(workspace.clone(), source_workspace, window, cx);
             return Task::ready(Ok(workspace));
         }
@@ -1246,8 +1266,7 @@ impl MultiWorkspace {
             if let Some(requesting_window) = requesting_window
                 && let Some(workspace) = requesting_window
                     .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace
-                            .workspace_for_paths(&effective_path_list, None, cx)
+                        local_workspace_for_paths(multi_workspace, &effective_path_list, cx)
                             .inspect(|workspace| {
                                 multi_workspace.activate(
                                     workspace.clone(),
@@ -1820,6 +1839,18 @@ impl MultiWorkspace {
                 let mut removed_any = false;
                 let displayed_workspace = this.workspace().clone();
 
+                // wait for should_continue to be true before removing project groups
+                if intent == RemovalIntent::CloseProject {
+                    let workspace_to_delete_keys = workspaces
+                        .iter()
+                        .map(|workspace| workspace.read(cx).project_group_key(cx))
+                        .collect::<Vec<_>>();
+
+                    this.project_groups
+                        .retain(|group| !workspace_to_delete_keys.contains(&group.key));
+                    cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+                }
+
                 for workspace in &workspaces {
                     if *workspace == displayed_workspace {
                         continue;
@@ -1973,7 +2004,35 @@ impl MultiWorkspace {
             })
         } else {
             let workspace = self.workspace().clone();
-            cx.spawn_in(window, async move |_this, cx| {
+            let project = workspace.read(cx).project().read(cx);
+            let reuse_workspace = open_mode != OpenMode::NewWindow
+                && project.is_local()
+                && project.visibility_for_paths(&paths, true, cx).is_some();
+            cx.spawn_in(window, async move |_, cx| {
+                if reuse_workspace {
+                    let results = workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.open_paths(
+                                paths,
+                                OpenOptions {
+                                    visible: Some(OpenVisible::All),
+                                    ..OpenOptions::default()
+                                },
+                                None,
+                                window,
+                                cx,
+                            )
+                        })?
+                        .await;
+                    workspace.update(cx, |workspace, cx| {
+                        for result in results.into_iter().flatten() {
+                            if let Err(error) = result {
+                                workspace.show_error(error, cx);
+                            }
+                        }
+                    });
+                    return Ok(workspace);
+                }
                 let should_continue = workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.prepare_to_close(crate::CloseIntent::ReplaceWindow, window, cx)
@@ -1982,9 +2041,18 @@ impl MultiWorkspace {
                 if should_continue {
                     workspace
                         .update_in(cx, |workspace, window, cx| {
-                            workspace.open_workspace_for_paths(open_mode, paths, window, cx)
+                            Workspace::new_local(
+                                paths,
+                                workspace.app_state().clone(),
+                                window.window_handle().downcast(),
+                                None,
+                                None,
+                                open_mode,
+                                cx,
+                            )
                         })?
                         .await
+                        .map(|result| result.workspace)
                 } else {
                     Ok(workspace)
                 }
@@ -2071,8 +2139,21 @@ impl Render for MultiWorkspace {
         let workspace = self.workspace().clone();
         let workspace_key_context = workspace.update(cx, |workspace, cx| workspace.key_context(cx));
         let root = workspace.update(cx, |workspace, cx| workspace.actions(h_flex(), window, cx));
+        let (has_title_bar, has_status_bar) = {
+            let workspace = workspace.read(cx);
+            (
+                workspace.titlebar_item().is_some(),
+                workspace.status_bar_visible(cx),
+            )
+        };
+        let rounded_corners = Corners {
+            top_left: has_title_bar || left_sidebar.is_some(),
+            top_right: has_title_bar || right_sidebar.is_some(),
+            bottom_right: has_status_bar || right_sidebar.is_some(),
+            bottom_left: has_status_bar || left_sidebar.is_some(),
+        };
 
-        client_side_decorations(
+        client_side_decorations_with_rounded_corners(
             root.key_context(workspace_key_context)
                 .relative()
                 .size_full()
@@ -2193,6 +2274,7 @@ impl Render for MultiWorkspace {
                     ))
                     .with_priority(2)
                 })),
+            rounded_corners,
             window,
             cx,
         )

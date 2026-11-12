@@ -11,8 +11,8 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolChoiceSupport, LanguageModelToolResultContent,
-    MessageContent, ModelRateLimiters, ProviderSettingsView, RateLimiter, Role,
-    SubPageProviderSettings, env_var, unavailable_error,
+    MessageContent, ModelRateLimiters, PromptCompactionStrategy, ProviderSettingsView, RateLimiter,
+    Role, SubPageProviderSettings, env_var, unavailable_error,
 };
 use llama_cpp::{
     LLAMA_CPP_API_URL, ModelEntry, Props, get_models, get_props, stream_chat_completion,
@@ -73,7 +73,8 @@ pub struct State {
     credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     fetched_models: Vec<llama_cpp::Model>,
-    fetch_model_task: Option<Task<Result<()>>>,
+    fetch_model_task: Option<Task<()>>,
+    last_fetch_models_error: Option<String>,
     /// Router-mode task on `/models/sse`; re-runs discovery as models load/unload.
     model_event_task: Option<Task<()>>,
     /// Same `Arc` as the provider's; re-discovery keeps these cells in sync.
@@ -132,7 +133,7 @@ impl State {
                     log::warn!("failed to load llama.cpp API key: {error}");
                 }
             }
-            let fetch_models_task = this.update(cx, |this, cx| this.fetch_models(cx))?;
+            let fetch_models_task = this.update(cx, |this, cx| this.start_fetch_models(cx))?;
             match fetch_models_task.await {
                 Ok(()) => Ok(()),
                 Err(err) => {
@@ -266,6 +267,12 @@ impl State {
 
         self.model_event_task = Some(cx.spawn(async move |this, cx| {
             loop {
+                if this
+                    .update(cx, |_, cx| crate::ai_disabled(cx))
+                    .unwrap_or(true)
+                {
+                    return;
+                }
                 match stream_model_events(
                     http_client.as_ref(),
                     &api_url,
@@ -326,16 +333,39 @@ impl State {
                 cx.background_executor()
                     .timer(MODEL_EVENT_RECONNECT_INTERVAL)
                     .await;
-                if this.update(cx, |_, _| ()).is_err() {
-                    return;
-                }
             }
         }));
     }
 
-    fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
+    fn start_fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        if crate::ai_disabled(cx) {
+            self.fetch_model_task = None;
+            self.model_event_task = None;
+            return Task::ready(Ok(()));
+        }
+
+        let fetch_task = self.fetch_models(cx);
+        let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        let task = cx.spawn(async move |this, cx| {
+            let result = fetch_task.await;
+            this.update(cx, |this, _cx| {
+                this.last_fetch_models_error =
+                    result.as_ref().err().map(|error| format!("{error:#}"));
+            })
+            .ok();
+            if let Err(result) = result_tx.send(result) {
+                result.log_err();
+            }
+        });
         self.fetch_model_task.replace(task);
+
+        cx.spawn(async move |_this, _cx| result_rx.await.unwrap_or(Ok(())))
+    }
+
+    fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        let result = self.start_fetch_models(cx);
+        cx.spawn(async move |_this, _cx| result.await.log_err())
+            .detach();
     }
 }
 
@@ -466,6 +496,7 @@ impl LlamaCppLanguageModelProvider {
             state: cx.new(|cx| {
                 cx.observe_global::<SettingsStore>({
                     let mut last_settings = LlamaCppLanguageModelProvider::settings(cx).clone();
+                    let mut last_disable_ai = crate::ai_disabled(cx);
                     move |this: &mut State, cx| {
                         let current_settings = LlamaCppLanguageModelProvider::settings(cx);
                         let settings_changed = current_settings != &last_settings;
@@ -490,6 +521,11 @@ impl LlamaCppLanguageModelProvider {
                             }
                             cx.notify();
                         }
+                        let disable_ai = crate::ai_disabled(cx);
+                        if disable_ai != last_disable_ai {
+                            last_disable_ai = disable_ai;
+                            this.restart_fetch_models_task(cx);
+                        }
                     }
                 })
                 .detach();
@@ -498,6 +534,7 @@ impl LlamaCppLanguageModelProvider {
                     http_client,
                     fetched_models: Default::default(),
                     fetch_model_task: None,
+                    last_fetch_models_error: None,
                     model_event_task: None,
                     capability_cells,
                     loading_progress,
@@ -559,6 +596,7 @@ impl LlamaCppLanguageModelProvider {
             None => LanguageModelName::from(display_name.to_string()),
         };
         LanguageModel {
+            prompt_compaction_strategy: PromptCompactionStrategy::PreserveRequestPrefix,
             supports_tools: capabilities.supports_tools,
             tool_choice_support: LanguageModelToolChoiceSupport {
                 auto: capabilities.supports_tools,
@@ -678,6 +716,11 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
+    }
+
+    fn refresh_models(&self, cx: &mut App) {
+        self.state
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
     }
 
     fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
@@ -1459,46 +1502,12 @@ impl Render for ConfigurationView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use credentials_provider::test_support::FakeCredentialsProvider;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
-    use language_model::LanguageModelToolUse;
+    use language_model::{LanguageModelRegistry, LanguageModelToolUse};
     use parking_lot::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
-
-    struct FakeCredentialsProvider {
-        api_key: Vec<u8>,
-    }
-
-    impl CredentialsProvider for FakeCredentialsProvider {
-        fn read_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>,
-        > {
-            let api_key = self.api_key.clone();
-            Box::pin(async move { Ok(Some(("Bearer".to_string(), api_key))) })
-        }
-
-        fn write_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _username: &'a str,
-            _password: &'a [u8],
-            _cx: &'a AsyncApp,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn delete_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
-    }
 
     fn entry(id: &str, n_ctx: Option<u64>, n_ctx_train: Option<u64>) -> ModelEntry {
         ModelEntry {
@@ -1805,9 +1814,7 @@ mod tests {
         let provider = cx.update(|cx| {
             LlamaCppLanguageModelProvider::new(
                 FakeHttpClient::with_404_response(),
-                Arc::new(FakeCredentialsProvider {
-                    api_key: Vec::new(),
-                }),
+                Arc::new(FakeCredentialsProvider::default()),
                 cx,
             )
         });
@@ -1871,6 +1878,315 @@ mod tests {
     }
 
     #[gpui::test]
+    fn registry_refreshes_models_while_credentials_are_pending(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        let request_count = AtomicUsize::new(0);
+        let http_client = FakeHttpClient::create(move |request| {
+            let first_request = request_count.fetch_add(1, Ordering::SeqCst) == 0;
+            async move {
+                let (status, body) = match request.uri().path() {
+                    "/v1/models" if first_request => (503, "not ready"),
+                    "/v1/models" => (200, r#"{"data":[{"id":"refreshed-model"}]}"#),
+                    "/props" => (200, "{}"),
+                    path => anyhow::bail!("unexpected request: {path}"),
+                };
+                Ok(http_client::Response::builder()
+                    .status(status)
+                    .body(http_client::AsyncBody::from(body))?)
+            }
+        });
+        let credentials = Arc::new(FakeCredentialsProvider::default());
+        let pending_credentials = credentials.defer_read(LLAMA_CPP_API_URL);
+        let provider = cx.update(|cx| {
+            let provider = Arc::new(LlamaCppLanguageModelProvider::new(
+                http_client,
+                credentials.clone(),
+                cx,
+            ));
+            provider.state.update(cx, |state, cx| {
+                state.api_key_state = ApiKeyState::new(
+                    LlamaCppLanguageModelProvider::api_url(cx),
+                    EnvVar {
+                        name: SharedString::from(API_KEY_ENV_VAR_NAME),
+                        value: None,
+                    },
+                );
+            });
+            provider
+        });
+        cx.run_until_parked();
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(provider.clone(), cx);
+            registry.authenticate_providers(cx);
+        });
+        cx.run_until_parked();
+        assert!(cx.update(|cx| provider.provided_models(cx).is_empty()));
+        credentials.assert_reads(&[LLAMA_CPP_API_URL]);
+
+        registry.update(cx, |registry, cx| registry.authenticate_providers(cx));
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|cx| provider
+                .provided_models(cx)
+                .into_iter()
+                .map(|model| model.id.0.to_string())
+                .collect::<Vec<_>>()),
+            ["refreshed-model"]
+        );
+        credentials.assert_reads(&[LLAMA_CPP_API_URL]);
+        assert!(!pending_credentials.is_canceled());
+        let provider_id = provider.id();
+        drop(provider);
+        registry.update(cx, |registry, cx| {
+            registry.unregister_provider(provider_id, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|_| ());
+        cx.run_until_parked();
+        assert!(pending_credentials.is_canceled());
+    }
+
+    #[gpui::test]
+    async fn does_not_fetch_models_when_ai_is_disabled(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::test(cx);
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
+            cx.set_global(store);
+        });
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let (release_first_fetch, first_fetch_released) = futures::channel::oneshot::channel();
+        let first_fetch_released = Arc::new(Mutex::new(Some(first_fetch_released)));
+        let http_client = FakeHttpClient::create({
+            let request_count = request_count.clone();
+            move |request| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+                let first_fetch_released = first_fetch_released.clone();
+                async move {
+                    let first_fetch_released = first_fetch_released.lock().take();
+                    if let Some(first_fetch_released) = first_fetch_released {
+                        first_fetch_released.await.ok();
+                    }
+                    let (status, body) = match request.uri().path() {
+                        "/v1/models" => (200, r#"{"data":[{"id":"test-model"}]}"#),
+                        "/props" => (200, "{}"),
+                        path => anyhow::bail!("unexpected request: {path}"),
+                    };
+                    Ok(http_client::Response::builder()
+                        .status(status)
+                        .body(http_client::AsyncBody::from(body))?)
+                }
+            }
+        });
+        let provider = cx.update(|cx| {
+            LlamaCppLanguageModelProvider::new(
+                http_client,
+                Arc::new(FakeCredentialsProvider::default()),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 0);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert!(cx.update(|cx| provider.provided_models(cx)).is_empty());
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
+        });
+        cx.run_until_parked();
+        release_first_fetch.send(()).ok();
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert!(cx.update(|cx| provider.provided_models(cx)).is_empty());
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            cx.update(|cx| provider
+                .provided_models(cx)
+                .into_iter()
+                .map(|model| model.id.0.to_string())
+                .collect::<Vec<_>>()),
+            ["test-model"]
+        );
+    }
+
+    #[gpui::test]
+    async fn disables_model_event_stream_when_ai_is_disabled(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+
+        let model_event_request_count = Arc::new(AtomicUsize::new(0));
+        let (release_event_stream, event_stream_released) = futures::channel::oneshot::channel();
+        let event_stream_released = Arc::new(Mutex::new(Some(event_stream_released)));
+        let http_client = FakeHttpClient::create({
+            let model_event_request_count = model_event_request_count.clone();
+            move |request| {
+                let model_event_request_count = model_event_request_count.clone();
+                let event_stream_released = event_stream_released.clone();
+                async move {
+                    if request.uri().path() == "/models/sse" {
+                        model_event_request_count.fetch_add(1, Ordering::SeqCst);
+                        let event_stream_released = event_stream_released.lock().take();
+                        if let Some(event_stream_released) = event_stream_released {
+                            event_stream_released.await.ok();
+                        }
+                    }
+                    let (status, body) = match request.uri().path() {
+                        "/v1/models" => (
+                            200,
+                            r#"{"data":[{"id":"test-model","status":{"value":"loaded"}}]}"#,
+                        ),
+                        "/props" => (200, "{}"),
+                        "/models/sse" => (200, ""),
+                        path => anyhow::bail!("unexpected request: {path}"),
+                    };
+                    Ok(http_client::Response::builder()
+                        .status(status)
+                        .body(http_client::AsyncBody::from(body))?)
+                }
+            }
+        });
+        let provider = cx.update(|cx| {
+            LlamaCppLanguageModelProvider::new(
+                http_client,
+                Arc::new(FakeCredentialsProvider::default()),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|cx| provider
+                .provided_models(cx)
+                .into_iter()
+                .map(|model| model.id.0.to_string())
+                .collect::<Vec<_>>()),
+            ["test-model"]
+        );
+        assert_eq!(model_event_request_count.load(Ordering::SeqCst), 1);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
+        });
+        cx.run_until_parked();
+        release_event_stream.send(()).ok();
+        cx.run_until_parked();
+        assert_eq!(model_event_request_count.load(Ordering::SeqCst), 1);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(model_event_request_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[gpui::test]
+    async fn authenticate_does_not_fetch_models_when_ai_is_disabled(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::test(cx);
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
+            cx.set_global(store);
+        });
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let (release_fetch, fetch_released) = futures::channel::oneshot::channel();
+        let fetch_released = Arc::new(Mutex::new(Some(fetch_released)));
+        let http_client = FakeHttpClient::create({
+            let request_count = request_count.clone();
+            move |request| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+                let fetch_released = fetch_released.clone();
+                async move {
+                    let fetch_released = fetch_released.lock().take();
+                    if let Some(fetch_released) = fetch_released {
+                        fetch_released.await.ok();
+                    }
+                    let (status, body) = match request.uri().path() {
+                        "/v1/models" => (200, r#"{"data":[{"id":"test-model"}]}"#),
+                        "/props" => (200, "{}"),
+                        path => anyhow::bail!("unexpected request: {path}"),
+                    };
+                    Ok(http_client::Response::builder()
+                        .status(status)
+                        .body(http_client::AsyncBody::from(body))?)
+                }
+            }
+        });
+        let credentials_provider = Arc::new(FakeCredentialsProvider::default());
+        credentials_provider
+            .state
+            .lock()
+            .keys
+            .insert(LLAMA_CPP_API_URL.to_string(), b"loaded-key".to_vec());
+        let provider = cx
+            .update(|cx| LlamaCppLanguageModelProvider::new(http_client, credentials_provider, cx));
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 0);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .language_models
+                    .get_or_insert_default()
+                    .llama_cpp
+                    .get_or_insert_default()
+                    .api_url = Some("http://localhost:9999".to_string());
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|cx| provider.authenticate(cx)).await.ok();
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 0);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
+        });
+        cx.run_until_parked();
+        release_fetch.send(()).ok();
+        cx.run_until_parked();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert!(cx.update(|cx| provider.provided_models(cx)).is_empty());
+    }
+
+    #[gpui::test]
     async fn authenticate_fetches_models_after_loading_api_key(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -1921,9 +2237,12 @@ mod tests {
                 }
             }
         });
-        let credentials_provider = Arc::new(FakeCredentialsProvider {
-            api_key: b"loaded-key".to_vec(),
-        });
+        let credentials_provider = Arc::new(FakeCredentialsProvider::default());
+        credentials_provider
+            .state
+            .lock()
+            .keys
+            .insert(LLAMA_CPP_API_URL.to_string(), b"loaded-key".to_vec());
         let provider = cx
             .update(|cx| LlamaCppLanguageModelProvider::new(http_client, credentials_provider, cx));
 
@@ -1937,6 +2256,37 @@ mod tests {
         assert_eq!(
             &*model_request_authorizations.lock(),
             &[None, Some("Bearer loaded-key".to_string())]
+        );
+    }
+
+    #[gpui::test]
+    async fn restart_fetch_models_task_records_error_on_failure(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let http_client = FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder()
+                .status(500)
+                .body(http_client::AsyncBody::from("server error"))?)
+        });
+        let credentials_provider = Arc::new(FakeCredentialsProvider::default());
+        let provider = cx
+            .update(|cx| LlamaCppLanguageModelProvider::new(http_client, credentials_provider, cx));
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            provider
+                .state
+                .update(cx, |state, cx| state.restart_fetch_models_task(cx))
+        });
+        cx.run_until_parked();
+
+        let error = cx.read(|cx| provider.state.read(cx).last_fetch_models_error.clone());
+        assert!(
+            error.is_some(),
+            "a failed model fetch should be recorded, not silently dropped"
         );
     }
 }

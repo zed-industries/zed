@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 
@@ -6,6 +6,7 @@ use futures::{FutureExt, future::Shared};
 use itertools::Itertools as _;
 use language::LanguageName;
 use remote::{Interactive, RemoteClient};
+use rpc::proto;
 use settings::{Settings, SettingsLocation};
 use std::{
     borrow::Cow,
@@ -353,6 +354,16 @@ impl Project {
         } else {
             self.remote_client.clone()
         };
+        let remote_shell_request = remote_client.as_ref().map(|remote_client| {
+            remote_client
+                .read(cx)
+                .proto_client()
+                .request(proto::GetTerminalShell {
+                    project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                    worktree_id: settings_location
+                        .map(|settings_location| settings_location.worktree_id.to_proto()),
+                })
+        });
         let shell = match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
@@ -373,7 +384,24 @@ impl Project {
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
-            let shell_kind = ShellKind::new(&shell, path_style.is_windows());
+            let remote_shell = if let Some(remote_shell_request) = remote_shell_request {
+                let response = remote_shell_request
+                    .await
+                    .context("failed to get terminal shell settings from remote server")?;
+                let shell = response
+                    .shell
+                    .context("remote server returned no terminal shell")?;
+                let shell = task::shell_from_proto(shell)
+                    .context("remote server returned an invalid terminal shell")?;
+                log::debug!(
+                    "create_terminal_shell_internal: using remote terminal shell setting: {shell:?}"
+                );
+                Some(shell)
+            } else {
+                None
+            };
+            let shell_program = remote_shell.as_ref().map(Shell::program).unwrap_or(shell);
+            let shell_kind = ShellKind::new(&shell_program, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
 
@@ -401,7 +429,15 @@ impl Project {
                     let (shell, env) = {
                         match remote_client {
                             Some(remote_client) => {
-                                create_remote_shell(None, env, path, remote_client, cx)?
+                                let empty_args = Vec::new();
+                                let spawn_command = match remote_shell.as_ref() {
+                                    Some(Shell::System) | None => None,
+                                    Some(Shell::Program(program)) => Some((program, &empty_args)),
+                                    Some(Shell::WithArguments { program, args, .. }) => {
+                                        Some((program, args))
+                                    }
+                                };
+                                create_remote_shell(spawn_command, env, path, remote_client, cx)?
                             }
                             None => (settings.shell, env),
                         }
@@ -551,7 +587,7 @@ impl Project {
                             &env,
                             None,
                             None,
-                            Interactive::Yes,
+                            Interactive::No,
                         )?;
                         let mut command = new_std_command(command_template.program);
                         command.args(command_template.args);
@@ -711,6 +747,7 @@ fn quote_cmd_command_arg_for_outer_shell(arg: &str, shell_kind: ShellKind) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
     use pretty_assertions::assert_eq;
 
     fn prepared_cmd_task(command_arg: &str) -> SpawnInTerminal {
@@ -788,6 +825,105 @@ mod tests {
         assert_eq!(
             format_task_for_activation(&task, ShellKind::PowerShell, "powershell.exe", true),
             "&cargo test 'some test'"
+        );
+    }
+
+    async fn init_remote_client(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> Entity<RemoteClient> {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+        let ping_handler = server_cx.new(|_| ());
+        server_session.add_request_handler::<proto::Ping, _, _, _>(
+            ping_handler.downgrade(),
+            |_entity, _envelope, _cx| async { Ok(proto::Ack {}) },
+        );
+        drop(connect_guard);
+
+        RemoteClient::connect_mock(opts, cx).await
+    }
+
+    #[gpui::test]
+    async fn remote_exec_in_shell_uses_non_interactive_command(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let remote_client = init_remote_client(cx, server_cx).await;
+        let project = cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            let client = client::Client::new(
+                Arc::new(clock::FakeSystemClock::new()),
+                http_client::FakeHttpClient::with_404_response(),
+                cx,
+            );
+            let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
+            Project::remote(
+                remote_client,
+                client,
+                node_runtime::NodeRuntime::unavailable(),
+                user_store,
+                Arc::new(language::LanguageRegistry::test(
+                    cx.background_executor().clone(),
+                )),
+                fs::FakeFs::new(cx.background_executor().clone()),
+                false,
+                cx,
+            )
+        });
+
+        let exec_command = project
+            .update(cx, |project, cx| {
+                project.exec_in_shell("echo hello".to_string(), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(exec_command.get_program(), "mock");
+        assert_eq!(
+            exec_command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            vec!["-T", "sh", "-c", "echo hello"],
+        );
+    }
+
+    #[gpui::test]
+    async fn remote_terminal_launch_uses_interactive_command(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let remote_client = init_remote_client(cx, server_cx).await;
+
+        let (expected_title, (terminal_shell, _)) = cx.update(|cx| {
+            let title = format!(
+                "{} — Terminal",
+                remote_client.read(cx).connection_options().display_name()
+            );
+            let shell = create_remote_shell(
+                None,
+                HashMap::default(),
+                Some(Arc::from(Path::new("/work"))),
+                remote_client,
+                cx,
+            )
+            .unwrap();
+            (title, shell)
+        });
+        assert_eq!(
+            terminal_shell,
+            Shell::WithArguments {
+                program: "mock".to_string(),
+                args: vec!["-t".to_string(), "sh".to_string()],
+                title_override: Some(expected_title),
+            },
         );
     }
 }

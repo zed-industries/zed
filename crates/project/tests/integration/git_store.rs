@@ -1290,14 +1290,26 @@ mod git_worktrees {
 
     #[test]
     fn test_worktree_directory_uses_remote_path_style() {
-        let work_dir = Path::new("/home/user/dev/lsp-tests");
-
-        let directory =
-            worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap();
+        // Unix remote
+        let anchor = Path::new("/home/user/dev/lsp-tests");
 
         assert_eq!(
-            directory,
+            worktrees_directory_for_repo(anchor, "../worktrees", PathStyle::Unix).unwrap(),
             PathBuf::from("/home/user/dev/worktrees/lsp-tests")
+        );
+
+        // Windows remote: the anchor intentionally mixes `/` and `\` separators.
+        let anchor = Path::new(r"C:\Users/user/dev\lsp-tests");
+
+        assert_eq!(
+            worktrees_directory_for_repo(anchor, "../worktrees", PathStyle::Windows).unwrap(),
+            PathBuf::from(r"C:\Users\user\dev\worktrees\lsp-tests")
+        );
+
+        assert_eq!(
+            worktrees_directory_for_repo(anchor, ".git\\zed-worktrees", PathStyle::Windows)
+                .unwrap(),
+            PathBuf::from(r"C:\Users\user\dev\lsp-tests\.git\zed-worktrees")
         );
     }
 
@@ -1960,20 +1972,40 @@ mod resolve_worktree_tests {
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/olivetti/zed",
+                PathStyle::Unix,
                 Some("olivetti".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed2", Some("zed2".into())),
+            (
+                "/home/bob/zed",
+                "/home/bob/zed2",
+                PathStyle::Unix,
+                Some("zed2".into()),
+            ),
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/zed/selectric",
+                PathStyle::Unix,
                 Some("selectric".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed", None),
+            ("/home/bob/zed", "/home/bob/zed", PathStyle::Unix, None),
+            (
+                r"C:\Users\bob\dev\zed",
+                r"C:\Users\bob\dev\worktrees\zed\olivetti\zed",
+                PathStyle::Windows,
+                Some("olivetti".into()),
+            ),
+            (
+                r"C:\Users\bob\dev\zed",
+                r"C:\Users\bob\dev\zed2",
+                PathStyle::Windows,
+                Some("zed2".into()),
+            ),
         ];
-        for (main_worktree_path, linked_worktree_path, expected) in examples {
+        for (main_worktree_path, linked_worktree_path, path_style, expected) in examples {
             let short_name = linked_worktree_short_name(
                 Path::new(main_worktree_path),
                 Path::new(linked_worktree_path),
+                path_style,
             );
             assert_eq!(
                 short_name, expected,
@@ -1985,12 +2017,15 @@ mod resolve_worktree_tests {
 
 mod repository_activation_tests {
     use std::{
+        cell::RefCell,
         path::{Path, PathBuf},
+        rc::Rc,
         sync::Arc,
     };
 
     use fs::{FakeFs, Fs, RemoveOptions};
     use gpui::{BorrowAppContext, Entity, TestAppContext};
+    use project::git_store::GitStoreEvent;
     use serde_json::json;
     use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore};
     use util::{
@@ -2373,6 +2408,77 @@ mod repository_activation_tests {
         cx.executor().run_until_parked();
 
         assert_repositories(&project, cx, &[path!("/root/nested/repo")], &[]);
+    }
+
+    #[gpui::test]
+    async fn test_removing_worktree_emits_repository_removed(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "first": { ".git": {}, "a.txt": "" },
+                "second": { ".git": {}, "b.txt": "" },
+            }),
+        )
+        .await;
+        let project = Project::test(
+            fs.clone(),
+            [
+                path!("/root/first").as_ref(),
+                path!("/root/second").as_ref(),
+            ],
+            cx,
+        )
+        .await;
+        cx.executor().run_until_parked();
+        assert_repositories(
+            &project,
+            cx,
+            &[path!("/root/first"), path!("/root/second")],
+            &[],
+        );
+
+        let (second_worktree_id, second_repository_id) = project.read_with(cx, |project, cx| {
+            let worktree_id = project
+                .worktrees(cx)
+                .find(|worktree| {
+                    worktree.read(cx).abs_path().as_ref() == Path::new(path!("/root/second"))
+                })
+                .map(|worktree| worktree.read(cx).id())
+                .expect("second worktree should exist");
+            let repository_id = project
+                .repositories(cx)
+                .values()
+                .find(|repository| {
+                    repository.read(cx).work_directory_abs_path.as_ref()
+                        == Path::new(path!("/root/second"))
+                })
+                .map(|repository| repository.read(cx).id)
+                .expect("second repository should exist");
+            (worktree_id, repository_id)
+        });
+
+        let removed_repository_ids = Rc::new(RefCell::new(Vec::new()));
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        let _subscription = cx.update({
+            let removed_repository_ids = removed_repository_ids.clone();
+            |cx| {
+                cx.subscribe(&git_store, move |_, event, _| {
+                    if let GitStoreEvent::RepositoryRemoved(id) = event {
+                        removed_repository_ids.borrow_mut().push(*id);
+                    }
+                })
+            }
+        });
+
+        project.update(cx, |project, cx| {
+            project.remove_worktree(second_worktree_id, cx);
+        });
+        cx.executor().run_until_parked();
+
+        assert_repositories(&project, cx, &[path!("/root/first")], &[]);
+        assert_eq!(*removed_repository_ids.borrow(), vec![second_repository_id]);
     }
 
     #[gpui::test]

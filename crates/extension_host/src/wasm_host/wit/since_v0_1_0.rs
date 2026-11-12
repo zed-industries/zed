@@ -8,8 +8,7 @@ use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use extension::{ExtensionLanguageServerProxy, KeyValueStoreDelegate, WorktreeDelegate};
-use futures::{AsyncReadExt, lock::Mutex};
-use futures::{FutureExt as _, io::BufReader};
+use futures::{AsyncReadExt, io::BufReader, lock::Mutex};
 use gpui::BackgroundExecutor;
 use language::LanguageName;
 use language::{BinaryStatus, language_settings::AllLanguageSettings};
@@ -441,55 +440,49 @@ impl ExtensionImports for WasmState {
         category: String,
         key: Option<String>,
     ) -> wasmtime::Result<Result<String, String>> {
-        self.on_main_thread(|cx| {
-            async move {
-                let path = location.as_ref().and_then(|location| {
-                    RelPath::new(Path::new(&location.path), PathStyle::Unix).ok()
+        self.on_main_thread(async move |cx| {
+            let path = location
+                .as_ref()
+                .and_then(|location| RelPath::new(Path::new(&location.path), PathStyle::Unix).ok());
+            let location = path
+                .as_ref()
+                .zip(location.as_ref())
+                .map(|(path, location)| ::settings::SettingsLocation {
+                    worktree_id: WorktreeId::from_proto(location.worktree_id),
+                    path,
                 });
-                let location = path
-                    .as_ref()
-                    .zip(location.as_ref())
-                    .map(|(path, location)| ::settings::SettingsLocation {
-                        worktree_id: WorktreeId::from_proto(location.worktree_id),
-                        path,
-                    });
 
-                cx.update(|cx| match category.as_str() {
-                    "language" => {
-                        let key = key.map(|k| LanguageName::new(&k));
-                        let settings = AllLanguageSettings::get(location, cx).language(
-                            location,
-                            key.as_ref(),
-                            cx,
-                        );
-                        Ok(serde_json::to_string(&settings::LanguageSettings {
-                            tab_size: settings.tab_size,
-                        })?)
-                    }
-                    "lsp" => {
-                        let settings = key
-                            .and_then(|key| {
-                                ProjectSettings::get(location, cx)
-                                    .lsp
-                                    .get(&::lsp::LanguageServerName(key.into()))
-                            })
-                            .cloned()
-                            .unwrap_or_default();
-                        Ok(serde_json::to_string(&settings::LspSettings {
-                            binary: settings.binary.map(|binary| settings::BinarySettings {
-                                path: binary.path,
-                                arguments: binary.arguments,
-                            }),
-                            settings: settings.settings,
-                            initialization_options: settings.initialization_options,
-                        })?)
-                    }
-                    _ => {
-                        bail!("Unknown settings category: {}", category);
-                    }
-                })
-            }
-            .boxed_local()
+            cx.update(|cx| match category.as_str() {
+                "language" => {
+                    let key = key.map(|k| LanguageName::new(&k));
+                    let settings =
+                        AllLanguageSettings::get(location, cx).language(location, key.as_ref(), cx);
+                    Ok(serde_json::to_string(&settings::LanguageSettings {
+                        tab_size: settings.tab_size,
+                    })?)
+                }
+                "lsp" => {
+                    let settings = key
+                        .and_then(|key| {
+                            ProjectSettings::get(location, cx)
+                                .lsp
+                                .get(&::lsp::LanguageServerName(key.into()))
+                        })
+                        .cloned()
+                        .unwrap_or_default();
+                    Ok(serde_json::to_string(&settings::LspSettings {
+                        binary: settings.binary.map(|binary| settings::BinarySettings {
+                            path: binary.path,
+                            arguments: binary.arguments,
+                        }),
+                        settings: settings.settings,
+                        initialization_options: settings.initialization_options,
+                    })?)
+                }
+                _ => {
+                    bail!("Unknown settings category: {}", category);
+                }
+            })
         })
         .await
         .to_wasmtime_result()

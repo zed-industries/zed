@@ -102,9 +102,6 @@ async fn with_remote_sync_timeout<T>(
     }
 }
 
-/// The current extension [`SchemaVersion`] supported by Zed.
-const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
-
 /// Extensions that should no longer be loaded or downloaded.
 ///
 /// These snippets should no longer be downloaded or loaded, because their
@@ -131,7 +128,7 @@ static SUPPRESSED_EXTENSIONS: LazyLock<FxHashSet<&str>> = LazyLock::new(|| {
 
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
-    SchemaVersion::ZERO..=CURRENT_SCHEMA_VERSION
+    SchemaVersion::ZERO..=SchemaVersion::CURRENT
 }
 
 /// Returns whether the given extension version is compatible with this version of Zed.
@@ -140,7 +137,7 @@ pub fn is_version_compatible(
     extension_version: &ExtensionMetadata,
 ) -> bool {
     let schema_version = extension_version.manifest.schema_version.unwrap_or(0);
-    if CURRENT_SCHEMA_VERSION.0 < schema_version {
+    if SchemaVersion::CURRENT.0 < schema_version {
         return false;
     }
 
@@ -195,6 +192,15 @@ pub enum ExtensionOperation {
     Upgrade,
     Install,
     Remove,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExtensionStatus {
+    NotInstalled,
+    Installing,
+    Upgrading,
+    Installed(Arc<str>),
+    Removing,
 }
 
 #[derive(Clone)]
@@ -560,6 +566,27 @@ impl ExtensionStore {
         &self.extension_index.extensions
     }
 
+    /// Returns the status of the extension, where outstanding operations take
+    /// precedence over the installed state.
+    pub fn extension_status(&self, extension_id: &str) -> ExtensionStatus {
+        match self.outstanding_operations.get(extension_id) {
+            Some(ExtensionOperation::Install) => ExtensionStatus::Installing,
+            Some(ExtensionOperation::Remove) => ExtensionStatus::Removing,
+            Some(ExtensionOperation::Upgrade) => ExtensionStatus::Upgrading,
+            None => match self.extension_index.extensions.get(extension_id) {
+                Some(extension) => ExtensionStatus::Installed(extension.manifest.version.clone()),
+                None => ExtensionStatus::NotInstalled,
+            },
+        }
+    }
+
+    pub fn is_dev_extension(&self, extension_id: &str) -> bool {
+        self.extension_index
+            .extensions
+            .get(extension_id)
+            .is_some_and(|extension| extension.dev)
+    }
+
     pub fn dev_extensions(&self) -> impl Iterator<Item = &Arc<ExtensionManifest>> {
         self.extension_index
             .extensions
@@ -637,7 +664,7 @@ impl ExtensionStore {
         provides_filter: Option<&BTreeSet<ExtensionProvides>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
-        let version = CURRENT_SCHEMA_VERSION.to_string();
+        let version = SchemaVersion::CURRENT.to_string();
         let mut query = vec![("max_schema_version", version.as_str())];
         if let Some(search) = search {
             query.push(("filter", search));
@@ -1400,21 +1427,7 @@ impl ExtensionStore {
         self.proxy.remove_user_themes(themes_to_remove);
         self.proxy.remove_icon_themes(icon_themes_to_remove);
         self.proxy
-            .remove_languages(&languages_to_remove, &grammars_to_remove);
-
-        // Remove semantic token rules for languages being unloaded.
-        let semantic_token_rules_to_remove = languages_to_remove
-            .iter()
-            .filter(|language| !self.proxy.is_language_registered(language))
-            .chain(languages_to_readd.iter().map(|(name, _)| name))
-            .collect::<Vec<_>>();
-        if !semantic_token_rules_to_remove.is_empty() {
-            SettingsStore::update_global(cx, |store, cx| {
-                for language in semantic_token_rules_to_remove {
-                    store.remove_language_semantic_token_rules(language.as_ref(), cx);
-                }
-            });
-        }
+            .update_languages(&[], &grammars_to_remove, Vec::new());
 
         let mut grammars_to_add = Vec::new();
         let mut themes_to_add = Vec::new();
@@ -1495,41 +1508,74 @@ impl ExtensionStore {
             .languages
             .iter()
             .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
-            .map(|(name, entry)| (name.clone(), entry.clone()))
-            .chain(languages_to_readd)
+            .chain(languages_to_readd.iter().map(|(name, entry)| (name, entry)))
+            .map(|(name, entry)| {
+                let mut language_path = self.installed_dir.clone();
+                language_path.extend([Path::new(entry.extension.as_ref()), entry.path.as_path()]);
+                (name, entry, language_path)
+            })
             .collect::<Vec<_>>();
-        let mut semantic_token_rules_paths: Vec<(LanguageName, PathBuf)> = Vec::new();
-        for (language_name, language) in languages_to_add {
-            let mut language_path = self.installed_dir.clone();
-            language_path.extend([
-                Path::new(language.extension.as_ref()),
-                language.path.as_path(),
-            ]);
-            let rules_path = language_path.join(SemanticTokenRules::FILE_NAME);
-
-            let registered = self.proxy.register_language(
-                language_name.clone(),
-                language.grammar.clone(),
-                language.matcher.clone(),
-                language.hidden,
-                Arc::new({
-                    let fs = self.fs.clone();
-                    let query_files = language.query_files;
-                    move || {
-                        let fs = fs.clone();
+        let registrations = languages_to_add
+            .iter()
+            .map(
+                |(name, entry, language_path)| language::LanguageRegistration {
+                    name: (*name).clone(),
+                    grammar_name: entry.grammar.clone(),
+                    matcher: entry.matcher.clone(),
+                    hidden: entry.hidden,
+                    load: Arc::new({
+                        let fs = self.fs.clone();
                         let language_path = language_path.clone();
-                        async move { load_plugin_language(fs, &language_path, query_files).await }
-                            .boxed()
-                    }
-                }),
-            );
-            if !registered {
-                continue;
-            }
-
-            semantic_token_rules_paths.push((language_name, rules_path));
+                        let query_files = entry.query_files;
+                        move || {
+                            let fs = fs.clone();
+                            let language_path = language_path.clone();
+                            async move {
+                                    load_plugin_language(fs, &language_path, query_files).await
+                                }
+                                .boxed()
+                        }
+                    }),
+                },
+            )
+            .collect();
+        let update = self
+            .proxy
+            .update_languages(&languages_to_remove, &[], registrations);
+        debug_assert_eq!(update.registrations().len(), languages_to_add.len());
+        let readded_statuses = update.registrations().iter().skip(
+            languages_to_add
+                .len()
+                .saturating_sub(languages_to_readd.len()),
+        );
+        let semantic_token_rules_paths = languages_to_add
+            .into_iter()
+            .zip(update.registrations())
+            .filter(|(_, status)| status.is_registered())
+            .map(|((name, _, mut rules_path), _)| {
+                rules_path.push(SemanticTokenRules::FILE_NAME);
+                (name.clone(), rules_path)
+            })
+            .collect::<Vec<_>>();
+        // Rejected re-additions are shadowed by a native language whose rules must survive.
+        let mut semantic_token_rules_to_remove = update
+            .removed()
+            .iter()
+            .chain(
+                languages_to_readd
+                    .iter()
+                    .zip(readded_statuses)
+                    .filter(|(_, status)| status.is_registered())
+                    .map(|((name, _), _)| name),
+            )
+            .peekable();
+        if semantic_token_rules_to_remove.peek().is_some() {
+            SettingsStore::update_global(cx, |store, _cx| {
+                for language in semantic_token_rules_to_remove {
+                    store.remove_language_semantic_token_rules(language.as_ref());
+                }
+            });
         }
-
         let fs = self.fs.clone();
         let wasm_host = self.wasm_host.clone();
         let root_dir = self.installed_dir.clone();
@@ -1602,13 +1648,9 @@ impl ExtensionStore {
             // Register semantic token rules for newly loaded extension languages.
             if !semantic_token_rules_to_add.is_empty() {
                 this.update(cx, |_, cx| {
-                    SettingsStore::update_global(cx, |store, cx| {
+                    SettingsStore::update_global(cx, |store, _| {
                         for (language_name, rules) in semantic_token_rules_to_add {
-                            store.set_language_semantic_token_rules(
-                                language_name.0.clone(),
-                                rules,
-                                cx,
-                            );
+                            store.set_language_semantic_token_rules(language_name.0.clone(), rules);
                         }
                     })
                 })
@@ -2227,6 +2269,12 @@ impl ExtensionStore {
     ) -> Result<()> {
         static UPLOAD_NONCE: AtomicU64 = AtomicU64::new(0);
 
+        anyhow::ensure!(
+            !path_style.has_root(Path::new(&missing_extension.id)),
+            "extension id must not be rooted: {:?}",
+            missing_extension.id
+        );
+
         if !already_prepared {
             this.update(cx, |this, cx| {
                 this.prepare_remote_extension(
@@ -2251,11 +2299,8 @@ impl ExtensionStore {
         let dest_dir = RemotePathBuf::new(
             path_style
                 .join(remote_tmp_dir, &upload_name)
-                .with_context(|| {
-                    format!(
-                        "failed to construct destination path: {remote_tmp_dir:?}, {upload_name:?}"
-                    )
-                })?,
+                .to_string_lossy()
+                .into_owned(),
             path_style,
         );
         log::info!(

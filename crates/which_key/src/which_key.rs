@@ -5,7 +5,9 @@ mod pending_keystrokes_indicator;
 mod which_key_modal;
 mod which_key_settings;
 
-use gpui::{App, KeybindingKeystroke, Keystroke, PlatformKeyboardMapper, SharedString, Window};
+use gpui::{
+    Action, App, KeybindingKeystroke, Keystroke, PlatformKeyboardMapper, SharedString, Window,
+};
 pub use pending_keystrokes_indicator::PendingKeystrokesIndicator;
 use settings::Settings;
 use std::{sync::LazyLock, time::Duration};
@@ -13,6 +15,15 @@ use util::ResultExt;
 use which_key_modal::WhichKeyModal;
 use which_key_settings::WhichKeySettings;
 use workspace::Workspace;
+
+gpui::actions!(
+    which_key,
+    [
+        /// Shows the bindings that can complete the pending key sequence. Must be bound to a
+        /// single keystroke.
+        ShowPendingBindings
+    ]
+);
 
 pub(crate) struct PendingBinding {
     pub(crate) remaining_keystrokes: Vec<KeybindingKeystroke>,
@@ -58,6 +69,9 @@ fn collect_bindings_for_pending_input(
     pending_keystrokes: &[Keystroke],
     mut include_binding: impl FnMut(&gpui::KeyBinding) -> bool,
 ) -> Vec<PendingBinding> {
+    // Which-key uses GPUI's candidate list as is, on purpose, instead of repeating dispatch rules.
+    // The list can include a longer chord that can't be typed because a shorter binding for its
+    // prefix comes later in the keymap. GPUI's shortcut display shows those chords too.
     window
         .possible_bindings_for_input(pending_keystrokes)
         .into_iter()
@@ -68,13 +82,20 @@ fn collect_bindings_for_pending_input(
                 return None;
             }
             let remaining_keystrokes = remaining_keystrokes.to_vec();
-            let action_name = command_palette::humanize_action_name(binding.action().name()).into();
+            let action_name = binding_label(binding.action());
             Some(PendingBinding {
                 remaining_keystrokes,
                 action_name,
             })
         })
         .collect()
+}
+
+fn binding_label(action: &dyn Action) -> SharedString {
+    match action.as_any().downcast_ref::<zed_actions::Spawn>() {
+        Some(zed_actions::Spawn::ByName { task_name, .. }) => task_name.clone().into(),
+        _ => command_palette::humanize_action_name(action.name()).into(),
+    }
 }
 
 pub fn init(cx: &mut App) {
@@ -107,7 +128,9 @@ pub fn init(cx: &mut App) {
                     .await;
                 workspace_handle
                     .update_in(cx, |workspace, window, cx| {
-                        if workspace.active_modal::<WhichKeyModal>(cx).is_some() {
+                        // The modal layer holds one modal at a time, so showing which-key
+                        // would dismiss an open modal such as the commit editor or a picker.
+                        if workspace.has_active_modal(window, cx) {
                             return;
                         };
 
@@ -164,7 +187,12 @@ mod tests {
     use std::cell::Cell;
 
     use collections::HashMap;
-    use gpui::PlatformKeyboardMapper;
+    use gpui::{
+        BorrowAppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+        InteractiveElement, IntoElement, KeyBinding, PlatformKeyboardMapper, Render,
+        TestAppContext, VisualTestContext, actions, div,
+    };
+    use workspace::{AppState, ModalView, MultiWorkspace};
 
     use super::*;
 
@@ -234,5 +262,116 @@ mod tests {
             ui::text_for_keybinding_keystrokes(&mapped, cx),
             expected_display_text
         );
+    }
+
+    #[test]
+    fn test_binding_label_uses_task_name_for_spawn_by_name() {
+        let action = zed_actions::Spawn::ByName {
+            task_name: "lazygit".to_string(),
+            reveal_target: None,
+        };
+
+        assert_eq!(binding_label(&action), "lazygit");
+    }
+
+    actions!(which_key_test, [TestChordAction]);
+
+    struct TestModal {
+        focus_handle: FocusHandle,
+        chord_action_count: usize,
+    }
+
+    impl TestModal {
+        fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+            Self {
+                focus_handle: cx.focus_handle(),
+                chord_action_count: 0,
+            }
+        }
+    }
+
+    impl EventEmitter<DismissEvent> for TestModal {}
+
+    impl Focusable for TestModal {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl ModalView for TestModal {}
+
+    impl Render for TestModal {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().track_focus(&self.focus_handle).on_action(cx.listener(
+                |this, _: &TestChordAction, _, _| {
+                    this.chord_action_count += 1;
+                },
+            ))
+        }
+    }
+
+    async fn init_workspace_test(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, &mut VisualTestContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            workspace::init(app_state.clone(), cx);
+            init(cx);
+            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(r#"{ "which_key": { "enabled": true, "delay_ms": 0 } }"#, cx)
+                    .expect("valid test settings");
+            });
+            cx.bind_keys([KeyBinding::new("ctrl-k ctrl-x", TestChordAction, None)]);
+            app_state
+        });
+        let project = project::Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        (workspace, cx)
+    }
+
+    #[gpui::test]
+    async fn test_which_key_shows_for_pending_chord(cx: &mut TestAppContext) {
+        let (workspace, cx) = init_workspace_test(cx).await;
+
+        cx.simulate_keystrokes("ctrl-k");
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.active_modal::<WhichKeyModal>(cx).is_some());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_which_key_does_not_replace_open_modal(cx: &mut TestAppContext) {
+        let (workspace, cx) = init_workspace_test(cx).await;
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, TestModal::new);
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("ctrl-k");
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                workspace.active_modal::<TestModal>(cx).is_some(),
+                "which-key should not dismiss the open modal"
+            );
+        });
+
+        cx.simulate_keystrokes("ctrl-x");
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            let modal = workspace
+                .active_modal::<TestModal>(cx)
+                .expect("modal should still be open");
+            assert_eq!(modal.read(cx).chord_action_count, 1);
+        });
     }
 }

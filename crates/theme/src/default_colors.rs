@@ -1,10 +1,12 @@
 use gpui::{Hsla, Rgba};
+use std::sync::LazyLock;
 
 use crate::scale::{ColorScaleSet, ColorScales};
 use crate::{AccentColors, ColorScale, SystemColors, ThemeColors};
 
-pub(crate) fn neutral() -> ColorScaleSet {
-    sand()
+pub(crate) fn neutral() -> &'static ColorScaleSet {
+    static NEUTRAL: LazyLock<ColorScaleSet> = LazyLock::new(sand);
+    &NEUTRAL
 }
 
 const ADDED_COLOR: Hsla = Hsla {

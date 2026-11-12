@@ -3,8 +3,8 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    FolderIndicator, GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, IntoGpui,
-    RegisterSetting, Settings, StatusStyle,
+    FolderIndicator, GitPanelClickBehavior, GitPanelCommitEditor, GitPanelGroupBy, GitPanelSortBy,
+    IntoGpui, RegisterSetting, Settings, StatusStyle,
 };
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 use workspace::dock::DockPosition;
@@ -16,6 +16,7 @@ pub struct ScrollbarSettings {
 
 #[derive(Debug, Clone, PartialEq, RegisterSetting)]
 pub struct GitPanelSettings {
+    pub date_style: settings::GitDateStyle,
     pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
@@ -33,6 +34,7 @@ pub struct GitPanelSettings {
     pub starts_open: bool,
     pub commit_title_max_length: usize,
     pub entry_primary_click_action: GitPanelClickBehavior,
+    pub commit_editor: GitPanelCommitEditor,
 }
 
 #[derive(Default)]
@@ -59,6 +61,7 @@ impl Settings for GitPanelSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let git_panel = content.git_panel.clone().unwrap();
         Self {
+            date_style: git_panel.date_style.unwrap(),
             button: git_panel.button.unwrap(),
             dock: git_panel.dock.unwrap().into(),
             default_width: git_panel.default_width.unwrap().into_gpui(),
@@ -82,6 +85,7 @@ impl Settings for GitPanelSettings {
             starts_open: git_panel.starts_open.unwrap(),
             commit_title_max_length: git_panel.commit_title_max_length.unwrap(),
             entry_primary_click_action: git_panel.entry_primary_click_action.unwrap(),
+            commit_editor: git_panel.commit_editor.unwrap(),
         }
     }
 }
