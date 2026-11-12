@@ -1,4 +1,3 @@
-use anyhow::Context as _;
 use editor::Editor;
 use fuzzy_nucleo::StringMatchCandidate;
 
@@ -9,7 +8,7 @@ use gpui::http_client::Url;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions, rems,
+    Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::{Repository, RepositoryEvent};
@@ -23,7 +22,7 @@ use ui::{
     ListItemSpacing, ListSubHeader, PopoverMenu, PopoverMenuHandle, Severity, Tooltip, prelude::*,
 };
 use ui_input::ErasedEditor;
-use util::ResultExt;
+use util::{ResultExt, maybe};
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
@@ -211,6 +210,8 @@ pub struct BranchList {
     pub picker: Entity<Picker<BranchListDelegate>>,
     picker_focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
+    _load_default_branch: Option<Task<()>>,
+    _load_remote_provider_icons: Option<Task<()>>,
     embedded: bool,
 }
 
@@ -369,45 +370,46 @@ impl BranchList {
             ));
         }
 
-        // Fetch default branch asynchronously since it requires a git operation
-        cx.spawn_in(window, async move |this, cx| {
-            let default_branch = default_branch_request
-                .context("No active repository")?
+        let load_default_branch = default_branch_request.map(|default_branch_request| {
+            cx.spawn(async move |this, cx| {
+                let default_branch = default_branch_request
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .flatten();
+                this.update(cx, |this, cx| {
+                    this.picker.update(cx, |picker, _| {
+                        picker.delegate.default_branch = default_branch;
+                    });
+                })
+                .log_err();
+            })
+        });
+
+        let load_remote_provider_icons = remote_urls_request.map(|remote_urls_request| {
+            cx.spawn(async move |this, cx| {
+                maybe!(async move {
+                    let remote_urls = remote_urls_request.await??;
+                    let remote_provider_icons =
+                        cx.update(|cx| remote_provider_icons(&remote_urls, cx));
+                    this.update(cx, |this, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            picker.delegate.remote_provider_icons = remote_provider_icons;
+                            cx.notify();
+                        });
+                    })
+                })
                 .await
-                .map(Result::ok)
-                .ok()
-                .flatten()
-                .flatten();
-
-            let _ = this.update_in(cx, |this, _window, cx| {
-                this.picker.update(cx, |picker, _cx| {
-                    picker.delegate.default_branch = default_branch;
-                });
-            });
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-
-        cx.spawn(async move |this, cx| {
-            let remote_urls = remote_urls_request
-                .context("No active repository")?
-                .await??;
-            let remote_provider_icons = cx.update(|cx| remote_provider_icons(&remote_urls, cx));
-            this.update(cx, |this, cx| {
-                this.picker.update(cx, |picker, cx| {
-                    picker.delegate.remote_provider_icons = remote_provider_icons;
-                    cx.notify();
-                });
-            })?;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+                .log_err();
+            })
+        });
 
         Self {
             picker,
             picker_focus_handle,
             _subscriptions: subscriptions,
+            _load_default_branch: load_default_branch,
+            _load_remote_provider_icons: load_remote_provider_icons,
             embedded,
         }
     }
@@ -2383,6 +2385,8 @@ mod tests {
                         picker,
                         picker_focus_handle,
                         _subscriptions: vec![_subscription],
+                        _load_default_branch: None,
+                        _load_remote_provider_icons: None,
                         embedded: false,
                     }
                 })

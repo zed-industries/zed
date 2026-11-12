@@ -91,6 +91,10 @@ impl MetalFrameSource {
     pub fn set_paused(&self, paused: bool) {
         self.link.setPaused(paused);
     }
+
+    pub fn is_paused(&self) -> bool {
+        self.link.isPaused()
+    }
 }
 
 impl Drop for MetalFrameSource {

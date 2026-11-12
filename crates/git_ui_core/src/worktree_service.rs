@@ -629,26 +629,26 @@ pub async fn await_and_rollback_on_failure(
 /// Propagates worktree trust from the source workspace to the new workspace.
 /// If the source project's worktrees are all trusted, the new worktree paths
 /// will also be trusted automatically.
-fn maybe_propagate_worktree_trust(
+async fn maybe_propagate_worktree_trust(
     source_workspace: &WeakEntity<Workspace>,
     new_workspace: &Entity<Workspace>,
     paths: &[PathBuf],
     cx: &mut AsyncWindowContext,
 ) {
-    cx.update(|_, cx| {
+    let inherit_restriction = cx.update(|window, cx| {
         if ProjectSettings::get_global(cx).session.trust_all_worktrees {
-            return;
+            return None;
         }
-        let source_is_trusted = source_workspace
-            .upgrade()
-            .map(|workspace| {
-                let source_worktree_store = workspace.read(cx).project().read(cx).worktree_store();
-                !TrustedWorktrees::has_restricted_worktrees(&source_worktree_store, cx)
-            })
-            .unwrap_or(false);
-
-        if !source_is_trusted {
-            return;
+        let source_workspace = source_workspace.upgrade()?;
+        let source_worktree_store = source_workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .worktree_store();
+        if TrustedWorktrees::has_restricted_worktrees(&source_worktree_store, cx) {
+            return Some(new_workspace.update(cx, |new_workspace, cx| {
+                new_workspace.inherit_restricted_worktrees(&source_workspace, window, cx)
+            }));
         }
 
         let worktree_store = new_workspace.read(cx).project().read(cx).worktree_store();
@@ -667,8 +667,11 @@ fn maybe_propagate_worktree_trust(
                 });
             }
         }
-    })
-    .ok();
+        None
+    });
+    if let Ok(Some(inherit_restriction)) = inherit_restriction {
+        inherit_restriction.await;
+    }
 
     // After trust propagation, refresh the security modal on the new workspace
     // so it dismisses itself if there are no more restricted worktrees.
@@ -1258,7 +1261,7 @@ async fn open_worktree_workspace(
         })
         .await;
 
-    maybe_propagate_worktree_trust(&workspace, &new_workspace, &all_paths, cx);
+    maybe_propagate_worktree_trust(&workspace, &new_workspace, &all_paths, cx).await;
 
     if transfer_state {
         window_handle.update(cx, |_multi_workspace, window, cx| {
@@ -1707,6 +1710,100 @@ mod tests {
             !has_modal,
             "security modal should not show for a linked worktree created from a trusted main worktree"
         );
+    }
+
+    #[gpui::test]
+    async fn test_linked_worktree_inherits_stay_in_restricted_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.set_global(db::AppDatabase::test_new());
+            project::trusted_worktrees::init(collections::HashMap::default(), cx);
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+        let main_project_root = PathBuf::from(path!("/root/project"));
+
+        for (worktree_name, stay_restricted_in_source) in [("undecided", false), ("declined", true)]
+        {
+            let project =
+                Project::test_with_worktree_trust(fs.clone(), [main_project_root.as_path()], cx)
+                    .await;
+            project
+                .update(cx, |project, cx| project.git_scans_complete(cx))
+                .await;
+            let (multi_workspace, window_cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            multi_workspace.update(window_cx, |multi_workspace, cx| {
+                multi_workspace.retain_active_workspace(cx);
+            });
+            let main_workspace = multi_workspace.read_with(window_cx, |multi_workspace, _| {
+                multi_workspace.workspace().clone()
+            });
+
+            if stay_restricted_in_source {
+                main_workspace.update_in(window_cx, |workspace, window, cx| {
+                    workspace.show_worktree_trust_security_modal(true, window, cx);
+                });
+                window_cx.run_until_parked();
+                window_cx.dispatch_action(workspace::ToggleWorktreeSecurity);
+                window_cx.run_until_parked();
+            }
+
+            main_workspace.update_in(window_cx, |workspace, window, cx| {
+                assert!(
+                    workspace
+                        .active_modal::<workspace::security_modal::SecurityModal>(cx)
+                        .is_none(),
+                    "{worktree_name}"
+                );
+                handle_create_worktree(
+                    workspace,
+                    &zed_actions::CreateWorktree {
+                        worktree_name: Some(worktree_name.to_string()),
+                        branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                    },
+                    window,
+                    None,
+                    cx,
+                );
+            });
+            window_cx.run_until_parked();
+
+            let new_workspace = multi_workspace.read_with(window_cx, |multi_workspace, _| {
+                multi_workspace.workspace().clone()
+            });
+            assert_ne!(new_workspace, main_workspace, "{worktree_name}");
+            new_workspace.read_with(window_cx, |workspace, cx| {
+                assert!(
+                    project::trusted_worktrees::TrustedWorktrees::has_restricted_worktrees(
+                        &workspace.project().read(cx).worktree_store(),
+                        cx,
+                    ),
+                    "{worktree_name}"
+                );
+                assert_eq!(
+                    workspace
+                        .active_modal::<workspace::security_modal::SecurityModal>(cx)
+                        .is_some(),
+                    !stay_restricted_in_source,
+                    "{worktree_name}"
+                );
+            });
+        }
     }
 
     #[test]
