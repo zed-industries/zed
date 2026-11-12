@@ -63,6 +63,8 @@ pub(crate) struct WebWindowInner {
     pub(crate) callbacks: RefCell<WebWindowCallbacks>,
     pub(crate) click_state: RefCell<ClickState>,
     pub(crate) touch_ids: RefCell<TouchIds>,
+    /// A multi-touch sequence remains active until all contacts leave.
+    pub(crate) touch_multi_sequence: Cell<bool>,
     pub(crate) pressed_button: Cell<Option<MouseButton>>,
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
@@ -217,6 +219,7 @@ impl WebWindow {
             callbacks: RefCell::new(WebWindowCallbacks::default()),
             click_state: RefCell::new(ClickState::default()),
             touch_ids: RefCell::new(TouchIds::default()),
+            touch_multi_sequence: Cell::new(false),
             pressed_button: Cell::new(None),
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
