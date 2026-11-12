@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+    printf 'Error: %s\n' "$*" >&2
+    exit 1
+}
+
+# Parse the procedure before fetching changes that may replace this script.
+main() {
+    case "${1:-update}" in
+        update|build|install) action="${1:-update}" ;;
+        -h|--help)
+            printf '%s\n' \
+                'Usage: script/update-local-zed [update|build|install]' \
+                '  update   Fast-forward main from origin, test, build, and install (default).' \
+                '  build    Update, test, and build while Zed remains open.' \
+                '  install  Install the last successful build after you quit Zed.' \
+                'Never quits Zed, resolves conflicts, pushes commits, or deploys to SSH hosts.'
+            exit 0
+            ;;
+        *) fail "Unknown action: $1 (use --help)" ;;
+    esac
+    [[ $# -le 1 ]] || fail 'Expected at most one action.'
+    [[ $(uname -s) == Darwin ]] || fail 'This script installs Zed on macOS only.'
+    cd "$(dirname "$0")/.."
+    export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
+    export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+
+    require_clean_main() {
+        [[ $(git branch --show-current) == main ]] || fail 'Switch to main first; no branches will be switched automatically.'
+        [[ -z $(git status --porcelain) ]] || fail 'Commit or stash local changes first; nothing was discarded.'
+        [[ ! -d $(git rev-parse --git-path rebase-merge) && ! -d $(git rev-parse --git-path rebase-apply) && ! -f $(git rev-parse --git-path MERGE_HEAD) ]] || fail 'Finish or abort the current Git operation first.'
+    }
+
+    require_zed_closed() {
+        local status=0
+        pgrep -x zed >/dev/null || status=$?
+        case "$status" in
+            0) fail 'Save drafts and quit all Zed instances, then run script/update-local-zed install. The existing installation is unchanged.' ;;
+            1) ;;
+            *) fail 'Could not check whether Zed is running.' ;;
+        esac
+    }
+
+    require_clean_main
+    host=$(rustc -vV | awk '/^host: / {print $2}')
+    case "$host" in
+        aarch64-apple-darwin|x86_64-apple-darwin) ;;
+        *) fail "Unsupported Rust host: $host" ;;
+    esac
+    app="target/$host/release/dmg/Zed.app"
+    receipt="target/local-zed-build-receipt"
+
+    if [[ "$action" != install ]]; then
+        git fetch origin
+        git merge --ff-only origin/main || fail 'main diverges from origin/main. Resolve this separately, then rerun; no automatic rebase or reset was attempted.'
+        [[ $(<crates/zed/RELEASE_CHANNEL) == stable ]] || fail 'Expected the stable channel, which produces Zed.app.'
+        build_commit=$(git rev-parse HEAD)
+        rm -f "$receipt"
+        cargo test --locked -p editor review --lib
+        cargo test --locked -p agent_ui inline_review --lib
+        cargo test --locked -p agent_servers extension_requests_round_trip_without_prompts_and_preserve_errors --lib
+        export ZED_UPDATE_EXPLANATION='Custom pi build; update using script/update-local-zed.'
+        env -u SENTRY_AUTH_TOKEN -u MACOS_CERTIFICATE -u MACOS_CERTIFICATE_PASSWORD \
+            -u APPLE_NOTARIZATION_KEY -u APPLE_NOTARIZATION_KEY_ID -u APPLE_NOTARIZATION_ISSUER_ID \
+            ./script/bundle-mac "$host"
+        codesign --verify --deep --strict "$app"
+        "$app/Contents/MacOS/cli" --version
+        require_clean_main
+        [[ $(git rev-parse HEAD) == "$build_commit" ]] || fail 'HEAD changed during the build; rerun before installing.'
+        app_digest=$(shasum -a 256 "$app/Contents/MacOS/zed" | awk '{print $1}')
+        printf '%s\n%s\n' "$build_commit" "$app_digest" > "$receipt"
+        printf 'Built commit %s.\n' "$build_commit"
+        if [[ "$action" == build ]]; then
+            printf 'Save drafts, quit Zed, then run script/update-local-zed install.\n'
+            exit 0
+        fi
+    fi
+
+    [[ -f "$receipt" ]] || fail 'No successful build recorded. Run script/update-local-zed build first.'
+    if ! {
+        read -r build_commit
+        read -r built_digest
+    } < "$receipt"; then
+        fail 'Invalid build receipt. Rebuild first.'
+    fi
+    [[ $(git rev-parse HEAD) == "$build_commit" ]] || fail 'The recorded build is not for current HEAD. Rebuild first.'
+    [[ -d "$app" ]] || fail "Built application not found: $app"
+    app_digest=$(shasum -a 256 "$app/Contents/MacOS/zed" | awk '{print $1}')
+    [[ "$app_digest" == "$built_digest" ]] || fail 'The executable changed since the recorded build. Rebuild first.'
+    codesign --verify --deep --strict "$app"
+    require_zed_closed
+
+    installed='/Applications/Zed.app'
+    staged='/Applications/Zed.pi-staged.app'
+    [[ -d "$installed" && ! -L "$installed" ]] || fail "Expected an existing application directory at $installed"
+    [[ ! -e "$staged" && ! -L "$staged" ]] || fail "Staging path already exists; inspect it before retrying: $staged"
+    backup_root="$HOME/Library/Application Support/ZedPiReview/app-backups"
+    mkdir -p "$backup_root"
+    backup_directory=$(mktemp -d "$backup_root/$(date +%Y%m%d-%H%M%S).XXXXXX")
+    backup="$backup_directory/Zed.app"
+    printf 'Staging replacement. Backup will be: %s\n' "$backup"
+    sudo ditto "$app" "$staged"
+    codesign --verify --deep --strict "$staged"
+    require_zed_closed
+    sudo mv "$installed" "$backup"
+    if sudo mv "$staged" "$installed" && "$installed/Contents/MacOS/cli" --version; then
+        printf 'Installed commit %s. Backup: %s\nRun zed . normally. No settings were changed.\n' "$build_commit" "$backup"
+    else
+        printf 'Installation failed; restoring %s\n' "$backup" >&2
+        if [[ -e "$installed" ]]; then
+            sudo mv "$installed" "$staged"
+        fi
+        sudo mv "$backup" "$installed"
+        fail "Previous installation restored. Inspect any staged bundle at $staged before retrying."
+    fi
+}
+
+main "$@"; exit

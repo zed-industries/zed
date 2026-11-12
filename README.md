@@ -1,3 +1,5 @@
+> [!IMPORTANT]
+> Remove this line to confirm you've reviewed this PR before submitting.
 # Zed
 
 [![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
@@ -14,6 +16,47 @@ On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/dow
 Other platforms are not yet available:
 
 - Web ([tracking discussion](https://github.com/zed-industries/zed/discussions/26195))
+
+### Updating this custom macOS build
+
+From this checkout, run:
+
+```sh
+./script/update-local-zed
+```
+
+The script requires a clean `main`, fetches `origin/main`, fast-forwards without
+rewriting local history, runs the focused pi review tests, and builds a signed
+release bundle with official self-updates disabled. It uses `script/bundle-mac`,
+including that script's build-tool installation and packaging dependencies.
+
+Save drafts and quit all Zed instances before installation. The script never
+quits them for you. To keep using Zed during the build:
+
+```sh
+./script/update-local-zed build
+# Save drafts and quit Zed, then:
+./script/update-local-zed install
+```
+
+Installation uses `sudo`, stages and verifies the replacement, and preserves the
+previous app under `~/Library/Application Support/ZedPiReview/app-backups/`.
+A failed replacement or CLI verification restores the previous app. A staging
+failure leaves the installed app untouched; inspect any reported staging path
+before retrying. The saved build commit and executable digest prevent installing
+an outdated or subsequently overwritten build through `install`.
+
+Your existing `zed` command continues to use `/Applications/Zed.app`; settings
+and profiles are unchanged. Ubuntu remote servers and the pi adapter are not
+deployed by this command. New official Zed releases must first be integrated and
+reviewed in the fork; diverged Git history stops with instructions rather than
+being automatically rebased or reset. Local signing does not provide official
+notarization or universal-link entitlements.
+
+Implementation decisions: track this fork's `origin/main`, use the existing
+release bundler, keep installation separate when Zed is open, and preserve the
+normal profile and existing CLI link. These choices avoid forced restarts,
+implicit upstream-version changes, and configuration migration.
 
 ### Developing Zed
 
