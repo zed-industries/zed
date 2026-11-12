@@ -1054,6 +1054,136 @@ mod tests {
     };
 
     #[gpui::test]
+    fn test_removed_saved_hosted_default_and_background_model_recovery(cx: &mut TestAppContext) {
+        use language_model::{
+            LanguageModelProvider, LanguageModelProviderName,
+            fake_provider::FakeLanguageModelProvider,
+        };
+
+        let hosted = Arc::new(FakeLanguageModelProvider::new(
+            language_model::ZED_CLOUD_PROVIDER_ID,
+            language_model::ZED_CLOUD_PROVIDER_NAME,
+        ));
+        let claude = hosted.update_model("fake", |model| {
+            model.id = LanguageModelId("claude-opus-4-6".into());
+            model.name = "Claude Opus 4.6".to_string().into();
+        });
+        let personal = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId("personal".into()),
+            LanguageModelProviderName("Personal API key".into()),
+        ));
+        let personal_model = personal.model("personal-model");
+        let selection = |provider: &str, model: &str| LanguageModelSelection {
+            provider: provider.to_string().into(),
+            model: model.to_string(),
+            enable_thinking: false,
+            effort: None,
+            speed: None,
+        };
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            AgentSettings::register(cx);
+            language_model::init(cx);
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(hosted.clone(), cx);
+                registry.register_provider(personal.clone(), cx);
+            });
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let agent = settings.agent.get_or_insert_default();
+                    agent.default_model = Some(selection("zed.dev", "claude-opus-4-6"));
+                });
+            });
+            init_language_model_settings(cx);
+            let registry = LanguageModelRegistry::read_global(cx);
+            assert_eq!(registry.default_model().unwrap().id(), claude.id());
+            assert_eq!(registry.default_fast_model(cx).unwrap().id(), claude.id());
+            assert_eq!(registry.commit_message_model(cx).unwrap().id(), claude.id());
+        });
+        cx.run_until_parked();
+
+        let luna_only = Arc::new(FakeLanguageModelProvider::new(
+            language_model::ZED_CLOUD_PROVIDER_ID,
+            language_model::ZED_CLOUD_PROVIDER_NAME,
+        ));
+        let luna = luna_only.update_model("fake", |model| {
+            model.id = LanguageModelId("gpt-6-luna".into());
+            model.name = "GPT-6 Luna".to_string().into();
+        });
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(luna_only.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let registry = LanguageModelRegistry::read_global(cx);
+            assert!(luna_only.default_fast_model(cx).is_some());
+            assert!(registry.default_model().is_none());
+            assert!(registry.default_fast_model(cx).is_none());
+            assert!(registry.commit_message_model(cx).is_none());
+            assert!(registry.thread_summary_model(cx).is_none());
+            assert!(registry.inline_assistant_model().is_none());
+            assert_eq!(
+                AgentSettings::get_global(cx)
+                    .default_model
+                    .as_ref()
+                    .unwrap()
+                    .model,
+                "claude-opus-4-6",
+                "catalog updates must not rewrite saved preferences"
+            );
+            assert!(registry.provider_for_model(&personal_model).is_ok());
+        });
+
+        // Explicitly changing the saved default restores background selection.
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let agent = settings.agent.get_or_insert_default();
+                    agent.default_model = Some(selection("zed.dev", "gpt-6-luna"));
+                    agent.commit_message_model = Some(selection("zed.dev", "claude-opus-4-6"));
+                });
+            });
+        });
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let registry = LanguageModelRegistry::read_global(cx);
+            assert_eq!(registry.default_model().unwrap().id(), luna.id());
+            assert_eq!(registry.default_fast_model(cx).unwrap().id(), luna.id());
+            assert_eq!(registry.commit_message_model(cx).unwrap().id(), luna.id());
+            assert_eq!(registry.thread_summary_model(cx).unwrap().id(), luna.id());
+        });
+
+        // A personal default and explicit background override remain independent.
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let agent = settings.agent.get_or_insert_default();
+                    agent.default_model = Some(selection("personal", "personal-model"));
+                    agent.commit_message_model = Some(selection("personal", "personal-model"));
+                });
+            });
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(luna_only, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let registry = LanguageModelRegistry::read_global(cx);
+            assert_eq!(
+                registry.default_model().unwrap().provider_id(),
+                personal.id()
+            );
+            assert_eq!(
+                registry.commit_message_model(cx).unwrap().provider_id(),
+                personal.id()
+            );
+        });
+    }
+
+    #[gpui::test]
     fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {
         // Init settings
         cx.update(|cx| {

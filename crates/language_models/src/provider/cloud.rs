@@ -486,6 +486,22 @@ struct ZedAiConfiguration {
 pub mod test_support {
     use super::*;
 
+    pub fn update_models(
+        provider: &CloudLanguageModelProvider,
+        response: cloud_llm_client::ListModelsResponse,
+        cx: &mut App,
+    ) {
+        provider
+            .state
+            .read(cx)
+            .provider
+            .clone()
+            .update(cx, |provider, cx| {
+                provider.update_models(response);
+                cx.notify();
+            });
+    }
+
     pub fn young_account_configuration() -> AnyElement {
         ZedAiConfiguration {
             is_connected: true,
