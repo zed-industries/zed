@@ -63,10 +63,7 @@ impl ManagedResource for Npm {
     type CommandKind = NpmCommandKind;
 
     fn id(key: &Self::Key) -> ResourceId {
-        ResourceId {
-            kind: "npm".into(),
-            key: key.clone(),
-        }
+        ResourceId(format!("npm:{key}"))
     }
 
     async fn obtain(_: &Self::Key, context: &NpmContext) -> Result<ResourceAcquisition<Self>> {

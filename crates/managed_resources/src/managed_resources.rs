@@ -80,10 +80,8 @@ pub trait ManagedResourceCommand<Resource: ManagedResource>: Sized + 'static {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ResourceId {
-    pub kind: String,
-    pub key: String,
-}
+#[serde(transparent)]
+pub struct ResourceId(pub String);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResourcePermissionRequest {
@@ -118,7 +116,7 @@ impl ResourcePermissions {
     fn permission(&self, id: &ResourceId) -> Option<ResourcePermission> {
         self.content
             .resources
-            .get(&id.kind)
+            .get(&id.0)
             .and_then(|resource| resource.obtain)
             .or(self.content.default)
     }
@@ -128,7 +126,7 @@ impl ResourcePermissions {
         id: &ResourceId,
         command: &Resource::Command,
     ) -> Result<Option<ResourcePermission>, ResourceAccessError> {
-        let settings = if let Some(resource) = self.content.resources.get(&id.kind) {
+        let settings = if let Some(resource) = self.content.resources.get(&id.0) {
             serde_json::from_value(serde_json::Value::Object(
                 resource.settings.clone().into_iter().collect(),
             ))
@@ -140,7 +138,7 @@ impl ResourcePermissions {
     }
 
     fn set_permission(&mut self, id: ResourceId, permission: ResourcePermission) {
-        self.content.resources.entry(id.kind).or_default().obtain = Some(permission);
+        self.content.resources.entry(id.0).or_default().obtain = Some(permission);
     }
 }
 
@@ -233,10 +231,8 @@ impl ManagedResourceStore {
         permission: ResourcePermission,
         cx: &mut Context<Self>,
     ) {
-        for (resource_id, resource) in &mut self.resources {
-            if resource_id.kind == id.kind {
-                resource.permission_revision = resource.permission_revision.wrapping_add(1);
-            }
+        if let Some(resource) = self.resources.get_mut(&id) {
+            resource.permission_revision = resource.permission_revision.wrapping_add(1);
         }
         self.permissions.set_permission(id.clone(), permission);
         self.persist_permission(id, Some(permission), cx);
@@ -244,15 +240,13 @@ impl ManagedResourceStore {
     }
 
     pub fn clear_permission(&mut self, id: &ResourceId, cx: &mut Context<Self>) {
-        for (resource_id, resource) in &mut self.resources {
-            if resource_id.kind == id.kind {
-                resource.permission_revision = resource.permission_revision.wrapping_add(1);
-            }
+        if let Some(resource) = self.resources.get_mut(id) {
+            resource.permission_revision = resource.permission_revision.wrapping_add(1);
         }
-        if let Some(resource) = self.permissions.content.resources.get_mut(&id.kind) {
+        if let Some(resource) = self.permissions.content.resources.get_mut(&id.0) {
             resource.obtain = None;
             if resource.settings.is_empty() {
-                self.permissions.content.resources.remove(&id.kind);
+                self.permissions.content.resources.remove(&id.0);
             }
         }
         self.persist_permission(id.clone(), None, cx);
@@ -265,11 +259,11 @@ impl ManagedResourceStore {
             .update_settings_file(fs.clone(), move |settings, _| {
                 let permissions = settings.experimental_permissions.get_or_insert_default();
                 if let Some(permission) = permission {
-                    permissions.resources.entry(id.kind).or_default().obtain = Some(permission);
-                } else if let Some(resource) = permissions.resources.get_mut(&id.kind) {
+                    permissions.resources.entry(id.0).or_default().obtain = Some(permission);
+                } else if let Some(resource) = permissions.resources.get_mut(&id.0) {
                     resource.obtain = None;
                     if resource.settings.is_empty() {
-                        permissions.resources.remove(&id.kind);
+                        permissions.resources.remove(&id.0);
                     }
                 }
             });
@@ -615,10 +609,7 @@ mod tests {
         type CommandKind = TestCommandKind;
 
         fn id(key: &Self::Key) -> ResourceId {
-            ResourceId {
-                kind: format!("counter-{KIND}-{key}"),
-                key: key.to_string(),
-            }
+            ResourceId(format!("counter-{KIND}-{key}"))
         }
 
         async fn obtain(
@@ -1154,6 +1145,16 @@ mod tests {
 
     #[gpui::test]
     async fn permissions_round_trip_without_sharing_live_resources(cx: &mut TestAppContext) {
+        let id = TestResource::id(&"first");
+        assert_eq!(
+            serde_json::to_value(&id).expect("serializable identity"),
+            serde_json::json!("counter-0-first")
+        );
+        assert_eq!(
+            serde_json::from_value::<ResourceId>(serde_json::json!("counter-0-first"))
+                .expect("restorable identity"),
+            id
+        );
         let store = new_store(cx);
         let context = Rc::new(TestContext::default());
         store.update(cx, |store, cx| {
