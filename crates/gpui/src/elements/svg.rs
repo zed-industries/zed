@@ -10,7 +10,8 @@ use std::{
 use crate::{
     App, Asset, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
     Interactivity, LayoutId, Pixels, Point, Radians, SharedString, Size, SpriteAnimation,
-    StyleRefinement, Styled, TransformationMatrix, Window, point, px, radians, size,
+    StyleRefinement, Styled, TransformationMatrix, Window, ease_in_out, ease_out_quint, linear,
+    point, px, quadratic, radians, size,
 };
 use gpui_util::ResultExt;
 
@@ -81,7 +82,7 @@ impl Svg {
     /// already has and presents that again, instead of re-rendering this view.
     ///
     /// Like [`Self::with_transformation`], this doesn't affect layout or hit testing.
-    /// The rotation is applied after any transformation.
+    /// The turn is added to the rotation of any transformation set on this SVG.
     pub fn with_rotation_animation(mut self, period: Duration) -> Self {
         self.rotation_period = Some(period);
         self
@@ -94,7 +95,8 @@ impl Svg {
     /// already has and presents that again, instead of re-rendering this view.
     ///
     /// This replaces [`Self::with_transformation`] and [`Self::with_rotation_animation`],
-    /// and like them doesn't affect layout or hit testing.
+    /// and like them doesn't affect layout or hit testing. The SVG is still clipped
+    /// and ordered by its untransformed bounds, so keep its motion close to them.
     pub fn with_timed_transformation(mut self, transformation: TimedTransformation) -> Self {
         self.timed_transformation = Some(transformation);
         self
@@ -181,7 +183,9 @@ impl Element for Svg {
                 let center = bounds.center();
                 let scale_factor = window.scale_factor();
                 let animation = timed_transformation
-                    .filter(|timed| !timed.period.is_zero() && !cx.reduce_motion())
+                    .filter(|timed| {
+                        !timed.period.is_zero() && timed.from != timed.to && !cx.reduce_motion()
+                    })
                     .map(|timed| SpriteAnimation::new(timed, center, scale_factor));
                 // With reduced motion, an animated SVG rests at its starting pose.
                 let pose = timed_transformation
@@ -375,17 +379,10 @@ pub enum Easing {
 impl Easing {
     fn apply(self, delta: f32) -> f32 {
         match self {
-            Easing::Linear => delta,
-            Easing::Quadratic => delta * delta,
-            Easing::EaseInOut => {
-                if delta < 0.5 {
-                    2.0 * delta * delta
-                } else {
-                    let x = -2.0 * delta + 2.0;
-                    1.0 - x * x / 2.0
-                }
-            }
-            Easing::EaseOutQuint => 1.0 - (1.0 - delta).powi(5),
+            Easing::Linear => linear(delta),
+            Easing::Quadratic => quadratic(delta),
+            Easing::EaseInOut => ease_in_out(delta),
+            Easing::EaseOutQuint => ease_out_quint()(delta),
         }
     }
 }
@@ -409,8 +406,8 @@ pub struct TimedTransformation {
 }
 
 impl TimedTransformation {
-    /// Create a timed transformation that repeats every `period`. Until
-    /// [`Self::from`] and [`Self::to`] are set, it has no effect.
+    /// Create a timed transformation that repeats every `period`. It animates
+    /// nothing until [`Self::from`] and [`Self::to`] differ.
     pub fn new(period: Duration) -> Self {
         Self {
             period,

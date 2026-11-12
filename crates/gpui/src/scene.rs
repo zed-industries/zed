@@ -92,7 +92,7 @@ impl Scene {
     }
 
     /// Registers an animation that sprites inserted into this scene can refer to.
-    pub fn insert_animation(&mut self, animation: SpriteAnimation) -> SpriteAnimationId {
+    pub(crate) fn insert_animation(&mut self, animation: SpriteAnimation) -> SpriteAnimationId {
         self.animations.push(animation);
         SpriteAnimationId(self.animations.len() as u32)
     }
@@ -918,7 +918,7 @@ pub struct MonochromeSprite {
     pub transformation: TransformationMatrix,
 }
 
-/// Refers to a [`SpriteAnimation`] registered with [`Scene::insert_animation`].
+/// Refers to an animation registered with the scene a sprite is inserted into.
 ///
 /// A single `u32` so it fits the sprite's existing padding and leaves the
 /// instance layout unchanged on every backend; renderers ignore it.
@@ -934,16 +934,14 @@ impl SpriteAnimationId {
 /// A [`TimedTransformation`] the window applies to a sprite right before
 /// every present, so the scene can be presented again without being redrawn.
 #[derive(Copy, Clone, Debug)]
-pub struct SpriteAnimation {
+pub(crate) struct SpriteAnimation {
     transformation: TimedTransformation,
     center: Point<Pixels>,
     scale_factor: f32,
 }
 
 impl SpriteAnimation {
-    /// Animates a sprite with `transformation`, around `center` in a window
-    /// with the given scale factor.
-    pub fn new(
+    pub(crate) fn new(
         transformation: TimedTransformation,
         center: Point<Pixels>,
         scale_factor: f32,
