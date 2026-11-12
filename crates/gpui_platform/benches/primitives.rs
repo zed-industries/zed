@@ -314,13 +314,13 @@ fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
             Kind::Shadow => scene.insert_primitive(gpui::Shadow {
                 order: 0,
                 blur_radius: gpui::ScaledPixels(6.),
-                bounds,
-                corner_radii: Corners::all(gpui::ScaledPixels(4.)),
+                bounds: bounds.dilate(gpui::ScaledPixels(18.)),
+                corner_radii: Corners::default(),
                 content_mask,
                 color: rectangle.color,
-                element_bounds: bounds,
-                element_corner_radii: Corners::all(gpui::ScaledPixels(4.)),
-                inset: 0,
+                shape_bounds: bounds,
+                shape_corner_radii: Corners::all(gpui::ScaledPixels(4.)),
+                inset: false.into(),
                 pad: 0,
             }),
             Kind::Underline => scene.insert_primitive(gpui::Underline {

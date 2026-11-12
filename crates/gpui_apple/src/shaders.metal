@@ -443,21 +443,8 @@ vertex ShadowFragmentInput shadow_vertex(
   float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
   Shadow shadow = shadows[shadow_id];
 
-  Bounds_ScaledPixels bounds;
-  if (shadow.inset != 0u) {
-    bounds = shadow.element_bounds;
-  } else {
-    // Leave room for the gaussian tail outside the shadow rect.
-    float margin = 3. * shadow.blur_radius;
-    bounds = shadow.bounds;
-    bounds.origin.x -= margin;
-    bounds.origin.y -= margin;
-    bounds.size.width += 2. * margin;
-    bounds.size.height += 2. * margin;
-  }
-
   ClippedVertex clipped =
-      clip_to_mask(unit_vertex, bounds, shadow.content_mask.bounds);
+      clip_to_mask(unit_vertex, shadow.bounds, shadow.content_mask.bounds);
   float4 device_position =
       to_device_position_impl(clipped.position, viewport_size);
   float4 color = hsla_to_rgba(shadow.color);
@@ -473,29 +460,30 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
                                 [[buffer(ShadowInputIndex_Shadows)]]) {
   Shadow shadow = shadows[input.shadow_id];
 
-  float2 origin = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
-  float2 size = float2(shadow.bounds.size.width, shadow.bounds.size.height);
+  float2 origin = float2(shadow.shape_bounds.origin.x, shadow.shape_bounds.origin.y);
+  float2 size = float2(shadow.shape_bounds.size.width, shadow.shape_bounds.size.height);
   float2 half_size = size / 2.;
   float2 center = origin + half_size;
   float2 point = input.position.xy - center;
   float corner_radius;
   if (point.x < 0.) {
     if (point.y < 0.) {
-      corner_radius = shadow.corner_radii.top_left;
+      corner_radius = shadow.shape_corner_radii.top_left;
     } else {
-      corner_radius = shadow.corner_radii.bottom_left;
+      corner_radius = shadow.shape_corner_radii.bottom_left;
     }
   } else {
     if (point.y < 0.) {
-      corner_radius = shadow.corner_radii.top_right;
+      corner_radius = shadow.shape_corner_radii.top_right;
     } else {
-      corner_radius = shadow.corner_radii.bottom_right;
+      corner_radius = shadow.shape_corner_radii.bottom_right;
     }
   }
 
   float alpha;
   if (shadow.blur_radius == 0.) {
-    float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
+    float distance = quad_sdf(input.position.xy, shadow.shape_bounds,
+                              shadow.shape_corner_radii);
     alpha = saturate(0.5 - distance);
   } else {
     // The signal is only non-zero in a limited range, so don't waste samples
@@ -520,8 +508,8 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
     // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
     // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
     alpha = 1. - alpha;
-    float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
-                                      shadow.element_corner_radii);
+    float element_distance =
+        quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
     alpha *= saturate(0.5 - element_distance);
   }
 
