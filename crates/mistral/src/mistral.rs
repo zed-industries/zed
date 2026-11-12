@@ -70,6 +70,8 @@ pub enum Model {
 
     #[serde(rename = "zai-glm-latest", alias = "zai-glm-latest")]
     ZaiGlmLatest,
+    #[serde(rename = "zai-glm-5-3-flash", alias = "zai-glm-5-3-flash")]
+    ZaiGlm53Flash,
 
     #[serde(rename = "custom")]
     Custom {
@@ -101,6 +103,7 @@ impl Model {
             "ministral-8b-latest" => Ok(Self::Ministral8bLatest),
             "ministral-14b-latest" => Ok(Self::Ministral14bLatest),
             "zai-glm-latest" => Ok(Self::ZaiGlmLatest),
+            "zai-glm-5-3-flash" => Ok(Self::ZaiGlm53Flash),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -116,6 +119,7 @@ impl Model {
             Self::Ministral8bLatest => "ministral-8b-latest",
             Self::Ministral14bLatest => "ministral-14b-latest",
             Self::ZaiGlmLatest => "zai-glm-latest",
+            Self::ZaiGlm53Flash => "zai-glm-5-3-flash",
             Self::Custom { name, .. } => name,
         }
     }
@@ -131,6 +135,7 @@ impl Model {
             Self::Ministral8bLatest => "ministral-8b-latest",
             Self::Ministral14bLatest => "ministral-14b-latest",
             Self::ZaiGlmLatest => "zai-glm-latest",
+            Self::ZaiGlm53Flash => "zai-glm-5-3-flash",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -148,6 +153,7 @@ impl Model {
             Self::Ministral8bLatest => 256000,
             Self::Ministral14bLatest => 256000,
             Self::ZaiGlmLatest => 1_048_576,
+            Self::ZaiGlm53Flash => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -155,6 +161,7 @@ impl Model {
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::MistralLarge4 => Some(262_144),
+            Self::ZaiGlm53Flash => Some(131_072),
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
@@ -172,7 +179,8 @@ impl Model {
             | Self::Ministral3bLatest
             | Self::Ministral8bLatest
             | Self::Ministral14bLatest
-            | Self::ZaiGlmLatest => true,
+            | Self::ZaiGlmLatest
+            | Self::ZaiGlm53Flash => true,
             Self::Custom { supports_tools, .. } => supports_tools.unwrap_or(false),
         }
     }
@@ -185,7 +193,8 @@ impl Model {
             | Self::MistralSmallLatest
             | Self::Ministral3bLatest
             | Self::Ministral8bLatest
-            | Self::Ministral14bLatest => true,
+            | Self::Ministral14bLatest
+            | Self::ZaiGlm53Flash => true,
             Self::CodestralLatest | Self::ZaiGlmLatest => false,
             Self::Custom {
                 supports_images, ..
@@ -198,7 +207,8 @@ impl Model {
             Self::MistralLarge4
             | Self::MistralMediumLatest
             | Self::MistralSmallLatest
-            | Self::ZaiGlmLatest => true,
+            | Self::ZaiGlmLatest
+            | Self::ZaiGlm53Flash => true,
             Self::Custom {
                 supports_thinking, ..
             } => supports_thinking.unwrap_or(false),
@@ -209,19 +219,22 @@ impl Model {
     /// Whether thinking can be turned off. Z.ai GLM and Mistral Large 4
     /// models always think and reject `reasoning_effort: "none"`.
     pub fn supports_disabling_thinking(&self) -> bool {
-        !matches!(self, Self::ZaiGlmLatest | Self::MistralLarge4)
+        !matches!(
+            self,
+            Self::ZaiGlmLatest | Self::ZaiGlm53Flash | Self::MistralLarge4
+        )
     }
 
     /// The `reasoning_effort` values this model accepts, as enforced by the
     /// Mistral API. Verified against the API: mistral-medium and mistral-small
-    /// only accept `none` and `high`, zai-glm-latest accepts `low`, `high` and
-    /// `max`, and mistral-large-4 accepts `low`, `medium` and `high`.
+    /// only accept `none` and `high`, the Z.ai GLM models accept `low`, `high`
+    /// and `max`, and mistral-large-4 accepts `low`, `medium` and `high`.
     pub fn supported_reasoning_efforts(&self) -> &'static [ReasoningEffort] {
         match self {
             Self::MistralMediumLatest | Self::MistralSmallLatest => {
                 &[ReasoningEffort::None, ReasoningEffort::High]
             }
-            Self::ZaiGlmLatest => &[
+            Self::ZaiGlmLatest | Self::ZaiGlm53Flash => &[
                 ReasoningEffort::Low,
                 ReasoningEffort::High,
                 ReasoningEffort::Max,

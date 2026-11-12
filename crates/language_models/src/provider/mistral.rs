@@ -1025,6 +1025,15 @@ mod tests {
                 Some(mistral::ReasoningEffort::Max),
             ),
             (
+                mistral::Model::ZaiGlm53Flash,
+                true,
+                Some("low"),
+                Some(mistral::ReasoningEffort::Low),
+            ),
+            // zai-glm-5-3-flash always thinks and rejects "none", so the
+            // field is omitted when the toggle is off.
+            (mistral::Model::ZaiGlm53Flash, false, None, None),
+            (
                 mistral::Model::MistralLarge4,
                 true,
                 Some("low"),
@@ -1099,6 +1108,13 @@ mod tests {
             .map(|level| level.value.as_ref())
             .collect();
         assert_eq!(large4_values, ["low", "medium", "high"]);
+
+        let flash_levels = supported_effort_levels(&mistral::Model::ZaiGlm53Flash);
+        let flash_values: Vec<_> = flash_levels
+            .iter()
+            .map(|level| level.value.as_ref())
+            .collect();
+        assert_eq!(flash_values, ["low", "high", "max"]);
 
         // mistral-medium and mistral-small only accept `none` and `high`, so
         // there is nothing to select beyond the thinking toggle.
