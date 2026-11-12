@@ -51,15 +51,22 @@ impl GlobalSkills {
         // Only the frontmatter is sent. The agent reads a skill's body when it's used.
         let results =
             agent_skills::load_skills_from_directory(&fs, &skills_dir, SkillSource::Global).await;
-        for result in results {
-            match result {
-                Ok(skill) => response.skills.push(global_skill_to_proto(skill)),
-                Err(error) => response.errors.push(proto::GlobalSkillLoadError {
-                    path: error.path.to_string_lossy().into_owned(),
-                    message: error.message,
+        response.results = results
+            .into_iter()
+            .map(|result| proto::GlobalSkillLoadResult {
+                variant: Some(match result {
+                    Ok(skill) => proto::global_skill_load_result::Variant::Skill(
+                        global_skill_to_proto(skill),
+                    ),
+                    Err(error) => proto::global_skill_load_result::Variant::Error(
+                        proto::GlobalSkillLoadError {
+                            path: error.path.to_string_lossy().into_owned(),
+                            message: error.message,
+                        },
+                    ),
                 }),
-            }
-        }
+            })
+            .collect();
         Ok(response)
     }
 
