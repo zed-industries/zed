@@ -67,17 +67,38 @@ struct QuadFragmentInput {
   PreparedBackground background;
 };
 
+constant float4 CULLED_POSITION = float4(0., 0., 0., 1.);
+
+float quad_depth(uint quad_id, float depth_scale) {
+  return saturate(float(quad_id + 1u) * depth_scale);
+}
+
+// Opaque rectangles are drawn by the opaque pass instead of the quad pass.
+bool is_opaque_rectangle(Quad quad) {
+  return quad.background.tag == 0u && quad.background.solid.a >= 1.0 &&
+         !has_rounded_corners(quad.corner_radii) &&
+         !has_border(quad.border_widths);
+}
+
 vertex QuadFragmentInput quad_vertex(
     uint vertex_id [[vertex_id]], uint quad_id [[instance_id]],
     constant Quad *quads [[buffer(QuadInputIndex_Quads)]],
     constant Size_DevicePixels *viewport_size
-    [[buffer(GlobalInputIndex_ViewportSize)]]) {
-  float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    [[buffer(GlobalInputIndex_ViewportSize)]],
+    constant float *depth_scale [[buffer(GlobalInputIndex_DepthScale)]]) {
   Quad quad = quads[quad_id];
+  if (is_opaque_rectangle(quad)) {
+    QuadFragmentInput culled = {};
+    culled.position = CULLED_POSITION;
+    return culled;
+  }
+
+  float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
   ClippedVertex clipped =
       clip_to_mask(unit_vertex, quad.bounds, quad.content_mask.bounds);
   float4 device_position =
       to_device_position_impl(clipped.position, viewport_size);
+  device_position.z = quad_depth(quad_id, *depth_scale);
   float4 border_color = hsla_to_rgba(quad.border_color);
   bool simple = !is_shaped(quad) && quad.background.tag == 0u;
   PreparedBackground background = prepare_background(quad.background);
@@ -427,6 +448,39 @@ float quarter_ellipse_sdf(float2 point, float2 radii) {
   // TODO: A better solution would be to use the gradient of the implicit
   // function for an ellipse to approximate a scaling factor.
   return unit_circle_sdf * (radii.x + radii.y) * -0.5;
+}
+
+struct OpaqueQuadFragmentInput {
+  float4 position [[position]];
+  float4 color [[flat]];
+};
+
+vertex OpaqueQuadFragmentInput opaque_quad_vertex(
+    uint vertex_id [[vertex_id]], uint instance_id [[instance_id]],
+    constant Quad *quads [[buffer(QuadInputIndex_Quads)]],
+    constant uint *quad_count [[buffer(QuadInputIndex_QuadCount)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(GlobalInputIndex_ViewportSize)]],
+    constant float *depth_scale [[buffer(GlobalInputIndex_DepthScale)]]) {
+  uint quad_id = *quad_count - 1u - instance_id;
+  Quad quad = quads[quad_id];
+  if (!is_opaque_rectangle(quad)) {
+    return OpaqueQuadFragmentInput{CULLED_POSITION, float4(0.)};
+  }
+
+  float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+  ClippedVertex clipped =
+      clip_to_mask(unit_vertex, quad.bounds, quad.content_mask.bounds);
+  float4 device_position =
+      to_device_position_impl(clipped.position, viewport_size);
+  device_position.z = quad_depth(quad_id, *depth_scale);
+  return OpaqueQuadFragmentInput{device_position,
+                                 hsla_to_rgba(quad.background.solid)};
+}
+
+fragment float4 opaque_quad_fragment(OpaqueQuadFragmentInput input
+                                     [[stage_in]]) {
+  return input.color;
 }
 
 struct ShadowFragmentInput {

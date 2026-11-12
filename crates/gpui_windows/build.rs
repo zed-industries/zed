@@ -33,6 +33,7 @@ mod shader_compilation {
         // Define all modules
         let modules = [
             "quad",
+            "opaque_quad",
             "shadow",
             "path_tile",
             "underline",

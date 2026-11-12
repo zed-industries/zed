@@ -6,7 +6,8 @@ cbuffer GlobalParams: register(b0) {
     float grayscale_enhanced_contrast;
     float subpixel_enhanced_contrast;
     uint is_bgr;
-    uint3 global_pad;
+    float depth_scale;
+    uint2 global_pad;
 };
 
 cbuffer BatchParams: register(b1) {
@@ -109,6 +110,12 @@ float4 to_device_position(float2 unit_vertex, Bounds bounds) {
     float2 position = unit_vertex * bounds.size + bounds.origin;
     return to_device_position_impl(position);
 }
+
+float quad_depth(uint quad_id) {
+    return saturate(float(quad_id + 1u) * depth_scale);
+}
+
+static const float4 CULLED_POSITION = float4(0.0, 0.0, 0.0, 1.0);
 
 float4 distance_from_clip_rect_impl(float2 position, Bounds clip_bounds) {
     float2 tl = position - clip_bounds.origin;
@@ -536,12 +543,27 @@ struct QuadFragmentInput {
     PreparedBackground background;
 };
 
+// Opaque rectangles are drawn by the opaque pass instead of the quad pass.
+bool is_opaque_rectangle(Quad quad) {
+    return quad.background.tag == 0u
+        && quad.background.solid.a >= 1.0
+        && !has_rounded_corners(quad.corner_radii)
+        && !has_border(quad.border_widths);
+}
+
 StructuredBuffer<Quad> quads: register(t1);
 
 QuadFragmentInput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
-    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint quad_id = batch_start_index + instance_id;
     Quad quad = quads[quad_id];
+
+    if (is_opaque_rectangle(quad)) {
+        QuadFragmentInput culled = (QuadFragmentInput)0;
+        culled.position = CULLED_POSITION;
+        return culled;
+    }
+
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     ClippedVertex vertex = clip_to_mask(unit_vertex, quad.bounds, quad.content_mask);
     float4 device_position = to_device_position_impl(vertex.position);
 
@@ -549,6 +571,7 @@ QuadFragmentInput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_
 
     QuadFragmentInput output;
     output.position = device_position;
+    output.position.z = quad_depth(quad_id);
     output.border_color = border_color;
     bool simple = !is_shaped(quad) && quad.background.tag == 0u;
     output.quad_id = quad_id | (simple ? SIMPLE_PRIMITIVE_FLAG : 0u);
@@ -836,6 +859,41 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
     }
 
     return color * float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
+}
+
+/*
+**
+**              Opaque quads
+**
+*/
+
+struct OpaqueQuadFragmentInput {
+    float4 position: SV_Position;
+    nointerpolation float4 color: COLOR0;
+};
+
+OpaqueQuadFragmentInput opaque_quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
+    uint quad_id = batch_start_index - instance_id;
+    Quad quad = quads[quad_id];
+
+    OpaqueQuadFragmentInput output;
+    if (!is_opaque_rectangle(quad)) {
+        output.position = CULLED_POSITION;
+        output.color = float4(0.0, 0.0, 0.0, 0.0);
+        return output;
+    }
+
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    ClippedVertex vertex = clip_to_mask(unit_vertex, quad.bounds, quad.content_mask);
+
+    output.position = to_device_position_impl(vertex.position);
+    output.position.z = quad_depth(quad_id);
+    output.color = hsla_to_rgba(quad.background.solid);
+    return output;
+}
+
+float4 opaque_quad_fragment(OpaqueQuadFragmentInput input): SV_Target {
+    return input.color;
 }
 
 /*
