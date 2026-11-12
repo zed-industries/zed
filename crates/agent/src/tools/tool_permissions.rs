@@ -266,6 +266,92 @@ pub fn resolve_project_path(
     Ok(ResolvedProjectPath::Safe(project_path))
 }
 
+/// Explains a [`resolve_project_path`] failure to the model.
+///
+/// `resolve_project_path` reports "Path ... is not in the project" both when
+/// the path exists outside every worktree root and when it does not exist at
+/// all, which leaves the model unable to tell a workspace-scope denial apart
+/// from a missing file.
+///
+/// This helper consults the filesystem:
+///
+/// - If the path exists on disk, it is either outside the project workspace
+///   or excluded from the worktree scan. The returned message says so, shows
+///   the path it resolved to, lists the project roots, and hints at how to
+///   grant access.
+/// - Otherwise the original error message is returned unchanged, so
+///   resolution failures unrelated to the workspace boundary (e.g. symlink
+///   verification) keep their specific wording.
+pub async fn unresolved_project_path_message(
+    input_path: &str,
+    fs: &dyn Fs,
+    worktree_roots: &[PathBuf],
+    resolution_error: &anyhow::Error,
+) -> String {
+    let Some(existing_path) = first_existing_disk_path(input_path, fs, worktree_roots).await else {
+        return resolution_error.to_string();
+    };
+
+    let roots = worktree_roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!(
+        "\"{input_path}\" resolves to {}, which is outside the project workspace (or \
+         excluded from the worktree scan), so agent tools cannot access it. Project \
+         roots: {roots}. To grant access, open the folder in Zed via \
+         \"Add Folder to Project\" or move the file inside the project.",
+        existing_path.display(),
+    )
+}
+
+/// Returns the first on-disk path that `input_path` could refer to, if any.
+///
+/// Probes the same interpretations that `find_project_path` uses: absolute
+/// paths as-is, `~`-prefixed paths expanded against the home directory, and
+/// relative paths against each worktree root (both with the worktree root
+/// name as the first component and without it). This is only used to explain
+/// a failed resolution, so a false positive can only change an error
+/// message, never grant access.
+async fn first_existing_disk_path(
+    input_path: &str,
+    fs: &dyn Fs,
+    worktree_roots: &[PathBuf],
+) -> Option<PathBuf> {
+    let input_path = Path::new(input_path);
+    let mut candidates = Vec::new();
+
+    // `expand_home_prefix` returns absolute paths unchanged and expands
+    // `~`-prefixed paths against the home directory. Relative paths fall
+    // through to the worktree-relative interpretations below.
+    if let Some(expanded) = expand_home_prefix(input_path) {
+        candidates.push(expanded);
+    } else {
+        for root in worktree_roots {
+            candidates.push(root.join(input_path));
+            if let Some(root_name) = root.file_name()
+                && let Ok(rest) = input_path.strip_prefix(root_name)
+            {
+                candidates.push(root.join(rest));
+            }
+        }
+    }
+
+    for candidate in candidates {
+        if fs
+            .metadata(&candidate)
+            .await
+            .is_ok_and(|metadata| metadata.is_some())
+        {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
 /// Prompts the user for permission when a path resolves through a symlink to a
 /// location outside the project. This check is an additional gate after
 /// settings-based deny decisions: even if a tool is configured as "always allow,"
@@ -1016,5 +1102,64 @@ mod tests {
                 resolved
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_unresolved_project_path_message(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        fs.insert_tree(path!("/outside"), json!({ "settings.json": "{}" }))
+            .await;
+
+        let roots = vec![PathBuf::from(path!("/root"))];
+
+        // A path that exists on disk but outside the workspace: the message
+        // names the resolved path, the project roots, and the remedy.
+        let error = anyhow!("Path /outside/settings.json is not in the project");
+        let message =
+            unresolved_project_path_message("/outside/settings.json", fs.as_ref(), &roots, &error)
+                .await;
+        assert_eq!(
+            message,
+            "\"/outside/settings.json\" resolves to /outside/settings.json, which is outside \
+             the project workspace (or excluded from the worktree scan), so agent tools \
+             cannot access it. Project roots: /root. To grant access, open the folder in Zed \
+             via \"Add Folder to Project\" or move the file inside the project."
+        );
+
+        // A path that does not exist anywhere: the original resolution error
+        // is kept verbatim.
+        let error = anyhow!("Path /outside/missing.json is not in the project");
+        let message =
+            unresolved_project_path_message("/outside/missing.json", fs.as_ref(), &roots, &error)
+                .await;
+        assert_eq!(message, "Path /outside/missing.json is not in the project");
+    }
+
+    #[gpui::test]
+    async fn test_unresolved_project_path_message_expands_tilde(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        fs.insert_tree(paths::home_dir(), json!({ "outside.txt": "contents" }))
+            .await;
+
+        let roots = vec![PathBuf::from(path!("/root"))];
+        let error = anyhow!("Path ~/outside.txt is not in the project");
+
+        let message =
+            unresolved_project_path_message("~/outside.txt", fs.as_ref(), &roots, &error).await;
+        assert!(
+            message.contains(&format!(
+                "\"~/outside.txt\" resolves to {}",
+                paths::home_dir().join("outside.txt").display()
+            )),
+            "unexpected message: {message}"
+        );
     }
 }

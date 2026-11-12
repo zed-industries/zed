@@ -1,6 +1,6 @@
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_project_path,
+    resolve_project_path, unresolved_project_path_message,
 };
 use crate::{AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput};
 use agent_client_protocol::v2::schema as acp;
@@ -246,7 +246,7 @@ impl AgentTool for ListDirectoryTool {
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
             let (project_path, symlink_canonical_target) =
-                project.read_with(cx, |project, cx| -> anyhow::Result<_> {
+                match project.read_with(cx, |project, cx| -> anyhow::Result<_> {
                     let resolved = resolve_project_path(project, &input.path, &canonical_roots, cx)?;
                     Ok(match resolved {
                         ResolvedProjectPath::Safe(path) => (path, None),
@@ -255,7 +255,18 @@ impl AgentTool for ListDirectoryTool {
                             canonical_target,
                         } => (project_path, Some(canonical_target)),
                     })
-                }).map_err(|e| e.to_string())?;
+                }) {
+                    Ok(resolved) => resolved,
+                    Err(error) => {
+                        return Err(unresolved_project_path_message(
+                            &input.path,
+                            fs.as_ref(),
+                            &canonical_roots,
+                            &error,
+                        )
+                        .await);
+                    }
+                };
 
             // Check settings exclusions synchronously
             project.read_with(cx, |project, cx| {
@@ -535,6 +546,74 @@ mod tests {
             })
             .await;
         assert!(output.unwrap_err().contains("is not a directory"));
+    }
+
+    #[gpui::test]
+    async fn test_list_directory_outside_workspace(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "file.txt": "content"
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/outside"),
+            json!({
+                "settings": {
+                    "settings.json": "{}"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let tool = Arc::new(ListDirectoryTool::new(project));
+
+        // A directory that exists on disk but outside the workspace gets an
+        // error that explains the workspace boundary and how to grant access.
+        let input = ListDirectoryToolInput {
+            path: "/outside/settings".into(),
+        };
+        let output = cx
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+        let error = output.unwrap_err();
+        assert!(
+            error.contains(
+                "\"/outside/settings\" resolves to /outside/settings, which is outside the \
+                 project workspace (or excluded from the worktree scan), so agent tools \
+                 cannot access it. Project roots: /project."
+            ),
+            "unexpected error: {error}"
+        );
+
+        // A directory that does not exist anywhere keeps the original
+        // resolution error, so the denial branch stays distinguishable.
+        let input = ListDirectoryToolInput {
+            path: "/outside/missing".into(),
+        };
+        let output = cx
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+        assert_eq!(
+            output.unwrap_err(),
+            "Path /outside/missing is not in the project"
+        );
     }
 
     #[gpui::test]
