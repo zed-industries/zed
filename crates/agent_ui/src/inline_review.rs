@@ -8,7 +8,10 @@ use futures::{
     FutureExt as _,
     future::{LocalBoxFuture, Shared},
 };
-use gpui::{App, Context, Entity, EntityId, Global, Subscription, WeakEntity, Window, actions};
+use gpui::{
+    App, AppContext as _, Context, Entity, EntityId, Global, Subscription, WeakEntity, Window,
+    actions,
+};
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -18,7 +21,10 @@ use std::{
 };
 use storage::ReviewStorage;
 use util::ResultExt as _;
-use workspace::{Toast, Workspace, notifications::NotificationId};
+use workspace::{
+    Toast, Workspace,
+    notifications::{NotificationId, simple_message_notification::MessageNotification},
+};
 
 const REVIEW_META_KEY: &str = "zed-pi-live/review";
 
@@ -54,6 +60,8 @@ struct ReviewQueue {
 #[derive(Default)]
 struct ReviewQueues(HashMap<EntityId, ReviewQueue>);
 impl Global for ReviewQueues {}
+
+struct UnattachedReviews;
 
 #[derive(Clone, Copy, PartialEq)]
 enum ReviewLoadTrigger {
@@ -302,10 +310,28 @@ fn load_reviews(
                     }
                     restored?;
                     if let Some(first) = failures.first() {
-                        bail!(
-                            "{} saved review(s) could not be attached. {first}",
-                            failures.len()
-                        );
+                        let id = NotificationId::unique::<UnattachedReviews>();
+                        if !workspace.has_notification(&id) {
+                            workspace.show_notification(id.clone(), cx, |cx| {
+                                let notification = cx.new(|cx| {
+                                    MessageNotification::new(
+                                        format!(
+                                            "{} saved review(s) could not be attached. {first}",
+                                            failures.len()
+                                        ),
+                                        cx,
+                                    )
+                                });
+                                cx.subscribe(
+                                    &notification,
+                                    move |workspace, _, _: &gpui::DismissEvent, cx| {
+                                        workspace.suppress_notification(&id, cx);
+                                    },
+                                )
+                                .detach();
+                                notification
+                            });
+                        }
                     }
                     Ok(())
                 })();
@@ -612,7 +638,7 @@ fn correlated_reply(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AppContext as _, Focusable as _, VisualTestContext};
+    use gpui::{Focusable as _, VisualTestContext};
     use std::sync::{
         Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -779,6 +805,100 @@ mod tests {
             editor.submit_diff_review_comment(window, cx);
         });
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn dismissed_unattached_review_warning_stays_hidden(cx: &mut gpui::TestAppContext) {
+        let fixture = review_workspace(cx).await;
+        let cx = &mut VisualTestContext::from_window(*fixture.window, cx);
+        let storage = fixture.workspace.read_with(cx, |workspace, cx| {
+            ReviewStorage::for_thread(&active_review_thread(workspace, cx).unwrap(), cx).unwrap()
+        });
+        cx.update(|_, cx| {
+            storage.create(
+                SavedInlineReview {
+                    version: 1,
+                    discussion_id: uuid::Uuid::new_v4().to_string(),
+                    submission_id: uuid::Uuid::new_v4().to_string(),
+                    path: util::path!("/project/file.txt").into(),
+                    start_line: 0,
+                    end_line: 1,
+                    excerpt: "Code that no longer exists".into(),
+                    diff: None,
+                    before: String::new(),
+                    after: String::new(),
+                    comment: "Historical comment".into(),
+                    created_at: 0,
+                    outcome: "answered".into(),
+                    reply: Some("Historical reply".into()),
+                    error: None,
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        let baseline = fixture
+            .workspace
+            .read_with(cx, |workspace, _| workspace.notification_ids().len());
+        fixture.workspace.update_in(cx, |workspace, window, cx| {
+            load_reviews(workspace, ReviewLoadTrigger::FileActivated, window, cx).unwrap();
+        });
+        cx.run_until_parked();
+        let (notification_id, notification) = fixture.workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.notification_ids().len(), baseline + 1);
+            (
+                workspace.notification_ids().last().unwrap().clone(),
+                workspace
+                    .notification_views()
+                    .last()
+                    .unwrap()
+                    .clone()
+                    .downcast::<MessageNotification>()
+                    .unwrap(),
+            )
+        });
+        notification.update(cx, |_, cx| cx.emit(gpui::DismissEvent));
+        cx.run_until_parked();
+        assert!(!fixture.workspace.read_with(cx, |workspace, _| {
+            workspace.has_notification(&notification_id)
+        }));
+        for trigger in [
+            ReviewLoadTrigger::FileActivated,
+            ReviewLoadTrigger::Restore,
+            ReviewLoadTrigger::Comment,
+        ] {
+            fixture.workspace.update_in(cx, |workspace, window, cx| {
+                load_reviews(workspace, trigger, window, cx).unwrap();
+            });
+            cx.run_until_parked();
+            assert!(!fixture.workspace.read_with(cx, |workspace, _| {
+                workspace.has_notification(&notification_id)
+            }));
+        }
+        cx.update(|_, cx| {
+            let mut failed = job(&fixture.editor, "discussion", "submission");
+            failed.workspace = Some(fixture.workspace.downgrade());
+            report_storage_failure(&failed, "Could not save review".into(), cx);
+        });
+        assert!(fixture.workspace.read_with(cx, |workspace, _| {
+            workspace.has_notification(&NotificationId::unique::<RestorePiReviews>())
+        }));
+        assert_eq!(
+            cx.update(|_, cx| storage.load(util::path!("/project/file.txt").as_ref(), cx))
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            !fixture
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|request| request.method == "session/prompt")
+        );
     }
 
     #[gpui::test]
