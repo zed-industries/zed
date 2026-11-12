@@ -660,13 +660,13 @@ mod tests {
         let query = tree_sitter::Query::new(&language, query_source)
             .expect("C++ highlights query should compile");
 
-        let source = r#"
+        let source = indoc! {"
             auto mutable_lambda = []() mutable {};
             auto static_lambda = []() static {};
 
             #if defined(MY_MACRO)
             #endif
-        "#;
+        "};
 
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&language).unwrap();
