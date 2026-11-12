@@ -335,27 +335,6 @@ fn over(below: vec4<f32>, above: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(color, alpha);
 }
 
-// A standard gaussian function, used for weighting samples
-fn gaussian(x: f32, sigma: f32) -> f32{
-    return exp(-(x * x) / (2.0 * sigma * sigma)) / (sqrt(2.0 * M_PI_F) * sigma);
-}
-
-// This approximates the error function, needed for the gaussian integral
-fn erf(v: vec2<f32>) -> vec2<f32> {
-    let s = sign(v);
-    let a = abs(v);
-    let r1 = 1.0 + (0.278393 + (0.230389 + (0.000972 + 0.078108 * a) * a) * a) * a;
-    let r2 = r1 * r1;
-    return s - s / (r2 * r2);
-}
-
-fn blur_along_x(x: f32, y: f32, sigma: f32, corner: f32, half_size: vec2<f32>) -> f32 {
-  let delta = min(half_size.y - corner - abs(y), 0.0);
-  let curved = half_size.x - corner + sqrt(max(0.0, corner * corner - delta * delta));
-  let integral = 0.5 + 0.5 * erf((x + vec2<f32>(-curved, curved)) * (sqrt(0.5) / sigma));
-  return integral.y - integral.x;
-}
-
 // Selects corner radius based on quadrant.
 fn pick_corner_radius(center_to_point: vec2<f32>, radii: Corners) -> f32 {
     if (center_to_point.x < 0.0) {
@@ -1041,6 +1020,74 @@ struct ShadowVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) @interpolate(flat) color: vec4<f32>,
     @location(1) @interpolate(flat) shadow_id: u32,
+    @location(2) @interpolate(flat) blur_shape: vec4<f32>,
+    @location(3) @interpolate(flat) blur_r1: vec4<f32>,
+    @location(4) @interpolate(flat) blur_exponent: vec4<f32>,
+    @location(5) @interpolate(flat) blur_scale: vec4<f32>,
+}
+
+struct PreparedBlurredRoundedRect {
+    shape: vec4<f32>,
+    r1: vec4<f32>,
+    exponent: vec4<f32>,
+    scale: vec4<f32>,
+}
+
+fn erf7(input: f32) -> f32 {
+    let x = clamp(input, -10.0, 10.0) * (2.0 / sqrt(M_PI_F));
+    let xx = x * x;
+    let y = x + (0.24295 + (0.03395 + 0.0104 * xx) * xx) * (x * xx);
+    return y / sqrt(1.0 + y * y);
+}
+
+// Raph Levien's blurred rounded rectangle approximation, whose blur s is sigma * sqrt(2):
+// https://raphlinus.github.io/graphics/2020/04/21/blurred-rounded-rects.html
+fn prepare_blurred_rounded_rect(size: vec2<f32>, corner_radii: Corners, sigma: f32) -> PreparedBlurredRoundedRect {
+    let s = max(sigma * sqrt(2.0), 1e-6);
+    let s_inv = 1.0 / s;
+    let min_edge = min(size.x, size.y);
+    let r_max = 0.5 * min_edge;
+    let radii = vec4<f32>(corner_radii.top_left, corner_radii.top_right,
+                          corner_radii.bottom_right, corner_radii.bottom_left);
+    let r0 = min(sqrt(radii * radii + 1.15 * 1.15 * s * s), vec4<f32>(r_max));
+    let r1 = min(sqrt(radii * radii + 4.0 * s * s), vec4<f32>(r_max));
+
+    let half_extent = 0.5 * s_inv * size;
+    let delta = 1.25 * s * (exp(-half_extent.x * half_extent.x) - exp(-half_extent.y * half_extent.y));
+    let adjusted_size = vec2<f32>(size.x + min(delta, 0.0), size.y - max(delta, 0.0));
+    let peak = s_inv * 0.5 * (max(adjusted_size.x, adjusted_size.y) - 0.5 * radii);
+
+    var output: PreparedBlurredRoundedRect;
+    output.shape = vec4<f32>(0.5 * adjusted_size, s_inv, min_edge);
+    output.r1 = r1;
+    output.exponent = 2.0 * r1 / r0;
+    output.scale = 0.5 * vec4<f32>(erf7(peak.x), erf7(peak.y), erf7(peak.z), erf7(peak.w));
+    return output;
+}
+
+fn pick_corner(center_to_point: vec2<f32>, values: vec4<f32>) -> f32 {
+    return pick_corner_radius(center_to_point, Corners(values.x, values.y, values.z, values.w));
+}
+
+fn blurred_rounded_rect(center_to_point: vec2<f32>, prepared: PreparedBlurredRoundedRect) -> f32 {
+    let r1 = pick_corner(center_to_point, prepared.r1);
+    let exponent = pick_corner(center_to_point, prepared.exponent);
+    let scale = pick_corner(center_to_point, prepared.scale);
+    let s_inv = prepared.shape.z;
+    let min_edge = prepared.shape.w;
+
+    let p0 = abs(center_to_point) - (prepared.shape.xy - r1);
+    let p1 = max(p0, vec2<f32>(0.0));
+    var d_pos: f32;
+    if (p1.x > 0.0 && p1.y > 0.0) {
+        d_pos = pow(pow(p1.x, exponent) + pow(p1.y, exponent), 1.0 / exponent);
+    } else {
+        d_pos = p1.x + p1.y;
+    }
+
+    let d_neg = min(max(p0.x, p0.y), 0.0);
+    let d = d_pos + d_neg - r1;
+    return scale * (erf7(s_inv * (min_edge + d)) - erf7(s_inv * d));
 }
 
 @vertex
@@ -1053,39 +1100,28 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
     out.position = to_device_position_impl(clipped.position);
     out.color = hsla_to_rgba(shadow.color);
     out.shadow_id = instance_id;
+    let blur = prepare_blurred_rounded_rect(shadow.shape_bounds.size, shadow.shape_corner_radii,
+                                            shadow.blur_radius);
+    out.blur_shape = blur.shape;
+    out.blur_r1 = blur.r1;
+    out.blur_exponent = blur.exponent;
+    out.blur_scale = blur.scale;
     return out;
 }
 
 @fragment
 fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     let shadow = load_shadow(input.shadow_id);
-    let half_size = shadow.shape_bounds.size / 2.0;
-    let center = shadow.shape_bounds.origin + half_size;
-    let center_to_point = input.position.xy - center;
-
-    let corner_radius = pick_corner_radius(center_to_point, shadow.shape_corner_radii);
 
     var alpha: f32;
     if (shadow.blur_radius == 0.0) {
         let distance = quad_sdf(input.position.xy, shadow.shape_bounds, shadow.shape_corner_radii);
         alpha = saturate(0.5 - distance);
     } else {
-        // The signal is only non-zero in a limited range, so don't waste samples
-        let low = center_to_point.y - half_size.y;
-        let high = center_to_point.y + half_size.y;
-        let start = clamp(-3.0 * shadow.blur_radius, low, high);
-        let end = clamp(3.0 * shadow.blur_radius, low, high);
-
-        // Accumulate samples (we can get away with surprisingly few samples)
-        let step = (end - start) / 4.0;
-        var y = start + step * 0.5;
-        alpha = 0.0;
-        for (var i = 0; i < 4; i += 1) {
-            let blur = blur_along_x(center_to_point.x, center_to_point.y - y,
-                shadow.blur_radius, corner_radius, half_size);
-            alpha +=  blur * gaussian(y, shadow.blur_radius) * step;
-            y += step;
-        }
+        let center = shadow.shape_bounds.origin + shadow.shape_bounds.size / 2.0;
+        let blur = PreparedBlurredRoundedRect(input.blur_shape, input.blur_r1,
+                                              input.blur_exponent, input.blur_scale);
+        alpha = blurred_rounded_rect(input.position.xy - center, blur);
     }
 
     if (shadow.inset != 0u) {
