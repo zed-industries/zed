@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use github_releases::{GitHubLspBinaryVersion, latest_github_release};
-use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use language::{
     Buffer, BufferSnapshot, ContextProvider, LanguageName, LanguageRegistry, LocalFile as _,
     LspAdapter, LspAdapterDelegate, LspInstaller, ResolvedRunnable, RunnableMatchCapture,
@@ -78,29 +78,32 @@ impl ContextProvider for JsonTaskProvider {
         buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> gpui::Task<Option<TaskTemplates>> {
-        let Some(buffer) = buffer else {
+        let file = buffer.as_ref().and_then(|buffer| buffer.read(cx).file());
+        let Some(file) = project::File::from_dyn(file).cloned() else {
             return Task::ready(None);
         };
-        let buffer = buffer.read(cx);
-        let Some(file) = project::File::from_dyn(buffer.file()) else {
-            return Task::ready(None);
-        };
-        let is_package_json = file
-            .path
-            .ends_with(RelPath::from_unix_str("package.json").unwrap());
-        let is_composer_json = file
-            .path
-            .ends_with(RelPath::from_unix_str("composer.json").unwrap());
+
+        let is_package_json = RelPath::from_unix_str("package.json")
+            .is_ok_and(|file_name| file.path.ends_with(file_name));
+        let is_composer_json = RelPath::from_unix_str("composer.json")
+            .is_ok_and(|file_name| file.path.ends_with(file_name));
+
         if !is_package_json && !is_composer_json {
             return Task::ready(None);
         }
 
-        // Runnables are detected in the buffer, so its scripts are listed from the buffer too:
-        // the file on disk may lack unsaved script renames.
-        let path: Arc<Path> = file.abs_path(cx).into();
-        let snapshot = buffer.text_snapshot();
-        cx.background_spawn(async move {
-            let contents = snapshot.text();
+        // Scripts are run by npm or composer against the saved manifest, so only its scripts are listed:
+        // an unsaved rename or an incomplete edit in the buffer must not change what can be run.
+        // Runnables still come from the buffer and bind by the decoded script name,
+        // so a script renamed without saving gets no runnable until the manifest is saved.
+        cx.spawn(async move |cx| {
+            let contents = file
+                .worktree
+                .update(cx, |worktree, cx| worktree.load_file(&file.path, cx))
+                .await
+                .ok()?;
+            let path: Arc<Path> = cx.update(|cx| file.abs_path(cx)).as_path().into();
+            let contents = contents.text.to_string();
             let task_templates = if is_package_json {
                 package_json_task_templates(path, &contents)?
             } else {

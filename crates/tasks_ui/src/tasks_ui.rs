@@ -1239,6 +1239,25 @@ mod tests {
         cx.run_until_parked();
     }
 
+    fn edit_package_json_without_saving(
+        editor: &Entity<Editor>,
+        old_text: &str,
+        new_text: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        let buffer = editor
+            .read_with(cx, |editor, cx| editor.buffer().read(cx).as_singleton())
+            .expect("package.json should be opened in a singleton buffer");
+        buffer.update(cx, |buffer, cx| {
+            let Some(start) = buffer.text().find(old_text) else {
+                panic!("missing {old_text:?} in package.json");
+            };
+
+            buffer.edit([(start..start + old_text.len(), new_text)], None, cx);
+        });
+        cx.run_until_parked();
+    }
+
     fn spawn_package_script_by_tag(cx: &mut VisualTestContext) {
         cx.dispatch_action(Spawn::ByTag {
             task_tag: "package-script".to_string(),
@@ -1342,40 +1361,63 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_package_json_scripts_are_listed_from_the_unsaved_buffer(cx: &mut TestAppContext) {
+    async fn test_unsaved_package_json_script_rename_keeps_the_saved_scripts(
+        cx: &mut TestAppContext,
+    ) {
         let (workspace, editor, cx) = open_package_json(cx).await;
-        let buffer = editor
-            .read_with(cx, |editor, cx| editor.buffer().read(cx).as_singleton())
-            .expect("package.json should be opened in a singleton buffer");
-        buffer.update(cx, |buffer, cx| {
-            let Some(build_key_start) = buffer.text().find("\"build\"") else {
-                panic!("missing the build script");
-            };
-            let name_start = build_key_start + 1;
-            buffer.edit(
-                [(name_start..name_start + "build".len(), "preview")],
-                None,
-                cx,
-            );
-        });
-        move_cursor_to(&editor, "\"preview\"", cx);
+        edit_package_json_without_saving(&editor, "\"build\"", "\"preview\"", cx);
 
         assert_eq!(
             listed_task_labels(&workspace, cx).await,
             (
                 Vec::new(),
                 vec![
-                    "package.json > dev".to_string(),
-                    "package.json > preview".to_string()
+                    "package.json > build".to_string(),
+                    "package.json > dev".to_string()
                 ]
             ),
-            "scripts should be listed from the buffer, not from the file on disk"
+            "scripts should be listed from the saved manifest that npm runs against"
         );
+
+        move_cursor_to(&editor, "\"preview\"", cx);
+        spawn_package_script_by_tag(cx);
+        assert!(
+            task_inventory(&workspace, cx)
+                .read_with(cx, |inventory, _| inventory.last_scheduled_task(None))
+                .is_none(),
+            "a script renamed without saving should not be bound to any saved script"
+        );
+        assert!(
+            workspace.read_with(cx, |workspace, cx| workspace
+                .active_modal::<TasksModal>(cx)
+                .is_some()),
+            "the task modal should open when no task is bound to the renamed script"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_incomplete_package_json_edit_keeps_the_saved_scripts(cx: &mut TestAppContext) {
+        let (workspace, editor, cx) = open_package_json(cx).await;
+        edit_package_json_without_saving(&editor, "\"tasks-repro\"", "", cx);
+
+        assert_eq!(
+            listed_task_labels(&workspace, cx).await,
+            (
+                Vec::new(),
+                vec![
+                    "package.json > build".to_string(),
+                    "package.json > dev".to_string()
+                ]
+            ),
+            "an incomplete edit outside of the scripts should not remove them"
+        );
+
+        move_cursor_to(&editor, "\"dev\"", cx);
         spawn_package_script_by_tag(cx);
         assert_eq!(
             last_scheduled_task(&workspace, cx).resolved.args,
-            vec!["run".to_string(), "preview".to_string()],
-            "the renamed script should be bound to its runnable before the buffer is saved"
+            vec!["run".to_string(), "dev".to_string()],
+            "an unchanged script should stay runnable while the buffer does not parse"
         );
     }
 
