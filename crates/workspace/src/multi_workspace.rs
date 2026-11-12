@@ -2,9 +2,9 @@ use anyhow::{Context as _, Result};
 use fs::Fs;
 
 use gpui::{
-    AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, WeakEntity, Window,
-    WindowId, actions, deferred, px,
+    AnyView, App, Context, Corners, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, WeakEntity,
+    Window, WindowId, actions, deferred, px,
 };
 pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};
@@ -28,8 +28,8 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 use crate::open_remote_project_with_existing_connection;
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
-    Panel, Workspace, WorkspaceId, client_side_decorations,
-    persistence::model::MultiWorkspaceState,
+    OpenOptions, OpenVisible, Panel, Workspace, WorkspaceId,
+    client_side_decorations_with_rounded_corners, persistence::model::MultiWorkspaceState,
 };
 
 actions!(
@@ -544,11 +544,9 @@ impl MultiWorkspace {
             self.previous_focus_handle.clone()
         };
 
-        if let Some(previous_focus) = focus_handle {
-            previous_focus.focus(window, cx);
-        } else {
-            let pane = self.workspace().read(cx).active_pane().clone();
-            window.focus(&pane.read(cx).focus_handle(cx), cx);
+        match focus_handle.filter(|focus_handle| focus_handle.is_rendered(window)) {
+            Some(previous_focus) => previous_focus.focus(window, cx),
+            None => self.focus_active_workspace(window, cx),
         }
     }
 
@@ -2006,7 +2004,35 @@ impl MultiWorkspace {
             })
         } else {
             let workspace = self.workspace().clone();
-            cx.spawn_in(window, async move |_this, cx| {
+            let project = workspace.read(cx).project().read(cx);
+            let reuse_workspace = open_mode != OpenMode::NewWindow
+                && project.is_local()
+                && project.visibility_for_paths(&paths, true, cx).is_some();
+            cx.spawn_in(window, async move |_, cx| {
+                if reuse_workspace {
+                    let results = workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.open_paths(
+                                paths,
+                                OpenOptions {
+                                    visible: Some(OpenVisible::All),
+                                    ..OpenOptions::default()
+                                },
+                                None,
+                                window,
+                                cx,
+                            )
+                        })?
+                        .await;
+                    workspace.update(cx, |workspace, cx| {
+                        for result in results.into_iter().flatten() {
+                            if let Err(error) = result {
+                                workspace.show_error(error, cx);
+                            }
+                        }
+                    });
+                    return Ok(workspace);
+                }
                 let should_continue = workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.prepare_to_close(crate::CloseIntent::ReplaceWindow, window, cx)
@@ -2015,9 +2041,18 @@ impl MultiWorkspace {
                 if should_continue {
                     workspace
                         .update_in(cx, |workspace, window, cx| {
-                            workspace.open_workspace_for_paths(open_mode, paths, window, cx)
+                            Workspace::new_local(
+                                paths,
+                                workspace.app_state().clone(),
+                                window.window_handle().downcast(),
+                                None,
+                                None,
+                                open_mode,
+                                cx,
+                            )
                         })?
                         .await
+                        .map(|result| result.workspace)
                 } else {
                     Ok(workspace)
                 }
@@ -2104,8 +2139,21 @@ impl Render for MultiWorkspace {
         let workspace = self.workspace().clone();
         let workspace_key_context = workspace.update(cx, |workspace, cx| workspace.key_context(cx));
         let root = workspace.update(cx, |workspace, cx| workspace.actions(h_flex(), window, cx));
+        let (has_title_bar, has_status_bar) = {
+            let workspace = workspace.read(cx);
+            (
+                workspace.titlebar_item().is_some(),
+                workspace.status_bar_visible(cx),
+            )
+        };
+        let rounded_corners = Corners {
+            top_left: has_title_bar || left_sidebar.is_some(),
+            top_right: has_title_bar || right_sidebar.is_some(),
+            bottom_right: has_status_bar || right_sidebar.is_some(),
+            bottom_left: has_status_bar || left_sidebar.is_some(),
+        };
 
-        client_side_decorations(
+        client_side_decorations_with_rounded_corners(
             root.key_context(workspace_key_context)
                 .relative()
                 .size_full()
@@ -2226,6 +2274,7 @@ impl Render for MultiWorkspace {
                     ))
                     .with_priority(2)
                 })),
+            rounded_corners,
             window,
             cx,
         )

@@ -1142,8 +1142,8 @@ mod element {
 
     use gpui::{
         Along, AnyElement, App, Axis, BorderStyle, Bounds, Element, GlobalElementId,
-        HitboxBehavior, IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-        Pixels, Point, Size, Style, WeakEntity, Window, px, relative, size,
+        HitboxBehavior, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+        Size, Style, WeakEntity, Window, px, relative, size,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
@@ -1344,14 +1344,6 @@ mod element {
                 hitbox: window.insert_hitbox(handle_bounds, HitboxBehavior::BlockMouse),
                 divider_bounds,
             }
-        }
-    }
-
-    impl IntoElement for PaneAxisElement {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
         }
     }
 

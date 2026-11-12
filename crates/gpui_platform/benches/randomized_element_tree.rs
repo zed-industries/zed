@@ -395,6 +395,31 @@ fn full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) 
     measure_in_window("full refresh", input, cx, |_, window, _| window.refresh());
 }
 
+/// The same tree as `family` draws, with elements painting no vector paths. Tessellating
+/// paths dominates the frames of trees that paint them, hiding everything else; without
+/// them the rest of the frame, layout especially, is most of what is measured.
+fn sample_without_paths(family: &TreeFamily, rng: &mut StdRng) -> TreeInput {
+    let mut input = family.sample(rng);
+    input.config = input.config.with_paths(false);
+    input
+}
+
+/// [`full_refresh`] on trees that paint no paths.
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "PathlessTree/full refresh", fps = 120)]
+fn pathless_full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &sample_without_paths(family, &mut rng);
+    measure_in_window("pathless full refresh", input, cx, |_, window, _| {
+        window.refresh()
+    });
+}
+
+/// [`element_style`] on trees that paint no paths.
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "PathlessTree/element style", fps = 120)]
+fn pathless_element_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = &sample_without_paths(family, &mut rng);
+    measure_element_style("pathless element style", input, cx);
+}
+
 /// A frame in which the root is notified but nothing in the tree changed. On a renderer
 /// that rebuilds every frame this is the whole tree's cost; on one that retains output
 /// it is the floor for a frame that has to do nothing.
@@ -1565,6 +1590,8 @@ gpui::bench_group!(
     reorder,
     hover,
     mixed,
+    pathless_full_refresh,
+    pathless_element_style,
     changing_share,
     text_panel_updates,
     installed_font_panel_updates,

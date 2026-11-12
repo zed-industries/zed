@@ -3290,7 +3290,9 @@ impl Thread {
             this.update(cx, |this, cx| {
                 if &this.prompt_id == prompt_id {
                     this.flush_pending_message(cx);
-                    if this.title.is_none() {
+                    if this.title.is_none()
+                        && AgentSettings::get_global(cx).auto_generate_thread_titles
+                    {
                         this.generate_title(cx);
                     }
                 }
@@ -3477,6 +3479,7 @@ impl Thread {
                     | LanguageModelCompletionEvent::Thinking { .. }
                     | LanguageModelCompletionEvent::RedactedThinking { .. }
                     | LanguageModelCompletionEvent::ReasoningDetails(_)
+                    | LanguageModelCompletionEvent::InputTransformations(_)
                     | LanguageModelCompletionEvent::ToolUse(_)
                     | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
                     | LanguageModelCompletionEvent::StartMessage { .. }
@@ -3734,7 +3737,7 @@ impl Thread {
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
-            Started | Queued { .. } | Compaction(_) => {}
+            Started | Queued { .. } | Compaction(_) | InputTransformations(_) => {}
         }
 
         Ok(None)

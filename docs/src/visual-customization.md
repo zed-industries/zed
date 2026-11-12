@@ -142,6 +142,7 @@ To disable this behavior use:
 ```json [settings]
   // Control which items are shown/hidden in the title bar
   "title_bar": {
+    "show": "always",                // When to show: always | never | hide_in_full_screen
     "show_branch_status_icon": false, // Show git status on branch icon
     "show_branch_name": true,         // Show/hide branch name
     "show_worktree_name": true,       // Show/hide worktree name

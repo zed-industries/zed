@@ -6,6 +6,7 @@ use serde_json::json;
 use settings::SettingsLocation;
 use std::path::Path;
 use std::sync::Arc;
+use task::{ResolvedTask, TaskId};
 use util::rel_path::rel_path;
 
 use project::task_store::{TaskSettingsLocation, TaskStore};
@@ -271,14 +272,14 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
         resolved_task_names(&inventory, None, cx).await,
         vec![
             "worktree_task_1".to_string(),
-            "1_a_task".to_string(),
+            "3_task".to_string(),
             "1_task".to_string(),
             "2_task".to_string(),
-            "3_task".to_string(),
+            "1_a_task".to_string(),
             "10_hello".to_string(),
             "11_hello".to_string(),
         ],
-        "After global tasks update, worktree task usage is not erased and it's the first still; global task is back to regular order as its file was updated"
+        "After global tasks update, usages of the tasks with unchanged definitions are kept"
     );
 
     register_task_used(&inventory, "11_hello", cx).await;
@@ -291,10 +292,10 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
         vec![
             "11_hello".to_string(),
             "worktree_task_1".to_string(),
-            "1_a_task".to_string(),
+            "3_task".to_string(),
             "1_task".to_string(),
             "2_task".to_string(),
-            "3_task".to_string(),
+            "1_a_task".to_string(),
             "10_hello".to_string(),
         ],
     );
@@ -608,6 +609,187 @@ async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_tasks_file_update_keeps_history_of_unchanged_tasks(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let update_tasks = |tasks: String, cx: &mut TestAppContext| {
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(TaskSettingsLocation::Global(tasks_file()), Some(&tasks))
+                .unwrap();
+        });
+    };
+
+    update_tasks(mock_tasks_from_names(["first", "second"]), cx);
+    register_task_used(&inventory, "first", cx).await;
+    let first_id = newest_task(&inventory, cx).unwrap().id;
+    register_task_used(&inventory, "second", cx).await;
+    let second_id = newest_task(&inventory, cx).unwrap().id;
+
+    update_tasks(mock_tasks_from_names(["first", "second"]), cx);
+    assert_eq!(
+        newest_task(&inventory, cx).map(|task| task.id),
+        Some(second_id.clone()),
+        "Saving the file without changes should keep the newest task"
+    );
+    assert_eq!(
+        resolved_task_names(&inventory, None, cx).await,
+        vec!["second".to_string(), "first".to_string()],
+    );
+
+    let edited_second = serde_json::to_string(&json!([
+        { "label": "first", "command": "echo", "args": ["first"] },
+        { "label": "second", "command": "echo", "args": ["edited"] },
+    ]))
+    .unwrap();
+    update_tasks(edited_second.clone(), cx);
+    assert_eq!(
+        newest_task(&inventory, cx).map(|task| task.id),
+        None,
+        "Editing the newest task should not make the older task the rerun target"
+    );
+    assert_eq!(
+        task_by_id(&inventory, &second_id, cx).map(|task| task.id),
+        None,
+        "An edited task should not rerun with its old definition"
+    );
+    assert_eq!(
+        task_by_id(&inventory, &first_id, cx).map(|task| task.id),
+        Some(first_id.clone()),
+        "An unchanged task should stay reachable by its id"
+    );
+    assert_eq!(
+        resolved_task_names(&inventory, None, cx).await,
+        vec!["first".to_string(), "second".to_string()],
+    );
+
+    register_task_used(&inventory, "first", cx).await;
+    assert_eq!(
+        newest_task(&inventory, cx).map(|task| task.id),
+        Some(first_id.clone()),
+        "Scheduling a task should restore the rerun target"
+    );
+
+    register_task_used(&inventory, "second", cx).await;
+    let edited_second_id = newest_task(&inventory, cx).unwrap().id;
+    let edited_first = serde_json::to_string(&json!([
+        { "label": "first", "command": "echo", "args": ["edited"] },
+        { "label": "second", "command": "echo", "args": ["edited"] },
+    ]))
+    .unwrap();
+    update_tasks(edited_first, cx);
+    assert_eq!(
+        newest_task(&inventory, cx).map(|task| task.id),
+        Some(edited_second_id),
+        "Editing an older task should not affect the rerun target"
+    );
+}
+
+#[gpui::test]
+async fn test_deleting_tasks_from_history_updates_rerun_target(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let update_tasks = |tasks: String, cx: &mut TestAppContext| {
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(TaskSettingsLocation::Global(tasks_file()), Some(&tasks))
+                .unwrap();
+        });
+    };
+    let delete_task = |task_id: &TaskId, cx: &mut TestAppContext| {
+        inventory.update(cx, |inventory, _| {
+            inventory.delete_previously_used(task_id);
+        });
+    };
+
+    update_tasks(mock_tasks_from_names(["first", "second", "third"]), cx);
+    register_task_used(&inventory, "first", cx).await;
+    let first_id = newest_task(&inventory, cx).unwrap().id;
+    register_task_used(&inventory, "second", cx).await;
+    let second_id = newest_task(&inventory, cx).unwrap().id;
+    register_task_used(&inventory, "third", cx).await;
+    let third_id = newest_task(&inventory, cx).unwrap().id;
+
+    delete_task(&third_id, cx);
+    assert_eq!(
+        newest_task(&inventory, cx).map(|task| task.id),
+        Some(second_id.clone()),
+        "Deleting the newest task should make the previous one the rerun target"
+    );
+
+    delete_task(&first_id, cx);
+    assert_eq!(
+        newest_task(&inventory, cx).map(|task| task.id),
+        Some(second_id.clone()),
+        "Deleting an older task should not affect the rerun target"
+    );
+
+    delete_task(&second_id, cx);
+    assert_eq!(newest_task(&inventory, cx).map(|task| task.id), None);
+
+    register_task_used(&inventory, "first", cx).await;
+    register_task_used(&inventory, "second", cx).await;
+    register_task_used(&inventory, "third", cx).await;
+    let edited_third = serde_json::to_string(&json!([
+        { "label": "first", "command": "echo", "args": ["first"] },
+        { "label": "second", "command": "echo", "args": ["second"] },
+        { "label": "third", "command": "echo", "args": ["edited"] },
+    ]))
+    .unwrap();
+    update_tasks(edited_third, cx);
+    delete_task(&third_id, cx);
+    assert_eq!(
+        newest_task(&inventory, cx).map(|task| task.id),
+        None,
+        "Deleting an already invalidated task should not make an older task the rerun target"
+    );
+    delete_task(&second_id, cx);
+    assert_eq!(
+        newest_task(&inventory, cx).map(|task| task.id),
+        None,
+        "Deleting an older task should not restore the invalidated rerun target"
+    );
+}
+
+#[gpui::test]
+async fn test_worktree_tasks_file_update_keeps_history_of_unchanged_tasks(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_id = WorktreeId::from_usize(0);
+    let update_tasks = |tasks: String, path: &str, cx: &mut TestAppContext| {
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    TaskSettingsLocation::Worktree(SettingsLocation {
+                        worktree_id,
+                        path: rel_path(path),
+                    }),
+                    Some(&tasks),
+                )
+                .unwrap();
+        });
+    };
+
+    update_tasks(mock_tasks_from_names(["task"]), ".zed", cx);
+    register_worktree_task_used(&inventory, worktree_id, "task", cx).await;
+    let task_id = newest_task(&inventory, cx).unwrap().id;
+
+    update_tasks(mock_tasks_from_names(["other"]), "nested/.zed", cx);
+    update_tasks(mock_tasks_from_names(["task", "new"]), ".zed", cx);
+    assert_eq!(
+        newest_task(&inventory, cx).map(|task| task.id),
+        Some(task_id.clone()),
+    );
+
+    update_tasks("[]".to_string(), ".zed", cx);
+    assert_eq!(newest_task(&inventory, cx).map(|task| task.id), None);
+    assert_eq!(
+        task_by_id(&inventory, &task_id, cx).map(|task| task.id),
+        None,
+    );
+}
+
 fn init_test(_cx: &mut TestAppContext) {
     zlog::init_test();
     TaskStore::init(None);
@@ -632,6 +814,24 @@ fn resolved_task_names(
             .chain(current)
             .map(|(_, task)| task.original_task().label.clone())
             .collect()
+    })
+}
+
+fn newest_task(inventory: &Entity<Inventory>, cx: &mut TestAppContext) -> Option<ResolvedTask> {
+    inventory.read_with(cx, |inventory, _| {
+        inventory.last_scheduled_task(None).map(|(_, task)| task)
+    })
+}
+
+fn task_by_id(
+    inventory: &Entity<Inventory>,
+    task_id: &TaskId,
+    cx: &mut TestAppContext,
+) -> Option<ResolvedTask> {
+    inventory.read_with(cx, |inventory, _| {
+        inventory
+            .last_scheduled_task(Some(task_id))
+            .map(|(_, task)| task)
     })
 }
 
