@@ -165,6 +165,41 @@ Set default values to such variables to have such tasks always displayed:
 }
 ```
 
+## Run a task from the editor toolbar
+
+To add a run button to the editor toolbar, set `toolbar.run_task` to the exact
+label of a task in your user settings:
+
+```json [settings]
+{
+  "toolbar": {
+    "run_task": "Run tests"
+  }
+}
+```
+
+For example, define this task in your project's `.zed/tasks.json`:
+
+```json [tasks]
+[
+  {
+    "label": "Run tests",
+    "command": "cargo",
+    "args": ["test"],
+    "save": "all"
+  }
+]
+```
+
+The button appears for saved files in single-buffer editors. It uses the same
+task resolution, save behavior, and terminal settings as {#action task::Spawn}.
+Each split pane's button targets the file in that pane. If no task with the
+configured label is available, the task picker opens instead.
+
+The button is hidden by default. Set `toolbar.run_task` to `""` to hide it again,
+or disable `toolbar.quick_actions` to hide all quick action buttons. You can also
+configure **Run Task** in the Settings editor under **Editor → Toolbar**.
+
 ## Oneshot tasks
 
 The same task modal opened via {#action task::Spawn} supports arbitrary bash-like command execution: type a command inside the modal text field, and use `opt-enter` to spawn it.

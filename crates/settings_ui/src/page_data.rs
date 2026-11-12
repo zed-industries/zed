@@ -2974,7 +2974,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn toolbar_section() -> [SettingsPageItem; 6] {
+    fn toolbar_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Toolbar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3022,6 +3022,26 @@ fn editor_page() -> SettingsPage {
                             .toolbar
                             .get_or_insert_default()
                             .quick_actions = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Run Task",
+                description: "Task name for the editor toolbar's run button. Leave empty to hide it. Requires Quick Actions; opens the task picker if the task is unavailable.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("toolbar.run_task"),
+                    pick: |settings_content| {
+                        settings_content.editor.toolbar.as_ref()?.run_task.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .get_or_insert_default()
+                            .run_task = value;
                     },
                 }),
                 metadata: None,

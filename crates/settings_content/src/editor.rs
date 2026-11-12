@@ -387,6 +387,12 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub quick_actions: Option<bool>,
+    /// The name of a task to run from a button in the editor toolbar.
+    /// An empty name hides the button. Requires quick actions to be enabled.
+    /// If the task is unavailable, the task picker opens instead.
+    ///
+    /// Default: ""
+    pub run_task: Option<String>,
     /// Whether to show the selections menu in the editor toolbar.
     ///
     /// Default: true

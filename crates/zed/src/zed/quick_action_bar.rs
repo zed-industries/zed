@@ -11,9 +11,9 @@ use editor::actions::{
 use editor::code_context_menus::{CodeContextMenu, ContextMenuOrigin};
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, Anchor, AnchoredPositionMode, ClickEvent, Context, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
-    WeakEntity, Window, anchored, deferred, point,
+    Action, Anchor, AnchoredPositionMode, AnyElement, ClickEvent, Context, ElementId, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled,
+    Subscription, WeakEntity, Window, anchored, deferred, point,
 };
 use project::{
     DisableAiSettings,
@@ -40,6 +40,7 @@ pub struct QuickActionBar {
     active_item: Option<Box<dyn ItemHandle>>,
     buffer_search_bar: Entity<BufferSearchBar>,
     show: bool,
+    run_task: String,
     toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
     toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
     workspace: WeakEntity<Workspace>,
@@ -71,6 +72,7 @@ impl QuickActionBar {
             active_item: None,
             buffer_search_bar,
             show: true,
+            run_task: String::new(),
             toggle_selections_handle: Default::default(),
             toggle_settings_handle: Default::default(),
             workspace: workspace.weak_handle(),
@@ -87,8 +89,45 @@ impl QuickActionBar {
             .and_then(|item| item.downcast::<Editor>())
     }
 
+    fn render_run_task_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.run_task.is_empty() {
+            return None;
+        }
+        let active_item = self.active_item.as_ref()?;
+        let editor = self.active_editor()?;
+        let buffer = editor.read(cx).buffer().read(cx).as_singleton()?;
+        buffer.read(cx).file()?;
+        let action = tasks_ui::Spawn::ByName {
+            task_name: self.run_task.clone(),
+            reveal_target: None,
+        };
+        let button = IconButton::new("run-task", IconName::PlayOutlined)
+            .aria_label(format!("Run Task: {}", self.run_task))
+            .icon_size(IconSize::Small)
+            .style(ButtonStyle::Subtle)
+            .tooltip(Tooltip::for_action_title(
+                format!("Run Task: {}", self.run_task),
+                &action,
+            ))
+            .on_click({
+                let workspace = self.workspace.clone();
+                let active_item = active_item.boxed_clone();
+                move |_, window, cx| {
+                    run_task_for_item(&workspace, active_item.as_ref(), &action, window, cx);
+                }
+            });
+        Some(button.into_any_element())
+    }
+
     fn apply_settings(&mut self, cx: &mut Context<Self>) {
-        let new_show = EditorSettings::get_global(cx).toolbar.quick_actions;
+        let (new_show, run_task) = {
+            let toolbar = &EditorSettings::get_global(cx).toolbar;
+            (toolbar.quick_actions, toolbar.run_task.clone())
+        };
+        if self.run_task != run_task {
+            self.run_task = run_task;
+            cx.notify();
+        }
         if new_show != self.show {
             self.show = new_show;
             cx.emit(ToolbarItemEvent::ChangeLocation(
@@ -103,6 +142,35 @@ impl QuickActionBar {
         } else {
             ToolbarItemLocation::Hidden
         }
+    }
+}
+
+fn run_task_for_item(
+    workspace: &WeakEntity<Workspace>,
+    active_item: &dyn ItemHandle,
+    action: &tasks_ui::Spawn,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(workspace) = workspace.upgrade() else {
+        return;
+    };
+    // A toolbar can belong to an unfocused split pane. Activate it before
+    // resolving task variables or saving the current buffer.
+    let activated = workspace.update(cx, |workspace, cx| {
+        let Some(pane) = workspace.pane_for(active_item) else {
+            return false;
+        };
+        pane.update(cx, |pane, cx| {
+            let Some(index) = pane.index_for_item(active_item) else {
+                return false;
+            };
+            pane.activate_item(index, true, true, window, cx);
+            true
+        })
+    });
+    if activated {
+        window.dispatch_action(Box::new(action.clone()), cx);
     }
 }
 
@@ -708,6 +776,7 @@ impl Render for QuickActionBar {
             .gap(DynamicSpacing::Base01.rems(cx))
             .children(self.render_repl_menu(cx))
             .children(self.render_preview_button(cx))
+            .children(self.render_run_task_button(cx))
             .children(search_button)
             .when(
                 AgentSettings::get_global(cx).enabled(cx) && AgentSettings::get_global(cx).button,
@@ -819,5 +888,316 @@ impl ToolbarItemView for QuickActionBar {
             }
         }
         self.get_toolbar_item_location()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Modifiers, TestAppContext, UpdateGlobal as _, VisualTestContext};
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+    use util::rel_path::rel_path;
+    use workspace::{MultiWorkspace, OpenOptions, SplitDirection};
+
+    struct FakeTerminalProvider;
+
+    impl workspace::TerminalProvider for FakeTerminalProvider {
+        fn spawn(
+            &self,
+            _task: task::SpawnInTerminal,
+            _window: &mut Window,
+            _cx: &mut App,
+        ) -> gpui::Task<Option<anyhow::Result<std::process::ExitStatus>>> {
+            gpui::Task::ready(Some(Ok(std::process::ExitStatus::default())))
+        }
+    }
+
+    async fn setup(cx: &mut TestAppContext) -> (Entity<Workspace>, &mut VisualTestContext) {
+        crate::zed::tests::init_test(cx);
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".zed": {"tasks.json": r#"[
+                    {"label":"custom task","command":"echo","args":["$ZED_FILE"]}
+                ]"#},
+                "main.custom": "first file",
+                "other.custom": "second file"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |view, _| view.workspace().clone());
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    path!("/project/main.custom").into(),
+                    OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("test file should open");
+        cx.run_until_parked();
+        workspace.update(cx, |workspace, _| {
+            workspace.set_terminal_provider(FakeTerminalProvider);
+        });
+        (workspace, cx)
+    }
+
+    fn set_task(name: &str, cx: &mut VisualTestContext) {
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.toolbar.get_or_insert_default().run_task = Some(name.into());
+                });
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_run_task_button_settings_and_click(cx: &mut TestAppContext) {
+        let (workspace, cx) = setup(cx).await;
+        assert!(cx.debug_bounds("ICON-PlayOutlined").is_none());
+
+        set_task("custom task", cx);
+        let bounds = cx
+            .debug_bounds("ICON-PlayOutlined")
+            .expect("setting a task should show the run button for any saved file type");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let inventory = workspace
+                .project()
+                .read(cx)
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+                .expect("task inventory should exist");
+            let (_, task) = inventory
+                .read(cx)
+                .last_scheduled_task(None)
+                .expect("click should schedule the configured task");
+            assert_eq!(
+                task.resolved.args,
+                vec![path!("/project/main.custom").to_string()]
+            );
+        });
+
+        set_task("missing task", cx);
+        let bounds = cx
+            .debug_bounds("ICON-PlayOutlined")
+            .expect("button should remain visible");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        cx.run_until_parked();
+        assert!(workspace.update_in(cx, |workspace, window, cx| {
+            workspace.has_active_modal(window, cx)
+        }));
+
+        set_task("", cx);
+        assert!(cx.debug_bounds("ICON-PlayOutlined").is_none());
+    }
+
+    #[gpui::test]
+    async fn test_run_task_targets_its_own_pane(cx: &mut TestAppContext) {
+        let (workspace, cx) = setup(cx).await;
+        let left_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let left_item = workspace.read_with(cx, |workspace, cx| {
+            workspace.active_item(cx).expect("left item should exist")
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            let right = workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+            right.read(cx).focus_handle(cx).focus(window, cx);
+        });
+        cx.run_until_parked();
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    path!("/project/other.custom").into(),
+                    OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("right file should open");
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_ne!(workspace.active_pane().entity_id(), left_pane.entity_id());
+            assert_ne!(
+                workspace.active_item(cx).expect("right item").item_id(),
+                left_item.item_id()
+            );
+        });
+        let handle = workspace.downgrade();
+        cx.update(|window, cx| {
+            run_task_for_item(
+                &handle,
+                left_item.as_ref(),
+                &tasks_ui::Spawn::ByName {
+                    task_name: "custom task".into(),
+                    reveal_target: None,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item(cx).expect("active item").item_id(),
+                left_item.item_id()
+            );
+            let inventory = workspace
+                .project()
+                .read(cx)
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+                .expect("task inventory should exist");
+            let (_, task) = inventory
+                .read(cx)
+                .last_scheduled_task(None)
+                .expect("task should be scheduled");
+            assert_eq!(
+                task.resolved.args,
+                vec![path!("/project/main.custom").to_string()]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_run_task_button_hidden_for_untitled_and_disabled_toolbar(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, cx) = setup(cx).await;
+        set_task("custom task", cx);
+        assert!(cx.debug_bounds("ICON-PlayOutlined").is_some());
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .editor
+                        .toolbar
+                        .get_or_insert_default()
+                        .quick_actions = Some(false);
+                });
+            });
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("ICON-PlayOutlined").is_none());
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .editor
+                        .toolbar
+                        .get_or_insert_default()
+                        .quick_actions = Some(true);
+                });
+            });
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("ICON-PlayOutlined").is_some());
+        let untitled = cx.new_window_entity(|window, cx| Editor::multi_line(window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_center(Box::new(untitled), window, cx);
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("ICON-PlayOutlined").is_none());
+    }
+
+    #[gpui::test]
+    async fn test_run_task_button_appears_after_first_save(cx: &mut TestAppContext) {
+        let (workspace, cx) = setup(cx).await;
+        set_task("custom task", cx);
+        let untitled = cx.new_window_entity(|window, cx| Editor::multi_line(window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_center(Box::new(untitled.clone()), window, cx);
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("ICON-PlayOutlined").is_none());
+
+        let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .next()
+                .expect("test worktree")
+                .read(cx)
+                .id()
+        });
+        let buffer = untitled.read_with(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("untitled buffer")
+        });
+        project
+            .update(cx, |project, cx| {
+                project.save_buffer_as(buffer, (worktree_id, rel_path("saved.custom")).into(), cx)
+            })
+            .await
+            .expect("first save should succeed");
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("ICON-PlayOutlined").is_some(),
+            "saving an untitled file should show the button without switching tabs"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_task_button_hidden_for_excerpts(cx: &mut TestAppContext) {
+        let (workspace, cx) = setup(cx).await;
+        set_task("custom task", cx);
+        assert!(cx.debug_bounds("ICON-PlayOutlined").is_some());
+        let (project, buffer) = workspace.read_with(cx, |workspace, cx| {
+            let editor = workspace
+                .active_item_as::<Editor>(cx)
+                .expect("saved editor");
+            (
+                workspace.project().clone(),
+                editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .expect("saved buffer"),
+            )
+        });
+        let excerpts = cx.new(|cx| {
+            let mut excerpts = editor::MultiBuffer::new(project.read(cx).capability());
+            excerpts.set_excerpts_for_path(
+                editor::PathKey::sorted(0),
+                buffer,
+                [language::Point::new(0, 0)..language::Point::new(0, 5)],
+                0,
+                cx,
+            );
+            excerpts
+        });
+        let editor = cx.new_window_entity(|window, cx| {
+            Editor::for_multibuffer(excerpts, Some(project), window, cx)
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_center(Box::new(editor), window, cx);
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("ICON-PlayOutlined").is_none());
     }
 }

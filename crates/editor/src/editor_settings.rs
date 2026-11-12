@@ -116,6 +116,7 @@ pub struct StickyScroll {
 pub struct Toolbar {
     pub breadcrumbs: bool,
     pub quick_actions: bool,
+    pub run_task: String,
     pub selections_menu: bool,
     pub agent_review: bool,
     pub code_actions: bool,
@@ -256,6 +257,7 @@ impl Settings for EditorSettings {
             toolbar: Toolbar {
                 breadcrumbs: toolbar.breadcrumbs.unwrap(),
                 quick_actions: toolbar.quick_actions.unwrap(),
+                run_task: toolbar.run_task.clone().unwrap_or_default(),
                 selections_menu: toolbar.selections_menu.unwrap(),
                 agent_review: toolbar.agent_review.unwrap(),
                 code_actions: toolbar.code_actions.unwrap(),

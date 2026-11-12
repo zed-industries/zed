@@ -599,6 +599,9 @@
     "breadcrumbs": true,
     // Whether to show quick action buttons.
     "quick_actions": true,
+    // The task name to run from the editor toolbar. Empty hides the button.
+    // If the task is unavailable, the task picker opens instead.
+    "run_task": "",
     // Whether to show the Selections menu in the editor toolbar.
     "selections_menu": true,
     // Whether to show agent review buttons in the editor toolbar.
