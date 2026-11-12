@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use agent_skills::{
-    GlobalSkillFileOperation, GlobalSkillPath, Skill, SkillLoadError, SkillLoadWarning, SkillSource,
-};
+use agent_skills::{GlobalSkillFileOperation, GlobalSkillPath, Skill, SkillLoadError};
 use anyhow::{Context as _, Result, anyhow};
 use client::{AnyProtoClient, proto};
 use fs::Fs;
@@ -46,28 +44,11 @@ pub fn load_remote_global_skills(
             .results
             .into_iter()
             .filter_map(|result| match result.variant? {
-                proto::global_skill_load_result::Variant::Skill(skill) => Some(Ok(Skill {
-                    name: skill.name,
-                    description: skill.description,
-                    source: SkillSource::Global,
-                    directory_path: PathBuf::from(skill.directory_path),
-                    skill_file_path: PathBuf::from(skill.skill_file_path),
-                    load_warnings: skill
-                        .description_too_long
-                        .map(|warning| SkillLoadWarning::DescriptionTooLong {
-                            actual_len: warning.actual_len as usize,
-                            max_len: warning.max_len as usize,
-                        })
-                        .into_iter()
-                        .collect(),
-                    disable_model_invocation: skill.disable_model_invocation,
-                    embedded_body: None,
-                })),
+                proto::global_skill_load_result::Variant::Skill(skill) => {
+                    Some(Ok(Skill::from_proto(skill)))
+                }
                 proto::global_skill_load_result::Variant::Error(error) => {
-                    Some(Err(SkillLoadError {
-                        path: PathBuf::from(error.path),
-                        message: error.message,
-                    }))
+                    Some(Err(SkillLoadError::from_proto(error)))
                 }
             })
             .collect()
@@ -323,47 +304,16 @@ impl GlobalSkillFiles {
         operation: GlobalSkillFileOperation,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        use proto::apply_global_skill_file_operation as operation_proto;
-
         match self {
             Self::Local(fs) => {
                 agent_skills::apply_global_skill_file_operation(fs.as_ref(), operation).await
             }
             Self::Remote(project) => {
                 let client = cx.update(|cx| remote_server_client(project, cx))?;
-                let path = |path: PathBuf| path.to_string_lossy().into_owned();
-                let operation = match operation {
-                    GlobalSkillFileOperation::CreateDirectory { path: directory } => {
-                        operation_proto::Operation::CreateDirectory(
-                            operation_proto::CreateDirectory {
-                                path: path(directory),
-                            },
-                        )
-                    }
-                    GlobalSkillFileOperation::Delete { path: deleted } => {
-                        operation_proto::Operation::Delete(operation_proto::Delete {
-                            path: path(deleted),
-                        })
-                    }
-                    GlobalSkillFileOperation::Copy {
-                        source,
-                        destination,
-                    } => operation_proto::Operation::Copy(operation_proto::Copy {
-                        source: path(source),
-                        destination: path(destination),
-                    }),
-                    GlobalSkillFileOperation::Move {
-                        source,
-                        destination,
-                    } => operation_proto::Operation::Move(operation_proto::Move {
-                        source: path(source),
-                        destination: path(destination),
-                    }),
-                };
                 client
                     .request(proto::ApplyGlobalSkillFileOperation {
                         project_id: proto::REMOTE_SERVER_PROJECT_ID,
-                        operation: Some(operation),
+                        operation: Some(operation.to_proto()),
                     })
                     .await?;
                 Ok(())
