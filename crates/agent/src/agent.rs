@@ -9570,23 +9570,24 @@ mod internal_tests {
             .unwrap();
         cx.run_until_parked();
         assert!(!acp_thread.read_with(cx, |thread, _| thread.had_error()));
-        let requests = requests.lock();
-        assert_eq!(requests.len(), 3);
-        let continuation = requests.last().unwrap();
-        assert_eq!(continuation["model"], "gpt-6-luna");
-        let history = continuation["provider_request"]["input"].to_string();
-        assert!(history.contains("Hello"));
-        assert!(history.contains("Response."));
-        assert!(history.contains("Continue"));
-        assert!(history.find("Hello").unwrap() < history.find("Response.").unwrap());
-        assert!(history.find("Response.").unwrap() < history.find("Continue").unwrap());
+        {
+            let requests = requests.lock();
+            assert_eq!(requests.len(), 3);
+            let continuation = requests.last().unwrap();
+            assert_eq!(continuation["model"], "gpt-6-luna");
+            let history = continuation["provider_request"]["input"].to_string();
+            assert!(history.contains("Hello"));
+            assert!(history.contains("Response."));
+            assert!(history.contains("Continue"));
+            assert!(history.find("Hello").unwrap() < history.find("Response.").unwrap());
+            assert!(history.find("Response.").unwrap() < history.find("Continue").unwrap());
+        }
         assert_eq!(
             thread
-                .read_with(cx, |thread, _| thread.model().unwrap().id().0.clone())
+                .read_with(cx, |thread, _| thread.model().unwrap().id().0)
                 .as_ref(),
             "gpt-6-luna"
         );
-        drop(requests);
         let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
         assert_eq!(saved.model.unwrap().model, "gpt-6-luna");
         assert!(
