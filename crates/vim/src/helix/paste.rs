@@ -151,12 +151,39 @@ mod test {
     use indoc::indoc;
 
     use gpui::ClipboardItem;
+    use settings::UseSystemClipboard;
 
     use crate::{state::Mode, test::VimTestContext};
 
     #[gpui::test]
-    async fn test_helix_paste_ignores_system_clipboard(cx: &mut gpui::TestAppContext) {
+    async fn test_helix_paste_honors_system_clipboard_by_default(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state(
+            indoc! {"
+            The quiˇck brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.write_to_clipboard(ClipboardItem::new_string("clipboard".to_string()));
+        cx.simulate_keystrokes("p");
+        cx.assert_state(
+            indoc! {"
+            The quic«clipboardˇ»k brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_paste_ignores_system_clipboard_when_disabled(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_use_system_clipboard(UseSystemClipboard::Never);
         cx.enable_helix();
         cx.set_state(
             indoc! {"
