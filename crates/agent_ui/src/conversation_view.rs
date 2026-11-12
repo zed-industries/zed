@@ -20567,6 +20567,64 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_tool_call_session_reference_opens_its_session(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let root =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
+        let child = conversation_view.update(cx, |view, cx| {
+            create_test_acp_subagent(
+                root_session_id.clone(),
+                "child",
+                Rc::new(connection.clone()),
+                view.project.clone(),
+                cx,
+            )
+        });
+        child.update(cx, |child, cx| {
+            child
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child").title("Investigator"),
+                    cx,
+                )
+                .expect("ACP subagent")
+        });
+        root.update(cx, |root, cx| root.register_subagent(child.clone(), cx));
+        root.update(cx, |root, cx| {
+            root.upsert_wire_tool_call(
+                acp_v2::ToolCallUpdate::new("delegate")
+                    .title("Delegate")
+                    .status(acp_v2::ToolCallStatus::Completed)
+                    .content(vec![
+                        acp_v2::SessionReference::new("child").into(),
+                        acp_v2::SessionReference::new("unknown").into(),
+                    ]),
+                cx,
+            )
+        })
+        .expect("tool call");
+        conversation_view.update(cx, |view, cx| view.expand_tool_call("delegate".into(), cx));
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("tool-call-session-reference-0-1").is_none(),
+            "an unknown session is not a link"
+        );
+        let link = cx
+            .debug_bounds("tool-call-session-reference-0-0")
+            .expect("the reference links to its session");
+        cx.simulate_click(link.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        let active_session_id = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, cx| view.thread.read(cx).session_id().clone());
+        assert_eq!(active_session_id, acp_v2::SessionId::new("child"));
+    }
+
+    #[gpui::test]
     async fn test_first_message_to_an_acp_subagent_shows_its_card(cx: &mut TestAppContext) {
         init_test(cx);
         let connection = StubAgentConnection::new();
