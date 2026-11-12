@@ -3479,6 +3479,7 @@ impl Thread {
                     | LanguageModelCompletionEvent::Thinking { .. }
                     | LanguageModelCompletionEvent::RedactedThinking { .. }
                     | LanguageModelCompletionEvent::ReasoningDetails(_)
+                    | LanguageModelCompletionEvent::InputTransformations(_)
                     | LanguageModelCompletionEvent::ToolUse(_)
                     | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
                     | LanguageModelCompletionEvent::StartMessage { .. }
@@ -3736,7 +3737,7 @@ impl Thread {
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
-            Started | Queued { .. } | Compaction(_) => {}
+            Started | Queued { .. } | Compaction(_) | InputTransformations(_) => {}
         }
 
         Ok(None)

@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use strum::EnumString;
 use thiserror::Error;
 
+pub use language_model_core::InputTransformation;
+
 pub mod batches;
 pub mod completion;
 
@@ -1182,6 +1184,10 @@ pub struct Response {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_sequence: Option<String>,
     pub usage: Usage,
+    /// Changes the API made to the request before the model read it. Only sent
+    /// with the [`THINKING_BINDING_CONTROLS_BETA_HEADER`] beta header.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_transformations: Vec<InputTransformation>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
