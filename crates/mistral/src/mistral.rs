@@ -211,6 +211,54 @@ impl Model {
     pub fn supports_disabling_thinking(&self) -> bool {
         !matches!(self, Self::ZaiGlmLatest | Self::MistralLarge4)
     }
+
+    /// The `reasoning_effort` values this model accepts, as enforced by the
+    /// Mistral API. Verified against the API: mistral-medium and mistral-small
+    /// only accept `none` and `high`, zai-glm-latest accepts `low`, `high` and
+    /// `max`, and mistral-large-4 accepts `low`, `medium` and `high`.
+    pub fn supported_reasoning_efforts(&self) -> &'static [ReasoningEffort] {
+        match self {
+            Self::MistralMediumLatest | Self::MistralSmallLatest => {
+                &[ReasoningEffort::None, ReasoningEffort::High]
+            }
+            Self::ZaiGlmLatest => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::High,
+                ReasoningEffort::Max,
+            ],
+            Self::MistralLarge4 => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ],
+            Self::Custom {
+                supports_thinking, ..
+            } => {
+                if supports_thinking.unwrap_or(false) {
+                    &[ReasoningEffort::None, ReasoningEffort::High]
+                } else {
+                    &[]
+                }
+            }
+            _ => &[],
+        }
+    }
+
+    /// The effort to request when thinking is enabled but the caller didn't
+    /// select one.
+    pub fn default_reasoning_effort(&self) -> Option<ReasoningEffort> {
+        let supported = self.supported_reasoning_efforts();
+        supported
+            .iter()
+            .copied()
+            .find(|effort| *effort == ReasoningEffort::High)
+            .or_else(|| {
+                supported
+                    .iter()
+                    .copied()
+                    .find(|effort| *effort != ReasoningEffort::None)
+            })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -240,7 +288,32 @@ pub struct Request {
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
     None,
+    Low,
+    Medium,
     High,
+    Max,
+}
+
+impl ReasoningEffort {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+            Self::Max => "Max",
+        }
+    }
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Max => "max",
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
