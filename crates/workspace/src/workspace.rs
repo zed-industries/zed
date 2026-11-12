@@ -11293,18 +11293,25 @@ fn preferred_workspace_target(
     }
 }
 
-/// Returns the path style of an open workspace on the requested host, using the same host
-/// matching as [`find_existing_workspace`].
-pub fn path_style_for_host(host: &ProjectHost<'_>, cx: &App) -> Option<PathStyle> {
-    cx.windows()
-        .into_iter()
-        .filter_map(|window| window.downcast::<MultiWorkspace>())
-        .find_map(|window| {
-            window.read(cx).ok()?.workspaces().find_map(|workspace| {
-                let project = workspace.read(cx).project.read(cx);
-                matches_requested_host(project, host, cx).then(|| project.path_style(cx))
+/// `ssh://` URL paths arrive unconverted, because each remote has its own path style. Every
+/// candidate converts its own copy, so the caller's paths reach a fresh connection unchanged.
+fn paths_for_candidate<'a>(
+    abs_paths: &'a [PathBuf],
+    host: &ProjectHost<'_>,
+    path_style: PathStyle,
+) -> Cow<'a, [PathBuf]> {
+    match host {
+        ProjectHost::Local => Cow::Borrowed(abs_paths),
+        ProjectHost::Remote(_) => abs_paths
+            .iter()
+            .map(|path| match path.to_str() {
+                Some(url_path) => {
+                    PathBuf::from(util::paths::url_path_to_path(url_path, path_style))
+                }
+                None => path.clone(),
             })
-        })
+            .collect(),
+    }
 }
 
 pub fn find_existing_workspace(
@@ -11338,16 +11345,17 @@ pub fn find_existing_workspace(
                             continue;
                         }
 
+                        let paths = paths_for_candidate(abs_paths, host, project.path_style(cx));
                         let visibility = match open_options.workspace_matching {
                             WorkspaceMatching::None => None,
                             WorkspaceMatching::MatchExact => {
-                                project.visibility_for_paths(abs_paths, true, cx)
+                                project.visibility_for_paths(&paths, true, cx)
                             }
                             WorkspaceMatching::MatchSubpaths => {
-                                project.visibility_for_subpaths(abs_paths, cx)
+                                project.visibility_for_subpaths(&paths, cx)
                             }
                             WorkspaceMatching::MatchSubdirectory => {
-                                project.visibility_for_paths(abs_paths, false, cx)
+                                project.visibility_for_paths(&paths, false, cx)
                             }
                         };
 
@@ -11375,8 +11383,9 @@ pub fn find_existing_workspace(
                 let workspace = target.workspace.read(cx);
                 let project = workspace.project.read(cx);
                 let path_style = workspace.path_style(cx);
+                let paths = paths_for_candidate(abs_paths, host, path_style);
 
-                !abs_paths.iter().any(|path| {
+                !paths.iter().any(|path| {
                     let path = util::paths::SanitizedPath::new(path);
 
                     project
