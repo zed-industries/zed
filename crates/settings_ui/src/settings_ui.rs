@@ -7262,7 +7262,7 @@ pub mod test {
 
         settings_window
             .update(cx, |settings_window, cx| {
-                crate::pages::copy_skill_share_link(&skill, settings_window, cx)
+                crate::pages::copy_skill_share_link(&skill, None, settings_window, cx)
             })
             .await;
 
@@ -7288,7 +7288,7 @@ pub mod test {
 
         settings_window
             .update(cx, |settings_window, cx| {
-                crate::pages::trash_skill(&skill, settings_window, cx)
+                crate::pages::trash_skill(&skill, None, settings_window, cx)
             })
             .await;
 
@@ -7322,7 +7322,7 @@ pub mod test {
 
         settings_window
             .update(cx, |settings_window, cx| {
-                crate::pages::copy_skill_share_link(&skill, settings_window, cx)
+                crate::pages::copy_skill_share_link(&skill, None, settings_window, cx)
             })
             .await;
 
@@ -7341,7 +7341,7 @@ pub mod test {
 
         settings_window
             .update(cx, |settings_window, cx| {
-                crate::pages::trash_skill(&skill, settings_window, cx)
+                crate::pages::trash_skill(&skill, None, settings_window, cx)
             })
             .await;
 
@@ -7364,7 +7364,7 @@ pub mod test {
 
         settings_window
             .update(cx, |settings_window, cx| {
-                crate::pages::trash_skill(&skill, settings_window, cx)
+                crate::pages::trash_skill(&skill, None, settings_window, cx)
             })
             .await;
 

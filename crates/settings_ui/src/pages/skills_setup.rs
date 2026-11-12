@@ -94,12 +94,12 @@ fn skill_location(
 
 pub(crate) fn copy_skill_share_link(
     skill: &Skill,
+    remote_project: Option<Entity<Project>>,
     settings_window: &SettingsWindow,
     cx: &mut Context<SettingsWindow>,
 ) -> Task<()> {
     let skill_file_path = skill.skill_file_path.clone();
     let directory_path = skill.directory_path.clone();
-    let remote_project = remote_global_skills_project(settings_window, cx);
     let location = skill_location(skill, remote_project, settings_window, cx);
     let fs = workspace::AppState::global(cx).fs.clone();
     cx.spawn(async move |settings_window, cx| {
@@ -137,11 +137,11 @@ pub(crate) fn copy_skill_share_link(
 
 pub(crate) fn trash_skill(
     skill: &Skill,
+    remote_project: Option<Entity<Project>>,
     settings_window: &mut SettingsWindow,
     cx: &mut Context<SettingsWindow>,
 ) -> Task<()> {
     let directory_path = skill.directory_path.clone();
-    let remote_project = remote_global_skills_project(settings_window, cx);
     let deleted_skill = DeletedSkill::new(
         skill,
         remote_project.as_ref().map(|project| project.entity_id()),
@@ -320,7 +320,7 @@ pub(crate) fn render_skills_setup_page(
                     .children(skills.iter().enumerate().flat_map(|(i, skill)| {
                         let mut elements: Vec<AnyElement> = vec![render_skill_row(
                             skill,
-                            remote_project.as_ref().map(|project| project.entity_id()),
+                            remote_project.clone(),
                             settings_window,
                             cx,
                         )];
@@ -341,12 +341,16 @@ pub(crate) fn render_skills_setup_page(
         .into_any_element()
 }
 
+/// `remote_project` is the one this row was rendered for. Its actions use it
+/// instead of looking it up again, since the settings window's original
+/// window can switch to another workspace before a delete is confirmed.
 fn render_skill_row(
     skill: &Skill,
-    remote_project_id: Option<EntityId>,
+    remote_project: Option<Entity<Project>>,
     settings_window: &SettingsWindow,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
+    let remote_project_id = remote_project.as_ref().map(|project| project.entity_id());
     let deleted_skill = DeletedSkill::new(skill, remote_project_id);
     let skill_file_path = skill.skill_file_path.clone();
     let directory_path = skill.directory_path.clone();
@@ -377,6 +381,7 @@ fn render_skill_row(
         .gap_1()
         .child({
             let share_skill = skill.clone();
+            let remote_project = remote_project.clone();
             IconButton::new(
                 SharedString::from(format!("share-{}", skill.name)),
                 share_icon,
@@ -388,7 +393,8 @@ fn render_skill_row(
             .tooltip(Tooltip::text("Copy Share Link"))
             .visible_on_hover(&group)
             .on_click(cx.listener(move |settings_window, _event, _window, cx| {
-                copy_skill_share_link(&share_skill, settings_window, cx).detach();
+                copy_skill_share_link(&share_skill, remote_project.clone(), settings_window, cx)
+                    .detach();
             }))
         })
         .child(Label::new(skill.name.clone()))
@@ -458,13 +464,19 @@ fn render_skill_row(
                             );
 
                             let delete_skill = delete_skill.clone();
+                            let remote_project = remote_project.clone();
                             cx.spawn(async move |settings_window, cx| {
                                 if answer.await != Ok(0) {
                                     return;
                                 }
                                 let Ok(trash_task) =
                                     settings_window.update(cx, |settings_window, cx| {
-                                        trash_skill(&delete_skill, settings_window, cx)
+                                        trash_skill(
+                                            &delete_skill,
+                                            remote_project,
+                                            settings_window,
+                                            cx,
+                                        )
                                     })
                                 else {
                                     return;
