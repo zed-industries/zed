@@ -38,6 +38,7 @@ pub(super) fn render_mermaid(
             .with_existing_style_merge(),
         )
         .with_postprocessor(merman::svg::CssOverridePostprocessor::strip_existing_important());
+    let control = merman::OperationControl::new();
     let label_measurer = Arc::new(LabelMeasurer {
         svg_renderer: svg_renderer.clone(),
         font_family: theme.font_family.clone(),
@@ -46,6 +47,7 @@ pub(super) fn render_mermaid(
             remaining_budget: MEASUREMENT_BUDGET,
         }),
         error: OnceLock::new(),
+        control: control.clone(),
     });
     let text_measurer = DeterministicTextMeasurer::default().with_width_callback({
         let label_measurer = label_measurer.clone();
@@ -68,11 +70,7 @@ pub(super) fn render_mermaid(
 
     let output = merman::Renderer::new()
         .with_engine(merman::Engine::new().with_site_config(to_merman_config(theme)?))
-        .render(merman::RenderRequest::svg(
-            source,
-            merman::OperationControl::new(),
-            request,
-        ));
+        .render(merman::RenderRequest::svg(source, control, request));
     if let Some(error) = label_measurer.error.get() {
         return Err(anyhow!("failed to measure mermaid text: {error}"));
     }
@@ -91,6 +89,7 @@ struct LabelMeasurer {
     font_family: String,
     measurements: Mutex<Measurements>,
     error: OnceLock<String>,
+    control: merman::OperationControl,
 }
 
 struct Measurements {
@@ -120,9 +119,7 @@ impl LabelMeasurer {
             .remaining_budget
             .checked_sub(measurement_cost(text))
         else {
-            self.error
-                .get_or_init(|| "the diagram has too much text".to_string());
-            return 0.0;
+            return self.fail("the diagram has too much text".to_string());
         };
         measurements.remaining_budget = remaining_budget;
         let font = SvgTextFont {
@@ -133,13 +130,16 @@ impl LabelMeasurer {
         };
         let width = match self.svg_renderer.measure_text_width(text, &font) {
             Ok(width) => f64::from(width),
-            Err(error) => {
-                self.error.get_or_init(|| error.to_string());
-                0.0
-            }
+            Err(error) => return self.fail(error.to_string()),
         };
         measurements.widths.insert(key, width);
         width
+    }
+
+    fn fail(&self, error: String) -> f64 {
+        self.error.get_or_init(|| error);
+        self.control.cancel();
+        0.0
     }
 }
 
@@ -569,6 +569,24 @@ mod tests {
             error.to_string(),
             "failed to measure mermaid text: the diagram has too much text"
         );
+    }
+
+    #[test]
+    fn measuring_past_the_budget_cancels_the_render() {
+        let control = merman::OperationControl::new();
+        let label_measurer = LabelMeasurer {
+            svg_renderer: svg_renderer(),
+            font_family: "IBM Plex Sans".to_string(),
+            measurements: Mutex::new(Measurements {
+                widths: HashMap::new(),
+                remaining_budget: 0,
+            }),
+            error: OnceLock::new(),
+            control: control.clone(),
+        };
+
+        assert_eq!(label_measurer.width("label", &TextStyle::default()), 0.0);
+        assert!(control.is_cancelled());
     }
 
     struct ViewportLabel {

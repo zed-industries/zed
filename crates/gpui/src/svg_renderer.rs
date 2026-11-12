@@ -153,6 +153,7 @@ impl SvgRenderer {
         let default_font_resolver = usvg::FontResolver::default_font_selector();
         let font_resolver = Box::new({
             let asset_source = asset_source.clone();
+            let enriched_fontdb = enriched_fontdb.clone();
             move |font: &usvg::Font, db: &mut Arc<usvg::fontdb::Database>| {
                 let fontdb = enriched_fontdb.get_or_init(|| {
                     let mut db = (**SYSTEM_FONT_DB).clone();
@@ -162,6 +163,7 @@ impl SvgRenderer {
                         database: Arc::new(db),
                         owned_faces: HashMap::default(),
                         remaining_owned_bytes: MAX_OWNED_FONT_BYTES,
+                        fallback_faces: HashMap::default(),
                     })
                 });
                 if db.is_empty() {
@@ -183,14 +185,27 @@ impl SvgRenderer {
         let default_fallback_selection = usvg::FontResolver::default_fallback_selector();
         let fallback_selection = Box::new(
             move |ch: char, fonts: &[usvg::fontdb::ID], db: &mut Arc<usvg::fontdb::Database>| {
-                if is_emoji_presentation(ch) {
-                    if let Some(id) = select_emoji_font(ch, fonts, db.as_ref(), EMOJI_FONT_FAMILIES)
-                    {
-                        return Some(id);
+                let mut select = |fonts: &[usvg::fontdb::ID]| {
+                    if is_emoji_presentation(ch) {
+                        if let Some(id) =
+                            select_emoji_font(ch, fonts, db.as_ref(), EMOJI_FONT_FAMILIES)
+                        {
+                            return Some(id);
+                        }
                     }
-                }
 
-                default_fallback_selection(ch, fonts, db)
+                    default_fallback_selection(ch, fonts, db)
+                };
+                let Some(fontdb) = enriched_fontdb.get() else {
+                    return select(fonts);
+                };
+                let face = cached_fallback_face(fontdb, ch, fonts, select)?;
+                let owned_face = fontdb.lock().owned_face(db, face);
+                Some(if fonts.contains(&owned_face) {
+                    face
+                } else {
+                    owned_face
+                })
             },
         );
         let options = usvg::Options {
@@ -355,6 +370,7 @@ struct FontDatabase {
     database: Arc<usvg::fontdb::Database>,
     owned_faces: HashMap<usvg::fontdb::ID, usvg::fontdb::ID>,
     remaining_owned_bytes: u64,
+    fallback_faces: HashMap<(usvg::fontdb::ID, char), Option<usvg::fontdb::ID>>,
 }
 
 impl FontDatabase {
@@ -417,6 +433,36 @@ impl FontDatabase {
                 .unwrap_or(id);
             self.owned_faces.insert(id, owned_id);
         }
+    }
+}
+
+const MAX_CACHED_FALLBACK_FACES: usize = 16 * 1024;
+
+fn cached_fallback_face(
+    fontdb: &Mutex<FontDatabase>,
+    ch: char,
+    fonts: &[usvg::fontdb::ID],
+    mut select: impl FnMut(&[usvg::fontdb::ID]) -> Option<usvg::fontdb::ID>,
+) -> Option<usvg::fontdb::ID> {
+    let Some(base) = fonts.first() else {
+        return select(fonts);
+    };
+    let key = (*base, ch);
+    let cached_face = fontdb.lock().fallback_faces.get(&key).copied();
+    let face = match cached_face {
+        Some(face) => face,
+        None => {
+            let face = select(&fonts[..1]);
+            let fallback_faces = &mut fontdb.lock().fallback_faces;
+            if fallback_faces.len() < MAX_CACHED_FALLBACK_FACES {
+                fallback_faces.insert(key, face);
+            }
+            face
+        }
+    };
+    match face {
+        Some(face) if fonts.contains(&face) => select(fonts),
+        face => face,
     }
 }
 
@@ -501,7 +547,7 @@ fn fix_generic_font_families(db: &mut usvg::fontdb::Database) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::borrow::Cow;
+    use std::{borrow::Cow, cell::Cell};
     use usvg::fontdb::{Database, Family, Query};
 
     const IBM_PLEX_REGULAR: &[u8] =
@@ -582,6 +628,7 @@ mod tests {
             database: Arc::new(database),
             owned_faces: HashMap::default(),
             remaining_owned_bytes: IBM_PLEX_REGULAR.len() as u64,
+            fallback_faces: HashMap::default(),
         };
         let mut db = fonts.database.clone();
         let face_ids = db.faces().map(|face| face.id).collect::<Vec<_>>();
@@ -600,6 +647,36 @@ mod tests {
         assert_eq!(fonts.remaining_owned_bytes, 0);
         assert_eq!(fonts.owned_face(&mut db, plex_id), owned_plex_id);
         Ok(())
+    }
+
+    #[test]
+    fn fallback_faces_are_remembered_until_excluded() {
+        let database = db_with_bundled_fonts();
+        let face_ids = database.faces().map(|face| face.id).collect::<Vec<_>>();
+        let (base, fallback) = (face_ids[0], face_ids[1]);
+        let fontdb = Mutex::new(FontDatabase {
+            database: Arc::new(database),
+            owned_faces: HashMap::default(),
+            remaining_owned_bytes: 0,
+            fallback_faces: HashMap::default(),
+        });
+        let selections = Cell::new(0);
+        let fallback_face = |ch, fonts: &[usvg::fontdb::ID]| {
+            cached_fallback_face(&fontdb, ch, fonts, |excluded| {
+                selections.set(selections.get() + 1);
+                (!excluded.contains(&fallback)).then_some(fallback)
+            })
+        };
+
+        assert_eq!(fallback_face('x', &[base]), Some(fallback));
+        assert_eq!(fallback_face('x', &[base]), Some(fallback));
+        assert_eq!(selections.get(), 1);
+        assert_eq!(fallback_face('x', &[base, fallback]), None);
+        assert_eq!(selections.get(), 2);
+        assert_eq!(fallback_face('y', &[base, fallback]), None);
+        assert_eq!(selections.get(), 4);
+        assert_eq!(fallback_face('y', &[base]), Some(fallback));
+        assert_eq!(selections.get(), 4);
     }
 
     fn db_with_bundled_fonts() -> Database {
