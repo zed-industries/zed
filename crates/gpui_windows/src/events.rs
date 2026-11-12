@@ -162,10 +162,28 @@ impl WindowsWindowInner {
             | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(handle, msg, wparam, lparam),
             _ => None,
         };
+        if is_input_message(msg) {
+            self.record_input();
+        }
         if let Some(n) = handled {
             LRESULT(n)
         } else {
             unsafe { DefWindowProcW(handle, msg, wparam, lparam) }
+        }
+    }
+
+    /// Keeps requesting frames while input arrives at a high rate, and for a while after, as GPUI
+    /// keeps presenting then. Input counts when a frame is pending after it, which is when input
+    /// changed the window (or the window was already changing).
+    fn record_input(&self) {
+        if !self.state.frame_request.is_pending() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self.state.input_rate.borrow_mut().record_input(now) {
+            self.state
+                .frame_request
+                .sustain(now + InputRateTracker::SUSTAIN);
         }
     }
 
@@ -243,6 +261,9 @@ impl WindowsWindowInner {
                 .callbacks
                 .request_frame
                 .set(Some(restore_from_minimized));
+            // Frames requested while minimized were dropped, since the window had no frame
+            // callback then.
+            self.state.frame_request.request();
         } else {
             should_resize_renderer = true;
         }
@@ -267,6 +288,7 @@ impl WindowsWindowInner {
             self.state
                 .invalidate_devices
                 .store(true, std::sync::atomic::Ordering::Release);
+            self.state.frame_request.wake_vsync();
         }
         if let Some(mut callback) = self.state.callbacks.resize.take() {
             callback(new_logical_size, scale_factor);
@@ -1345,7 +1367,10 @@ impl WindowsWindowInner {
     }
 
     fn handle_dm_pointer_hit_test(&self, wparam: WPARAM) -> Option<isize> {
-        self.state.direct_manipulation.on_pointer_hit_test(wparam);
+        if self.state.direct_manipulation.on_pointer_hit_test(wparam) {
+            // Start updating Direct Manipulation each frame for the gesture.
+            self.state.frame_request.request();
+        }
         None
     }
 
@@ -1358,16 +1383,21 @@ impl WindowsWindowInner {
             }
             // Validate the region so a nested message pump doesn't keep
             // re-dispatching WM_PAINT for the still-invalid region in a busy
-            // loop until the in-progress draw unwinds. The vsync thread
-            // re-invalidates every window on each vsync (see
-            // `begin_vsync_thread`), so the deferred frame still gets drawn,
-            // at most one vsync late.
+            // loop until the in-progress draw unwinds. Ask the vsync thread to
+            // invalidate the window again (see `begin_vsync_thread`), so the
+            // deferred frame still gets drawn, at most one vsync late.
             unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+            self.state.frame_request.request();
             return Some(0);
         };
         let mut request_frame = self.state.callbacks.request_frame.take()?;
 
         self.state.direct_manipulation.update();
+        if self.state.direct_manipulation.is_gesture_active() {
+            // Direct Manipulation is updated by hand, once per frame, so a touchpad
+            // gesture (and its inertia) needs a frame on every vsync until it ends.
+            self.state.frame_request.request();
+        }
 
         let events = self.state.direct_manipulation.drain_events();
         if !events.is_empty() {
@@ -1389,6 +1419,9 @@ impl WindowsWindowInner {
             (None, FrameRequestSource::NativeCallback),
             |(at, source)| (Some(at), source),
         );
+        // A frame request made from here on (the window is still dirty, or
+        // animating) asks for the next vsync's frame.
+        self.state.frame_request.begin_frame();
         request_frame(RequestFrameOptions {
             require_presentation: false,
             force_render,
@@ -1833,4 +1866,29 @@ fn notify_frame_changed(handle: HWND) {
         )
         .log_err();
     }
+}
+
+/// Whether `msg` is input that GPUI's `InputRateTracker` may count.
+fn is_input_message(msg: u32) -> bool {
+    matches!(
+        msg,
+        WM_MOUSEMOVE
+            | WM_NCMOUSEMOVE
+            | WM_MOUSEWHEEL
+            | WM_MOUSEHWHEEL
+            | WM_LBUTTONDOWN
+            | WM_LBUTTONUP
+            | WM_RBUTTONDOWN
+            | WM_RBUTTONUP
+            | WM_MBUTTONDOWN
+            | WM_MBUTTONUP
+            | WM_XBUTTONDOWN
+            | WM_XBUTTONUP
+            | WM_KEYDOWN
+            | WM_KEYUP
+            | WM_SYSKEYDOWN
+            | WM_SYSKEYUP
+            | WM_CHAR
+            | WM_IME_COMPOSITION
+    )
 }
