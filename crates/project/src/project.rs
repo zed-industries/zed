@@ -41,7 +41,7 @@ use crate::{
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
-    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
+    trusted_worktrees::{PathTrust, TrustedWorktrees},
     worktree_store::WorktreeIdCounter,
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
@@ -1526,7 +1526,7 @@ impl Project {
                 (
                     remote.proto_client(),
                     remote.path_style(),
-                    RemoteHostLocation::from(remote.connection_options()),
+                    remote.connection_options().identity().into_owned(),
                 )
             });
             let worktree_store = cx.new(|cx| {
@@ -2640,13 +2640,13 @@ impl Project {
     #[inline]
     pub fn visibility_for_paths(
         &self,
-        paths: &[PathBuf],
+        paths: &[impl AsRef<Path>],
         exclude_sub_dirs: bool,
         cx: &App,
     ) -> Option<bool> {
         paths
             .iter()
-            .filter_map(|path| self.visibility_for_path(path, exclude_sub_dirs, cx))
+            .filter_map(|path| self.visibility_for_path(path.as_ref(), exclude_sub_dirs, cx))
             .max()
     }
 
@@ -2682,10 +2682,10 @@ impl Project {
             .max()
     }
 
-    pub fn visibility_for_subpaths(&self, paths: &[PathBuf], cx: &App) -> Option<bool> {
+    pub fn visibility_for_subpaths(&self, paths: &[impl AsRef<Path>], cx: &App) -> Option<bool> {
         paths
             .iter()
-            .filter_map(|path| self.visibility_for_subpath(path, cx))
+            .filter_map(|path| self.visibility_for_subpath(path.as_ref(), cx))
             .max()
     }
 
