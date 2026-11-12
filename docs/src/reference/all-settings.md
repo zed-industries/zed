@@ -4695,7 +4695,7 @@ These settings belong inside the `file_finder` object.
 
 - Description: Prefill the file finder query with text selected in the focused item, such as an editor or terminal.
 - Setting: `prefill_query_from_selection`
-- Default: `true`
+- Default: `false`
 
 **Options**
 
