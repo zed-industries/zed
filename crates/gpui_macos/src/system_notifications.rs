@@ -4,19 +4,24 @@
 //! so nothing can trigger the authorization prompt or the framework's
 //! not-in-a-bundle abort) until the application posts a notification or
 //! registers a response callback.
+//!
+//! Notification-center calls can synchronously wait for the macOS service.
+//! A single worker owns the center so those waits never block the UI, while
+//! preserving the order of posting and dismissing notifications.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::mpsc::{Sender, channel};
 
 use block2::RcBlock;
 use futures::StreamExt as _;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use gpui::{
     ForegroundExecutor, SharedString, SystemNotification, SystemNotificationAction,
     SystemNotificationResponse, Task,
 };
-use objc2::rc::Retained;
+use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::{Bool, ProtocolObject};
 use objc2::{AnyThread, DefinedClass, define_class, msg_send};
 use objc2_foundation::{NSArray, NSBundle, NSError, NSObject, NSObjectProtocol, NSSet, NSString};
@@ -30,9 +35,15 @@ use objc2_user_notifications::{
 
 type ResponseCallback = Rc<RefCell<Option<Box<dyn FnMut(SystemNotificationResponse)>>>>;
 
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+pub(crate) enum NotificationCommand {
+    Show(SystemNotification),
+    Dismiss(String),
+}
+
 pub(crate) struct SystemNotificationState {
     initialized: bool,
-    center: Option<NotificationCenter>,
+    commands: Option<Sender<(NotificationCommand, oneshot::Sender<()>)>>,
     callback: ResponseCallback,
     _response_task: Option<Task<()>>,
 }
@@ -41,24 +52,33 @@ impl SystemNotificationState {
     pub(crate) fn new() -> Self {
         Self {
             initialized: false,
-            center: None,
+            commands: None,
             callback: Rc::new(RefCell::new(None)),
             _response_task: None,
         }
     }
 
-    pub(crate) fn show(&mut self, executor: &ForegroundExecutor, notification: SystemNotification) {
+    pub(crate) fn send(
+        &mut self,
+        executor: &ForegroundExecutor,
+        command: NotificationCommand,
+    ) -> Task<()> {
         self.initialize(executor);
-        if let Some(center) = &self.center {
-            center.show(notification);
+        let Some(commands) = &self.commands else {
+            return Task::ready(());
+        };
+        let (completed, completion) = oneshot::channel();
+        if let Err(error) = commands.send((command, completed)) {
+            log::error!("system notification worker disconnected: {error}");
+            return Task::ready(());
         }
-    }
-
-    pub(crate) fn dismiss(&mut self, executor: &ForegroundExecutor, tag: &str) {
-        self.initialize(executor);
-        if let Some(center) = &self.center {
-            center.dismiss(tag);
-        }
+        executor.spawn(async move {
+            if let Err(error) = completion.await {
+                log::error!(
+                    "system notification worker stopped before completing a command: {error}"
+                );
+            }
+        })
     }
 
     pub(crate) fn on_response(
@@ -76,11 +96,33 @@ impl SystemNotificationState {
         }
         self.initialized = true;
 
-        let (sender, mut receiver) = mpsc::unbounded();
-        self.center = NotificationCenter::new(sender);
-        if self.center.is_none() {
+        // UserNotifications aborts outside an app bundle. Checking the bundle
+        // does not contact the notification service.
+        if NSBundle::mainBundle().bundleIdentifier().is_none() {
+            log::info!("system notifications disabled: not running from an app bundle");
             return;
         }
+
+        let (sender, mut receiver) = mpsc::unbounded();
+        let (commands, pending_commands) = channel::<(NotificationCommand, oneshot::Sender<()>)>();
+        let worker = std::thread::Builder::new()
+            .name("system-notifications".into())
+            .spawn(move || {
+                let mut center = autoreleasepool(|_| NotificationCenter::new(sender));
+                for (command, completed) in pending_commands {
+                    autoreleasepool(|_| match command {
+                        NotificationCommand::Show(notification) => center.show(notification),
+                        NotificationCommand::Dismiss(tag) => center.dismiss(&tag),
+                    });
+                    // The caller may stop waiting without cancelling the operation.
+                    _ = completed.send(());
+                }
+            });
+        if let Err(error) = worker {
+            log::error!("failed to start system notification worker: {error}");
+            return;
+        }
+        self.commands = Some(commands);
 
         // Responses arrive from the delegate on an arbitrary thread; this task
         // hands them to the registered callback on the main thread.
@@ -108,40 +150,30 @@ struct NotificationCenter {
     /// The union of every action set registered so far. Categories are shared
     /// by notifications with identical actions because macOS replaces the
     /// entire registered set whenever a category is added.
-    categories: RefCell<
+    categories:
         HashMap<Vec<SystemNotificationAction>, (SharedString, Retained<UNNotificationCategory>)>,
-    >,
-    authorization_requested: Cell<bool>,
+    authorization_requested: bool,
 }
 
 impl NotificationCenter {
-    fn new(sender: mpsc::UnboundedSender<SystemNotificationResponse>) -> Option<Self> {
-        // `UNUserNotificationCenter` raises `NSInternalInconsistencyException`
-        // ("bundleProxyForCurrentProcess is nil"), aborting the process, when
-        // the binary isn't part of an app bundle — which is how dev builds run
-        // via `cargo run`. A bundle identifier is only present when launched
-        // from a real `.app`, so use it as the guard.
-        if NSBundle::mainBundle().bundleIdentifier().is_none() {
-            log::info!("system notifications disabled: not running from an app bundle");
-            return None;
-        }
-
+    fn new(sender: mpsc::UnboundedSender<SystemNotificationResponse>) -> Self {
         let center = UNUserNotificationCenter::currentNotificationCenter();
         let delegate = NotificationResponseDelegate::new(sender);
         center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
 
-        Some(Self {
+        Self {
             center,
             _delegate: delegate,
-            categories: RefCell::new(HashMap::new()),
-            authorization_requested: Cell::new(false),
-        })
+            categories: HashMap::new(),
+            authorization_requested: false,
+        }
     }
 
-    fn request_authorization(&self) {
-        if self.authorization_requested.replace(true) {
+    fn request_authorization(&mut self) {
+        if self.authorization_requested {
             return;
         }
+        self.authorization_requested = true;
         let completion = RcBlock::new(|granted: Bool, error: *mut NSError| {
             // SAFETY: when non-null, `error` is a valid `NSError` for the
             // duration of the callback.
@@ -161,7 +193,7 @@ impl NotificationCenter {
             );
     }
 
-    fn show(&self, notification: SystemNotification) {
+    fn show(&mut self, notification: SystemNotification) {
         self.request_authorization();
 
         let content = UNMutableNotificationContent::new();
@@ -194,14 +226,13 @@ impl NotificationCenter {
             .addNotificationRequest_withCompletionHandler(&request, Some(&completion));
     }
 
-    fn register_category(&self, actions: &[SystemNotificationAction]) -> SharedString {
-        let mut categories = self.categories.borrow_mut();
-        if let Some((identifier, _category)) = categories.get(actions) {
+    fn register_category(&mut self, actions: &[SystemNotificationAction]) -> SharedString {
+        if let Some((identifier, _category)) = self.categories.get(actions) {
             return identifier.clone();
         }
 
         let identifier =
-            SharedString::from(format!("gpui-system-notification-{}", categories.len()));
+            SharedString::from(format!("gpui-system-notification-{}", self.categories.len()));
         let platform_actions: Vec<Retained<UNNotificationAction>> = actions
             .iter()
             .map(|action| {
@@ -220,8 +251,10 @@ impl NotificationCenter {
                 UNNotificationCategoryOptions::empty(),
             );
 
-        categories.insert(actions.to_vec(), (identifier.clone(), category));
-        let all: Vec<Retained<UNNotificationCategory>> = categories
+        self.categories
+            .insert(actions.to_vec(), (identifier.clone(), category));
+        let all: Vec<Retained<UNNotificationCategory>> = self
+            .categories
             .values()
             .map(|(_identifier, category)| category.clone())
             .collect();
@@ -307,3 +340,6 @@ impl NotificationResponseDelegate {
         unsafe { msg_send![super(this), init] }
     }
 }
+
+#[cfg(test)]
+mod tests;

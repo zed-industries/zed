@@ -1424,7 +1424,7 @@ mod tests {
             }]
         );
 
-        cx.update(|cx| cx.dismiss_system_notification("thread-1"));
+        cx.update(|cx| cx.dismiss_system_notification("thread-1").detach());
         assert!(cx.delivered_system_notifications().is_empty());
         assert_eq!(cx.dismissed_system_notifications(), ["thread-1"]);
     }
@@ -1499,7 +1499,7 @@ mod tests {
                 actions: Vec::new(),
             });
             cx.on_system_notification_response(|response, cx| {
-                cx.dismiss_system_notification(&response.tag);
+                cx.dismiss_system_notification(&response.tag).detach();
             });
         });
 
