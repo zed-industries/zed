@@ -43,7 +43,7 @@ impl GlobalSkills {
         _: TypedEnvelope<proto::GetGlobalSkills>,
         mut cx: AsyncApp,
     ) -> Result<proto::GetGlobalSkillsResponse> {
-        let fs = cx.read_entity(&this, |this, _| this.fs.clone());
+        let fs = this.read_with(&cx, |this, _| this.fs.clone());
         let skills_dir = agent_skills::global_skills_dir();
         let mut response = proto::GetGlobalSkillsResponse::default();
         if !fs.is_dir(&skills_dir).await {
@@ -93,7 +93,7 @@ impl GlobalSkills {
         envelope: TypedEnvelope<proto::CreateGlobalSkill>,
         cx: AsyncApp,
     ) -> Result<proto::CreateGlobalSkillResponse> {
-        let fs = cx.read_entity(&this, |this, _| this.fs.clone());
+        let fs = this.read_with(&cx, |this, _| this.fs.clone());
         let payload = envelope.payload;
         agent_skills::validate_name(&payload.name).map_err(|error| anyhow!(error))?;
         let skill_file_path = agent_skills::write_skill_to_disk(
@@ -115,7 +115,7 @@ impl GlobalSkills {
         envelope: TypedEnvelope<proto::TrashGlobalSkill>,
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let fs = cx.read_entity(&this, |this, _| this.fs.clone());
+        let fs = this.read_with(&cx, |this, _| this.fs.clone());
         let directory_name = envelope.payload.directory_name;
         // Only a direct child of the skills directory may be trashed.
         let mut components = Path::new(&directory_name).components();
@@ -142,7 +142,7 @@ impl GlobalSkills {
         envelope: TypedEnvelope<proto::ResolveGlobalSkillPath>,
         cx: AsyncApp,
     ) -> Result<proto::ResolveGlobalSkillPathResponse> {
-        let fs = cx.read_entity(&this, |this, _| this.fs.clone());
+        let fs = this.read_with(&cx, |this, _| this.fs.clone());
         let payload = envelope.payload;
         let located = agent_skills::locate_global_skill_path(
             Path::new(&payload.path),
@@ -167,7 +167,7 @@ impl GlobalSkills {
     ) -> Result<proto::Ack> {
         use proto::apply_global_skill_file_operation::Operation;
 
-        let fs = cx.read_entity(&this, |this, _| this.fs.clone());
+        let fs = this.read_with(&cx, |this, _| this.fs.clone());
         let operation = match envelope.payload.operation.context("missing operation")? {
             Operation::CreateDirectory(create) => GlobalSkillFileOperation::CreateDirectory {
                 path: PathBuf::from(create.path),
