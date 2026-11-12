@@ -274,6 +274,24 @@ pub(crate) fn open_global_rules(
     // them on the project's machine, so show them read-only.
     let fs = workspace.app_state().fs.clone();
     cx.spawn_in(window, async move |workspace, cx| {
+        // A local project opens the missing file so it can be created, but a
+        // read-only buffer can't create it.
+        if !fs.is_file(&agents_file).await {
+            return workspace.update(cx, |workspace, cx| {
+                struct NoGlobalRulesToast;
+                workspace.show_toast(
+                    workspace::Toast::new(
+                        workspace::notifications::NotificationId::unique::<NoGlobalRulesToast>(),
+                        format!(
+                            "No global rules yet. Create {} on this machine to add them.",
+                            agents_file.display()
+                        ),
+                    )
+                    .autohide(),
+                    cx,
+                );
+            });
+        }
         let content = fs.load(&agents_file).await?;
         let title = agents_file
             .file_name()
