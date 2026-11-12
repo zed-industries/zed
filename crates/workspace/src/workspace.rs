@@ -11293,6 +11293,20 @@ fn preferred_workspace_target(
     }
 }
 
+/// Returns the path style of an open workspace on the requested host, using the same host
+/// matching as [`find_existing_workspace`].
+pub fn path_style_for_host(host: &ProjectHost<'_>, cx: &App) -> Option<PathStyle> {
+    cx.windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<MultiWorkspace>())
+        .find_map(|window| {
+            window.read(cx).ok()?.workspaces().find_map(|workspace| {
+                let project = workspace.read(cx).project.read(cx);
+                matches_requested_host(project, host, cx).then(|| project.path_style(cx))
+            })
+        })
+}
+
 pub fn find_existing_workspace(
     abs_paths: &[PathBuf],
     open_options: &OpenOptions,

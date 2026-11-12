@@ -17,7 +17,9 @@ use remote::{
 pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
 use util::paths::{PathStyle, PathWithPosition, url_path_to_path};
-use workspace::{AppState, MultiWorkspace, OpenOptions, Workspace, find_existing_workspace};
+use workspace::{
+    AppState, MultiWorkspace, OpenOptions, Workspace, WorkspaceOpenTarget, find_existing_workspace,
+};
 
 pub use remote_connection::{
     RemoteClientDelegate, RemoteConnectionModal, RemoteConnectionPrompt, SshConnectionHeader,
@@ -129,20 +131,8 @@ pub async fn open_remote_project(
 ) -> Result<WindowHandle<MultiWorkspace>> {
     let created_new_window = open_options.requesting_window.is_none();
 
-    // An open workspace on this host has a live connection, so its path style is known before
-    // matching. Without one, the paths are converted once connected.
-    if let Some(path_style) =
-        cx.update(|cx| remote::active_connection_path_style(&connection_options, cx))
-    {
-        url_paths_to_paths(&mut paths, path_style);
-    }
-
-    let existing = find_existing_workspace(
-        &paths,
-        &open_options,
-        &ProjectHost::Remote(&connection_options),
-        cx,
-    );
+    let existing =
+        find_existing_remote_workspace(&connection_options, &mut paths, &open_options, cx);
 
     if let Some(existing) = existing {
         let existing_window = existing.window;
@@ -481,6 +471,21 @@ pub(crate) async fn determine_paths_with_positions(
     (paths, paths_with_positions)
 }
 
+/// Looks for an open workspace to reuse, first converting `ssh://` URL paths with the path style
+/// of a workspace on the same host. Without one, the paths are converted once connected.
+fn find_existing_remote_workspace(
+    connection_options: &RemoteConnectionOptions,
+    paths: &mut [PathBuf],
+    open_options: &OpenOptions,
+    cx: &mut AsyncApp,
+) -> Option<WorkspaceOpenTarget> {
+    let host = ProjectHost::Remote(connection_options);
+    if let Some(path_style) = cx.update(|cx| workspace::path_style_for_host(&host, cx)) {
+        url_paths_to_paths(paths, path_style);
+    }
+    find_existing_workspace(paths, open_options, &host, cx)
+}
+
 /// `ssh://` URL paths are converted here rather than when the URL is parsed, because the remote's
 /// path style is only known once connected.
 fn url_paths_to_paths(paths: &mut [PathBuf], path_style: PathStyle) {
@@ -528,45 +533,94 @@ mod tests {
     use util::path;
     use workspace::find_existing_workspace;
 
-    // The mock connection reports the local path style, so drive letters are only exercised when
-    // the tests run on Windows.
-    #[cfg(target_os = "windows")]
+    // Each remote path style is set explicitly, so the client and remote styles differ on every
+    // platform the tests run on.
     #[gpui::test]
-    async fn test_determine_paths_with_positions_converts_drive_letter_url_paths(
+    async fn test_determine_paths_with_positions_converts_url_paths_for_remote_path_style(
         cx: &mut TestAppContext,
         server_cx: &mut TestAppContext,
     ) {
         init_test(cx);
-        let (opts, _headless) = init_remote_server(cx, server_cx).await;
-        let connection = remote::connect(opts, Arc::new(remote::MockDelegate), &mut cx.to_async())
-            .await
-            .unwrap();
+        // As parsed from `ssh://host/C:/`, `ssh://host/C:/project/src/lib.rs` and `ssh://host/a:12`.
+        let url_paths = ["/C:/", "/C:/project/src/lib.rs", "/a:12"];
+        for (path_style, expected_paths) in [
+            (PathStyle::Windows, ["C:/", "C:/project/src/lib.rs", "/a"]),
+            (PathStyle::Unix, ["/C:/", "/C:/project/src/lib.rs", "/a"]),
+        ] {
+            let (opts, _server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+            cx.update(|cx| remote::MockConnection::set_path_style(&opts, path_style, cx));
+            drop(connect_guard);
+            let connection =
+                remote::connect(opts, Arc::new(remote::MockDelegate), &mut cx.to_async())
+                    .await
+                    .unwrap();
 
-        let (paths, paths_with_positions) = determine_paths_with_positions(
-            &connection,
-            vec![
-                PathBuf::from("/C:/"),
-                PathBuf::from("/d:\\"),
-                PathBuf::from("/C:/project/src/lib.rs"),
-            ],
-        )
-        .await;
+            let (paths, paths_with_positions) = determine_paths_with_positions(
+                &connection,
+                url_paths.iter().map(PathBuf::from).collect(),
+            )
+            .await;
 
-        let expected = vec![
-            PathBuf::from("C:/"),
-            PathBuf::from("d:\\"),
-            PathBuf::from("C:/project/src/lib.rs"),
-        ];
-        assert_eq!(paths, expected);
-        assert_eq!(
-            paths_with_positions
-                .into_iter()
-                .map(|path| path.path)
-                .collect::<Vec<_>>(),
-            expected
-        );
+            let expected_paths = expected_paths.map(PathBuf::from).to_vec();
+            assert_eq!(paths, expected_paths, "{path_style:?}");
+            assert_eq!(
+                paths_with_positions
+                    .iter()
+                    .map(|path| (path.path.clone(), path.row))
+                    .collect::<Vec<_>>(),
+                expected_paths
+                    .into_iter()
+                    .zip([None, None, Some(12)])
+                    .collect::<Vec<_>>(),
+                "{path_style:?}"
+            );
+        }
     }
 
+    // A remote workspace on a Unix host cannot hold a `C:` path, so this needs a Windows host.
+    #[cfg(target_os = "windows")]
+    #[gpui::test]
+    async fn test_drive_letter_url_path_matches_saved_connection_with_other_options(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let (opts, _headless) = init_remote_server(cx, server_cx).await;
+        let host = || SshConnectionOptions {
+            host: "example.com".to_string().into(),
+            ..Default::default()
+        };
+        // A saved connection keeps its timeout; options built from a URL leave it unset.
+        let saved = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            connection_timeout: Some(30),
+            ..host()
+        });
+        cx.update(|cx| remote::MockConnection::report_connection_options(&opts, saved, cx));
+        let mut async_cx = cx.to_async();
+        let window = open_remote_project(
+            opts,
+            vec![PathBuf::from(path!("/project"))],
+            app_state,
+            workspace::OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
+
+        let mut paths = vec![PathBuf::from("/C:/project/src/lib.rs")];
+        let found = find_existing_remote_workspace(
+            &RemoteConnectionOptions::Ssh(host()),
+            &mut paths,
+            &workspace::OpenOptions::default(),
+            &mut async_cx,
+        );
+
+        assert_eq!(paths, vec![PathBuf::from("C:/project/src/lib.rs")]);
+        assert_eq!(found.map(|target| target.window), Some(window));
+    }
+
+    // A remote workspace on a Unix host cannot hold a `C:` path, so this needs a Windows host.
     #[cfg(target_os = "windows")]
     #[gpui::test]
     async fn test_drive_letter_url_path_reuses_open_remote_workspace(
