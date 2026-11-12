@@ -2418,7 +2418,7 @@ fn test_fold_at_current_level(cx: &mut TestAppContext) {
             editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
                 selections.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
             });
-            editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+            editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
 
             assert_eq!(
                 editor.display_text(cx),
@@ -2439,7 +2439,7 @@ fn test_fold_at_current_level(cx: &mut TestAppContext) {
             editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
                 selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
             });
-            editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+            editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
 
             assert_eq!(
                 editor.display_text(cx),
@@ -2546,7 +2546,7 @@ async fn test_fold_at_current_level_is_column_independent_with_injection(cx: &mu
                 let cursor = Point::new(1, column);
                 selections.select_ranges([cursor..cursor]);
             });
-            editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+            editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
             assert_eq!(
                 editor.display_text(cx),
                 expected,
@@ -2588,7 +2588,7 @@ fn test_fold_at_current_level_with_tabs(cx: &mut TestAppContext) {
                     let cursor = Point::new(1, column);
                     selections.select_ranges([cursor..cursor]);
                 });
-                editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
                 assert_eq!(
                     editor.display_text(cx),
                     concat!(
@@ -2637,7 +2637,7 @@ fn test_fold_at_current_level_with_tabs_and_soft_tab_settings(cx: &mut TestAppCo
                     let cursor = Point::new(1, column);
                     selections.select_ranges([cursor..cursor]);
                 });
-                editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
                 assert_eq!(
                     editor.display_text(cx),
                     concat!(
@@ -2686,7 +2686,7 @@ fn test_fold_at_current_level_with_spaces_and_hard_tab_settings(cx: &mut TestApp
                     let cursor = Point::new(1, column);
                     selections.select_ranges([cursor..cursor]);
                 });
-                editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
                 assert_eq!(
                     editor.display_text(cx),
                     concat!(
@@ -2735,7 +2735,7 @@ fn test_fold_at_current_level_with_mixed_indentation(cx: &mut TestAppContext) {
                     let cursor = Point::new(1, column);
                     selections.select_ranges([cursor..cursor]);
                 });
-                editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
                 assert_eq!(
                     editor.display_text(cx),
                     concat!(
@@ -2785,7 +2785,7 @@ fn test_fold_at_current_level_ignores_empty_lines(cx: &mut TestAppContext) {
                     let cursor = Point::new(row, 0);
                     selections.select_ranges([cursor..cursor]);
                 });
-                editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
                 assert_eq!(editor.display_text(cx), text, "cursor at ({row}, 0)",);
             }
         })
@@ -2830,7 +2830,11 @@ fn test_fold_at_current_level_on_space_only_lines(cx: &mut TestAppContext) {
                             selections.select_ranges([cursor..cursor]);
                         },
                     );
-                    editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                    editor.fold_at_current_level(
+                        &actions::FoldAtCurrentIndentationLevel,
+                        window,
+                        cx,
+                    );
                     assert_eq!(
                         editor.display_text(cx),
                         concat!(
@@ -2888,7 +2892,11 @@ fn test_fold_at_current_level_on_tab_only_lines(cx: &mut TestAppContext) {
                             selections.select_ranges([cursor..cursor]);
                         },
                     );
-                    editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                    editor.fold_at_current_level(
+                        &actions::FoldAtCurrentIndentationLevel,
+                        window,
+                        cx,
+                    );
                     assert_eq!(
                         editor.display_text(cx),
                         concat!(
@@ -2936,7 +2944,7 @@ fn test_fold_at_current_level_with_multiple_cursors(cx: &mut TestAppContext) {
                     Point::new(5, 0)..Point::new(5, 0),
                 ]);
             });
-            editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+            editor.fold_at_current_level(&actions::FoldAtCurrentIndentationLevel, window, cx);
             assert_eq!(editor.display_text(cx), text);
         })
         .unwrap();

@@ -572,7 +572,7 @@ actions!(
         FoldAtLevel9,
         /// Folds all code blocks at the same indentation level of the current
         /// line.
-        FoldAtCurrentLevel,
+        FoldAtCurrentIndentationLevel,
         /// Folds all function bodies in the editor.
         FoldFunctionBodies,
         /// Folds the current code block and all its children.

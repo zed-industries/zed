@@ -334,7 +334,7 @@ impl Editor {
     /// indentation and the language settings at the start of the line.
     pub fn fold_at_current_level(
         &mut self,
-        _: &actions::FoldAtCurrentLevel,
+        _: &actions::FoldAtCurrentIndentationLevel,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
