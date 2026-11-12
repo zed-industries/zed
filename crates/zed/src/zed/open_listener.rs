@@ -601,117 +601,127 @@ pub async fn handle_cli_connection(
     cx: &mut AsyncApp,
 ) {
     if let Some(request) = requests.next().await {
-        match request {
-            CliRequest::Open {
-                urls,
+        handle_cli_request(request, requests, responses, app_state, cx).await;
+    }
+}
+
+pub async fn handle_cli_request(
+    request: CliRequest,
+    mut requests: mpsc::UnboundedReceiver<CliRequest>,
+    responses: Box<dyn CliResponseSink>,
+    app_state: Arc<AppState>,
+    cx: &mut AsyncApp,
+) {
+    match request {
+        CliRequest::Open {
+            urls,
+            paths,
+            diff_paths,
+            diff_all,
+            wait,
+            wsl,
+            mut open_behavior,
+            env,
+            user_data_dir: _,
+            dev_container,
+            cwd,
+        } => {
+            if !urls.is_empty() {
+                cx.update(|cx| {
+                    match OpenRequest::parse(
+                        RawOpenRequest {
+                            urls,
+                            diff_paths,
+                            diff_all,
+                            dev_container,
+                            wsl,
+                            open_behavior: Some(open_behavior),
+                        },
+                        cx,
+                    ) {
+                        Ok(open_request) => {
+                            cx.activate(true);
+                            handle_open_request(open_request, app_state.clone(), cx);
+                            responses.send(CliResponse::Exit { status: 0 }).log_err();
+                        }
+                        Err(e) => {
+                            responses
+                                .send(CliResponse::Stderr {
+                                    message: format!("{e}"),
+                                })
+                                .log_err();
+                            responses.send(CliResponse::Exit { status: 1 }).log_err();
+                        }
+                    };
+                });
+                return;
+            }
+
+            if open_behavior == cli::OpenBehavior::Default {
+                match resolve_open_behavior(
+                    &paths,
+                    &app_state,
+                    responses.as_ref(),
+                    &mut requests,
+                    cx,
+                )
+                .await
+                {
+                    Some(settings::CliDefaultOpenBehavior::ExistingWindow) => {
+                        open_behavior = cli::OpenBehavior::ExistingWindow;
+                    }
+                    Some(settings::CliDefaultOpenBehavior::NewWindow) => {
+                        open_behavior = cli::OpenBehavior::PreferNewWindow;
+                    }
+                    None => {}
+                }
+            }
+
+            if open_behavior == cli::OpenBehavior::Default {
+                open_behavior = cx.update(|cx| open_behavior_for_default_setting(cx));
+            }
+
+            cx.update(|cx| cx.activate(true));
+
+            let open_workspace_result = open_workspaces(
                 paths,
                 diff_paths,
                 diff_all,
+                open_behavior,
+                responses.as_ref(),
                 wait,
-                wsl,
-                mut open_behavior,
-                env,
-                user_data_dir: _,
                 dev_container,
+                app_state.clone(),
+                env,
                 cwd,
-            } => {
-                if !urls.is_empty() {
-                    cx.update(|cx| {
-                        match OpenRequest::parse(
-                            RawOpenRequest {
-                                urls,
-                                diff_paths,
-                                diff_all,
-                                dev_container,
-                                wsl,
-                                open_behavior: Some(open_behavior),
-                            },
-                            cx,
-                        ) {
-                            Ok(open_request) => {
-                                cx.activate(true);
-                                handle_open_request(open_request, app_state.clone(), cx);
-                                responses.send(CliResponse::Exit { status: 0 }).log_err();
-                            }
-                            Err(e) => {
-                                responses
-                                    .send(CliResponse::Stderr {
-                                        message: format!("{e}"),
-                                    })
-                                    .log_err();
-                                responses.send(CliResponse::Exit { status: 1 }).log_err();
-                            }
-                        };
-                    });
-                    return;
-                }
+                cx,
+            )
+            .await;
 
-                if open_behavior == cli::OpenBehavior::Default {
-                    match resolve_open_behavior(
-                        &paths,
-                        &app_state,
-                        responses.as_ref(),
-                        &mut requests,
-                        cx,
-                    )
-                    .await
-                    {
-                        Some(settings::CliDefaultOpenBehavior::ExistingWindow) => {
-                            open_behavior = cli::OpenBehavior::ExistingWindow;
-                        }
-                        Some(settings::CliDefaultOpenBehavior::NewWindow) => {
-                            open_behavior = cli::OpenBehavior::PreferNewWindow;
-                        }
-                        None => {}
-                    }
-                }
-
-                if open_behavior == cli::OpenBehavior::Default {
-                    open_behavior = cx.update(|cx| open_behavior_for_default_setting(cx));
-                }
-
-                cx.update(|cx| cx.activate(true));
-
-                let open_workspace_result = open_workspaces(
-                    paths,
-                    diff_paths,
-                    diff_all,
-                    open_behavior,
-                    responses.as_ref(),
-                    wait,
-                    dev_container,
-                    app_state.clone(),
-                    env,
-                    cwd,
-                    cx,
-                )
-                .await;
-
-                let status = if open_workspace_result.is_err() { 1 } else { 0 };
-                responses.send(CliResponse::Exit { status }).log_err();
-            }
-            CliRequest::SetOpenBehavior { .. } => {
-                // We handle this case in a situation-specific way in
-                // resolve_open_behavior
-                debug_panic!("unexpected SetOpenBehavior message");
-            }
-            CliRequest::DebugState => {
-                // Deliberately does not activate the app: activation redraws
-                // windows and would disturb the state being inspected.
-                let state = cx.update(|cx| cx.debug_state());
-                let response = match serde_json::to_string_pretty(&state) {
-                    Ok(message) => CliResponse::Stdout { message },
-                    Err(error) => CliResponse::Stderr {
-                        message: format!("failed to serialize debug state: {error}"),
-                    },
-                };
-                let status = match response {
-                    CliResponse::Stdout { .. } => 0,
-                    _ => 1,
-                };
-                responses.send(response).log_err();
-                responses.send(CliResponse::Exit { status }).log_err();
-            }
+            let status = if open_workspace_result.is_err() { 1 } else { 0 };
+            responses.send(CliResponse::Exit { status }).log_err();
+        }
+        CliRequest::SetOpenBehavior { .. } => {
+            // We handle this case in a situation-specific way in
+            // resolve_open_behavior
+            debug_panic!("unexpected SetOpenBehavior message");
+        }
+        CliRequest::DebugState => {
+            // Deliberately does not activate the app: activation redraws
+            // windows and would disturb the state being inspected.
+            let state = cx.update(|cx| cx.debug_state());
+            let response = match serde_json::to_string_pretty(&state) {
+                Ok(message) => CliResponse::Stdout { message },
+                Err(error) => CliResponse::Stderr {
+                    message: format!("failed to serialize debug state: {error}"),
+                },
+            };
+            let status = match response {
+                CliResponse::Stdout { .. } => 0,
+                _ => 1,
+            };
+            responses.send(response).log_err();
+            responses.send(CliResponse::Exit { status }).log_err();
         }
     }
 }

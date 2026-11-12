@@ -1157,6 +1157,10 @@ impl WorkspaceDb {
         self.workspace_for_roots_internal(worktree_roots, None)
     }
 
+    pub fn has_workspace_for_roots<P: AsRef<Path>>(&self, worktree_roots: &[P]) -> bool {
+        self.workspace_for_roots(worktree_roots).is_some()
+    }
+
     pub(crate) fn remote_workspace_for_roots<P: AsRef<Path>>(
         &self,
         worktree_roots: &[P],
@@ -3017,10 +3021,11 @@ mod tests {
     use crate::ProjectGroupKey;
     use crate::RemovalIntent;
     use crate::{
+        item::test::TestItem,
         multi_workspace::MultiWorkspace,
         persistence::{
             model::{
-                SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
+                DockData, SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
                 SessionWorkspace,
             },
             read_multi_workspace_state,
@@ -3029,11 +3034,16 @@ mod tests {
     use gpui::TaskExt;
 
     use gpui::AppContext as _;
+    use language::Point;
     use pretty_assertions::assert_eq;
-    use project::Project;
+    use project::{
+        Project,
+        debugger::breakpoint_store::{self, BreakpointEditAction, BreakpointWithPosition},
+    };
     use remote::SshConnectionOptions;
     use serde_json::json;
-    use std::{thread, time::Duration};
+    use std::{cell::RefCell, rc::Rc, thread, time::Duration};
+    use util::path;
 
     /// Creates a unique directory in a FakeFs, returning the path.
     /// Uses a UUID suffix to avoid collisions with other tests sharing the global DB.
@@ -5473,6 +5483,374 @@ mod tests {
         assert!(
             serialized.is_some(),
             "flush_serialization should have persisted the workspace to DB"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_restoring_workspace_saves_what_it_restores_and_what_was_added(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+        cx.update(crate::register_serializable_item::<TestItem>);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({ "saved.rs": "one\ntwo\n", "added.rs": "one\ntwo\n" }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
+        workspace.update(cx, |workspace, _| workspace.set_database_id(workspace_id));
+
+        let added_item = cx.new(TestItem::new);
+        let added_item_id = added_item.entity_id().as_u64();
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(added_item.clone()), None, true, window, cx);
+        });
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/added.rs"), cx)
+            })
+            .await
+            .unwrap();
+        project.update(cx, |project, cx| {
+            let position = buffer.read(cx).anchor_before(Point::new(1, 0));
+            project.bookmark_store().update(cx, |bookmark_store, cx| {
+                bookmark_store.toggle_bookmark(buffer.clone(), position, String::new(), cx);
+            });
+            project
+                .breakpoint_store()
+                .update(cx, |breakpoint_store, cx| {
+                    breakpoint_store.toggle_breakpoint(
+                        buffer.clone(),
+                        BreakpointWithPosition {
+                            position,
+                            bp: breakpoint_store::Breakpoint::new_standard(),
+                        },
+                        BreakpointEditAction::Toggle,
+                        cx,
+                    );
+                });
+        });
+
+        let saved_path = Arc::<Path>::from(Path::new(path!("/project/saved.rs")));
+        let added_path = Arc::<Path>::from(Path::new(path!("/project/added.rs")));
+        let bookmark = |row| SerializedBookmark {
+            row,
+            label: String::new(),
+        };
+        let breakpoint = |row, path: &Arc<Path>| SourceBreakpoint {
+            row,
+            path: path.clone(),
+            message: None,
+            condition: None,
+            hit_condition: None,
+            state: BreakpointState::Enabled,
+        };
+        let saved_docks = DockStructure {
+            left: DockData {
+                visible: true,
+                active_panel: Some("SavedPanel".to_owned()),
+                zoom: false,
+            },
+            ..Default::default()
+        };
+        let restoring_from = SerializedWorkspace {
+            id: workspace_id,
+            paths: PathList::new(&[path!("/project")]),
+            identity_paths: None,
+            location: SerializedWorkspaceLocation::Local,
+            center_group: SerializedPaneGroup::Pane(SerializedPane::new(
+                vec![
+                    SerializedItem::new("Terminal", added_item_id, true, false),
+                    SerializedItem::new("TestItem", added_item_id + 1, false, false),
+                ],
+                true,
+                1,
+            )),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: saved_docks.clone(),
+            centered_layout: false,
+            bookmarks: BTreeMap::from_iter([(saved_path.clone(), vec![bookmark(0)])]),
+            breakpoints: BTreeMap::from_iter([(
+                saved_path.clone(),
+                vec![breakpoint(0, &saved_path)],
+            )]),
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
+        };
+        workspace.update(cx, |workspace, _| {
+            workspace.restoring_workspace.set(true);
+            workspace.restoring_from.replace(Some(restoring_from));
+        });
+        multi_workspace
+            .update_in(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.flush_serialization(window, cx)
+                })
+            })
+            .await;
+
+        let both_breakpoints = BTreeMap::from_iter([
+            (added_path.clone(), vec![breakpoint(1, &added_path)]),
+            (saved_path.clone(), vec![breakpoint(0, &saved_path)]),
+        ]);
+        let saved = db.workspace_for_id(workspace_id).unwrap();
+        assert_eq!(
+            (
+                saved.center_group,
+                saved.docks,
+                saved.bookmarks,
+                saved.breakpoints
+            ),
+            (
+                SerializedPaneGroup::Group {
+                    axis: SerializedAxis(Axis::Horizontal),
+                    children: vec![
+                        SerializedPaneGroup::Pane(SerializedPane::new(
+                            vec![SerializedItem::new(
+                                "TestItem",
+                                added_item_id + 1,
+                                false,
+                                false
+                            )],
+                            false,
+                            0,
+                        )),
+                        SerializedPaneGroup::Pane(SerializedPane::new(
+                            vec![SerializedItem::new("TestItem", added_item_id, true, false)],
+                            true,
+                            0,
+                        )),
+                    ],
+                    flexes: None,
+                },
+                saved_docks,
+                BTreeMap::from_iter([
+                    (added_path.clone(), vec![bookmark(1)]),
+                    (saved_path.clone(), vec![bookmark(0)]),
+                ]),
+                both_breakpoints.clone(),
+            )
+        );
+
+        workspace.update(cx, |workspace, _| workspace.restoring_workspace.set(false));
+        multi_workspace
+            .update_in(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.flush_serialization(window, cx)
+                })
+            })
+            .await;
+
+        let saved = db.workspace_for_id(workspace_id).unwrap();
+        assert_eq!(
+            (
+                saved.center_group,
+                saved.docks,
+                saved.bookmarks,
+                saved.breakpoints
+            ),
+            (
+                SerializedPaneGroup::Pane(SerializedPane::new(
+                    vec![SerializedItem::new("TestItem", added_item_id, true, false)],
+                    true,
+                    0,
+                )),
+                DockStructure::default(),
+                BTreeMap::from_iter([(added_path.clone(), vec![bookmark(1)])]),
+                both_breakpoints,
+            )
+        );
+    }
+
+    #[test]
+    fn test_saved_layout_is_unchanged_when_nothing_was_opened_while_restoring() {
+        let saved = SerializedPaneGroup::Pane(SerializedPane::new(
+            vec![SerializedItem::new("Terminal", 5, true, false)],
+            true,
+            1,
+        ));
+        let nothing_opened = SerializedPaneGroup::Pane(SerializedPane::new(Vec::new(), true, 0));
+
+        assert_eq!(
+            saved
+                .clone()
+                .with_panes_opened_while_restoring(nothing_opened),
+            saved
+        );
+    }
+
+    #[gpui::test]
+    async fn test_restoring_workspace_keeps_its_saved_breakpoints_until_they_are_loaded(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ "saved.rs": "one\ntwo\n" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
+        workspace.update(cx, |workspace, _| workspace.set_database_id(workspace_id));
+
+        let saved_path = Arc::<Path>::from(Path::new(path!("/project/saved.rs")));
+        let saved_breakpoints = BTreeMap::from_iter([(
+            saved_path.clone(),
+            vec![SourceBreakpoint {
+                row: 1,
+                path: saved_path.clone(),
+                message: None,
+                condition: None,
+                hit_condition: None,
+                state: BreakpointState::Enabled,
+            }],
+        )]);
+        let restoring_from = SerializedWorkspace {
+            id: workspace_id,
+            paths: PathList::new(&[path!("/project")]),
+            identity_paths: None,
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            bookmarks: Default::default(),
+            breakpoints: saved_breakpoints.clone(),
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
+        };
+
+        let breakpoints_when_the_tabs_were_in_place = Rc::new(RefCell::new(None));
+        let _tabs_in_place = cx.update(|_, cx| {
+            cx.observe(&workspace, {
+                let breakpoints_when_the_tabs_were_in_place =
+                    breakpoints_when_the_tabs_were_in_place.clone();
+                move |workspace, cx| {
+                    let workspace = workspace.read(cx);
+                    if !workspace.is_restoring()
+                        && breakpoints_when_the_tabs_were_in_place.borrow().is_none()
+                    {
+                        let restoring_from = workspace.restoring_from.borrow();
+                        breakpoints_when_the_tabs_were_in_place.replace(Some(
+                            restoring_from
+                                .as_ref()
+                                .map(|restoring_from| restoring_from.breakpoints.clone()),
+                        ));
+                    }
+                }
+            })
+        });
+        workspace.update(cx, |workspace, _| {
+            workspace.restoring_workspace.set(true);
+            workspace
+                .restoring_from
+                .replace(Some(restoring_from.clone()));
+        });
+        workspace
+            .update_in(cx, |_, window, cx| {
+                crate::Workspace::load_workspace(restoring_from, Vec::new(), window, cx)
+            })
+            .await
+            .unwrap();
+
+        let loaded_breakpoints = project.read_with(cx, |project, cx| {
+            project
+                .breakpoint_store()
+                .read(cx)
+                .all_source_breakpoints(cx)
+        });
+        let still_restoring_from = workspace.read_with(cx, |workspace, _| {
+            workspace.restoring_from.borrow().is_some()
+        });
+        assert_eq!(
+            (
+                breakpoints_when_the_tabs_were_in_place.take(),
+                loaded_breakpoints,
+                still_restoring_from,
+            ),
+            (
+                Some(Some(saved_breakpoints.clone())),
+                saved_breakpoints,
+                false
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_workspace_whose_restore_is_cancelled_is_no_longer_restoring(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
+        workspace.update(cx, |workspace, _| {
+            workspace.set_database_id(workspace_id);
+            workspace.keeps_saved_state_while_restoring = true;
+        });
+
+        let restoring_from = SerializedWorkspace {
+            id: workspace_id,
+            paths: PathList::default(),
+            identity_paths: None,
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            bookmarks: Default::default(),
+            breakpoints: Default::default(),
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
+            path_style: PathStyle::local(),
+        };
+        let restoring_state = |cx: &mut gpui::VisualTestContext| {
+            workspace.read_with(cx, |workspace, _| {
+                (
+                    workspace.is_restoring(),
+                    workspace.restoring_from.borrow().is_some(),
+                )
+            })
+        };
+        let restore = workspace.update_in(cx, |workspace, window, cx| {
+            crate::open_items(workspace, Some(restoring_from), Vec::new(), window, cx)
+        });
+        let while_restoring = restoring_state(cx);
+        drop(restore);
+        cx.run_until_parked();
+
+        assert_eq!(
+            (while_restoring, restoring_state(cx)),
+            ((true, true), (false, false))
         );
     }
 
