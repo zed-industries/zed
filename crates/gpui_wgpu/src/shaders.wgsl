@@ -79,9 +79,11 @@ fn apply_contrast_and_gamma_correction3(sample: vec3<f32>, color: vec3<f32>, enh
 
 struct GlobalParams {
     viewport_size: vec2<f32>,
-    premultiplied_alpha: u32,
-    pad: u32,
+    path_paint_base: u32,
+    path_curve_base: u32,
 }
+
+override PREMULTIPLIED_ALPHA: bool = false;
 
 struct GammaParams {
     gamma_ratios: vec4<f32>,
@@ -404,7 +406,7 @@ fn quad_sdf_impl(corner_center_to_point: vec2<f32>, corner_radius: f32) -> f32 {
 // target alpha compositing mode.
 fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
     let alpha = color.a * alpha_factor;
-    let multiplier = select(1.0, alpha, globals.premultiplied_alpha != 0u);
+    let multiplier = select(1.0, alpha, PREMULTIPLIED_ALPHA);
     return vec4<f32>(color.rgb * multiplier, alpha);
 }
 
@@ -1054,97 +1056,177 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     return blend_color(input.color, alpha);
 }
 
-// --- path rasterization --- //
+// --- path tiles --- //
 
-struct PathRasterizationVertex {
-    xy_position: vec2<f32>,
-    st_position: vec2<f32>,
-    color: Background,
-    bounds: Bounds,
+struct PathTile {
+    paint: u32,
+    curve_start: u32,
+    curve_count: u32,
+    backdrop: i32,
+    top_left: vec2<f32>,
+    bottom_right: vec2<f32>,
+    reference: vec2<f32>,
+    curves_top_left: vec2<f32>,
+    curves_bottom_right: vec2<f32>,
 }
 
+struct PathCurve {
+    p0: vec2<f32>,
+    p1: vec2<f32>,
+    a: vec2<f32>,
+    b: vec2<f32>,
+    sign: f32,
+    pad: u32,
+}
 
+struct PathPaint {
+    bounds: Bounds,
+    content_mask: Bounds,
+    color: Background,
+    even_odd: u32,
+    pad: u32,
+}
 
-struct PathRasterizationVarying {
+struct PathTileVarying {
     @builtin(position) position: vec4<f32>,
-    @location(0) st_position: vec2<f32>,
-    @location(1) @interpolate(flat) vertex_id: u32,
-    //TODO: use `clip_distance` once Naga supports it
-    @location(3) clip_distances: vec4<f32>,
+    @location(0) @interpolate(flat) tile_id: u32,
+    // Inter-stage values can't be structs, so `PreparedBackground` is flattened.
+    @location(1) @interpolate(flat) background_color0: vec4<f32>,
+    @location(2) @interpolate(flat) background_color1: vec4<f32>,
+    @location(3) @interpolate(flat) background_tag: u32,
+    @location(4) @interpolate(flat) curve_box: vec4<f32>,
 }
 
 @vertex
-fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasterizationVarying {
-    let v = load_path_vertex(vertex_id);
+fn vs_path_tile(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PathTileVarying {
+    let tile = load_path_tile(instance_id);
+    let paint = load_path_paint(tile.paint);
 
-    var out = PathRasterizationVarying();
-    out.position = to_device_position_impl(v.xy_position);
-    out.st_position = v.st_position;
-    out.vertex_id = vertex_id;
-    out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.bounds);
+    let mask_top_left = paint.content_mask.origin;
+    let mask_bottom_right = paint.content_mask.origin + paint.content_mask.size;
+    let top_left = clamp(tile.top_left, mask_top_left, mask_bottom_right);
+    let bottom_right = clamp(tile.bottom_right, top_left, mask_bottom_right);
+    let position = vec2<f32>(
+        select(top_left.x, bottom_right.x, (vertex_id & 1u) != 0u),
+        select(top_left.y, bottom_right.y, (vertex_id & 2u) != 0u),
+    );
+
+    var out = PathTileVarying();
+    out.position = to_device_position_impl(position);
+    out.tile_id = instance_id;
+    out.curve_box = vec4<f32>(tile.curves_top_left, tile.curves_bottom_right);
+    let background = prepare_background(paint.color);
+    out.background_color0 = background.color0;
+    out.background_color1 = background.color1;
+    out.background_tag = background.tag;
     return out;
 }
 
+// Solves a*t^2 + b*t + c = 0 for the root in [0, 1] on a monotone piece.
+fn monotone_quadratic_root(a: f32, b: f32, c: f32, direction: f32) -> f32 {
+    let discriminant = max(b * b - 4.0 * a * c, 0.0);
+    let denominator = b + direction * sqrt(discriminant);
+    if (denominator == 0.0) {
+        return 0.0;
+    }
+    return saturate(-2.0 * c / denominator);
+}
+
+// Coverage estimate adapted from https://github.com/EricLengyel/Slug/blob/be3c13eb7d63f9e8aa5c583e42d92c374cb91d98/SlugPixelShader.hlsl
+// Copyright (c) 2017 Eric Lengyel.
+// Licensed under the MIT license.
+
+// Accumulates the curve's winding along the pixel's leftward and upward rays. Like Slug, a crossing
+// within half a pixel of the center counts fractionally.
+fn add_curve_winding(curve: PathCurve, center: vec2<f32>, winding: ptr<function, vec2<f32>>,
+    weight: ptr<function, vec2<f32>>) {
+    let min_x = min(curve.p0.x, curve.p1.x);
+    let max_x = max(curve.p0.x, curve.p1.x);
+
+    if (curve.p0.y <= center.y && center.y < curve.p1.y) {
+        if (max_x <= center.x - 0.5) {
+            (*winding).x += curve.sign;
+        } else {
+            let t = monotone_quadratic_root(curve.a.y, curve.b.y, curve.p0.y - center.y, 1.0);
+            let x = (curve.a.x * t + curve.b.x) * t + curve.p0.x;
+            let distance = center.x - x;
+            (*winding).x += curve.sign * saturate(distance + 0.5);
+            (*weight).x = max((*weight).x, saturate(1.0 - 2.0 * abs(distance)));
+        }
+    }
+
+    if (min_x <= center.x && center.x < max_x) {
+        let direction = select(-1.0, 1.0, curve.p1.x > curve.p0.x);
+        if (curve.p1.y <= center.y - 0.5) {
+            (*winding).y -= curve.sign * direction;
+        } else if (curve.p0.y < center.y + 0.5) {
+            let t = monotone_quadratic_root(curve.a.x, curve.b.x, curve.p0.x - center.x, direction);
+            let y = (curve.a.y * t + curve.b.y) * t + curve.p0.y;
+            let distance = center.y - y;
+            (*winding).y -= curve.sign * direction * saturate(distance + 0.5);
+            (*weight).y = max((*weight).y, saturate(1.0 - 2.0 * abs(distance)));
+        }
+    }
+}
+
+// The backdrop gives the unlisted curves' winding along a leftward ray from the tile's reference
+// corner. We need it at the current pixel, along both leftward and upward rays. Because paths are
+// closed, chains of unlisted curves can only begin or end where a listed curve does. So, we can
+// compute the winding at the current pixel by correcting the backdrop for each listed endpoint
+// between its ray and the pixel.
+fn correct_for_endpoint(endpoint: vec2<f32>, step: f32, reference: vec2<f32>, center: vec2<f32>,
+    winding: ptr<function, vec2<f32>>) {
+    if (endpoint.x <= reference.x) {
+        (*winding).x -= step * (f32(endpoint.y <= center.y) - f32(endpoint.y <= reference.y));
+    }
+    if (endpoint.y <= reference.y && endpoint.x <= center.x) {
+        (*winding).y += step;
+    }
+}
+
 @fragment
-fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f32> {
-    let dx = dpdx(input.st_position);
-    let dy = dpdy(input.st_position);
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
+fn fs_path_tile(input: PathTileVarying) -> @location(0) vec4<f32> {
+    let center = floor(input.position.xy) + 0.5;
+    if (input.background_tag == 0u
+        && (any(center < input.curve_box.xy) || any(center > input.curve_box.zw))) {
+        return blend_color(input.background_color0, 1.0);
+    }
+    let tile = load_path_tile(input.tile_id);
+    let paint = load_path_paint(tile.paint);
+
+    var winding = vec2<f32>(f32(tile.backdrop));
+    var weight = vec2<f32>(0.0);
+    for (var i = 0u; i < tile.curve_count; i++) {
+        let curve = load_path_curve(tile.curve_start + i);
+        if (min(curve.p0.x, curve.p1.x) >= center.x + 0.5) {
+            break;
+        }
+        if (curve.p0.y < center.y + 0.5) {
+            add_curve_winding(curve, center, &winding, &weight);
+            correct_for_endpoint(curve.p0, curve.sign, tile.reference, center, &winding);
+            correct_for_endpoint(curve.p1, -curve.sign, tile.reference, center, &winding);
+        }
+    }
+
+    // Weight the winding computed by each ray by its nearest crossing's distance from the pixel center,
+    // using Slug's technique.
+    var coverage = max(
+        abs(dot(winding, weight)) / max(weight.x + weight.y, 1.0 / 65536.0),
+        min(abs(winding.x), abs(winding.y)));
+    if (paint.even_odd != 0u) {
+        coverage = 1.0 - abs(1.0 - fract(coverage * 0.5) * 2.0);
+    } else {
+        coverage = saturate(coverage);
+    }
+
+    if (coverage == 0.0) {
         return vec4<f32>(0.0);
     }
 
-    let v = load_path_vertex(input.vertex_id);
-    let background = v.color;
-    let bounds = v.bounds;
-
-    var alpha: f32;
-    if (length(vec2<f32>(dx.x, dy.x)) < 0.001) {
-        // If the gradient is too small, return a solid color.
-        alpha = 1.0;
-    } else {
-        let gradient = 2.0 * input.st_position.xx * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
-        let f = input.st_position.x * input.st_position.x - input.st_position.y;
-        let distance = f / length(gradient);
-        alpha = saturate(0.5 - distance);
-    }
-    let color = background_color(prepare_background(background), background, bounds,
-        input.position.xy);
-    return vec4<f32>(color.rgb * color.a * alpha, color.a * alpha);
-}
-
-// --- paths --- //
-
-struct PathSprite {
-    bounds: Bounds,
-}
-
-
-struct PathVarying {
-    @builtin(position) position: vec4<f32>,
-    @location(0) texture_coords: vec2<f32>,
-}
-
-@vertex
-fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PathVarying {
-    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let sprite = load_path_sprite(instance_id);
-    // Don't apply content mask because it was already accounted for when rasterizing the path.
-    let device_position = to_device_position(unit_vertex, sprite.bounds);
-    // For screen-space intermediate texture, convert screen position to texture coordinates
-    let screen_position = sprite.bounds.origin + unit_vertex * sprite.bounds.size;
-    let texture_coords = screen_position / globals.viewport_size;
-
-    var out = PathVarying();
-    out.position = device_position;
-    out.texture_coords = texture_coords;
-
-    return out;
-}
-
-@fragment
-fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
-    let sample = textureSample(t_sprite, s_sprite, input.texture_coords);
-    return sample;
+    let prepared = PreparedBackground(input.background_color0, input.background_color1,
+        input.background_tag);
+    let color = background_color(prepared, paint.color, paint.bounds, input.position.xy);
+    return blend_color(color, coverage);
 }
 
 // --- underlines --- //
