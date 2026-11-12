@@ -2305,7 +2305,10 @@ impl GitPanel {
             self.select_branch_changes_row(|_, _| 0, cx);
             return;
         }
+        self.select_first_entry(cx);
+    }
 
+    fn select_first_entry(&mut self, cx: &mut Context<Self>) {
         let is_selectable = |index| {
             self.entries
                 .get(index)
@@ -2517,7 +2520,10 @@ impl GitPanel {
             self.select_branch_changes_row(|_, last_row| last_row, cx);
             return;
         }
+        self.select_last_entry(cx);
+    }
 
+    fn select_last_entry(&mut self, cx: &mut Context<Self>) {
         if self.entries.last().is_some() {
             self.mark_range_gesture = None;
             self.selected_entry = Some(self.entries.len() - 1);
@@ -2605,21 +2611,21 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn select_first_entry_if_none(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_first_entry_if_none(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let have_entries = self
             .active_repository
             .as_ref()
             .is_some_and(|active_repository| active_repository.read(cx).status_summary().count > 0);
         if have_entries && self.selected_entry.is_none() {
-            self.select_first(&menu::SelectFirst, window, cx);
+            self.select_first_entry(cx);
         }
     }
 
-    fn select_last_entry_if_out_of_bounds(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_last_entry_if_out_of_bounds(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(idx) = self.selected_entry
             && idx >= self.entries.len()
         {
-            self.select_last(&menu::SelectLast, window, cx);
+            self.select_last_entry(cx);
         }
     }
 

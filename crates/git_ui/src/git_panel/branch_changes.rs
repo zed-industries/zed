@@ -533,7 +533,7 @@ mod tests {
     async fn committed_branch_changes_are_listed_and_open_in_the_branch_diff(
         cx: &mut TestAppContext,
     ) {
-        let (_fs, workspace, panel, mut cx) =
+        let (fs, workspace, panel, mut cx) =
             panel_on_branch_with_committed_changes("committed", cx).await;
         assert_eq!(working_paths(&panel, &mut cx), Vec::<String>::new());
 
@@ -564,6 +564,23 @@ mod tests {
             );
         });
 
+        fs.write(
+            path!("/project/working.txt").as_ref(),
+            "uncommitted".as_bytes(),
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(working_paths(&panel, &mut cx), ["working.txt"]);
+        panel.read_with(&cx, |panel, _| {
+            let branch_changes = panel.branch_changes.as_ref().unwrap();
+            let selected_row = &branch_changes.visible_rows[branch_changes.selected_row.unwrap()];
+            assert_eq!(selected_row.repo_path(), Some(&repo_path("src/b.txt")));
+            assert!(panel.selected_entry.is_some());
+        });
+
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
@@ -574,7 +591,7 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(
             visible_rows(&panel, &mut cx),
-            ["src", "src/a.txt", "src/b.txt", "gone.txt"]
+            ["src", "src/a.txt", "src/b.txt", "gone.txt", "working.txt"]
         );
         panel.update_in(&mut cx, |panel, window, cx| {
             panel.focus_handle.focus(window, cx);
@@ -582,7 +599,10 @@ mod tests {
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.dispatch_action(menu::SelectFirst);
         cx.dispatch_action(menu::Confirm);
-        assert_eq!(visible_rows(&panel, &mut cx), ["src", "gone.txt"]);
+        assert_eq!(
+            visible_rows(&panel, &mut cx),
+            ["src", "gone.txt", "working.txt"]
+        );
     }
 
     #[gpui::test]
