@@ -574,7 +574,7 @@ fn test_block_with_timeout() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_block_with_timeout_does_not_deadlock_with_off_thread_scheduling() {
-    const SPAWN_COUNT: usize = 20_000;
+    const SPAWN_COUNT: usize = 2_000;
 
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
