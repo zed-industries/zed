@@ -83,10 +83,9 @@ struct GlobalParams {
     path_curve_base: u32,
     depth_scale: f32,
     quad_count: u32,
-    pad: vec2<u32>,
+    premultiplied_alpha: u32,
+    pad: u32,
 }
-
-override PREMULTIPLIED_ALPHA: bool = false;
 
 struct GammaParams {
     gamma_ratios: vec4<f32>,
@@ -388,7 +387,7 @@ fn quad_sdf_impl(corner_center_to_point: vec2<f32>, corner_radius: f32) -> f32 {
 // target alpha compositing mode.
 fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
     let alpha = color.a * alpha_factor;
-    let multiplier = select(1.0, alpha, PREMULTIPLIED_ALPHA);
+    let multiplier = select(1.0, alpha, globals.premultiplied_alpha != 0u);
     return vec4<f32>(color.rgb * multiplier, alpha);
 }
 
