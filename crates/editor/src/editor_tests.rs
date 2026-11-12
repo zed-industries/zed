@@ -2503,13 +2503,15 @@ async fn test_fold_at_current_level_is_column_independent_with_injection(cx: &mu
     cx.language_registry().add(html_language.clone());
     cx.language_registry().add(javascript_language);
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(html_language), cx));
-    cx.set_state(concat!(
-        "<body>\n",
-        "    ˇ<script>let value = 1;\n",
-        "        value++;\n",
-        "    </script>\n",
-        "</body>\n",
-    ));
+    cx.set_state(
+        &"<body>
+            ˇ<script>let value = 1;
+                value++;
+            </script>
+        </body>
+        "
+        .unindent(),
+    );
     cx.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -2528,15 +2530,13 @@ async fn test_fold_at_current_level_is_column_independent_with_injection(cx: &mu
             );
         }
 
-        let expected = concat!(
-            "<body>\n",
-            "    <script>let value = 1;⋯\n",
-            "    </script>\n",
-            "</body>\n",
-        );
+        let expected = "<body>
+                <script>let value = 1;⋯
+                </script>
+            </body>
+            "
+        .unindent();
 
-        // Four leading spaces / four-space HTML indentation + 1 = level 2.
-        // Pin the actual fold result as well as checking column independence.
         editor.fold_at_level(&actions::FoldAtLevel(2), window, cx);
         assert_eq!(editor.display_text(cx), expected);
 
@@ -2550,7 +2550,7 @@ async fn test_fold_at_current_level_is_column_independent_with_injection(cx: &mu
             assert_eq!(
                 editor.display_text(cx),
                 expected,
-                "folding must use the language at the first non-whitespace character, not cursor column {column}",
+                "folding must use the language at the first non-whitespace character",
             );
         }
     });
@@ -2562,19 +2562,24 @@ fn test_fold_at_current_level_with_tabs(cx: &mut TestAppContext) {
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(true);
     });
-    let text = concat!(
-        "class Foo:\n",
-        "\tdef a():\n",
-        "\t\tprint(1)\n",
-        "\n",
-        "class Bar:\n",
-        "\tdef b():\n",
-        "\t\tprint(2)\n",
-    );
+
     let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer = MultiBuffer::build_simple(
+            &"
+            class Foo:
+            \tdef a():
+            \t\tprint(1)
+
+            class Bar:
+            \tdef b():
+            \t\tprint(2)
+            "
+            .unindent(),
+            cx,
+        );
         build_editor(buffer, window, cx)
     });
+
     editor
         .update(cx, |editor, window, cx| {
             for column in [0, 1] {
@@ -2606,19 +2611,24 @@ fn test_fold_at_current_level_with_tabs_and_soft_tab_settings(cx: &mut TestAppCo
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(false);
     });
-    let text = concat!(
-        "class Foo:\n",
-        "\tdef a():\n",
-        "\t\tprint(1)\n",
-        "\n",
-        "class Bar:\n",
-        "\tdef b():\n",
-        "\t\tprint(2)\n",
-    );
+
     let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer = MultiBuffer::build_simple(
+            &"
+            class Foo:
+            \tdef a():
+            \t\tprint(1)
+
+            class Bar:
+            \tdef b():
+            \t\tprint(2)
+            "
+            .unindent(),
+            cx,
+        );
         build_editor(buffer, window, cx)
     });
+
     editor
         .update(cx, |editor, window, cx| {
             for column in [0, 1] {
@@ -2650,19 +2660,24 @@ fn test_fold_at_current_level_with_spaces_and_hard_tab_settings(cx: &mut TestApp
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(true);
     });
-    let text = concat!(
-        "class Foo:\n",
-        "    def a():\n",
-        "        print(1)\n",
-        "\n",
-        "class Bar:\n",
-        "    def b():\n",
-        "        print(2)\n",
-    );
+
     let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer = MultiBuffer::build_simple(
+            &"
+            class Foo:
+                def a():
+                    print(1)
+
+            class Bar:
+                def b():
+                    print(2)
+            "
+            .unindent(),
+            cx,
+        );
         build_editor(buffer, window, cx)
     });
+
     editor
         .update(cx, |editor, window, cx| {
             for column in [0, 4] {
@@ -2694,18 +2709,22 @@ fn test_fold_at_current_level_with_mixed_indentation(cx: &mut TestAppContext) {
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(false);
     });
-    // A tab after two spaces reaches column four, not column six.
-    let text = concat!(
-        "class Foo:\n",
-        "  \tdef a():\n",
-        "  \t  \tprint(1)\n",
-        "\n",
-        "class Bar:\n",
-        "  \tdef b():\n",
-        "  \t  \tprint(2)\n",
-    );
+
     let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(text, cx);
+        // A tab after two spaces reaches column four, not column six.
+        let buffer = MultiBuffer::build_simple(
+            &"
+            class Foo:
+            \tdef a():
+            \t  \tprint(1)
+
+            class Bar:
+            \tdef b():
+            \t  \tprint(2)
+            "
+            .unindent(),
+            cx,
+        );
         build_editor(buffer, window, cx)
     });
     editor
@@ -2739,21 +2758,25 @@ fn test_fold_at_current_level_ignores_empty_lines(cx: &mut TestAppContext) {
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(false);
     });
-    let text = concat!(
-        "\n",
-        "class Foo:\n",
-        "    def a():\n",
-        "        print(1)\n",
-        "\n",
-        "class Bar:\n",
-        "    def b():\n",
-        "        print(2)\n",
-        "",
-    );
+
+    let text = "
+
+        class Foo:
+            def a():
+                print(1)
+
+        class Bar:
+            def b():
+                print(2)
+
+        "
+    .unindent();
+
     let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer = MultiBuffer::build_simple(&text, cx);
         build_editor(buffer, window, cx)
     });
+
     editor
         .update(cx, |editor, window, cx| {
             for row in [0, 4, 8] {
@@ -2775,21 +2798,24 @@ fn test_fold_at_current_level_on_space_only_lines(cx: &mut TestAppContext) {
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(false);
     });
-    let text = concat!(
-        "    \n",
-        "class Foo:\n",
-        "    def a():\n",
-        "        print(1)\n",
-        "\n",
-        "class Bar:\n",
-        "    def b():\n",
-        "        print(2)\n",
-        "    ",
-    );
+
     let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer = MultiBuffer::build_simple(
+            &"\x20\x20\x20\x20
+            class Foo:
+                def a():
+                    print(1)
+
+            class Bar:
+                def b():
+                    print(2)
+            \x20\x20\x20\x20"
+                .unindent(),
+            cx,
+        );
         build_editor(buffer, window, cx)
     });
+
     editor
         .update(cx, |editor, window, cx| {
             for row in [0, 8] {
@@ -2830,21 +2856,24 @@ fn test_fold_at_current_level_on_tab_only_lines(cx: &mut TestAppContext) {
         settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(false);
     });
-    let text = concat!(
-        "\t\n",
-        "class Foo:\n",
-        "    def a():\n",
-        "        print(1)\n",
-        "\n",
-        "class Bar:\n",
-        "    def b():\n",
-        "        print(2)\n",
-        "\t",
-    );
+
     let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer = MultiBuffer::build_simple(
+            &"\t
+            class Foo:
+                def a():
+                    print(1)
+
+            class Bar:
+                def b():
+                    print(2)
+            \t"
+            .unindent(),
+            cx,
+        );
         build_editor(buffer, window, cx)
     });
+
     editor
         .update(cx, |editor, window, cx| {
             for row in [0, 8] {
@@ -2882,11 +2911,23 @@ fn test_fold_at_current_level_on_tab_only_lines(cx: &mut TestAppContext) {
 #[gpui::test]
 fn test_fold_at_current_level_with_multiple_cursors(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-    let text = "class Foo:\n    def a():\n        print(1)\n\nclass Bar:\n    def b():\n        print(2)\n";
+
+    let text = "
+        class Foo:
+            def a():
+                print(1)
+
+        class Bar:
+            def b():
+                print(2)
+        "
+    .unindent();
+
     let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer = MultiBuffer::build_simple(&text, cx);
         build_editor(buffer, window, cx)
     });
+
     editor
         .update(cx, |editor, window, cx| {
             editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
