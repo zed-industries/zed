@@ -1180,7 +1180,7 @@ impl OpenAiResponseEventMapper {
                             events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
                                     id: LanguageModelToolUseId::from(call_id),
-                                    name: name,
+                                    name,
                                     is_input_complete: true,
                                     input: LanguageModelToolUseInput::Json(input),
                                     raw_input: arguments.clone(),
