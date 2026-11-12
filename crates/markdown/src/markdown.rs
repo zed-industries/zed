@@ -3009,7 +3009,7 @@ impl Element for MarkdownElement {
                                 let checkbox = if let Some(on_toggle) =
                                     self.on_checkbox_toggle.clone()
                                 {
-                                    let task_source_range = task_range.clone();
+                                    let task_source_range = task_range;
                                     checkbox.on_click(move |_state, window, cx| {
                                         on_toggle(task_source_range.clone(), !checked, window, cx);
                                     })

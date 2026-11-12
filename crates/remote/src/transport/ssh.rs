@@ -1916,7 +1916,7 @@ impl SshConnectionOptions {
 
         'outer: while let Some(arg) = tokens.next() {
             if ALLOWED_OPTS.contains(&(&arg as &str)) {
-                args.push(arg.to_string());
+                args.push(arg);
                 continue;
             }
             if arg == "-p" {

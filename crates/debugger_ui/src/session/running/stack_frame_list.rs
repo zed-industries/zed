@@ -311,7 +311,7 @@ impl StackFrameList {
                 _ => {
                     let collapsed_entries = std::mem::take(&mut collapsed_entries);
                     if !collapsed_entries.is_empty() {
-                        entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
+                        entries.push(StackFrameEntry::Collapsed(collapsed_entries));
                     }
 
                     first_stack_frame.get_or_insert(entries.len());

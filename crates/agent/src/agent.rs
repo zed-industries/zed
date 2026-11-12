@@ -473,7 +473,7 @@ impl LanguageModels {
             }
             if !provider_models.is_empty() {
                 language_model_list.insert(
-                    acp_thread::AgentModelGroupName(provider.name().0.clone()),
+                    acp_thread::AgentModelGroupName(provider.name().0),
                     provider_models,
                 );
             }

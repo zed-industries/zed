@@ -3852,7 +3852,7 @@ async fn test_random_worktree_operations_during_initial_scan(
     let settings = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().settings());
 
     for (i, snapshot) in snapshots.into_iter().enumerate().rev() {
-        let mut updated_snapshot = snapshot.clone();
+        let mut updated_snapshot = snapshot;
         for update in updates.lock().iter() {
             if update.scan_id >= updated_snapshot.scan_id() as u64 {
                 updated_snapshot

@@ -2626,7 +2626,7 @@ impl SettingsWindow {
                     continue;
                 };
 
-                missing_worktrees.push((worktree_id, directory_name.clone()));
+                missing_worktrees.push((worktree_id, directory_name));
                 let path = RelPath::empty().to_owned().into_arc();
 
                 let settings_ui_file = SettingsUiFile::Project((worktree_id, path));

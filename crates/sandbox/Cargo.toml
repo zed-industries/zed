@@ -52,10 +52,11 @@ log.workspace = true
 # Used only by the `nixos-test` helper binary to parse its check list; gated
 # behind the `nixos-test` feature so normal builds don't pull it in.
 serde = { workspace = true, features = ["derive"], optional = true }
-serde_json = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
+# The `nixos-test` helper binary only parses its check list on Linux.
+serde_json = { workspace = true, optional = true }
 # Safe wrappers for the SCM_RIGHTS fd-passing and `fstat` the bind validator
 # needs, so that code doesn't hand-roll `msghdr`/`CMSG_*`/`mem::zeroed` unsafe.
 nix = { workspace = true, features = ["fs", "socket", "uio"] }

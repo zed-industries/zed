@@ -1423,12 +1423,10 @@ impl WorkspaceDb {
 
                 for (path, bookmark) in bookmarks {
                     let path: Arc<Path> = path.into();
-                    map.entry(path.clone())
-                        .or_default()
-                        .push(SerializedBookmark {
-                            row: bookmark.row,
-                            label: bookmark.label,
-                        })
+                    map.entry(path).or_default().push(SerializedBookmark {
+                        row: bookmark.row,
+                        label: bookmark.label,
+                    })
                 }
 
                 map

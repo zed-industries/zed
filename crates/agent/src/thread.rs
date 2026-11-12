@@ -1623,7 +1623,7 @@ impl Thread {
                                 compaction_id.clone(),
                                 acp_thread::ContextCompactionStatus::Completed,
                             );
-                            stream.send_context_compaction_update(compaction_id.clone(), summary);
+                            stream.send_context_compaction_update(compaction_id, summary);
                         }
                         CompactionInfo::ProviderNative { .. } => {
                             stream.send_context_compaction(
@@ -3242,7 +3242,7 @@ impl Thread {
 
                 if let Some(fallback) = maybe_fallback {
                     log::info!("Refusal fallback: retrying with {}", fallback.id().0);
-                    let fallback_name = fallback.name().0.clone();
+                    let fallback_name = fallback.name().0;
                     this.update(cx, |this, cx| {
                         this.pending_message = None;
                         this.set_model(fallback.clone(), cx);
@@ -4484,7 +4484,7 @@ impl Thread {
                 let available = MAX_TOOL_NAME_LENGTH.saturating_sub(tool_name.len());
                 if available >= 2 {
                     let mut disambiguated =
-                        provider_compatible_tool_name(&server_id.0.to_snake_case()).to_string();
+                        provider_compatible_tool_name(&server_id.0.to_snake_case());
                     disambiguated.truncate(available - 1);
                     disambiguated.push('_');
                     disambiguated.push_str(&tool_name);
