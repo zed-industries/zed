@@ -9772,6 +9772,7 @@ dependencies = [
  "globset",
  "gpui",
  "grammars",
+ "indoc",
  "itertools 0.14.0",
  "json_schema_store",
  "language",

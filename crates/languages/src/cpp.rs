@@ -11,6 +11,7 @@ pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
+    use indoc::indoc;
     use language::{AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
@@ -659,13 +660,13 @@ mod tests {
         let query = tree_sitter::Query::new(&language, query_source)
             .expect("C++ highlights query should compile");
 
-        let source = r#"
+        let source = indoc! {"
             auto mutable_lambda = []() mutable {};
             auto static_lambda = []() static {};
 
             #if defined(MY_MACRO)
             #endif
-        "#;
+        "};
 
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&language).unwrap();
@@ -690,5 +691,44 @@ mod tests {
         assert!(captures.contains(&("static".into(), "keyword".into())));
         assert!(captures.contains(&("defined".into(), "keyword.preproc".into())));
         assert!(captures.contains(&("MY_MACRO".into(), "constant.macro".into())));
+    }
+
+    #[test]
+    fn test_cpp_highlights_query_captures_preproc_call_arguments() {
+        let language: tree_sitter::Language = tree_sitter_cpp::LANGUAGE.into();
+        let query_source = include_str!("../../grammars/src/cpp/highlights.scm");
+
+        let query = tree_sitter::Query::new(&language, query_source)
+            .expect("C++ highlights query should compile");
+
+        let source = indoc! {"
+            #pragma pack(push, 4)
+            #undef FOO
+            #define BAR 42
+        "};
+
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language).unwrap();
+
+        let tree = parser.parse(source, None).expect("C++ source should parse");
+
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+        let mut captures = Vec::new();
+
+        while let Some(query_match) = matches.next() {
+            for capture in query_match.captures() {
+                let capture_name = query.capture_names()[capture.index as usize];
+                let captured_text = &source[capture.node.byte_range()];
+
+                captures.push((captured_text.to_owned(), capture_name.to_owned()));
+            }
+        }
+
+        assert!(captures.contains(&("#pragma".into(), "preproc".into())));
+        assert!(captures.contains(&("pack(push, 4)".into(), "preproc".into())));
+        assert!(captures.contains(&("FOO".into(), "preproc".into())));
+        assert!(!captures.contains(&("42".into(), "preproc".into())));
     }
 }
