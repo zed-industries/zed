@@ -1,7 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use agent_skills::{GlobalSkillFileOperation, Skill, SkillLoadWarning, SkillSource};
+use agent_skills::{GlobalSkillFileOperation, SkillSource};
 use anyhow::{Context as _, Result};
 use fs::Fs;
 use gpui::{AsyncApp, Context, Entity, Task};
@@ -55,15 +55,8 @@ impl GlobalSkills {
             .into_iter()
             .map(|result| proto::GlobalSkillLoadResult {
                 variant: Some(match result {
-                    Ok(skill) => proto::global_skill_load_result::Variant::Skill(
-                        global_skill_to_proto(skill),
-                    ),
-                    Err(error) => proto::global_skill_load_result::Variant::Error(
-                        proto::GlobalSkillLoadError {
-                            path: error.path.to_string_lossy().into_owned(),
-                            message: error.message,
-                        },
-                    ),
+                    Ok(skill) => proto::global_skill_load_result::Variant::Skill(skill.to_proto()),
+                    Err(error) => proto::global_skill_load_result::Variant::Error(error.to_proto()),
                 }),
             })
             .collect();
@@ -169,51 +162,11 @@ impl GlobalSkills {
         envelope: TypedEnvelope<proto::ApplyGlobalSkillFileOperation>,
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        use proto::apply_global_skill_file_operation::Operation;
-
         let fs = this.read_with(&cx, |this, _| this.fs.clone());
-        let operation = match envelope.payload.operation.context("missing operation")? {
-            Operation::CreateDirectory(create) => GlobalSkillFileOperation::CreateDirectory {
-                path: PathBuf::from(create.path),
-            },
-            Operation::Delete(delete) => GlobalSkillFileOperation::Delete {
-                path: PathBuf::from(delete.path),
-            },
-            Operation::Copy(copy) => GlobalSkillFileOperation::Copy {
-                source: PathBuf::from(copy.source),
-                destination: PathBuf::from(copy.destination),
-            },
-            Operation::Move(move_operation) => GlobalSkillFileOperation::Move {
-                source: PathBuf::from(move_operation.source),
-                destination: PathBuf::from(move_operation.destination),
-            },
-        };
+        let operation = GlobalSkillFileOperation::from_proto(
+            envelope.payload.operation.context("missing operation")?,
+        );
         agent_skills::apply_global_skill_file_operation(fs.as_ref(), operation).await?;
         Ok(proto::Ack {})
-    }
-}
-
-fn global_skill_to_proto(skill: Skill) -> proto::GlobalSkill {
-    let mut description_too_long = None;
-    for warning in skill.load_warnings {
-        match warning {
-            SkillLoadWarning::DescriptionTooLong {
-                actual_len,
-                max_len,
-            } => {
-                description_too_long = Some(proto::SkillDescriptionTooLong {
-                    actual_len: actual_len as u64,
-                    max_len: max_len as u64,
-                });
-            }
-        }
-    }
-    proto::GlobalSkill {
-        name: skill.name,
-        description: skill.description,
-        skill_file_path: skill.skill_file_path.to_string_lossy().into_owned(),
-        directory_path: skill.directory_path.to_string_lossy().into_owned(),
-        disable_model_invocation: skill.disable_model_invocation,
-        description_too_long,
     }
 }

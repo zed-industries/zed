@@ -447,6 +447,7 @@ dependencies = [
  "futures 0.3.34",
  "gpui",
  "paths",
+ "proto",
  "serde",
  "serde_json",
  "serde_yaml_ng",

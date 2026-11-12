@@ -96,6 +96,54 @@ pub struct Skill {
     pub embedded_body: Option<&'static str>,
 }
 
+impl Skill {
+    pub fn to_proto(&self) -> proto::GlobalSkill {
+        let mut description_too_long = None;
+        for warning in &self.load_warnings {
+            match warning {
+                SkillLoadWarning::DescriptionTooLong {
+                    actual_len,
+                    max_len,
+                } => {
+                    description_too_long = Some(proto::SkillDescriptionTooLong {
+                        actual_len: *actual_len as u64,
+                        max_len: *max_len as u64,
+                    });
+                }
+            }
+        }
+        proto::GlobalSkill {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            skill_file_path: self.skill_file_path.to_string_lossy().into_owned(),
+            directory_path: self.directory_path.to_string_lossy().into_owned(),
+            disable_model_invocation: self.disable_model_invocation,
+            description_too_long,
+        }
+    }
+
+    /// Only global skills are sent over the wire.
+    pub fn from_proto(skill: proto::GlobalSkill) -> Self {
+        Self {
+            name: skill.name,
+            description: skill.description,
+            source: SkillSource::Global,
+            directory_path: PathBuf::from(skill.directory_path),
+            skill_file_path: PathBuf::from(skill.skill_file_path),
+            load_warnings: skill
+                .description_too_long
+                .map(|warning| SkillLoadWarning::DescriptionTooLong {
+                    actual_len: warning.actual_len as usize,
+                    max_len: warning.max_len as usize,
+                })
+                .into_iter()
+                .collect(),
+            disable_model_invocation: skill.disable_model_invocation,
+            embedded_body: None,
+        }
+    }
+}
+
 /// Indicates where a skill was loaded from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkillSource {
@@ -259,6 +307,22 @@ impl std::fmt::Display for SkillLoadError {
 }
 
 impl std::error::Error for SkillLoadError {}
+
+impl SkillLoadError {
+    pub fn to_proto(&self) -> proto::GlobalSkillLoadError {
+        proto::GlobalSkillLoadError {
+            path: self.path.to_string_lossy().into_owned(),
+            message: self.message.clone(),
+        }
+    }
+
+    pub fn from_proto(error: proto::GlobalSkillLoadError) -> Self {
+        Self {
+            path: PathBuf::from(error.path),
+            message: error.message,
+        }
+    }
+}
 
 /// Parse the frontmatter of a SKILL.md file into a `Skill` struct.
 ///

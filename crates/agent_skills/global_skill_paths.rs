@@ -239,6 +239,61 @@ pub enum GlobalSkillFileOperation {
     },
 }
 
+impl GlobalSkillFileOperation {
+    pub fn to_proto(&self) -> proto::apply_global_skill_file_operation::Operation {
+        use proto::apply_global_skill_file_operation::{
+            Copy, CreateDirectory, Delete, Move, Operation,
+        };
+
+        let path = |path: &Path| path.to_string_lossy().into_owned();
+        match self {
+            Self::CreateDirectory { path: directory } => {
+                Operation::CreateDirectory(CreateDirectory {
+                    path: path(directory),
+                })
+            }
+            Self::Delete { path: deleted } => Operation::Delete(Delete {
+                path: path(deleted),
+            }),
+            Self::Copy {
+                source,
+                destination,
+            } => Operation::Copy(Copy {
+                source: path(source),
+                destination: path(destination),
+            }),
+            Self::Move {
+                source,
+                destination,
+            } => Operation::Move(Move {
+                source: path(source),
+                destination: path(destination),
+            }),
+        }
+    }
+
+    pub fn from_proto(operation: proto::apply_global_skill_file_operation::Operation) -> Self {
+        use proto::apply_global_skill_file_operation::Operation;
+
+        match operation {
+            Operation::CreateDirectory(create) => Self::CreateDirectory {
+                path: PathBuf::from(create.path),
+            },
+            Operation::Delete(delete) => Self::Delete {
+                path: PathBuf::from(delete.path),
+            },
+            Operation::Copy(copy) => Self::Copy {
+                source: PathBuf::from(copy.source),
+                destination: PathBuf::from(copy.destination),
+            },
+            Operation::Move(move_operation) => Self::Move {
+                source: PathBuf::from(move_operation.source),
+                destination: PathBuf::from(move_operation.destination),
+            },
+        }
+    }
+}
+
 pub async fn apply_global_skill_file_operation(
     fs: &dyn Fs,
     operation: GlobalSkillFileOperation,
