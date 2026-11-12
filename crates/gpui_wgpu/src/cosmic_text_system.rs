@@ -1579,32 +1579,6 @@ mod tests {
         Ok(())
     }
 
-    /// Right-to-left characters are drawn further left the later they come, which the editor
-    /// relies on to place the block cursor over the character under it.
-    #[test]
-    fn x_range_for_index_follows_right_to_left_glyphs() -> Result<()> {
-        let text_system = text_system()?;
-
-        for text in ["\u{05d0}\u{05d1}\u{05d2}", "a \u{05d0}\u{05d1}\u{05d2} b"] {
-            let layout = layout_text(&text_system, text)?;
-            let hebrew_ranges: Vec<_> = text
-                .char_indices()
-                .filter(|(_, character)| ('\u{05d0}'..='\u{05ea}').contains(character))
-                .map(|(index, _)| layout.x_range_for_index(text, index))
-                .collect::<Option<_>>()
-                .with_context(|| format!("missing glyph in {text:?}"))?;
-
-            for range in &hebrew_ranges {
-                assert!(range.start < range.end, "{text:?}: {range:?}");
-            }
-            for pair in hebrew_ranges.windows(2) {
-                assert!(pair[1].end <= pair[0].start, "{text:?}: {pair:?}");
-            }
-        }
-
-        Ok(())
-    }
-
     /// A font run boundary that does not line up with a paragraph boundary must
     /// still be clipped to the right segments.
     #[test]

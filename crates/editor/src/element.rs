@@ -1214,7 +1214,7 @@ impl EditorElement {
                     let alignment_offset = cursor_row_layout
                         .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
                     let cursor_x_range = cursor_row_layout
-                        .x_range_for_index(cursor_column)
+                        .right_to_left_x_range_for_index(cursor_column)
                         .unwrap_or_else(|| {
                             cursor_row_layout.x_for_index(cursor_column)
                                 ..cursor_row_layout.x_for_index(cursor_column + 1)
@@ -1277,13 +1277,9 @@ impl EditorElement {
                                 cx.theme().colors().editor_background
                             };
 
-                            let cell_in_context =
-                                if cursor_row_layout.is_right_to_left_at(cursor_column) {
-                                    cursor_row_layout.cell_for_index(cursor_column, color, window)
-                                } else {
-                                    None
-                                };
-                            if let Some((span, cell)) = cell_in_context {
+                            if let Some((span, cell)) = cursor_row_layout
+                                .right_to_left_cell_for_index(cursor_column, color, window)
+                            {
                                 cursor_character_x = span.start + alignment_offset;
                                 block_width = span.end - span.start;
                                 block_text = Some(cell);
@@ -8308,15 +8304,10 @@ impl LineWithInvisibles {
         fragment_start_x
     }
 
-    pub fn x_range_for_index(&self, index: usize) -> Option<Range<Pixels>> {
+    pub fn right_to_left_x_range_for_index(&self, index: usize) -> Option<Range<Pixels>> {
         let (fragment_start_x, fragment_start_index, shaped_line) =
             self.text_fragment_for_index(index)?;
-        let index = index - fragment_start_index;
-        let range = if shaped_line.is_right_to_left_at(index) {
-            shaped_line.cluster_for_index(&shaped_line.text, index)?.1
-        } else {
-            shaped_line.x_range_for_index(&shaped_line.text, index)?
-        };
+        let range = shaped_line.right_to_left_x_range_for_index(index - fragment_start_index)?;
         Some(fragment_start_x + range.start..fragment_start_x + range.end)
     }
 
@@ -8329,14 +8320,7 @@ impl LineWithInvisibles {
         }
     }
 
-    pub fn is_right_to_left_at(&self, index: usize) -> bool {
-        self.text_fragment_for_index(index)
-            .is_some_and(|(_, fragment_start_index, shaped_line)| {
-                shaped_line.is_right_to_left_at(index - fragment_start_index)
-            })
-    }
-
-    pub fn cell_for_index(
+    pub fn right_to_left_cell_for_index(
         &self,
         index: usize,
         color: Hsla,
@@ -8344,8 +8328,11 @@ impl LineWithInvisibles {
     ) -> Option<(Range<Pixels>, ShapedLine)> {
         let (fragment_start_x, fragment_start_index, shaped_line) =
             self.text_fragment_for_index(index)?;
-        let (span, cell) =
-            shaped_line.cell_for_index(index - fragment_start_index, color, window)?;
+        let (span, cell) = shaped_line.right_to_left_cell_for_index(
+            index - fragment_start_index,
+            color,
+            window,
+        )?;
         Some((
             fragment_start_x + span.start..fragment_start_x + span.end,
             cell,
@@ -8358,13 +8345,13 @@ impl LineWithInvisibles {
         let mut fragment_start_x = Pixels::ZERO;
         let mut fragment_start_index = 0;
 
-        for (fragment_ix, fragment) in self.fragments.iter().enumerate() {
+        for (fragment_index, fragment) in self.fragments.iter().enumerate() {
             let (fragment_len, fragment_width) = match fragment {
                 LineFragment::Text(shaped_line) => (shaped_line.len, shaped_line.width),
                 LineFragment::Element { len, size, .. } => (*len, size.width),
             };
             let fragment_end_index = fragment_start_index + fragment_len;
-            let is_last_fragment = fragment_ix + 1 == self.fragments.len();
+            let is_last_fragment = fragment_index + 1 == self.fragments.len();
             if index < fragment_end_index || (index == fragment_end_index && is_last_fragment) {
                 let LineFragment::Text(shaped_line) = fragment else {
                     return None;

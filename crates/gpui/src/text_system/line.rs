@@ -113,24 +113,19 @@ impl ShapedLine {
     /// inside right-to-left text. At the end of the line it follows the last character instead.
     /// Inside a right-to-left ligature, the ligature is split evenly between its graphemes.
     pub fn caret_x_for_index(&self, index: usize) -> Pixels {
-        if self.is_right_to_left_at(index)
-            && let Some((cluster, range)) = self.cluster_for_index(&self.text, index)
+        if let Some((cluster, range)) = self.right_to_left_cluster_for_index(index)
             && let Some(cluster_text) = self.text.get(cluster.clone())
             && let Some(text_before_index) = self.text.get(cluster.start..index)
         {
             let graphemes_before_index = text_before_index.graphemes(true).count() as f32;
-            let graphemes = cluster_text.graphemes(true).count().max(1) as f32;
-            return range.end - (range.end - range.start) * (graphemes_before_index / graphemes);
-        }
-
-        if let Some(range) = self.x_range_for_index(&self.text, index) {
-            return range.start;
+            let grapheme_count = cluster_text.graphemes(true).count().max(1) as f32;
+            return range.end
+                - (range.end - range.start) * (graphemes_before_index / grapheme_count);
         }
 
         if index == self.len()
             && let Some((last_index, _)) = self.text.grapheme_indices(true).next_back()
-            && self.is_right_to_left_at(last_index)
-            && let Some((_, range)) = self.cluster_for_index(&self.text, last_index)
+            && let Some((_, range)) = self.right_to_left_cluster_for_index(last_index)
         {
             return range.start;
         }
@@ -138,32 +133,30 @@ impl ShapedLine {
         self.x_for_index(index)
     }
 
-    /// Whether the character at the given index is laid out right to left.
-    pub fn is_right_to_left_at(&self, index: usize) -> bool {
-        self.len() == self.text.len()
-            && !self.text.is_ascii()
-            && line_bidi_levels(&self.text)
-                .get(index)
-                .is_some_and(|level| level.is_rtl())
+    /// The horizontal span covered by the glyph cluster holding the given index, or `None` when
+    /// the character there is laid out left to right.
+    ///
+    /// Unlike `x_for_index`, this follows glyph positions rather than byte order, so it stays
+    /// correct inside right-to-left runs, where later characters are drawn further left.
+    pub fn right_to_left_x_range_for_index(&self, index: usize) -> Option<Range<Pixels>> {
+        Some(self.right_to_left_cluster_for_index(index)?.1)
     }
 
-    /// The span the glyph cluster holding the given index covers, counting both its advance and
-    /// the ink its glyphs draw, together with this line repainted in `color` and shifted so that
-    /// the span starts at x = 0.
+    /// The span the right-to-left glyph cluster holding the given index covers, counting both its
+    /// advance and the ink its glyphs draw, together with this line repainted in `color` and
+    /// shifted so that the span starts at x = 0. `None` when the character there is laid out
+    /// left to right.
     ///
     /// Painting that line clipped to the span redraws the grapheme as it appears in context,
     /// along with any neighbouring ink that reaches into the span, such as the strokes that join
     /// Arabic letters. Shaping the grapheme alone would give its standalone form instead.
-    pub fn cell_for_index(
+    pub fn right_to_left_cell_for_index(
         &self,
         index: usize,
         color: Hsla,
         window: &Window,
     ) -> Option<(Range<Pixels>, ShapedLine)> {
-        if self.len() != self.text.len() {
-            return None;
-        }
-        let (cluster, advance) = self.cluster_for_index(&self.text, index)?;
+        let (cluster, advance) = self.right_to_left_cluster_for_index(index)?;
         let scale_factor = window.scale_factor();
         let span = self
             .layout
@@ -232,6 +225,70 @@ impl ShapedLine {
             }],
         };
         Some((span, line))
+    }
+
+    fn is_right_to_left_at(&self, index: usize) -> bool {
+        self.len() == self.text.len()
+            && !self.text.is_ascii()
+            && line_bidi_levels(&self.text)
+                .get(index)
+                .is_some_and(|level| level.is_rtl())
+    }
+
+    /// The right-to-left glyph cluster holding the character at the given index, as its byte
+    /// range and the horizontal span it covers.
+    ///
+    /// A ligature, such as lam-alef in some Arabic fonts, draws several graphemes with one
+    /// glyph, so only the first of them starts a glyph.
+    fn right_to_left_cluster_for_index(
+        &self,
+        index: usize,
+    ) -> Option<(Range<usize>, Range<Pixels>)> {
+        if !self.is_right_to_left_at(index) {
+            return None;
+        }
+        let glyphs = self.grapheme_start_glyphs();
+        let cluster_start = glyphs
+            .iter()
+            .map(|glyph| glyph.index)
+            .filter(|&glyph_index| glyph_index <= index)
+            .max()?;
+        let cluster_end = glyphs
+            .iter()
+            .map(|glyph| glyph.index)
+            .filter(|&glyph_index| glyph_index > cluster_start)
+            .min()
+            .unwrap_or(self.len());
+        let x_start = glyphs
+            .iter()
+            .filter(|glyph| glyph.index == cluster_start)
+            .map(|glyph| glyph.position.x)
+            .reduce(Pixels::min)?;
+        let x_end = glyphs
+            .iter()
+            .filter(|glyph| glyph.index != cluster_start && glyph.position.x > x_start)
+            .map(|glyph| glyph.position.x)
+            .reduce(Pixels::min)
+            .unwrap_or(self.width);
+        Some((cluster_start..cluster_end, x_start..x_end))
+    }
+
+    /// The glyphs that begin a grapheme. Marks in right-to-left scripts get glyphs of their own,
+    /// drawn over the letter they belong to without advancing, so their origins are not
+    /// grapheme edges. This does not hold for left-to-right scripts such as Devanagari, whose
+    /// reordered vowel signs advance, which is why only right-to-left text is measured this way.
+    fn grapheme_start_glyphs(&self) -> Vec<&ShapedGlyph> {
+        let grapheme_starts: Vec<usize> = self
+            .text
+            .grapheme_indices(true)
+            .map(|(grapheme_start, _)| grapheme_start)
+            .collect();
+        self.layout
+            .runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .filter(|glyph| grapheme_starts.binary_search(&glyph.index).is_ok())
+            .collect()
     }
 
     /// Paint the line of text to the window.
@@ -1156,9 +1213,14 @@ mod tests {
     #[test]
     fn test_caret_x_for_index() {
         let left_to_right = make_shaped_line("ab", &[(0, 0.), (1, 10.)], 20., &[]);
-        let right_to_left = make_shaped_line("אבג", &[(0, 20.), (2, 10.), (4, 0.)], 30., &[]);
+        let right_to_left = make_shaped_line(
+            "\u{5d0}\u{5d1}\u{5d2}",
+            &[(0, 20.), (2, 10.), (4, 0.)],
+            30.,
+            &[],
+        );
         let mixed = make_shaped_line(
-            "a אב b",
+            "a \u{5d0}\u{5d1} b",
             &[(0, 0.), (1, 10.), (4, 20.), (2, 30.), (6, 40.), (7, 50.)],
             60.,
             &[],
@@ -1192,6 +1254,12 @@ mod tests {
         let seen_with_fatha =
             make_shaped_line("\u{633}\u{64e}", &[(0, 0.), (2, 5.189873)], 12.778481, &[]);
         let lam_alef_at_line_end = make_shaped_line("\u{644}\u{627}", &[(0, 0.)], 7.35443, &[]);
+        let reordered_vowel_sign = make_shaped_line(
+            "a\u{915}\u{93f}x",
+            &[(0, 0.), (4, 8.428711), (1, 12.25071), (7, 23.03071)],
+            30.,
+            &[],
+        );
 
         for (line, index, expected_x) in [
             (&left_to_right, 0, 0.),
@@ -1217,6 +1285,7 @@ mod tests {
             (&seen_with_fatha, 4, 0.),
             (&lam_alef_at_line_end, 0, 7.35443),
             (&lam_alef_at_line_end, 4, 0.),
+            (&reordered_vowel_sign, 1, 8.428711),
         ] {
             assert_eq!(
                 line.caret_x_for_index(index),
@@ -1227,8 +1296,74 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_right_to_left_x_range_for_index() {
+        let right_to_left = make_shaped_line(
+            "\u{5d0}\u{5d1}\u{5d2}",
+            &[(0, 20.), (2, 10.), (4, 0.)],
+            30.,
+            &[],
+        );
+        let mixed = make_shaped_line(
+            "a \u{5d0}\u{5d1} b",
+            &[(0, 0.), (1, 10.), (4, 20.), (2, 30.), (6, 40.), (7, 50.)],
+            60.,
+            &[],
+        );
+        let lam_alef_ligature = make_shaped_line(
+            "\u{633}\u{644}\u{627}\u{645}",
+            &[(0, 20.), (2, 10.), (6, 0.)],
+            30.,
+            &[],
+        );
+        let lam_alef_with_fatha = make_shaped_line(
+            "\u{644}\u{64e}\u{627}",
+            &[(0, 0.), (2, 3.607595)],
+            7.35443,
+            &[],
+        );
+        let seen_with_fatha =
+            make_shaped_line("\u{633}\u{64e}", &[(0, 0.), (2, 5.189873)], 12.778481, &[]);
+        let mark_over_next_letter = make_shaped_line(
+            "aq\u{301}x",
+            &[(0, 0.), (1, 8.428711), (2, 7.758789), (4, 16.857422)],
+            25.,
+            &[],
+        );
+        let reordered_vowel_sign = make_shaped_line(
+            "a\u{915}\u{93f}x",
+            &[(0, 0.), (4, 8.428711), (1, 12.25071), (7, 23.03071)],
+            30.,
+            &[],
+        );
+
+        for (line, index, expected) in [
+            (&right_to_left, 0, Some(20.0..30.0)),
+            (&right_to_left, 2, Some(10.0..20.0)),
+            (&right_to_left, 4, Some(0.0..10.0)),
+            (&right_to_left, 6, None),
+            (&mixed, 0, None),
+            (&mixed, 2, Some(30.0..40.0)),
+            (&mixed, 4, Some(20.0..30.0)),
+            (&mixed, 7, None),
+            (&lam_alef_ligature, 0, Some(20.0..30.0)),
+            (&lam_alef_ligature, 4, Some(10.0..20.0)),
+            (&lam_alef_with_fatha, 4, Some(0.0..7.35443)),
+            (&seen_with_fatha, 0, Some(0.0..12.778481)),
+            (&mark_over_next_letter, 0, None),
+            (&reordered_vowel_sign, 0, None),
+        ] {
+            assert_eq!(
+                line.right_to_left_x_range_for_index(index),
+                expected.map(|range| px(range.start)..px(range.end)),
+                "{:?} at {index}",
+                line.text
+            );
+        }
+    }
+
     #[gpui::test]
-    fn test_cell_for_index(cx: &mut TestAppContext) {
+    fn test_right_to_left_cell_for_index(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
         let color = hsla(0., 0., 0., 1.);
         let line = make_shaped_line(
@@ -1246,7 +1381,7 @@ mod tests {
 
         cx.update(|window, _| {
             let (span, cell) = line
-                .cell_for_index(2, color, window)
+                .right_to_left_cell_for_index(2, color, window)
                 .expect("glyph starts at 2");
             assert_eq!(span, px(30.)..px(40.));
             assert_eq!(cell.width, px(10.));
@@ -1270,7 +1405,7 @@ mod tests {
             );
 
             let (span, _) = lam_alef_ligature
-                .cell_for_index(4, color, window)
+                .right_to_left_cell_for_index(4, color, window)
                 .expect("alef belongs to the lam-alef glyph");
             assert_eq!(span, px(10.)..px(20.));
 
@@ -1281,12 +1416,23 @@ mod tests {
                 &[],
             );
             let (span, _) = lam_alef_with_fatha
-                .cell_for_index(4, color, window)
+                .right_to_left_cell_for_index(4, color, window)
                 .expect("alef belongs to the lam-alef glyph, not the fatha");
             assert_eq!(span, px(0.)..px(7.35443));
 
-            assert!(line.cell_for_index(line.len(), color, window).is_none());
-            assert!(line.with_len(4).cell_for_index(2, color, window).is_none());
+            assert!(
+                line.right_to_left_cell_for_index(0, color, window)
+                    .is_none()
+            );
+            assert!(
+                line.right_to_left_cell_for_index(line.len(), color, window)
+                    .is_none()
+            );
+            assert!(
+                line.with_len(4)
+                    .right_to_left_cell_for_index(2, color, window)
+                    .is_none()
+            );
         });
     }
 
