@@ -295,8 +295,7 @@ impl HeadlessProject {
             cx,
         );
 
-        let global_skills = cx.new(|_| GlobalSkills::new(fs.clone(), session.clone()));
-        GlobalSkills::init(&global_skills, &session);
+        let global_skills = cx.new(|cx| GlobalSkills::new(fs.clone(), session.clone(), cx));
 
         // local_machine -> ssh handlers
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &worktree_store);

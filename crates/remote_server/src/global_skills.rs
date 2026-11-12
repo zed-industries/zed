@@ -4,7 +4,7 @@ use std::sync::Arc;
 use agent_skills::{GlobalSkillFileOperation, Skill, SkillLoadWarning, SkillSource};
 use anyhow::{Context as _, Result, anyhow};
 use fs::Fs;
-use gpui::{AppContext as _, AsyncApp, Context, Entity, Task};
+use gpui::{AsyncApp, Context, Entity, Task};
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self, REMOTE_SERVER_PROJECT_ID},
@@ -19,23 +19,20 @@ pub struct GlobalSkills {
 }
 
 impl GlobalSkills {
-    pub fn new(fs: Arc<dyn Fs>, session: AnyProtoClient) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, session: AnyProtoClient, cx: &mut Context<Self>) -> Self {
+        session.add_request_handler(cx.weak_entity(), Self::handle_get_global_skills);
+        session.add_request_handler(cx.weak_entity(), Self::handle_create_global_skill);
+        session.add_request_handler(cx.weak_entity(), Self::handle_trash_global_skill);
+        session.add_request_handler(cx.weak_entity(), Self::handle_resolve_global_skill_path);
+        session.add_request_handler(
+            cx.weak_entity(),
+            Self::handle_apply_global_skill_file_operation,
+        );
         Self {
             fs,
             session,
             watch: None,
         }
-    }
-
-    pub fn init(this: &Entity<Self>, session: &AnyProtoClient) {
-        session.add_request_handler(this.downgrade(), Self::handle_get_global_skills);
-        session.add_request_handler(this.downgrade(), Self::handle_create_global_skill);
-        session.add_request_handler(this.downgrade(), Self::handle_trash_global_skill);
-        session.add_request_handler(this.downgrade(), Self::handle_resolve_global_skill_path);
-        session.add_request_handler(
-            this.downgrade(),
-            Self::handle_apply_global_skill_file_operation,
-        );
     }
 
     async fn handle_get_global_skills(
