@@ -498,6 +498,14 @@ impl MetalRenderer {
         };
     }
 
+    pub fn is_display_link_attached(&self) -> bool {
+        matches!(self.display_link_mode, DisplayLinkMode::Attached { .. })
+    }
+
+    pub fn presents_with_transaction(&self) -> bool {
+        self.presents_with_transaction
+    }
+
     pub fn set_presents_with_transaction(&mut self, presents_with_transaction: bool) {
         self.presents_with_transaction = presents_with_transaction;
         if let Some(layer) = &self.layer {

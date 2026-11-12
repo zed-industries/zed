@@ -28,7 +28,7 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
-use platform_title_bar::apply_title_bar_insets;
+use platform_title_bar::{SidebarWindowControls, apply_title_bar_insets};
 use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
@@ -859,16 +859,11 @@ impl ThreadsArchiveView {
 
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
-        let sidebar_on_left = matches!(
-            AgentSettings::get_global(cx).sidebar_side(),
-            settings::SidebarSide::Left
-        );
-        let sidebar_on_right = !sidebar_on_left;
-        let not_fullscreen = !window.is_fullscreen() && !window.is_simple_fullscreen();
-        let traffic_lights = cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
-        let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
-        let right_window_controls =
-            !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_right;
+        let SidebarWindowControls {
+            traffic_lights,
+            left: left_window_controls,
+            right: right_window_controls,
+        } = SidebarWindowControls::new(AgentSettings::get_global(cx).sidebar_side(), window, cx);
         let header_height = platform_title_bar_height(window);
         let show_focus_keybinding =
             self.selection.is_some() && !self.filter_editor.focus_handle(cx).is_focused(window);
@@ -906,6 +901,7 @@ impl ThreadsArchiveView {
             })
             .child(
                 h_flex()
+                    .debug_selector(|| "threads-archive-header-search".into())
                     .ml_1()
                     .min_w_0()
                     .w_full()

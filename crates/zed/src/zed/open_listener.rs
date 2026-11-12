@@ -601,100 +601,127 @@ pub async fn handle_cli_connection(
     cx: &mut AsyncApp,
 ) {
     if let Some(request) = requests.next().await {
-        match request {
-            CliRequest::Open {
-                urls,
+        handle_cli_request(request, requests, responses, app_state, cx).await;
+    }
+}
+
+pub async fn handle_cli_request(
+    request: CliRequest,
+    mut requests: mpsc::UnboundedReceiver<CliRequest>,
+    responses: Box<dyn CliResponseSink>,
+    app_state: Arc<AppState>,
+    cx: &mut AsyncApp,
+) {
+    match request {
+        CliRequest::Open {
+            urls,
+            paths,
+            diff_paths,
+            diff_all,
+            wait,
+            wsl,
+            mut open_behavior,
+            env,
+            user_data_dir: _,
+            dev_container,
+            cwd,
+        } => {
+            if !urls.is_empty() {
+                cx.update(|cx| {
+                    match OpenRequest::parse(
+                        RawOpenRequest {
+                            urls,
+                            diff_paths,
+                            diff_all,
+                            dev_container,
+                            wsl,
+                            open_behavior: Some(open_behavior),
+                        },
+                        cx,
+                    ) {
+                        Ok(open_request) => {
+                            cx.activate(true);
+                            handle_open_request(open_request, app_state.clone(), cx);
+                            responses.send(CliResponse::Exit { status: 0 }).log_err();
+                        }
+                        Err(e) => {
+                            responses
+                                .send(CliResponse::Stderr {
+                                    message: format!("{e}"),
+                                })
+                                .log_err();
+                            responses.send(CliResponse::Exit { status: 1 }).log_err();
+                        }
+                    };
+                });
+                return;
+            }
+
+            if open_behavior == cli::OpenBehavior::Default {
+                match resolve_open_behavior(
+                    &paths,
+                    &app_state,
+                    responses.as_ref(),
+                    &mut requests,
+                    cx,
+                )
+                .await
+                {
+                    Some(settings::CliDefaultOpenBehavior::ExistingWindow) => {
+                        open_behavior = cli::OpenBehavior::ExistingWindow;
+                    }
+                    Some(settings::CliDefaultOpenBehavior::NewWindow) => {
+                        open_behavior = cli::OpenBehavior::PreferNewWindow;
+                    }
+                    None => {}
+                }
+            }
+
+            if open_behavior == cli::OpenBehavior::Default {
+                open_behavior = cx.update(|cx| open_behavior_for_default_setting(cx));
+            }
+
+            cx.update(|cx| cx.activate(true));
+
+            let open_workspace_result = open_workspaces(
                 paths,
                 diff_paths,
                 diff_all,
+                open_behavior,
+                responses.as_ref(),
                 wait,
-                wsl,
-                mut open_behavior,
-                env,
-                user_data_dir: _,
                 dev_container,
+                app_state.clone(),
+                env,
                 cwd,
-            } => {
-                if !urls.is_empty() {
-                    cx.update(|cx| {
-                        match OpenRequest::parse(
-                            RawOpenRequest {
-                                urls,
-                                diff_paths,
-                                diff_all,
-                                dev_container,
-                                wsl,
-                                open_behavior: Some(open_behavior),
-                            },
-                            cx,
-                        ) {
-                            Ok(open_request) => {
-                                cx.activate(true);
-                                handle_open_request(open_request, app_state.clone(), cx);
-                                responses.send(CliResponse::Exit { status: 0 }).log_err();
-                            }
-                            Err(e) => {
-                                responses
-                                    .send(CliResponse::Stderr {
-                                        message: format!("{e}"),
-                                    })
-                                    .log_err();
-                                responses.send(CliResponse::Exit { status: 1 }).log_err();
-                            }
-                        };
-                    });
-                    return;
-                }
+                cx,
+            )
+            .await;
 
-                if open_behavior == cli::OpenBehavior::Default {
-                    match resolve_open_behavior(
-                        &paths,
-                        &app_state,
-                        responses.as_ref(),
-                        &mut requests,
-                        cx,
-                    )
-                    .await
-                    {
-                        Some(settings::CliDefaultOpenBehavior::ExistingWindow) => {
-                            open_behavior = cli::OpenBehavior::ExistingWindow;
-                        }
-                        Some(settings::CliDefaultOpenBehavior::NewWindow) => {
-                            open_behavior = cli::OpenBehavior::PreferNewWindow;
-                        }
-                        None => {}
-                    }
-                }
-
-                if open_behavior == cli::OpenBehavior::Default {
-                    open_behavior = cx.update(|cx| open_behavior_for_default_setting(cx));
-                }
-
-                cx.update(|cx| cx.activate(true));
-
-                let open_workspace_result = open_workspaces(
-                    paths,
-                    diff_paths,
-                    diff_all,
-                    open_behavior,
-                    responses.as_ref(),
-                    wait,
-                    dev_container,
-                    app_state.clone(),
-                    env,
-                    cwd,
-                    cx,
-                )
-                .await;
-
-                let status = if open_workspace_result.is_err() { 1 } else { 0 };
-                responses.send(CliResponse::Exit { status }).log_err();
-            }
-            CliRequest::SetOpenBehavior { .. } => {
-                // We handle this case in a situation-specific way in
-                // resolve_open_behavior
-                debug_panic!("unexpected SetOpenBehavior message");
-            }
+            let status = if open_workspace_result.is_err() { 1 } else { 0 };
+            responses.send(CliResponse::Exit { status }).log_err();
+        }
+        CliRequest::SetOpenBehavior { .. } => {
+            // We handle this case in a situation-specific way in
+            // resolve_open_behavior
+            debug_panic!("unexpected SetOpenBehavior message");
+        }
+        CliRequest::DebugState => {
+            // Deliberately does not activate the app: activation redraws
+            // windows and would disturb the state being inspected.
+            let state = cx.update(|cx| cx.debug_state());
+            let response = match serde_json::to_string_pretty(&state) {
+                Ok(message) => CliResponse::Stdout { message },
+                Err(error) => CliResponse::Stderr {
+                    message: format!("failed to serialize debug state: {error}"),
+                },
+            };
+            let status = match response {
+                CliResponse::Stdout { .. } => 0,
+                _ => 1,
+            };
+            responses.send(response).log_err();
+            responses.send(CliResponse::Exit { status }).log_err();
         }
     }
 }
@@ -723,19 +750,15 @@ async fn resolve_open_behavior(
     }
 
     if !paths.is_empty() {
-        let paths_as_pathbufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
         let paths_in_existing_workspace = cx.update(|cx| {
             for window in cx.windows() {
-                if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
-                    if let Ok(multi_workspace) = multi_workspace.read(cx) {
-                        for workspace in multi_workspace.workspaces() {
-                            let project = workspace.read(cx).project().read(cx);
-                            if project
-                                .visibility_for_paths(&paths_as_pathbufs, false, cx)
-                                .is_some()
-                            {
-                                return true;
-                            }
+                if let Some(multi_workspace) = window.downcast::<MultiWorkspace>()
+                    && let Ok(multi_workspace) = multi_workspace.read(cx)
+                {
+                    for workspace in multi_workspace.workspaces() {
+                        let project = workspace.read(cx).project().read(cx);
+                        if project.visibility_for_paths(&paths, false, cx).is_some() {
+                            return true;
                         }
                     }
                 }
@@ -746,14 +769,13 @@ async fn resolve_open_behavior(
         if paths_in_existing_workspace {
             return None;
         }
-    }
 
-    if !paths.is_empty() {
-        let has_directory =
-            futures::future::join_all(paths.iter().map(|p| app_state.fs.is_dir(Path::new(p))))
-                .await
-                .into_iter()
-                .any(|is_dir| is_dir);
+        let has_directory = paths
+            .iter()
+            .map(|path| app_state.fs.is_dir(Path::new(path)))
+            .collect::<futures::stream::FuturesUnordered<_>>()
+            .any(|is_dir| async move { is_dir })
+            .await;
 
         if !has_directory {
             return None;
@@ -2297,7 +2319,7 @@ mod tests {
 
         // Now test the reuse functionality - should replace the existing workspace
         let workspace_paths_reuse = vec![file1_path.to_string()];
-        let paths: Vec<PathBuf> = workspace_paths_reuse.iter().map(PathBuf::from).collect();
+        let paths: Vec<_> = workspace_paths_reuse.iter().map(PathBuf::from).collect();
         let window_to_replace = workspace::find_existing_workspace(
             &paths,
             &workspace::OpenOptions::default(),
