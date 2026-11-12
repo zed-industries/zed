@@ -1592,6 +1592,15 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Sets a callback that returns the scroll delta multiplier for each event.
+    fn scroll_sensitivity(
+        mut self,
+        sensitivity: impl Fn(&ScrollEvent, &App) -> f32 + 'static,
+    ) -> Self {
+        self.interactivity().scroll_sensitivity = Some(Box::new(sensitivity));
+        self
+    }
+
     /// Track the scroll state of this element with the given handle.
     fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
         self.interactivity().tracked_scroll_handle = Some(scroll_handle.clone());
@@ -1777,6 +1786,8 @@ pub(crate) type FileDropExitListener =
 
 pub(crate) type ScrollListener =
     Box<dyn Fn(&ScrollEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+
+type ScrollSensitivity = Box<dyn Fn(&ScrollEvent, &App) -> f32>;
 
 pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
@@ -2241,6 +2252,7 @@ pub struct Interactivity {
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
+    pub(crate) scroll_sensitivity: Option<ScrollSensitivity>,
     pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
     /// by focus, active, etc.
@@ -3427,7 +3439,7 @@ impl Interactivity {
     }
 
     fn paint_scroll_listener(
-        &self,
+        &mut self,
         hitbox: &Hitbox,
         style: &Style,
         window: &mut Window,
@@ -3435,6 +3447,7 @@ impl Interactivity {
     ) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let ongoing_scroll = self.ongoing_scroll.clone();
+            let scroll_sensitivity = self.scroll_sensitivity.take();
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
@@ -3454,6 +3467,11 @@ impl Interactivity {
                         ongoing_scroll
                             .borrow_mut()
                             .filter(&mut delta, event.touch_phase);
+                    }
+
+                    // Keep gesture thresholds independent of scroll sensitivity.
+                    if let Some(sensitivity) = &scroll_sensitivity {
+                        delta *= sensitivity(event, cx);
                     }
 
                     let mut delta_x = match overflow.x {
@@ -4537,7 +4555,7 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, IntoElement,
-        Keystroke, MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas,
+        Keystroke, MouseMoveEvent, ScrollDelta, TestAppContext, TouchEvent, TouchId, canvas,
         util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
@@ -5734,6 +5752,79 @@ mod tests {
             .unwrap();
 
         assert_eq!(focused, Some(item_b.id));
+    }
+
+    #[gpui::test]
+    fn scroll_sensitivity_preserves_axis_lock_and_child_event_handling(cx: &mut TestAppContext) {
+        struct SensitiveScrollView {
+            scroll_handle: ScrollHandle,
+        }
+
+        impl Render for SensitiveScrollView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("sensitive-scroll-container")
+                    .size(px(100.))
+                    .overflow_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .restrict_scroll_to_axis()
+                    .scroll_sensitivity(|_, _| 5.)
+                    .child(
+                        div().size(px(400.)).child(
+                            div()
+                                .size(px(50.))
+                                .on_scroll(|_, _, cx| cx.stop_propagation()),
+                        ),
+                    )
+            }
+        }
+
+        let scroll_handle = ScrollHandle::new();
+        let (view, cx) = cx.add_window_view(|_, _| SensitiveScrollView {
+            scroll_handle: scroll_handle.clone(),
+        });
+        cx.run_until_parked();
+
+        for (delta, touch_phase, expected_offset) in [
+            (
+                point(px(0.), px(-10.)),
+                TouchPhase::Started,
+                point(px(0.), px(-50.)),
+            ),
+            (
+                point(px(-5.), px(-2.)),
+                TouchPhase::Moved,
+                point(px(0.), px(-60.)),
+            ),
+            (
+                point(px(-10.), px(-2.)),
+                TouchPhase::Started,
+                point(px(-50.), px(-60.)),
+            ),
+        ] {
+            cx.simulate_event(ScrollEvent {
+                position: point(px(75.), px(75.)),
+                delta: ScrollDelta::Pixels(delta),
+                touch_phase,
+                ..ScrollEvent::default()
+            });
+            cx.run_until_parked();
+            assert_eq!(scroll_handle.offset(), expected_offset);
+        }
+
+        view.update(cx, |_, cx| {
+            scroll_handle.set_offset(Point::default());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.simulate_event(ScrollEvent {
+            position: point(px(10.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-10.))),
+            touch_phase: TouchPhase::Started,
+            ..ScrollEvent::default()
+        });
+        cx.run_until_parked();
+        assert_eq!(scroll_handle.offset(), Point::default());
     }
 
     #[gpui::test]

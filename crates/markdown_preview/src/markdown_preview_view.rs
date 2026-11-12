@@ -11,8 +11,8 @@ use anyhow::{Context as _, Result};
 use editor::items::open_resolved_target;
 use editor::scroll::Autoscroll;
 use editor::{
-    Editor, EditorEvent, EditorSettingsScrollbarProxy, MAX_TAB_TITLE_LEN, MultiBufferOffset,
-    SelectionEffects,
+    Editor, EditorEvent, EditorSettings, EditorSettingsScrollbarProxy, MAX_TAB_TITLE_LEN,
+    MultiBufferOffset, SelectionEffects,
 };
 use gpui::{
     Action, AnyElement, App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle,
@@ -1952,6 +1952,15 @@ impl Render for MarkdownPreviewView {
                         .overflow_y_scroll()
                         .track_scroll(&self.scroll_handle)
                         .restrict_scroll_to_axis()
+                        .scroll_sensitivity(|event, cx| {
+                            let settings = EditorSettings::get_global(cx);
+                            if event.modifiers.alt {
+                                settings.fast_scroll_sensitivity
+                            } else {
+                                settings.scroll_sensitivity
+                            }
+                            .max(0.01)
+                        })
                         .p_4()
                         .child({
                             let markdown_element =
@@ -2369,7 +2378,8 @@ mod tests {
     use gpui::UpdateGlobal as _;
     use gpui::{
         App, AppContext as _, Entity, Focusable as _, Modifiers, MouseButton, MouseDownEvent,
-        MouseUpEvent, TestAppContext, VisualTestContext, WindowHandle, px,
+        MouseUpEvent, ScrollDelta, ScrollEvent, TestAppContext, TouchPhase, VisualTestContext,
+        WindowHandle, point, px,
     };
     use language::{Buffer, DiskState, Point};
     use project::{Project, ProjectPath};
@@ -2413,6 +2423,76 @@ mod tests {
             filter_non_rendered_matches(vec![58..65, 1..9, 30..37], &non_rendered_ranges),
             vec![58..65, 1..9]
         );
+    }
+
+    #[gpui::test]
+    async fn preview_scroll_honors_sensitivity_settings(cx: &mut TestAppContext) {
+        let (project, _, multi_workspace) =
+            markdown_workspace(cx, json!({ "note.md": "Paragraph\n\n".repeat(200) }), false).await;
+        open_project_file(cx, &project, &multi_workspace, "note.md", None, true).await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.run_until_parked();
+        let scroll_handle = preview.read_with(cx, |preview, _| preview.scroll_handle.clone());
+        let initial_offset = point(px(0.), px(-1000.));
+        assert!(scroll_handle.max_offset().y > px(2000.));
+        cx.simulate_event(ScrollEvent {
+            position: scroll_handle.bounds().center(),
+            delta: ScrollDelta::Lines(point(0., -1.)),
+            ..ScrollEvent::default()
+        });
+        cx.run_until_parked();
+        let line_delta = scroll_handle.offset().y;
+        assert!(line_delta < px(0.));
+
+        for (normal_sensitivity, fast_sensitivity) in
+            [(1.0_f32, 4.0_f32), (5.0, 15.0), (0.5, 2.0), (0.0, -1.0)]
+        {
+            cx.update(|_, cx| {
+                settings::SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.editor.scroll_sensitivity = Some(normal_sensitivity);
+                        settings.editor.fast_scroll_sensitivity = Some(fast_sensitivity);
+                    });
+                });
+            });
+            for modifiers in [Modifiers::default(), Modifiers::alt()] {
+                let sensitivity = if modifiers.alt {
+                    fast_sensitivity
+                } else {
+                    normal_sensitivity
+                }
+                .max(0.01);
+                for (delta, base_delta) in [
+                    (ScrollDelta::Pixels(point(px(0.), px(-10.))), px(-10.)),
+                    (ScrollDelta::Lines(point(0., -1.)), line_delta),
+                ] {
+                    preview.update(cx, |_, cx| {
+                        scroll_handle.set_offset(initial_offset);
+                        cx.notify();
+                    });
+                    cx.run_until_parked();
+                    cx.simulate_event(ScrollEvent {
+                        position: scroll_handle.bounds().center(),
+                        delta,
+                        modifiers,
+                        touch_phase: TouchPhase::Started,
+                        ..ScrollEvent::default()
+                    });
+                    cx.run_until_parked();
+
+                    let expected_offset = initial_offset.y + base_delta * sensitivity;
+                    assert!(
+                        (scroll_handle.offset().y - expected_offset).abs() < px(0.01),
+                        "{delta:?} with {modifiers:?}, normal sensitivity {normal_sensitivity} \
+                         and fast sensitivity {fast_sensitivity}: expected {expected_offset:?}, \
+                         got {:?}",
+                        scroll_handle.offset().y
+                    );
+                    assert_eq!(scroll_handle.offset().x, px(0.));
+                }
+            }
+        }
     }
 
     #[gpui::test]
