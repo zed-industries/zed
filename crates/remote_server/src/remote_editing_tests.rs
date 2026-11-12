@@ -5413,6 +5413,42 @@ async fn test_remote_global_skill_frontmatter_comes_from_the_remote(
 }
 
 #[gpui::test]
+async fn test_remote_global_skill_load_errors_come_from_the_remote(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let test = RemoteSkillsTest::new(&["remote-skill"], cx, server_cx).await;
+    let issues = Rc::new(RefCell::new(Vec::new()));
+    let _subscription = cx.update(|cx| {
+        let issues = issues.clone();
+        cx.subscribe(
+            &test.agent,
+            move |_, event: &agent::SkillLoadingIssuesUpdated, _| {
+                *issues.borrow_mut() = event.issues.clone();
+            },
+        )
+    });
+    test.server_fs
+        .insert_tree(
+            test.skills_dir.join("broken-skill"),
+            json!({ "SKILL.md": "no frontmatter" }),
+        )
+        .await;
+    cx.run_until_parked();
+
+    assert_eq!(test.global_skills(cx), ["remote-skill"]);
+    let issues = issues.borrow();
+    let [issue] = issues.as_slice() else {
+        panic!("expected one loading issue, got {issues:?}");
+    };
+    assert_eq!(issue.kind, agent::SkillLoadingIssueKind::LoadFailed);
+    assert_eq!(
+        issue.path,
+        test.skills_dir.join("broken-skill").join("SKILL.md")
+    );
+}
+
+#[gpui::test]
 async fn test_remote_global_skills_dir_deleted_and_recreated(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,

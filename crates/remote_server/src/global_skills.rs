@@ -2,7 +2,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use agent_skills::{GlobalSkillFileOperation, Skill, SkillLoadWarning, SkillSource};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use fs::Fs;
 use gpui::{AsyncApp, Context, Entity, Task};
 use rpc::{
@@ -15,7 +15,7 @@ use util::ResultExt as _;
 pub struct GlobalSkills {
     fs: Arc<dyn Fs>,
     session: AnyProtoClient,
-    watch: Option<Task<()>>,
+    watch_task: Option<Task<()>>,
 }
 
 impl GlobalSkills {
@@ -31,7 +31,7 @@ impl GlobalSkills {
         Self {
             fs,
             session,
-            watch: None,
+            watch_task: None,
         }
     }
 
@@ -73,12 +73,12 @@ impl GlobalSkills {
     /// Tells the client when global skills change, until the skills
     /// directory is removed. The next request watches it again.
     fn watch(&mut self, skills_dir: PathBuf, cx: &mut Context<Self>) {
-        if self.watch.is_some() {
+        if self.watch_task.is_some() {
             return;
         }
         let fs = self.fs.clone();
         let session = self.session.clone();
-        self.watch = Some(cx.spawn(async move |this, cx| {
+        self.watch_task = Some(cx.spawn(async move |this, cx| {
             agent_skills::watch_skills_dir(fs, skills_dir, || {
                 session
                     .send(proto::GlobalSkillsChanged {
@@ -88,7 +88,7 @@ impl GlobalSkills {
                 true
             })
             .await;
-            this.update(cx, |this, _| this.watch = None).ok();
+            this.update(cx, |this, _| this.watch_task = None).ok();
         }));
     }
 
@@ -99,7 +99,7 @@ impl GlobalSkills {
     ) -> Result<proto::CreateGlobalSkillResponse> {
         let fs = this.read_with(&cx, |this, _| this.fs.clone());
         let payload = envelope.payload;
-        agent_skills::validate_name(&payload.name).map_err(|error| anyhow!(error))?;
+        agent_skills::validate_name(&payload.name).map_err(anyhow::Error::msg)?;
         let skill_file_path = agent_skills::write_skill_to_disk(
             fs.as_ref(),
             &agent_skills::global_skills_dir(),
@@ -183,9 +183,9 @@ impl GlobalSkills {
                 source: PathBuf::from(copy.source),
                 destination: PathBuf::from(copy.destination),
             },
-            Operation::Rename(rename) => GlobalSkillFileOperation::Move {
-                source: PathBuf::from(rename.source),
-                destination: PathBuf::from(rename.destination),
+            Operation::Move(move_operation) => GlobalSkillFileOperation::Move {
+                source: PathBuf::from(move_operation.source),
+                destination: PathBuf::from(move_operation.destination),
             },
         };
         agent_skills::apply_global_skill_file_operation(fs.as_ref(), operation).await?;

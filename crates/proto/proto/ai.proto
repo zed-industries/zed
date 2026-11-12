@@ -111,7 +111,7 @@ message ApplyGlobalSkillFileOperation {
     string destination = 2;
   }
 
-  message Rename {
+  message Move {
     string source = 1;
     string destination = 2;
   }
@@ -121,7 +121,7 @@ message ApplyGlobalSkillFileOperation {
     CreateDirectory create_directory = 2;
     Delete delete = 3;
     Copy copy = 4;
-    Rename rename = 5;
+    Move move = 5;
   }
 }
 
