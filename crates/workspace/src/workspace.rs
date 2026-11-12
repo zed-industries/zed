@@ -11564,22 +11564,22 @@ fn preferred_workspace_target(
 /// `ssh://` URL paths arrive unconverted, because each remote has its own path style. Every
 /// candidate converts its own copy, so the caller's paths reach a fresh connection unchanged.
 fn paths_for_candidate<'a>(
-    abs_paths: &'a [PathBuf],
+    abs_paths: &'a [impl AsRef<Path>],
     host: &ProjectHost<'_>,
     path_style: PathStyle,
-) -> Cow<'a, [PathBuf]> {
-    match host {
-        ProjectHost::Local => Cow::Borrowed(abs_paths),
-        ProjectHost::Remote(_) => abs_paths
-            .iter()
-            .map(|path| match path.to_str() {
-                Some(url_path) => {
-                    PathBuf::from(util::paths::url_path_to_path(url_path, path_style))
+) -> Vec<&'a Path> {
+    abs_paths
+        .iter()
+        .map(|path| {
+            let path = path.as_ref();
+            match (host, path.to_str()) {
+                (ProjectHost::Remote(_), Some(url_path)) => {
+                    Path::new(util::paths::url_path_to_path(url_path, path_style))
                 }
-                None => path.clone(),
-            })
-            .collect(),
-    }
+                _ => path,
+            }
+        })
+        .collect()
 }
 
 pub fn find_existing_workspace(
