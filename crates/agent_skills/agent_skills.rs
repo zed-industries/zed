@@ -72,6 +72,35 @@ impl SkillLoadWarning {
             ),
         }
     }
+
+    pub fn to_proto(&self) -> proto::SkillLoadWarning {
+        use proto::skill_load_warning::{DescriptionTooLong, Variant};
+
+        let variant = match self {
+            Self::DescriptionTooLong {
+                actual_len,
+                max_len,
+            } => Variant::DescriptionTooLong(DescriptionTooLong {
+                actual_len: *actual_len as u64,
+                max_len: *max_len as u64,
+            }),
+        };
+        proto::SkillLoadWarning {
+            variant: Some(variant),
+        }
+    }
+
+    /// Returns `None` for a warning this version doesn't know about.
+    pub fn from_proto(warning: proto::SkillLoadWarning) -> Option<Self> {
+        use proto::skill_load_warning::Variant;
+
+        match warning.variant? {
+            Variant::DescriptionTooLong(warning) => Some(Self::DescriptionTooLong {
+                actual_len: warning.actual_len as usize,
+                max_len: warning.max_len as usize,
+            }),
+        }
+    }
 }
 
 /// Represents a loaded skill with all its metadata and content.
@@ -98,27 +127,17 @@ pub struct Skill {
 
 impl Skill {
     pub fn to_proto(&self) -> proto::GlobalSkill {
-        let mut description_too_long = None;
-        for warning in &self.load_warnings {
-            match warning {
-                SkillLoadWarning::DescriptionTooLong {
-                    actual_len,
-                    max_len,
-                } => {
-                    description_too_long = Some(proto::SkillDescriptionTooLong {
-                        actual_len: *actual_len as u64,
-                        max_len: *max_len as u64,
-                    });
-                }
-            }
-        }
         proto::GlobalSkill {
             name: self.name.clone(),
             description: self.description.clone(),
             skill_file_path: self.skill_file_path.to_string_lossy().into_owned(),
             directory_path: self.directory_path.to_string_lossy().into_owned(),
             disable_model_invocation: self.disable_model_invocation,
-            description_too_long,
+            load_warnings: self
+                .load_warnings
+                .iter()
+                .map(SkillLoadWarning::to_proto)
+                .collect(),
         }
     }
 
@@ -131,12 +150,9 @@ impl Skill {
             directory_path: PathBuf::from(skill.directory_path),
             skill_file_path: PathBuf::from(skill.skill_file_path),
             load_warnings: skill
-                .description_too_long
-                .map(|warning| SkillLoadWarning::DescriptionTooLong {
-                    actual_len: warning.actual_len as usize,
-                    max_len: warning.max_len as usize,
-                })
+                .load_warnings
                 .into_iter()
+                .filter_map(SkillLoadWarning::from_proto)
                 .collect(),
             disable_model_invocation: skill.disable_model_invocation,
             embedded_body: None,

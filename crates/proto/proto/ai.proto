@@ -51,12 +51,18 @@ message GlobalSkill {
   string skill_file_path = 3;
   string directory_path = 4;
   bool disable_model_invocation = 5;
-  optional SkillDescriptionTooLong description_too_long = 6;
+  repeated SkillLoadWarning load_warnings = 6;
 }
 
-message SkillDescriptionTooLong {
-  uint64 actual_len = 1;
-  uint64 max_len = 2;
+message SkillLoadWarning {
+  message DescriptionTooLong {
+    uint64 actual_len = 1;
+    uint64 max_len = 2;
+  }
+
+  oneof variant {
+    DescriptionTooLong description_too_long = 1;
+  }
 }
 
 message GlobalSkillLoadError {
