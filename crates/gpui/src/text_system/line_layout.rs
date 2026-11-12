@@ -14,6 +14,7 @@ use std::{
 };
 
 use super::LineWrapper;
+use unicode_segmentation::UnicodeSegmentation as _;
 
 /// A laid out and styled line of text
 #[derive(Default, Debug)]
@@ -117,48 +118,72 @@ impl LineLayout {
         self.width
     }
 
-    /// The horizontal span covered by the character whose glyphs start at the given index,
-    /// or `None` if no glyph starts there.
+    /// The horizontal span covered by the grapheme whose glyphs start at the given index of
+    /// `text`, or `None` if no glyph starts there.
     ///
     /// Unlike `x_for_index`, this follows glyph positions rather than byte order, so it stays
     /// correct inside right-to-left runs, where later characters are drawn further left.
-    pub fn x_range_for_index(&self, index: usize) -> Option<Range<Pixels>> {
-        let glyphs = || self.runs.iter().flat_map(|run| &run.glyphs);
-        let start = glyphs()
+    pub fn x_range_for_index(&self, text: &str, index: usize) -> Option<Range<Pixels>> {
+        self.grapheme_x_range(&self.grapheme_start_glyphs(text), index)
+    }
+
+    /// The glyph cluster holding the character at the given index of `text`, as its byte range
+    /// and the horizontal span it covers.
+    ///
+    /// A ligature, such as lam-alef in some Arabic fonts, draws several graphemes with one
+    /// glyph, so only the first of them starts a glyph and has an `x_range_for_index`.
+    pub fn cluster_for_index(
+        &self,
+        text: &str,
+        index: usize,
+    ) -> Option<(Range<usize>, Range<Pixels>)> {
+        if index >= self.len {
+            return None;
+        }
+        let glyphs = self.grapheme_start_glyphs(text);
+        let start = glyphs
+            .iter()
+            .map(|glyph| glyph.index)
+            .filter(|&glyph_index| glyph_index <= index)
+            .max()?;
+        let end = glyphs
+            .iter()
+            .map(|glyph| glyph.index)
+            .filter(|&glyph_index| glyph_index > start)
+            .min()
+            .unwrap_or(self.len);
+        Some((start..end, self.grapheme_x_range(&glyphs, start)?))
+    }
+
+    /// The glyphs that begin a grapheme of `text`. Combining marks get glyphs of their own,
+    /// positioned over the grapheme they belong to, so their origins are not grapheme edges.
+    fn grapheme_start_glyphs(&self, text: &str) -> Vec<&ShapedGlyph> {
+        let grapheme_starts: Vec<usize> = text
+            .grapheme_indices(true)
+            .map(|(grapheme_start, _)| grapheme_start)
+            .collect();
+        self.runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .filter(|glyph| {
+                glyph.index >= text.len() || grapheme_starts.binary_search(&glyph.index).is_ok()
+            })
+            .collect()
+    }
+
+    fn grapheme_x_range(&self, glyphs: &[&ShapedGlyph], index: usize) -> Option<Range<Pixels>> {
+        let start = glyphs
+            .iter()
             .filter(|glyph| glyph.index == index)
             .map(|glyph| glyph.position.x)
             .reduce(Pixels::min)?;
-        let end = glyphs()
+        let end = glyphs
+            .iter()
             .filter(|glyph| glyph.index != index && glyph.position.x > start)
             .map(|glyph| glyph.position.x)
             .reduce(Pixels::min)
             .unwrap_or(self.width);
         Some(start..end)
-    }
-
-    /// The glyph cluster holding the character at the given index, as its byte range and the
-    /// horizontal span it covers.
-    ///
-    /// A ligature, such as lam-alef in some Arabic fonts, draws several characters with one
-    /// glyph, so only the first of them starts a glyph and has an `x_range_for_index`.
-    pub fn cluster_for_index(&self, index: usize) -> Option<(Range<usize>, Range<Pixels>)> {
-        if index >= self.len {
-            return None;
-        }
-        let glyph_indices = || {
-            self.runs
-                .iter()
-                .flat_map(|run| &run.glyphs)
-                .map(|glyph| glyph.index)
-        };
-        let start = glyph_indices()
-            .filter(|&glyph_index| glyph_index <= index)
-            .max()?;
-        let end = glyph_indices()
-            .filter(|&glyph_index| glyph_index > start)
-            .min()
-            .unwrap_or(self.len);
-        Some((start..end, self.x_range_for_index(start)?))
     }
 
     /// The corresponding Font at the given index
@@ -983,66 +1008,174 @@ mod tests {
         );
     }
 
+    fn layout_for(text: &str, glyphs: &[(usize, f32)], width: f32) -> LineLayout {
+        let mut layout = make_layout(
+            glyphs
+                .iter()
+                .map(|&(index, x)| glyph_at(x, index))
+                .collect(),
+        );
+        layout.width = px(width);
+        layout.len = text.len();
+        layout
+    }
+
     #[test]
     fn test_x_range_for_index() {
-        let mut right_to_left =
-            make_layout(vec![glyph_at(20., 0), glyph_at(10., 2), glyph_at(0., 4)]);
-        right_to_left.width = px(30.);
-        right_to_left.len = "אבג".len();
+        let right_to_left = "\u{5d0}\u{5d1}\u{5d2}";
+        let mixed = "a \u{5d0}\u{5d1} b";
+        let with_mark = "e\u{301}x";
+        let mark_over_next_letter = "aq\u{301}x";
 
-        let mut mixed = make_layout(vec![
-            glyph_at(0., 0),
-            glyph_at(10., 1),
-            glyph_at(20., 4),
-            glyph_at(30., 2),
-            glyph_at(40., 6),
-            glyph_at(50., 7),
-        ]);
-        mixed.width = px(60.);
-        mixed.len = "a אב b".len();
-
-        let mut with_mark = make_layout(vec![glyph_at(0., 0), glyph_at(2., 0), glyph_at(10., 3)]);
-        with_mark.width = px(20.);
-        with_mark.len = "e\u{301}x".len();
-
-        for (layout, index, expected) in [
-            (&right_to_left, 0, Some(20.0..30.0)),
-            (&right_to_left, 2, Some(10.0..20.0)),
-            (&right_to_left, 4, Some(0.0..10.0)),
-            (&right_to_left, 6, None),
-            (&mixed, 0, Some(0.0..10.0)),
-            (&mixed, 2, Some(30.0..40.0)),
-            (&mixed, 4, Some(20.0..30.0)),
-            (&mixed, 7, Some(50.0..60.0)),
-            (&mixed, 3, None),
-            (&with_mark, 0, Some(0.0..10.0)),
+        for (text, glyphs, width, index, expected) in [
+            (
+                right_to_left,
+                &[(0, 20.), (2, 10.), (4, 0.)][..],
+                30.,
+                0,
+                Some(20.0..30.0),
+            ),
+            (
+                right_to_left,
+                &[(0, 20.), (2, 10.), (4, 0.)],
+                30.,
+                2,
+                Some(10.0..20.0),
+            ),
+            (
+                right_to_left,
+                &[(0, 20.), (2, 10.), (4, 0.)],
+                30.,
+                4,
+                Some(0.0..10.0),
+            ),
+            (right_to_left, &[(0, 20.), (2, 10.), (4, 0.)], 30., 6, None),
+            (
+                mixed,
+                &[(0, 0.), (1, 10.), (4, 20.), (2, 30.), (6, 40.), (7, 50.)],
+                60.,
+                0,
+                Some(0.0..10.0),
+            ),
+            (
+                mixed,
+                &[(0, 0.), (1, 10.), (4, 20.), (2, 30.), (6, 40.), (7, 50.)],
+                60.,
+                2,
+                Some(30.0..40.0),
+            ),
+            (
+                mixed,
+                &[(0, 0.), (1, 10.), (4, 20.), (2, 30.), (6, 40.), (7, 50.)],
+                60.,
+                4,
+                Some(20.0..30.0),
+            ),
+            (
+                mixed,
+                &[(0, 0.), (1, 10.), (4, 20.), (2, 30.), (6, 40.), (7, 50.)],
+                60.,
+                7,
+                Some(50.0..60.0),
+            ),
+            (
+                mixed,
+                &[(0, 0.), (1, 10.), (4, 20.), (2, 30.), (6, 40.), (7, 50.)],
+                60.,
+                3,
+                None,
+            ),
+            (
+                with_mark,
+                &[(0, 0.), (0, 2.), (3, 10.)],
+                20.,
+                0,
+                Some(0.0..10.0),
+            ),
+            (
+                mark_over_next_letter,
+                &[(0, 0.), (1, 8.428711), (2, 7.758789), (4, 16.857422)],
+                25.,
+                0,
+                Some(0.0..8.428711),
+            ),
+            (
+                mark_over_next_letter,
+                &[(0, 0.), (1, 8.428711), (2, 7.758789), (4, 16.857422)],
+                25.,
+                2,
+                None,
+            ),
         ] {
             assert_eq!(
-                layout.x_range_for_index(index),
+                layout_for(text, glyphs, width).x_range_for_index(text, index),
                 expected.map(|range| px(range.start)..px(range.end)),
-                "index {index}",
+                "{text:?} at {index}",
             );
         }
     }
 
     #[test]
     fn test_cluster_for_index() {
-        let mut lam_alef_ligature =
-            make_layout(vec![glyph_at(20., 0), glyph_at(10., 2), glyph_at(0., 6)]);
-        lam_alef_ligature.width = px(30.);
-        lam_alef_ligature.len = "\u{633}\u{644}\u{627}\u{645}".len();
+        let lam_alef_ligature = "\u{633}\u{644}\u{627}\u{645}";
+        let lam_alef_with_fatha = "\u{644}\u{64e}\u{627}";
+        let seen_with_fatha = "\u{633}\u{64e}";
 
-        for (index, expected) in [
-            (0, Some((0..2, 20.0..30.0))),
-            (2, Some((2..6, 10.0..20.0))),
-            (4, Some((2..6, 10.0..20.0))),
-            (6, Some((6..8, 0.0..10.0))),
-            (8, None),
+        for (text, glyphs, width, index, expected) in [
+            (
+                lam_alef_ligature,
+                &[(0, 20.), (2, 10.), (6, 0.)][..],
+                30.,
+                0,
+                Some((0..2, 20.0..30.0)),
+            ),
+            (
+                lam_alef_ligature,
+                &[(0, 20.), (2, 10.), (6, 0.)],
+                30.,
+                2,
+                Some((2..6, 10.0..20.0)),
+            ),
+            (
+                lam_alef_ligature,
+                &[(0, 20.), (2, 10.), (6, 0.)],
+                30.,
+                4,
+                Some((2..6, 10.0..20.0)),
+            ),
+            (
+                lam_alef_ligature,
+                &[(0, 20.), (2, 10.), (6, 0.)],
+                30.,
+                6,
+                Some((6..8, 0.0..10.0)),
+            ),
+            (
+                lam_alef_ligature,
+                &[(0, 20.), (2, 10.), (6, 0.)],
+                30.,
+                8,
+                None,
+            ),
+            (
+                lam_alef_with_fatha,
+                &[(0, 0.), (2, 3.607595)],
+                7.35443,
+                4,
+                Some((0..6, 0.0..7.35443)),
+            ),
+            (
+                seen_with_fatha,
+                &[(0, 0.), (2, 5.189873)],
+                12.778481,
+                0,
+                Some((0..4, 0.0..12.778481)),
+            ),
         ] {
             assert_eq!(
-                lam_alef_ligature.cluster_for_index(index),
+                layout_for(text, glyphs, width).cluster_for_index(text, index),
                 expected.map(|(cluster, range)| (cluster, px(range.start)..px(range.end))),
-                "index {index}",
+                "{text:?} at {index}",
             );
         }
     }

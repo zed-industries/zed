@@ -8313,9 +8313,9 @@ impl LineWithInvisibles {
             self.text_fragment_for_index(index)?;
         let index = index - fragment_start_index;
         let range = if shaped_line.is_right_to_left_at(index) {
-            shaped_line.cluster_for_index(index)?.1
+            shaped_line.cluster_for_index(&shaped_line.text, index)?.1
         } else {
-            shaped_line.x_range_for_index(index)?
+            shaped_line.x_range_for_index(&shaped_line.text, index)?
         };
         Some(fragment_start_x + range.start..fragment_start_x + range.end)
     }

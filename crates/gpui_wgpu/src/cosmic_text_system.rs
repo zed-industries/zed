@@ -1590,7 +1590,7 @@ mod tests {
             let hebrew_ranges: Vec<_> = text
                 .char_indices()
                 .filter(|(_, character)| ('\u{05d0}'..='\u{05ea}').contains(character))
-                .map(|(index, _)| layout.x_range_for_index(index))
+                .map(|(index, _)| layout.x_range_for_index(text, index))
                 .collect::<Option<_>>()
                 .with_context(|| format!("missing glyph in {text:?}"))?;
 

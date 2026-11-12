@@ -114,7 +114,7 @@ impl ShapedLine {
     /// Inside a right-to-left ligature, the ligature is split evenly between its graphemes.
     pub fn caret_x_for_index(&self, index: usize) -> Pixels {
         if self.is_right_to_left_at(index)
-            && let Some((cluster, range)) = self.cluster_for_index(index)
+            && let Some((cluster, range)) = self.cluster_for_index(&self.text, index)
             && let Some(cluster_text) = self.text.get(cluster.clone())
             && let Some(text_before_index) = self.text.get(cluster.start..index)
         {
@@ -123,14 +123,14 @@ impl ShapedLine {
             return range.end - (range.end - range.start) * (graphemes_before_index / graphemes);
         }
 
-        if let Some(range) = self.x_range_for_index(index) {
+        if let Some(range) = self.x_range_for_index(&self.text, index) {
             return range.start;
         }
 
         if index == self.len()
             && let Some((last_index, _)) = self.text.grapheme_indices(true).next_back()
             && self.is_right_to_left_at(last_index)
-            && let Some(range) = self.x_range_for_index(last_index)
+            && let Some((_, range)) = self.cluster_for_index(&self.text, last_index)
         {
             return range.start;
         }
@@ -163,7 +163,7 @@ impl ShapedLine {
         if self.len() != self.text.len() {
             return None;
         }
-        let (cluster, advance) = self.cluster_for_index(index)?;
+        let (cluster, advance) = self.cluster_for_index(&self.text, index)?;
         let scale_factor = window.scale_factor();
         let span = self
             .layout
@@ -172,7 +172,7 @@ impl ShapedLine {
             .flat_map(|run| {
                 run.glyphs
                     .iter()
-                    .filter(|glyph| glyph.index == cluster.start)
+                    .filter(|glyph| cluster.contains(&glyph.index))
                     .map(|glyph| (run.font_id, glyph))
             })
             .filter_map(|(font_id, glyph)| {
@@ -1183,6 +1183,15 @@ mod tests {
             30.,
             &[],
         );
+        let mark_over_next_letter = make_shaped_line(
+            "aq\u{301}x",
+            &[(0, 0.), (1, 8.428711), (2, 7.758789), (4, 16.857422)],
+            25.,
+            &[],
+        );
+        let seen_with_fatha =
+            make_shaped_line("\u{633}\u{64e}", &[(0, 0.), (2, 5.189873)], 12.778481, &[]);
+        let lam_alef_at_line_end = make_shaped_line("\u{644}\u{627}", &[(0, 0.)], 7.35443, &[]);
 
         for (line, index, expected_x) in [
             (&left_to_right, 0, 0.),
@@ -1203,6 +1212,11 @@ mod tests {
             (&lam_alef_ligature, 4, 15.),
             (&lam_alef_ligature, 6, 10.),
             (&lam_alef_ligature, 8, 0.),
+            (&mark_over_next_letter, 1, 8.428711),
+            (&seen_with_fatha, 0, 12.778481),
+            (&seen_with_fatha, 4, 0.),
+            (&lam_alef_at_line_end, 0, 7.35443),
+            (&lam_alef_at_line_end, 4, 0.),
         ] {
             assert_eq!(
                 line.caret_x_for_index(index),
@@ -1259,6 +1273,17 @@ mod tests {
                 .cell_for_index(4, color, window)
                 .expect("alef belongs to the lam-alef glyph");
             assert_eq!(span, px(10.)..px(20.));
+
+            let lam_alef_with_fatha = make_shaped_line(
+                "\u{644}\u{64e}\u{627}",
+                &[(0, 0.), (2, 3.607595)],
+                7.35443,
+                &[],
+            );
+            let (span, _) = lam_alef_with_fatha
+                .cell_for_index(4, color, window)
+                .expect("alef belongs to the lam-alef glyph, not the fatha");
+            assert_eq!(span, px(0.)..px(7.35443));
 
             assert!(line.cell_for_index(line.len(), color, window).is_none());
             assert!(line.with_len(4).cell_for_index(2, color, window).is_none());
