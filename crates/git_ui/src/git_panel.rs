@@ -16882,6 +16882,11 @@ mod tests {
             mark_file(panel, "x.txt");
             panel.compare_with_branch("main".into(), window, cx);
         });
+        let focus_outside_panel = cx.update(|window, cx| {
+            let focus_handle = cx.focus_handle();
+            window.focus(&focus_handle, cx);
+            focus_handle
+        });
 
         repository_b.update(&mut cx, |repository, cx| {
             repository.set_as_active_repository(cx)
@@ -16903,5 +16908,9 @@ mod tests {
                 "a branch comparison must not carry over to another repository",
             );
         });
+        assert!(
+            cx.update(|window, _| focus_outside_panel.is_focused(window)),
+            "dropping the comparison must not move focus into the panel",
+        );
     }
 }

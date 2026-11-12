@@ -101,7 +101,13 @@ impl GitPanel {
             return;
         }
         if self.active_tab == GitPanelTab::BranchChanges {
-            self.set_active_tab(GitPanelTab::Changes, window, cx);
+            // A repository switch also closes the comparison, and must not pull focus
+            // into the panel from wherever the user is working.
+            if self.focus_handle.contains_focused(window, cx) {
+                self.set_active_tab(GitPanelTab::Changes, window, cx);
+            } else {
+                self.active_tab = GitPanelTab::Changes;
+            }
         }
         cx.notify();
     }
