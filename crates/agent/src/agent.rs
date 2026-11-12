@@ -9217,6 +9217,91 @@ mod internal_tests {
     }
 
     #[gpui::test]
+    async fn test_loaded_thread_can_continue_after_saved_model_is_removed(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (agent, connection, project, session_id, original_provider) =
+            persist_thread_with_fake_corp_model(cx).await;
+        original_provider.forbid_requests();
+
+        // The same provider now offers Luna but no longer offers the saved model.
+        unregister_fake_corp(cx);
+        let provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("fake-corp".to_string()),
+            LanguageModelProviderName::from("Fake Corp".to_string()),
+        ));
+        let luna = provider.update_model("gpt-6-luna", |model| {
+            model.name = LanguageModelName::from("GPT-6 Luna".to_string());
+        });
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let reloaded_acp_thread = agent
+            .update(cx, |agent, cx| {
+                agent.open_thread(session_id.clone(), project.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.model().is_none());
+        });
+
+        let selector = connection.model_selector(&session_id).unwrap();
+        let models = cx.update(|cx| selector.list_models(cx)).await.unwrap();
+        let acp_thread::AgentModelList::Grouped(models) = models else {
+            panic!("Unexpected model group");
+        };
+        let luna_id = AgentModelId::new("fake-corp/gpt-6-luna");
+        assert!(models.values().flatten().any(|model| model.id == luna_id));
+        let removed_model_id = AgentModelId::new("fake-corp/custom-model-id");
+        assert!(
+            !models
+                .values()
+                .flatten()
+                .any(|model| model.id == removed_model_id)
+        );
+
+        cx.update(|cx| selector.select_model(luna_id, cx))
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.model().unwrap().id(), luna.id());
+        });
+
+        let send =
+            reloaded_acp_thread.update(cx, |thread, cx| thread.send(vec!["Continue.".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+
+        let requests = provider.pending_completions_for(&luna);
+        let [request] = requests.as_slice() else {
+            panic!("Expected one continuation request to Luna");
+        };
+        let history = request_texts_after_system(&request.messages);
+        let mut history = history.iter();
+        assert!(history.any(|message| message.contains("Hello")));
+        assert!(history.any(|message| message == "Response."));
+        assert!(history.any(|message| message.contains("Continue.")));
+
+        provider.send_last_text(&luna, "Continued with Luna.");
+        provider.end_last(&luna);
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert_eq!(saved.model.unwrap().model, "gpt-6-luna");
+        assert!(
+            serde_json::to_string(&saved.messages)
+                .unwrap()
+                .contains("Continued with Luna.")
+        );
+    }
+
+    #[gpui::test]
     async fn test_save_load_thread(cx: &mut TestAppContext) {
         let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
