@@ -2757,20 +2757,13 @@ fn test_fold_at_current_level_ignores_empty_lines(cx: &mut TestAppContext) {
     editor
         .update(cx, |editor, window, cx| {
             for row in [0, 4, 8] {
-                for column in [0] {
-                    editor.unfold_all(&actions::UnfoldAll, window, cx);
-                    editor.change_selections(
-                        SelectionEffects::default(),
-                        window,
-                        cx,
-                        |selections| {
-                            let cursor = Point::new(row, column);
-                            selections.select_ranges([cursor..cursor]);
-                        },
-                    );
-                    editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
-                    assert_eq!(editor.display_text(cx), text, "cursor at ({row}, {column})",);
-                }
+                editor.unfold_all(&actions::UnfoldAll, window, cx);
+                editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                    let cursor = Point::new(row, 0);
+                    selections.select_ranges([cursor..cursor]);
+                });
+                editor.fold_at_current_level(&actions::FoldAtCurrentLevel, window, cx);
+                assert_eq!(editor.display_text(cx), text, "cursor at ({row}, 0)",);
             }
         })
         .unwrap();
