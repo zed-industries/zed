@@ -953,8 +953,10 @@ impl X11Client {
                         || "Failed to query pointer position",
                         state.xcb_connection.query_pointer(event.window),
                     ) {
-                        state.xdnd_state.position =
-                            Point::new(px(pos.win_x as f32), px(pos.win_y as f32));
+                        state.xdnd_state.position = Point::new(
+                            px(pos.win_x as f32 / state.scale_factor),
+                            px(pos.win_y as f32 / state.scale_factor),
+                        );
                     }
                     if !state.xdnd_state.retrieved {
                         check_reply(
