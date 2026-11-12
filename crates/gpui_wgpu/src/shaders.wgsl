@@ -968,15 +968,16 @@ fn fmod(a: f32, b: f32) -> f32 {
 struct Shadow {
     order: u32,
     blur_radius: f32,
-    // The shadow rect for drop shadows; the "hole" rect for inset shadows.
+    // The area the shadow paints: the blurred extent of a drop shadow, or the element
+    // that an inset shadow is clipped to.
     bounds: Bounds,
     corner_radii: Corners,
     content_mask: Bounds,
     color: Hsla,
-    // Only consulted when `inset == 1u`: the element's own bounds, used as a rounded-rect
-    // clip so the shadow never escapes the element.
-    element_bounds: Bounds,
-    element_corner_radii: Corners,
+    // The shape that is blurred: the silhouette of a drop shadow, or the hole of an
+    // inset shadow.
+    shape_bounds: Bounds,
+    shape_corner_radii: Corners,
     // 0 = drop shadow, 1 = inset shadow.
     inset: u32,
     pad: u32, // align to 8 bytes
@@ -993,19 +994,8 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     var shadow = load_shadow(instance_id);
 
-    var geometry: Bounds;
-    if (shadow.inset != 0u) {
-        geometry = shadow.element_bounds;
-    } else {
-        // Leave room for the gaussian tail outside the shadow rect.
-        let margin = 3.0 * shadow.blur_radius;
-        geometry = shadow.bounds;
-        geometry.origin -= vec2<f32>(margin);
-        geometry.size += 2.0 * vec2<f32>(margin);
-    }
-
     var out = ShadowVarying();
-    let clipped = clip_to_mask(unit_vertex, geometry, shadow.content_mask);
+    let clipped = clip_to_mask(unit_vertex, shadow.bounds, shadow.content_mask);
     out.position = to_device_position_impl(clipped.position);
     out.color = hsla_to_rgba(shadow.color);
     out.shadow_id = instance_id;
@@ -1015,15 +1005,15 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
 @fragment
 fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     let shadow = load_shadow(input.shadow_id);
-    let half_size = shadow.bounds.size / 2.0;
-    let center = shadow.bounds.origin + half_size;
+    let half_size = shadow.shape_bounds.size / 2.0;
+    let center = shadow.shape_bounds.origin + half_size;
     let center_to_point = input.position.xy - center;
 
-    let corner_radius = pick_corner_radius(center_to_point, shadow.corner_radii);
+    let corner_radius = pick_corner_radius(center_to_point, shadow.shape_corner_radii);
 
     var alpha: f32;
     if (shadow.blur_radius == 0.0) {
-        let distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
+        let distance = quad_sdf(input.position.xy, shadow.shape_bounds, shadow.shape_corner_radii);
         alpha = saturate(0.5 - distance);
     } else {
         // The signal is only non-zero in a limited range, so don't waste samples
@@ -1048,8 +1038,7 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
         // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
         // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
         alpha = 1.0 - alpha;
-        let element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
-                                        shadow.element_corner_radii);
+        let element_distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
         alpha *= saturate(0.5 - element_distance);
     }
 
