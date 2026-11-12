@@ -16808,7 +16808,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_marks_cleared_on_repo_switch(cx: &mut TestAppContext) {
+    async fn test_marks_and_branch_comparison_cleared_on_repo_switch(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -16874,12 +16874,13 @@ mod tests {
         let panel = workspace.update_in(&mut cx, GitPanel::new);
         await_git_panel_entries(&panel, &mut cx).await;
 
-        panel.update_in(&mut cx, |panel, _window, _cx| {
+        panel.update_in(&mut cx, |panel, window, cx| {
             assert!(
                 entry_index_for_repo_path(panel, &repo_path("x.txt")).is_some(),
                 "repo A should list x.txt",
             );
             mark_file(panel, "x.txt");
+            panel.compare_with_branch("main".into(), window, cx);
         });
 
         repository_b.update(&mut cx, |repository, cx| {
@@ -16896,6 +16897,10 @@ mod tests {
             assert!(
                 panel.marked_entries.is_empty(),
                 "marks must not carry over to another repository",
+            );
+            assert!(
+                panel.branch_changes.is_none() && panel.active_tab == GitPanelTab::Changes,
+                "a branch comparison must not carry over to another repository",
             );
         });
     }
