@@ -7375,6 +7375,53 @@ pub mod test {
     }
 
     #[gpui::test]
+    async fn test_global_skill_delete_uses_the_rows_machine(cx: &mut gpui::TestAppContext) {
+        use crate::pages::DeletedSkill;
+        use fs::Fs as _;
+
+        let (settings_window, cx, _project_fs, host_fs, worktree_id) =
+            init_project_skill_test(cx).await;
+        // This machine has a global skill at the same path as the remote's.
+        let mut skill = project_skill(worktree_id, "my-skill");
+        skill.source = agent_skills::SkillSource::Global;
+        // Stands in for the remote project the row was rendered for. It has no
+        // remote server, so deleting through it fails rather than reaching
+        // this machine.
+        let remote_project = settings_window
+            .read_with(cx, |settings_window, cx| settings_window.active_project(cx))
+            .expect("settings should have the original window's project");
+
+        let trash_task = settings_window.update(cx, |settings_window, cx| {
+            crate::pages::trash_skill(&skill, Some(remote_project.clone()), settings_window, cx)
+        });
+        settings_window.read_with(cx, |settings_window, _| {
+            assert!(
+                settings_window
+                    .hidden_deleted_skills
+                    .contains(&DeletedSkill::new(&skill, Some(remote_project.entity_id())))
+            );
+        });
+        trash_task.await;
+        assert!(
+            host_fs.is_dir(&skill.directory_path).await,
+            "a remote row's delete must not touch this machine's skill"
+        );
+        settings_window.read_with(cx, |settings_window, _| {
+            assert!(
+                settings_window.hidden_deleted_skills.is_empty(),
+                "a failed delete shows the skill again"
+            );
+        });
+
+        settings_window
+            .update(cx, |settings_window, cx| {
+                crate::pages::trash_skill(&skill, None, settings_window, cx)
+            })
+            .await;
+        assert!(!host_fs.is_dir(&skill.directory_path).await);
+    }
+
+    #[gpui::test]
     async fn test_deleted_remote_global_skill_stays_hidden_only_on_its_machine(
         cx: &mut gpui::TestAppContext,
     ) {
