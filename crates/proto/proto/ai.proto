@@ -51,10 +51,10 @@ message GlobalSkill {
   string skill_file_path = 3;
   string directory_path = 4;
   bool disable_model_invocation = 5;
-  repeated SkillLoadWarning load_warnings = 6;
+  repeated GlobalSkillLoadWarning load_warnings = 6;
 }
 
-message SkillLoadWarning {
+message GlobalSkillLoadWarning {
   message DescriptionTooLong {
     uint64 actual_len = 1;
     uint64 max_len = 2;

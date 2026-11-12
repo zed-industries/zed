@@ -231,15 +231,10 @@ impl GlobalSkillFiles {
         match self {
             Self::Local(fs) => Ok(fs.metadata(path).await?.map(|metadata| metadata.is_dir)),
             Self::Remote(project) => {
-                let client = cx.update(|cx| remote_server_client(project, cx))?;
-                let response = client
-                    .request(proto::GetPathMetadata {
-                        project_id: proto::REMOTE_SERVER_PROJECT_ID,
-                        path: path.to_string_lossy().into_owned(),
-                        canonicalize: false,
-                    })
-                    .await?;
-                Ok(response.exists.then_some(response.is_dir))
+                project
+                    .read_with(cx, |project, cx| project.host_path_is_dir(path, cx))
+                    .context("project has no remote server")?
+                    .await
             }
         }
     }

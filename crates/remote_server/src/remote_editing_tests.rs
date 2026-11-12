@@ -5216,7 +5216,7 @@ impl RemoteSkillsTest {
         use acp_thread::AgentConnection as _;
 
         let project_root = Path::new(path!("/project"));
-        let skills_dir = paths::home_dir().join(".agents").join("skills");
+        let skills_dir = agent_skills::global_skills_dir();
         let server_fs = FakeFs::new(server_cx.executor());
         server_fs.insert_tree(project_root, json!({})).await;
         for name in remote_skills {

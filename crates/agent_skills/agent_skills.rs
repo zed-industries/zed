@@ -73,8 +73,8 @@ impl SkillLoadWarning {
         }
     }
 
-    pub fn to_proto(&self) -> proto::SkillLoadWarning {
-        use proto::skill_load_warning::{DescriptionTooLong, Variant};
+    pub fn to_proto(&self) -> proto::GlobalSkillLoadWarning {
+        use proto::global_skill_load_warning::{DescriptionTooLong, Variant};
 
         let variant = match self {
             Self::DescriptionTooLong {
@@ -85,14 +85,14 @@ impl SkillLoadWarning {
                 max_len: *max_len as u64,
             }),
         };
-        proto::SkillLoadWarning {
+        proto::GlobalSkillLoadWarning {
             variant: Some(variant),
         }
     }
 
     /// Returns `None` for a warning this version doesn't know about.
-    pub fn from_proto(warning: proto::SkillLoadWarning) -> Option<Self> {
-        use proto::skill_load_warning::Variant;
+    pub fn from_proto(warning: proto::GlobalSkillLoadWarning) -> Option<Self> {
+        use proto::global_skill_load_warning::Variant;
 
         match warning.variant? {
             Variant::DescriptionTooLong(warning) => Some(Self::DescriptionTooLong {
@@ -127,6 +127,10 @@ pub struct Skill {
 
 impl Skill {
     pub fn to_proto(&self) -> proto::GlobalSkill {
+        debug_assert!(
+            self.source == SkillSource::Global,
+            "only global skills are sent over the wire"
+        );
         proto::GlobalSkill {
             name: self.name.clone(),
             description: self.description.clone(),
@@ -2431,5 +2435,140 @@ description: A skill with no body content
         assert!(decode_skill_share_link("zed://skill").is_err());
         assert!(decode_skill_share_link("zed://skill?other=1").is_err());
         assert!(decode_skill_share_link("zed://skill?data=!!!notbase64").is_err());
+    }
+
+    #[test]
+    fn format_skill_file_round_trips_through_parser() {
+        let content =
+            format_skill_file("draft-pr", "Push a draft PR", "Do the thing.", false).unwrap();
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/draft-pr/SKILL.md"),
+            &content,
+            SkillSource::Global,
+        )
+        .expect("generated frontmatter must round-trip through parse_skill_frontmatter");
+        assert_eq!(skill.name, "draft-pr");
+        assert_eq!(skill.description, "Push a draft PR");
+        assert!(!skill.disable_model_invocation);
+    }
+
+    #[test]
+    fn format_skill_file_writes_disable_model_invocation_true() {
+        let content = format_skill_file("my-skill", "description", "body", true).unwrap();
+        assert!(content.contains("disable-model-invocation: true"));
+    }
+
+    #[test]
+    fn format_skill_file_omits_body_when_empty() {
+        let content = format_skill_file("my-skill", "description", "   ", false).unwrap();
+        // The trailing closing-delimiter newline is the last byte.
+        assert!(content.ends_with("---\n"));
+    }
+
+    #[test]
+    fn format_skill_file_escapes_yaml_specials_in_description() {
+        // serde_yaml_ng must quote/escape descriptions that contain YAML
+        // specials so the file round-trips. If we ever swap formatters,
+        // this test will catch a regression.
+        let tricky = "contains: a colon, # a hash, and a \"quote\"";
+        let content = format_skill_file("weird-skill", tricky, "body", false).unwrap();
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/weird-skill/SKILL.md"),
+            &content,
+            SkillSource::Global,
+        )
+        .expect("YAML-special characters must round-trip");
+        assert_eq!(skill.description, tricky);
+    }
+
+    #[gpui::test]
+    async fn write_skill_to_disk_creates_directory_and_file(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/skills", serde_json::json!({})).await;
+
+        let path = write_skill_to_disk(
+            fs.as_ref(),
+            Path::new("/skills"),
+            "draft-pr",
+            "Push a draft PR",
+            "Body of the skill.",
+            false,
+        )
+        .await
+        .expect("write should succeed");
+
+        assert_eq!(path, Path::new("/skills/draft-pr/SKILL.md"));
+        let content = fs.load(&path).await.expect("file should exist");
+        let skill = parse_skill_frontmatter(&path, &content, SkillSource::Global)
+            .expect("written file should be parseable");
+        assert_eq!(skill.name, "draft-pr");
+        assert_eq!(skill.description, "Push a draft PR");
+    }
+
+    #[gpui::test]
+    async fn write_skill_to_disk_refuses_to_overwrite(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "draft-pr": {
+                    "SKILL.md": "---\nname: draft-pr\ndescription: existing\n---\nbody\n"
+                }
+            }),
+        )
+        .await;
+
+        let err = write_skill_to_disk(
+            fs.as_ref(),
+            Path::new("/skills"),
+            "draft-pr",
+            "Push a draft PR",
+            "Body of the skill.",
+            false,
+        )
+        .await
+        .expect_err("writing over an existing skill must fail");
+        assert!(
+            err.to_string().contains("already exists"),
+            "error message should mention the conflict, got: {err}"
+        );
+    }
+
+    #[gpui::test]
+    async fn write_skill_to_disk_rejects_non_directory_at_skill_path(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        // A *file* (not a directory) sitting at `/skills/draft-pr`. With the
+        // old `is_dir` check this slipped through and we ended up surfacing
+        // the underlying "File exists" OS error.
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({ "draft-pr": "i am a stray file" }),
+        )
+        .await;
+
+        let err = write_skill_to_disk(
+            fs.as_ref(),
+            Path::new("/skills"),
+            "draft-pr",
+            "Push a draft PR",
+            "Body of the skill.",
+            false,
+        )
+        .await
+        .expect_err("writing where a file already lives must fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("not a skill directory"),
+            "error should explain the conflict is a non-directory, got: {message}"
+        );
+        // Path separator differs between platforms
+        let expected_path = Path::new("/skills").join("draft-pr");
+        let expected_path = expected_path.display().to_string();
+        assert!(
+            message.contains(&expected_path),
+            "error should include the conflicting path {expected_path:?}, got: {message}"
+        );
     }
 }
