@@ -153,6 +153,7 @@ fn open_performance_profiler(
     let default_bounds = size(px(1280.), px(720.));
 
     cx.defer(move |cx| {
+        let display_id = cx.active_display().map(|display| display.id());
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
@@ -167,7 +168,8 @@ fn open_performance_profiler(
                 window_background,
                 window_decorations: None,
                 window_min_size: Some(default_bounds),
-                window_bounds: Some(WindowBounds::centered(default_bounds, cx)),
+                window_bounds: Some(WindowBounds::centered(display_id, default_bounds, cx)),
+                display_id,
                 ..Default::default()
             },
             |_window, cx| ProfilerWindow::new(startup_time, Some(workspace_handle), cx),

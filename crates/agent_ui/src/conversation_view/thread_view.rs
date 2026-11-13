@@ -6645,7 +6645,7 @@ impl ThreadView {
                             .toggleable(IconPosition::End, is_selected);
 
                         menu.push_item(entry.handler({
-                            let effort = effort_level.value.clone();
+                            let effort = effort_level.value;
                             let weak_self = weak_self.clone();
                             move |_window, cx| {
                                 let effort = effort.clone();
@@ -7710,6 +7710,7 @@ impl ThreadView {
                                         !markdown.read(cx).source().is_empty()
                                     })
                             }
+                            ToolCallContent::SessionReference(_) => true,
                             ToolCallContent::Other { markdown, .. } => {
                                 !markdown.read(cx).source().is_empty()
                             }
@@ -11922,6 +11923,9 @@ impl ThreadView {
                     })
                     .into_any_element()
             }
+            ToolCallContent::SessionReference(reference) => {
+                self.render_tool_call_session_reference(entry_ix, context_ix, reference, cx)
+            }
             ToolCallContent::Other { markdown, .. } => self.render_markdown_output(
                 markdown.clone(),
                 entry_ix,
@@ -11932,6 +11936,58 @@ impl ThreadView {
                 cx,
             ),
         }
+    }
+
+    fn render_tool_call_session_reference(
+        &self,
+        entry_ix: usize,
+        context_ix: usize,
+        reference: &acp_v2::SessionReference,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let element_id = format!("tool-call-session-reference-{entry_ix}-{context_ix}");
+        let participant = match self.session_participant_label(&reference.session_id, cx) {
+            Some(label) => div()
+                .debug_selector({
+                    let element_id = element_id.clone();
+                    move || element_id
+                })
+                .child(
+                    Button::new(SharedString::from(element_id), label)
+                        .label_size(LabelSize::Small)
+                        .tooltip(Tooltip::text("Open Session"))
+                        .on_click(cx.listener({
+                            let session_id = reference.session_id.clone();
+                            move |this, _, window, cx| {
+                                let Some(server_view) = this.server_view.upgrade() else {
+                                    return;
+                                };
+                                server_view.update(cx, |view, cx| {
+                                    view.navigate_to_thread(session_id.clone(), window, cx)
+                                });
+                            }
+                        })),
+                )
+                .into_any_element(),
+            // The reference is display-only, so a session this conversation has no thread for
+            // is shown rather than loaded.
+            None => Label::new("Unavailable Session")
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element(),
+        };
+
+        h_flex()
+            .px_2()
+            .py_1()
+            .gap_1p5()
+            .child(
+                Icon::new(IconName::ForwardArrow)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(participant)
+            .into_any_element()
     }
 
     fn render_output_content_block(

@@ -3581,7 +3581,7 @@ async fn test_refusal(cx: &mut TestAppContext) {
     // If the model refuses to continue, the thread should remove all the messages after the last user message.
     fake.send_last_event(
         &model,
-        LanguageModelCompletionEvent::Stop(StopReason::Refusal),
+        LanguageModelCompletionEvent::Stop(StopReason::Refusal(None)),
     );
     let events = events.collect::<Vec<_>>().await;
     assert_eq!(stop_events(events), vec![acp_v2::StopReason::Refusal]);
@@ -7346,7 +7346,7 @@ async fn test_subagent_auto_compaction(cx: &mut TestAppContext) {
         }
         test.fake.send_last_event(
             &test.model,
-            LanguageModelCompletionEvent::Stop(StopReason::Refusal),
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(None)),
         );
         test.fake.end_last(&test.model);
         assert_eq!(

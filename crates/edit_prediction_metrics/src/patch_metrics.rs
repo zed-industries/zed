@@ -561,11 +561,7 @@ pub fn is_editable_region_correct(actual_patch: &str) -> bool {
         }
     }
 
-    if deletions_at_start >= 3 {
-        return false;
-    }
-
-    true
+    deletions_at_start < 3
 }
 
 #[derive(Debug, Default, Clone, Serialize)]

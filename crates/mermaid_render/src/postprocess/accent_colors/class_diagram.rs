@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
 use quick_xml::XmlVersion;
 use quick_xml::events::Event;
@@ -13,6 +15,8 @@ pub(crate) struct ClassDiagramAccents {
     node_counter: usize,
     nodes: NodeTracker,
     current_text_accent: Option<usize>,
+    label_accents: HashMap<String, Option<usize>>,
+    label_definition_depth: Option<usize>,
 }
 
 impl ClassDiagramAccents {
@@ -23,6 +27,8 @@ impl ClassDiagramAccents {
             node_counter: 0,
             nodes: NodeTracker::default(),
             current_text_accent: None,
+            label_accents: HashMap::new(),
+            label_definition_depth: None,
         }
     }
 
@@ -35,6 +41,21 @@ impl ClassDiagramAccents {
             Event::Start(e) if e.name().as_ref() == b"g" => {
                 if is_foreign_object_fallback_group(e)? {
                     self.accent_g_stack.push(AccentStackEntry::none());
+                    return Ok(event);
+                }
+
+                let label_accent = match e.try_get_attribute("id")? {
+                    Some(id) => self
+                        .label_accents
+                        .remove(id.normalized_value(XmlVersion::Implicit1_0)?.as_ref()),
+                    None => None,
+                };
+                if let Some(label_accent) = label_accent {
+                    self.accent_g_stack.push(match label_accent {
+                        Some(accent_idx) => AccentStackEntry::accent(accent_idx, false),
+                        None => AccentStackEntry::none(),
+                    });
+                    self.label_definition_depth = Some(self.accent_g_stack.len());
                     return Ok(event);
                 }
 
@@ -69,9 +90,25 @@ impl ClassDiagramAccents {
             }
 
             Event::End(e) if e.name().as_ref() == b"g" => {
+                if self.label_definition_depth == Some(self.accent_g_stack.len()) {
+                    self.label_definition_depth = None;
+                }
                 if let Some(entry) = self.accent_g_stack.pop() {
                     if entry.tracks_node() {
                         self.nodes.maybe_finish_node();
+                    }
+                }
+                Ok(event)
+            }
+
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"use" => {
+                if let Some(href) = e.try_get_attribute("href")? {
+                    let href = href.normalized_value(XmlVersion::Implicit1_0)?;
+                    if let Some(id) = href.strip_prefix('#') {
+                        self.label_accents.insert(
+                            id.to_string(),
+                            super::current_stack_accent(&self.accent_g_stack),
+                        );
                     }
                 }
                 Ok(event)
@@ -96,12 +133,14 @@ impl ClassDiagramAccents {
                 let is_start = matches!(event, Event::Start(_));
                 let is_text = e.name().as_ref() == b"text";
 
-                let accent_idx = if is_text {
+                let accent_idx = if !is_text {
+                    self.current_text_accent
+                } else if self.label_definition_depth.is_some() {
+                    super::current_stack_accent(&self.accent_g_stack)
+                } else {
                     self.nodes
                         .lookup_accent(e)
                         .or_else(|| super::current_stack_accent(&self.accent_g_stack))
-                } else {
-                    self.current_text_accent
                 };
 
                 if let Some(idx) = accent_idx {

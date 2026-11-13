@@ -468,6 +468,7 @@ pub trait LanguageModelClient: 'static {
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::ReasoningDetails(_)) => None,
+                                Ok(LanguageModelCompletionEvent::InputTransformations(_)) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
@@ -747,7 +748,7 @@ impl LanguageModelCostInfo {
     }
 
     fn cost_value_to_string(cost: &f64) -> SharedString {
-        if (cost.fract() - 0.0).abs() < std::f64::EPSILON {
+        if (cost.fract() - 0.0).abs() < f64::EPSILON {
             SharedString::from(format!("{:.0}", cost))
         } else {
             SharedString::from(format!("{:.2}", cost))

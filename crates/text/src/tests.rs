@@ -295,7 +295,7 @@ fn test_random_edits(mut rng: StdRng) {
             subscription_edits,
         );
 
-        let mut text = old_buffer.visible_text.clone();
+        let mut text = old_buffer.visible_text;
         for edit in subscription_edits.into_inner() {
             let new_text: String = buffer.text_for_range(edit.new.clone()).collect();
             text.replace(edit.new.start..edit.new.start + edit.old.len(), &new_text);

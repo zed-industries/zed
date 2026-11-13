@@ -5083,7 +5083,7 @@ impl EditorElement {
     }
 
     fn paint_background(&self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
-        window.paint_layer(layout.hitbox.bounds, |window| {
+        window.paint_layer(|window| {
             let scroll_top = layout.position_map.scroll_position.y;
             let gutter_bg = cx.theme().colors().editor_gutter_background;
             window.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
@@ -5406,7 +5406,7 @@ impl EditorElement {
         }
 
         let line_height = layout.position_map.line_height;
-        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
+        window.paint_layer(|window| {
             for (hunk, hitbox) in &layout.display_hunks {
                 let hunk_to_paint = match hunk {
                     DisplayDiffHunk::Folded { .. } => {
@@ -5619,35 +5619,33 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
-            window.with_element_namespace("crease_toggles", |window| {
-                for crease_toggle in layout.crease_toggles.iter_mut().flatten() {
-                    crease_toggle.paint(window, cx);
-                }
-            });
-
-            window.with_element_namespace("expand_toggles", |window| {
-                for (expand_toggle, _) in layout.expand_toggles.iter_mut().flatten() {
-                    expand_toggle.paint(window, cx);
-                }
-            });
-
-            for bookmark in layout.bookmarks.iter_mut() {
-                bookmark.paint(window, cx);
-            }
-
-            for breakpoint in layout.breakpoints.iter_mut() {
-                breakpoint.paint(window, cx);
-            }
-
-            for test_indicator in layout.test_indicators.iter_mut() {
-                test_indicator.paint(window, cx);
-            }
-
-            if let Some(diff_review_button) = layout.diff_review_button.as_mut() {
-                diff_review_button.paint(window, cx);
+        window.with_element_namespace("crease_toggles", |window| {
+            for crease_toggle in layout.crease_toggles.iter_mut().flatten() {
+                crease_toggle.paint(window, cx);
             }
         });
+
+        window.with_element_namespace("expand_toggles", |window| {
+            for (expand_toggle, _) in layout.expand_toggles.iter_mut().flatten() {
+                expand_toggle.paint(window, cx);
+            }
+        });
+
+        for bookmark in layout.bookmarks.iter_mut() {
+            bookmark.paint(window, cx);
+        }
+
+        for breakpoint in layout.breakpoints.iter_mut() {
+            breakpoint.paint(window, cx);
+        }
+
+        for test_indicator in layout.test_indicators.iter_mut() {
+            test_indicator.paint(window, cx);
+        }
+
+        if let Some(diff_review_button) = layout.diff_review_button.as_mut() {
+            diff_review_button.paint(window, cx);
+        }
     }
 
     fn paint_gutter_highlights(
@@ -5685,7 +5683,7 @@ impl EditorElement {
 
         let highlight_width = 0.275 * layout.position_map.line_height;
         let highlight_corner_radii = Corners::all(0.05 * layout.position_map.line_height);
-        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
+        window.paint_layer(|window| {
             for (range, color) in &layout.highlighted_gutter_ranges {
                 let start_row = if range.start.row() < layout.visible_display_row_range.start {
                     layout.visible_display_row_range.start - DisplayRow(1)
@@ -5729,11 +5727,9 @@ impl EditorElement {
             return;
         };
 
-        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
-            for mut blame_element in blamed_display_rows.into_iter() {
-                blame_element.paint(window, cx);
-            }
-        })
+        for mut blame_element in blamed_display_rows.into_iter() {
+            blame_element.paint(window, cx);
+        }
     }
 
     fn populate_point_diagnostics(
@@ -5975,7 +5971,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> SmallVec<[Range<DisplayPoint>; 32]> {
-        window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
+        window.paint_layer(|window| {
             let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
             let line_end_overshoot = 0.15 * layout.position_map.line_height;
             for (range, color) in &layout.highlighted_ranges {
@@ -6072,7 +6068,7 @@ impl EditorElement {
         // A softer than perfect black
         let redaction_color = gpui::rgb(0x0e1111);
 
-        window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
+        window.paint_layer(|window| {
             for range in layout.redacted_ranges.iter() {
                 self.paint_highlighted_range(
                     range.clone(),
@@ -6173,7 +6169,7 @@ impl EditorElement {
                     },
                 };
 
-                window.paint_layer(hitbox.bounds, |window| {
+                window.paint_layer(|window| {
                     window.paint_quad(quad(
                         hitbox.bounds,
                         Corners::default(),
@@ -6676,9 +6672,7 @@ impl EditorElement {
 
     fn paint_inline_blame(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         if let Some(mut blame_layout) = layout.inline_blame_layout.take() {
-            window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
-                blame_layout.element.paint(window, cx);
-            })
+            blame_layout.element.paint(window, cx);
         }
     }
 
@@ -6689,9 +6683,7 @@ impl EditorElement {
         cx: &mut App,
     ) {
         if let Some(mut inline_code_actions) = layout.inline_code_actions.take() {
-            window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
-                inline_code_actions.paint(window, cx);
-            })
+            inline_code_actions.paint(window, cx);
         }
     }
 
@@ -6711,54 +6703,48 @@ impl EditorElement {
             let minimap_hitbox = layout.thumb_layout.hitbox.clone();
             let dragging_minimap = self.editor.read(cx).scroll_manager.is_dragging_minimap();
 
-            window.paint_layer(layout.thumb_layout.hitbox.bounds, |window| {
-                window.with_element_namespace("minimap", |window| {
-                    layout.minimap.paint(window, cx);
-                    if let Some(thumb_bounds) = layout.thumb_layout.thumb_bounds {
-                        let minimap_thumb_color = match layout.thumb_layout.thumb_state {
-                            ScrollbarThumbState::Idle => {
-                                cx.theme().colors().minimap_thumb_background
-                            }
-                            ScrollbarThumbState::Hovered => {
-                                cx.theme().colors().minimap_thumb_hover_background
-                            }
-                            ScrollbarThumbState::Dragging => {
-                                cx.theme().colors().minimap_thumb_active_background
-                            }
-                        };
-                        let minimap_thumb_border = match layout.thumb_border_style {
-                            MinimapThumbBorder::Full => Edges::all(ScrollbarLayout::BORDER_WIDTH),
-                            MinimapThumbBorder::LeftOnly => Edges {
-                                left: ScrollbarLayout::BORDER_WIDTH,
-                                ..Default::default()
-                            },
-                            MinimapThumbBorder::LeftOpen => Edges {
-                                right: ScrollbarLayout::BORDER_WIDTH,
-                                top: ScrollbarLayout::BORDER_WIDTH,
-                                bottom: ScrollbarLayout::BORDER_WIDTH,
-                                ..Default::default()
-                            },
-                            MinimapThumbBorder::RightOpen => Edges {
-                                left: ScrollbarLayout::BORDER_WIDTH,
-                                top: ScrollbarLayout::BORDER_WIDTH,
-                                bottom: ScrollbarLayout::BORDER_WIDTH,
-                                ..Default::default()
-                            },
-                            MinimapThumbBorder::None => Default::default(),
-                        };
+            window.with_element_namespace("minimap", |window| {
+                layout.minimap.paint(window, cx);
+                if let Some(thumb_bounds) = layout.thumb_layout.thumb_bounds {
+                    let minimap_thumb_color = match layout.thumb_layout.thumb_state {
+                        ScrollbarThumbState::Idle => cx.theme().colors().minimap_thumb_background,
+                        ScrollbarThumbState::Hovered => {
+                            cx.theme().colors().minimap_thumb_hover_background
+                        }
+                        ScrollbarThumbState::Dragging => {
+                            cx.theme().colors().minimap_thumb_active_background
+                        }
+                    };
+                    let minimap_thumb_border = match layout.thumb_border_style {
+                        MinimapThumbBorder::Full => Edges::all(ScrollbarLayout::BORDER_WIDTH),
+                        MinimapThumbBorder::LeftOnly => Edges {
+                            left: ScrollbarLayout::BORDER_WIDTH,
+                            ..Default::default()
+                        },
+                        MinimapThumbBorder::LeftOpen => Edges {
+                            right: ScrollbarLayout::BORDER_WIDTH,
+                            top: ScrollbarLayout::BORDER_WIDTH,
+                            bottom: ScrollbarLayout::BORDER_WIDTH,
+                            ..Default::default()
+                        },
+                        MinimapThumbBorder::RightOpen => Edges {
+                            left: ScrollbarLayout::BORDER_WIDTH,
+                            top: ScrollbarLayout::BORDER_WIDTH,
+                            bottom: ScrollbarLayout::BORDER_WIDTH,
+                            ..Default::default()
+                        },
+                        MinimapThumbBorder::None => Default::default(),
+                    };
 
-                        window.paint_layer(minimap_hitbox.bounds, |window| {
-                            window.paint_quad(quad(
-                                thumb_bounds,
-                                Corners::default(),
-                                minimap_thumb_color,
-                                minimap_thumb_border,
-                                cx.theme().colors().minimap_thumb_border,
-                                BorderStyle::Solid,
-                            ));
-                        });
-                    }
-                });
+                    window.paint_quad(quad(
+                        thumb_bounds,
+                        Corners::default(),
+                        minimap_thumb_color,
+                        minimap_thumb_border,
+                        cx.theme().colors().minimap_thumb_border,
+                        BorderStyle::Solid,
+                    ));
+                }
             });
 
             if dragging_minimap {

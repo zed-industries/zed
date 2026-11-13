@@ -3199,6 +3199,7 @@ pub enum ToolCallContent {
         source: acp_v2::Diff,
         render: DiffPatch,
     },
+    SessionReference(acp_v2::SessionReference),
     Other {
         source: acp_v2::ToolCallContent,
         markdown: Entity<Markdown>,
@@ -3213,6 +3214,7 @@ enum PreparedToolCallContent {
         meta: Option<acp_v2::Meta>,
     },
     DiffPatch(acp_v2::Diff),
+    SessionReference(acp_v2::SessionReference),
     Other(acp_v2::ToolCallContent),
 }
 
@@ -3235,6 +3237,13 @@ impl PreparedToolCallContent {
                     terminal: terminals.resolve(&acp_v2::TerminalId::new(terminal_id.0), cx)?,
                     meta,
                 },
+                acp_v1::ToolCallContent::Session(acp_v1::SessionReference {
+                    session_id,
+                    meta,
+                    ..
+                }) => {
+                    Self::SessionReference(acp_v2::SessionReference::new(session_id.0).meta(meta))
+                }
                 _ => continue,
             };
             prepared.push(content);
@@ -3265,6 +3274,7 @@ impl PreparedToolCallContent {
                 terminal: terminals.resolve(&terminal.terminal_id, cx)?,
                 meta: terminal.meta,
             }),
+            acp_v2::ToolCallContent::Session(reference) => Ok(Self::SessionReference(reference)),
             other => Ok(Self::Other(other)),
         }
     }
@@ -3314,6 +3324,9 @@ impl ToolCallContent {
                 render: DiffPatch::new(&source, language_registry, cx),
                 source,
             },
+            PreparedToolCallContent::SessionReference(reference) => {
+                Self::SessionReference(reference)
+            }
             PreparedToolCallContent::Other(source) => Self::Other {
                 source,
                 markdown: ContentBlock::create_markdown(
@@ -3371,6 +3384,10 @@ impl ToolCallContent {
                 }
                 *source = new_source;
             }
+            (
+                Self::SessionReference(reference),
+                PreparedToolCallContent::SessionReference(new_reference),
+            ) => *reference = new_reference,
             (Self::Other { source, .. }, PreparedToolCallContent::Other(new_source)) => {
                 *source = new_source;
             }
@@ -3388,6 +3405,7 @@ impl ToolCallContent {
                 source.changes.iter().map(diff_change_label).join("\n"),
                 Self::patch_preview(source)
             ),
+            Self::SessionReference(reference) => format!("Session {}", reference.session_id),
             Self::Other { markdown, .. } => markdown.read(cx).source().to_string(),
         }
     }
@@ -3397,7 +3415,10 @@ impl ToolCallContent {
             Self::ContentBlock { block, .. } => block.markdown(),
             Self::DiffPatch { render, .. } => render.fallback.as_ref(),
             Self::Other { markdown, .. } => Some(markdown),
-            Self::Diff(_) | Self::LegacyDiff { .. } | Self::Terminal { .. } => None,
+            Self::Diff(_)
+            | Self::LegacyDiff { .. }
+            | Self::Terminal { .. }
+            | Self::SessionReference(_) => None,
         }
     }
 
@@ -7313,10 +7334,15 @@ impl AcpThread {
         if self.plans.remove(&identity).is_none() {
             return;
         }
-        // A user dismissal (no visible plan) stays in effect; only an agent removing the
-        // plan on screen moves the panel to the next most recently changed plan. Empty plans
-        // are skipped because the panel hides them, which would mask a non-empty one.
-        if self.visible_plan.as_ref() == Some(&identity) {
+        self.fall_back_from_visible_plan(&identity, cx);
+        cx.notify();
+    }
+
+    /// A user dismissal (no visible plan) stays in effect; only an agent removing or emptying
+    /// the plan on screen moves the panel to the next most recently changed plan. Empty plans
+    /// are skipped because the panel hides them, which would mask a non-empty one.
+    fn fall_back_from_visible_plan(&mut self, identity: &PlanIdentity, cx: &App) {
+        if self.visible_plan.as_ref() == Some(identity) {
             self.visible_plan = self
                 .plans
                 .iter()
@@ -7324,7 +7350,6 @@ impl AcpThread {
                 .max_by_key(|(_, plan)| plan.last_changed)
                 .map(|(identity, _)| identity.clone());
         }
-        cx.notify();
     }
 
     fn replace_plan(
@@ -7341,7 +7366,11 @@ impl AcpThread {
         if is_new || changed || identity == PlanIdentity::Legacy {
             self.plan_change_count += 1;
             plan.last_changed = self.plan_change_count;
-            self.visible_plan = Some(identity);
+            if plan.is_empty(cx) {
+                self.fall_back_from_visible_plan(&identity, cx);
+            } else {
+                self.visible_plan = Some(identity);
+            }
         }
         cx.notify();
     }
@@ -7355,6 +7384,9 @@ impl AcpThread {
         {
             entries
                 .retain(|entry| !matches!(entry.source.status, acp_v2::PlanEntryStatus::Completed));
+            if entries.is_empty() {
+                self.fall_back_from_visible_plan(&PlanIdentity::Legacy, cx);
+            }
         }
         cx.notify();
     }
@@ -9107,7 +9139,6 @@ mod tests {
                 reordered,
                 appended,
                 vec![original[0].clone()],
-                vec![],
             ] {
                 thread.upsert_plan_items(
                     acp_v2::PlanItems::new("plan", original.clone()),
@@ -9129,6 +9160,20 @@ mod tests {
                     assert_eq!(first.content, markdown);
                 }
             }
+
+            thread.clear_plan(cx);
+            thread.upsert_plan_items(acp_v2::PlanItems::new("plan", vec![]), None, cx);
+            assert!(
+                thread.plan().is_none(),
+                "emptying a plan does not reopen it"
+            );
+            assert!(
+                thread
+                    .plan_by_id(&"plan".into())
+                    .expect("plan")
+                    .entries()
+                    .is_empty()
+            );
         });
     }
 
@@ -9162,19 +9207,14 @@ mod tests {
             );
             assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("b".into())));
             thread.upsert_plan_items(acp_v2::PlanItems::new("empty", vec![]), None, cx);
-            assert!(
-                thread
-                    .plan()
-                    .expect("selected empty plan")
-                    .entries()
-                    .is_empty()
-            );
-            thread.upsert_plan_items(acp_v2::PlanItems::new("a", entries.clone()), None, cx);
             assert_eq!(
                 thread.visible_plan,
-                Some(PlanIdentity::Keyed("empty".into()))
+                Some(PlanIdentity::Keyed("b".into())),
+                "a new empty plan does not hide the visible one"
             );
-            let mut changed = entries;
+            thread.upsert_plan_items(acp_v2::PlanItems::new("a", entries.clone()), None, cx);
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("b".into())));
+            let mut changed = entries.clone();
             changed[0].content = "Changed".into();
             thread.upsert_plan_items(acp_v2::PlanItems::new("a", changed), None, cx);
             assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("a".into())));
@@ -9183,11 +9223,38 @@ mod tests {
                 first_markdown
             );
             thread.upsert_plan_items(acp_v2::PlanItems::new("b", vec![]), None, cx);
-            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("b".into())));
+            assert_eq!(
+                thread.visible_plan,
+                Some(PlanIdentity::Keyed("a".into())),
+                "emptying a hidden plan does not select it"
+            );
+            thread.upsert_plan_items(acp_v2::PlanItems::new("c", entries.clone()), None, cx);
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("c".into())));
+            thread.upsert_plan_items(acp_v2::PlanItems::new("c", vec![]), None, cx);
+            assert_eq!(
+                thread.visible_plan,
+                Some(PlanIdentity::Keyed("a".into())),
+                "emptying the visible plan falls back to the most recently changed non-empty plan"
+            );
             assert!(
                 thread
-                    .plan()
-                    .expect("clearing older B selects empty B")
+                    .plan_by_id(&"c".into())
+                    .expect("empty C retained")
+                    .entries()
+                    .is_empty(),
+                "the empty update still replaces C's content"
+            );
+            thread.upsert_plan_items(acp_v2::PlanItems::new("c", entries), None, cx);
+            assert_eq!(thread.visible_plan, Some(PlanIdentity::Keyed("c".into())));
+            assert_eq!(thread.plan().expect("C refilled").entries().len(), 1);
+            thread.clear_plan(cx);
+            thread.upsert_plan_items(acp_v2::PlanItems::new("b", vec![]), None, cx);
+            thread.upsert_plan_items(acp_v2::PlanItems::new("d", vec![]), None, cx);
+            assert!(thread.plan().is_none(), "empty plans do not undo dismissal");
+            assert!(
+                thread
+                    .plan_by_id(&"b".into())
+                    .expect("empty B retained")
                     .entries()
                     .is_empty()
             );
@@ -10608,6 +10675,49 @@ mod tests {
             };
             assert_eq!(source, &unknown);
             assert!(!markdown.read(cx).source().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn test_tool_content_session_references_are_kept_from_v1_and_v2(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let meta = acp_v2::Meta::from_iter([("revision".into(), 1.into())]);
+            let mut prepared = PreparedToolCallContent::prepare(
+                vec![acp_v1::ToolCallContent::Session(
+                    acp_v1::SessionReference::new("from-v1").meta(meta.clone()),
+                )],
+                ToolTerminalResolver::registered(&HashMap::default()),
+                cx,
+            )
+            .expect("prepare v1 content");
+            prepared.extend(
+                PreparedToolCallContent::prepare_v2(
+                    vec![acp_v2::ToolCallContent::Session(
+                        acp_v2::SessionReference::new("from-v2"),
+                    )],
+                    ToolTerminalResolver::registered(&HashMap::default()),
+                    cx,
+                )
+                .expect("prepare v2 content"),
+            );
+            let content: Vec<_> = prepared
+                .into_iter()
+                .map(|content| ToolCallContent::from_prepared(content, &languages, cx))
+                .collect();
+            let [
+                ToolCallContent::SessionReference(from_v1),
+                ToolCallContent::SessionReference(from_v2),
+            ] = content.as_slice()
+            else {
+                panic!("expected two session references, got {content:?}");
+            };
+            assert_eq!(
+                from_v1,
+                &acp_v2::SessionReference::new("from-v1").meta(meta)
+            );
+            assert_eq!(from_v2, &acp_v2::SessionReference::new("from-v2"));
         });
     }
 
@@ -14165,7 +14275,7 @@ mod tests {
                 ),
                 (
                     json!({"messageId": "patch", "content": replacement}),
-                    replacement.clone(),
+                    replacement,
                     json!({}),
                 ),
                 (
@@ -14180,7 +14290,7 @@ mod tests {
                 ),
                 (
                     json!({"messageId": "patch", "content": original, "_meta": {"restored": true}}),
-                    original.clone(),
+                    original,
                     json!({"restored": true}),
                 ),
                 (

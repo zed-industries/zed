@@ -103,7 +103,7 @@ mod integration {
         for &(path_str, rows) in entries {
             let path = project_path(path_str);
             map.insert(
-                path.clone(),
+                path,
                 rows.iter().map(|&row| serialized_bookmark(row)).collect(),
             );
         }

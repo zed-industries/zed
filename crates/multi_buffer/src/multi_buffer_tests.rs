@@ -6876,7 +6876,7 @@ fn check_multibuffer_edits(
             .text_for_range(edit.new.start..edit.new.end)
             .collect();
         text.replace_range(
-            (edit.new.start.0..edit.new.start.0 + (edit.old.end.0 - edit.old.start.0)).clone(),
+            edit.new.start.0..edit.new.start.0 + (edit.old.end.0 - edit.old.start.0),
             &new_text,
         );
         pretty_assertions::assert_eq!(

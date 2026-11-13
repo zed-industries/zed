@@ -17,8 +17,6 @@ default = ["gpui/default"]
 test-support = ["gpui/test-support"]
 screen-capture = ["gpui/screen-capture", "scap"]
 
-[dependencies]
-gpui.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 accesskit.workspace = true
@@ -28,6 +26,7 @@ collections.workspace = true
 dunce.workspace = true
 etagere.workspace = true
 futures.workspace = true
+gpui.workspace = true
 gpui_util.workspace = true
 image.workspace = true
 itertools.workspace = true

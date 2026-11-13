@@ -32,9 +32,10 @@ use objc2::{
 use objc2_app_kit::{
     NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSAppearanceNameVibrantDark,
     NSAppearanceNameVibrantLight, NSApplication, NSApplicationActivationPolicy,
-    NSControlStateValueOn, NSCursor, NSDocumentController, NSEventModifierFlags, NSMenu,
-    NSMenuItem, NSModalResponse, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSScroller,
-    NSScrollerStyle, NSWorkspace, NSWorkspaceDidWakeNotification, NSWorkspaceWillSleepNotification,
+    NSApplicationOcclusionState, NSControlStateValueOn, NSCursor, NSDocumentController,
+    NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSModalResponseOK, NSOpenPanel,
+    NSSavePanel, NSScroller, NSScrollerStyle, NSWorkspace, NSWorkspaceDidWakeNotification,
+    NSWorkspaceWillSleepNotification,
 };
 use objc2_foundation::{
     NSActivityOptions, NSArray, NSBundle, NSError, NSInteger, NSProcessInfo, NSString, NSURL,
@@ -55,6 +56,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+use strum::IntoEnumIterator as _;
 
 const MAC_PLATFORM_IVAR: &CStr = c"platform";
 static mut APP_CLASS: *const AnyClass = ptr::null();
@@ -1079,6 +1081,34 @@ impl Platform for MacPlatform {
     fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().on_system_wake = Some(callback);
         self.ensure_system_power_observers();
+    }
+
+    fn debug_state(&self) -> serde_json::Value {
+        let app = NSApplication::sharedApplication(self.1);
+        let key_window: *mut AnyObject = unsafe { msg_send![&*app, keyWindow] };
+        let main_window: *mut AnyObject = unsafe { msg_send![&*app, mainWindow] };
+        let window_number = |window: *mut AnyObject| -> Option<isize> {
+            (!window.is_null()).then(|| unsafe { msg_send![window, windowNumber] })
+        };
+        // AppKit's cursor for this app, mapped back to the style GPUI would
+        // have set it from. `None` when it is not one GPUI sets.
+        let current_cursor = Retained::as_ptr(&NSCursor::currentCursor()).cast::<AnyObject>();
+        let current_cursor_style = CursorStyle::iter().find(|style| {
+            // SAFETY: The platform is only used on the main thread.
+            let cursor = unsafe { crate::window::native_cursor(*style) };
+            ptr::eq(cursor, current_cursor)
+        });
+        serde_json::json!({
+            "current_cursor_style": current_cursor_style,
+            "app_is_active": app.isActive(),
+            "app_is_hidden": app.isHidden(),
+            "app_occlusion_state_visible": app
+                .occlusionState()
+                .contains(NSApplicationOcclusionState::Visible),
+            "key_window_number": window_number(key_window),
+            "main_window_number": window_number(main_window),
+            "low_power_mode": NSProcessInfo::processInfo().isLowPowerModeEnabled(),
+        })
     }
 
     fn thermal_state(&self) -> ThermalState {
