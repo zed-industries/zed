@@ -18,8 +18,8 @@ use block2::RcBlock;
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui::{
-    ForegroundExecutor, SharedString, SystemNotification, SystemNotificationAction,
-    SystemNotificationResponse, Task,
+    BackgroundExecutor, ForegroundExecutor, SharedString, SystemNotification,
+    SystemNotificationAction, SystemNotificationResponse, Task,
 };
 use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::{Bool, ProtocolObject};
@@ -38,13 +38,16 @@ type ResponseCallback = Rc<RefCell<Option<Box<dyn FnMut(SystemNotificationRespon
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub(crate) enum NotificationCommand {
     Show(SystemNotification),
-    Dismiss(String),
+    Dismiss(SharedString),
 }
 
 pub(crate) struct SystemNotificationState {
     initialized: bool,
     commands: Option<Sender<(NotificationCommand, oneshot::Sender<()>)>>,
     callback: ResponseCallback,
+    /// The center's `delegate` property is weak; keeping the delegate retained
+    /// here keeps response handling alive for the app's lifetime.
+    _delegate: Option<Retained<NotificationResponseDelegate>>,
     _response_task: Option<Task<()>>,
 }
 
@@ -54,16 +57,18 @@ impl SystemNotificationState {
             initialized: false,
             commands: None,
             callback: Rc::new(RefCell::new(None)),
+            _delegate: None,
             _response_task: None,
         }
     }
 
     pub(crate) fn send(
         &mut self,
-        executor: &ForegroundExecutor,
+        foreground_executor: &ForegroundExecutor,
+        background_executor: &BackgroundExecutor,
         command: NotificationCommand,
     ) -> Task<()> {
-        self.initialize(executor);
+        self.initialize(foreground_executor);
         let Some(commands) = &self.commands else {
             return Task::ready(());
         };
@@ -72,7 +77,7 @@ impl SystemNotificationState {
             log::error!("system notification worker disconnected: {error}");
             return Task::ready(());
         }
-        executor.spawn(async move {
+        background_executor.spawn(async move {
             if let Err(error) = completion.await {
                 log::error!(
                     "system notification worker stopped before completing a command: {error}"
@@ -104,11 +109,23 @@ impl SystemNotificationState {
         }
 
         let (sender, mut receiver) = mpsc::unbounded();
+        // Install the delegate before returning so a response delivered right
+        // after registration (e.g. the click that launched the app) has
+        // somewhere to go. Setting the delegate doesn't wait on the
+        // notification service, unlike the calls handled by the worker.
+        let delegate = autoreleasepool(|_| {
+            let delegate = NotificationResponseDelegate::new(sender);
+            UNUserNotificationCenter::currentNotificationCenter()
+                .setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+            delegate
+        });
+        self._delegate = Some(delegate);
+
         let (commands, pending_commands) = channel::<(NotificationCommand, oneshot::Sender<()>)>();
         let worker = std::thread::Builder::new()
             .name("system-notifications".into())
             .spawn(move || {
-                let mut center = autoreleasepool(|_| NotificationCenter::new(sender));
+                let mut center = autoreleasepool(|_| NotificationCenter::new());
                 for (command, completed) in pending_commands {
                     autoreleasepool(|_| match command {
                         NotificationCommand::Show(notification) => center.show(notification),
@@ -144,9 +161,6 @@ impl SystemNotificationState {
 
 struct NotificationCenter {
     center: Retained<UNUserNotificationCenter>,
-    /// The center's `delegate` property is weak; keeping the delegate retained
-    /// here keeps response handling alive for the app's lifetime.
-    _delegate: Retained<NotificationResponseDelegate>,
     /// The union of every action set registered so far. Categories are shared
     /// by notifications with identical actions because macOS replaces the
     /// entire registered set whenever a category is added.
@@ -156,14 +170,9 @@ struct NotificationCenter {
 }
 
 impl NotificationCenter {
-    fn new(sender: mpsc::UnboundedSender<SystemNotificationResponse>) -> Self {
-        let center = UNUserNotificationCenter::currentNotificationCenter();
-        let delegate = NotificationResponseDelegate::new(sender);
-        center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-
+    fn new() -> Self {
         Self {
-            center,
-            _delegate: delegate,
+            center: UNUserNotificationCenter::currentNotificationCenter(),
             categories: HashMap::new(),
             authorization_requested: false,
         }
@@ -344,4 +353,63 @@ impl NotificationResponseDelegate {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use futures::FutureExt as _;
+
+    #[gpui::test]
+    async fn test_notification_commands_do_not_wait_for_the_service(cx: &mut gpui::TestAppContext) {
+        let (sender, receiver) = channel();
+        let mut state = SystemNotificationState {
+            initialized: true,
+            commands: Some(sender),
+            ..SystemNotificationState::new()
+        };
+        let notification = SystemNotification {
+            tag: "thread".into(),
+            title: "Finished".into(),
+            body: "Ready for input".into(),
+            actions: vec![],
+        };
+
+        // No service consumes commands until after every UI call has returned.
+        let mut tasks = [
+            state.send(
+                &cx.foreground_executor,
+                &cx.background_executor,
+                NotificationCommand::Show(notification.clone()),
+            ),
+            state.send(
+                &cx.foreground_executor,
+                &cx.background_executor,
+                NotificationCommand::Dismiss("thread".into()),
+            ),
+            state.send(
+                &cx.foreground_executor,
+                &cx.background_executor,
+                NotificationCommand::Show(notification.clone()),
+            ),
+        ];
+        for task in &mut tasks {
+            assert!(task.now_or_never().is_none());
+        }
+
+        let (commands, completions): (Vec<_>, Vec<_>) = receiver.try_iter().unzip();
+        assert_eq!(
+            commands,
+            vec![
+                NotificationCommand::Show(notification.clone()),
+                NotificationCommand::Dismiss("thread".into()),
+                NotificationCommand::Show(notification),
+            ]
+        );
+        for completed in completions {
+            completed
+                .send(())
+                .expect("caller is waiting for completion");
+        }
+        for task in tasks {
+            task.await;
+        }
+    }
+}

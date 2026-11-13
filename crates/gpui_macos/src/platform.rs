@@ -1129,19 +1129,27 @@ impl Platform for MacPlatform {
 
     fn show_system_notification(&self, notification: gpui::SystemNotification) {
         let mut state = self.0.lock();
-        let executor = state.foreground_executor.clone();
+        let foreground_executor = state.foreground_executor.clone();
+        let background_executor = state.background_executor.clone();
         state
             .system_notifications
-            .send(&executor, NotificationCommand::Show(notification))
+            .send(
+                &foreground_executor,
+                &background_executor,
+                NotificationCommand::Show(notification),
+            )
             .detach();
     }
 
     fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         let mut state = self.0.lock();
-        let executor = state.foreground_executor.clone();
-        state
-            .system_notifications
-            .send(&executor, NotificationCommand::Dismiss(tag.to_owned()))
+        let foreground_executor = state.foreground_executor.clone();
+        let background_executor = state.background_executor.clone();
+        state.system_notifications.send(
+            &foreground_executor,
+            &background_executor,
+            NotificationCommand::Dismiss(gpui::SharedString::from(tag.to_owned())),
+        )
     }
 
     fn on_system_notification_response(
