@@ -43,8 +43,8 @@ use std::os::fd::{BorrowedFd, OwnedFd};
 ///   compares `fstat` of this descriptor against `lstat` of the mounted path
 ///   after the mounts, catching a swap between the host check and the mount (the
 ///   post-mount half; see `linux_bubblewrap::validate_binds` and `README.md`).
-/// - **Windows**: the persisted canonical path is resolved inside WSL at
-///   approval time. The WSL helper reopens and verifies it before binding it.
+/// - **Windows**: the path is canonicalized when the sandbox policy is built,
+///   and the Process Security Environment grants access to that path.
 ///
 /// The type is deliberately **opaque**: it does not `Deref`. Its paths are
 /// readable only through [`HostFilesystemLocation::display`] (for showing the
@@ -206,13 +206,13 @@ impl HostFilesystemLocation {
         self.canonical.dup_fd()
     }
 
-    /// Windows: the requested path, retained for distro selection and display.
+    /// Windows: the requested path, retained for display.
     #[cfg(target_os = "windows")]
     pub(crate) fn windows_requested_path(&self) -> &Path {
         &self.untrusted_raw_path
     }
 
-    /// Windows: the canonical path resolved inside WSL at approval time.
+    /// Windows: the canonical path recorded at approval time.
     #[cfg(target_os = "windows")]
     pub(crate) fn windows_canonical_path(&self) -> &Path {
         self.canonical.path()

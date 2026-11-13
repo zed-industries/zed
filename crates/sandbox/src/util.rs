@@ -32,8 +32,9 @@ pub fn resolve_canonical(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
     Ok(CanonicalPathBuf::resolve(path)?.into_path())
 }
 
-/// Non-Linux/macOS platforms capture no canonical identity of their own (the
-/// real resolution happens WSL-side), so the requested path is returned as-is.
+/// Non-Linux/macOS platforms capture no canonical identity of their own (Windows
+/// resolves grants when it builds the sandbox policy), so the requested path is
+/// returned as-is.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn resolve_canonical(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
     Ok(path.as_ref().to_path_buf())

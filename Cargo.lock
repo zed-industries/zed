@@ -296,7 +296,6 @@ dependencies = [
  "quick-xml 0.41.0",
  "rand 0.9.4",
  "regex",
- "release_channel",
  "reqwest_client",
  "sandbox",
  "schemars 1.0.4",
@@ -15825,11 +15824,9 @@ dependencies = [
  "seccompiler",
  "serde",
  "serde_json",
- "smol",
  "tempfile",
  "windows 0.62.2",
  "windows-core 0.62.2",
- "windows-registry 0.6.1",
 ]
 
 [[package]]

@@ -1556,8 +1556,8 @@ impl Thread {
     }
 
     // Only used by Seatbelt-style sandboxes (macOS); Linux relies on bwrap's
-    // tmpfs `/tmp` and Windows on the WSL bwrap tmpfs, so neither needs a
-    // per-thread temp directory.
+    // tmpfs `/tmp` and Windows on the sandbox's own `%TEMP%`, so neither needs
+    // a per-thread temp directory.
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     pub(crate) fn sandboxed_terminal_temp_dir(
         &mut self,
@@ -5920,9 +5920,9 @@ impl ThreadEventStream {
 }
 
 /// The user's choice when the OS sandbox could not be created for a command
-/// (see [`ToolCallEventStream::authorize_sandbox_fallback`]). Only the
-/// Bubblewrap sandboxes (Linux directly, Windows via WSL) can fail to create a
-/// sandbox, so this is gated to those platforms.
+/// (see [`ToolCallEventStream::authorize_sandbox_fallback`]). Only the Linux
+/// and Windows sandboxes can fail to create a sandbox, so this is gated to
+/// those platforms.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SandboxFallbackDecision {
@@ -6262,10 +6262,6 @@ impl ToolCallEventStream {
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
-            // The Windows-drive warning is a separate pre-prompt
-            // (`authorize_windows_fs_warning`), never part of the escalation
-            // prompt, so this stays off here.
-            warn_windows_fs: false,
             reason,
         };
         let allow_thread_label = if self.is_subagent(cx) {
@@ -6369,80 +6365,6 @@ impl ToolCallEventStream {
                         }
                     }
                 }
-            }
-        })
-    }
-
-    /// Confirm, before running a command whose sandbox will contain a Windows
-    /// drive (DrvFs) path, that the user accepts the weaker integrity
-    /// guarantees. This is a transient gate *in front of* the normal sandbox
-    /// flow — it is never persisted or recorded as a grant; the only way to
-    /// stop it recurring is to disable `warn_ntfs_grants` in settings (offered
-    /// via the banner's gear). Returns `Ok(())` on "Continue" (after which the
-    /// caller proceeds to any escalation prompt) and `Err` on "Abort".
-    pub(crate) fn authorize_windows_fs_warning(&self, cx: &mut App) -> Task<Result<()>> {
-        // If the warning is already disabled, don't prompt.
-        if !AgentSettings::get_global(cx)
-            .sandbox_permissions
-            .warn_ntfs_grants
-        {
-            return Task::ready(Ok(()));
-        }
-
-        let details = acp_thread::SandboxAuthorizationDetails {
-            command: None,
-            network_hosts: Vec::new(),
-            network_all_hosts: false,
-            allow_fs_write_all: false,
-            unsandboxed: false,
-            write_paths: Vec::new(),
-            warn_windows_fs: true,
-            reason: String::new(),
-        };
-        let options = acp_thread::PermissionOptions::Flat(vec![
-            acp_v2::PermissionOption::new(
-                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
-                "Continue",
-                acp_v2::PermissionOptionKind::AllowOnce,
-            ),
-            acp_v2::PermissionOption::new(
-                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
-                "Abort",
-                acp_v2::PermissionOptionKind::RejectOnce,
-            ),
-        ]);
-
-        let stream = self.stream.clone();
-        let tool_call_id = self.tool_call_id.clone();
-        cx.spawn(async move |_cx| {
-            let (response_tx, response_rx) = oneshot::channel();
-            if let Err(error) =
-                stream
-                    .sender
-                    .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                        ToolCallAuthorization {
-                            tool_call: acp_v2::ToolCallUpdate::new(tool_call_id)
-                                .meta(acp_thread::meta_with_sandbox_authorization(details)),
-                            options,
-                            response: response_tx,
-                            context: None,
-                            kind: acp_thread::AuthorizationKind::PermissionGrant,
-                        },
-                    )))
-            {
-                log::error!("Failed to send Windows-drive sandbox warning: {error}");
-                return Err(anyhow!(
-                    "Failed to send Windows-drive sandbox warning: {error}"
-                ));
-            }
-
-            let outcome = response_rx
-                .await
-                .map_err(|_| anyhow!("authorization channel closed"))?;
-            ensure_tool_call_authorization_not_interrupted(&outcome)?;
-            match acp_thread::SandboxPermission::from_id(outcome.option_id.0.as_ref()) {
-                Some(acp_thread::SandboxPermission::AllowOnce) => Ok(()),
-                _ => Err(anyhow!("Windows-drive write aborted by user")),
             }
         })
     }
@@ -6552,7 +6474,6 @@ impl ToolCallEventStream {
                     agent.add_sandbox_write_path(settings::GrantedWritePathContent {
                         requested: granted.requested,
                         resolved: granted.resolved,
-                        on_windows_fs: granted.on_windows_fs,
                     });
                 }
             });
@@ -6612,9 +6533,9 @@ impl ToolCallEventStream {
     /// so the prompt explains why (`reason`) and lets the user retry, run the
     /// command unsandboxed (once / for this thread / always), or deny it. The
     /// "for this thread" choice is recorded in the in-memory thread grants and
-    /// "always" is persisted as the `allow_unsandboxed` setting. Only the
-    /// Bubblewrap sandboxes (Linux directly, Windows via WSL) can fail to
-    /// create a sandbox, so this is gated to those platforms.
+    /// "always" is persisted as the `allow_unsandboxed` setting. Only the Linux
+    /// and Windows sandboxes can fail to create a sandbox, so this is gated to
+    /// those platforms.
     ///
     /// `retries` is how many times the user has already pressed Retry for this
     /// command; it's shown on the button so repeated presses visibly advance
@@ -6746,7 +6667,7 @@ impl ToolCallEventStream {
     /// Persist the `allow_unsandboxed` setting. Going forward this turns
     /// sandboxing off for the model-facing surface: later turns expose the
     /// plain `terminal` tool (with no sandbox prompt section) and commands run
-    /// without an OS sandbox. On Windows, WSL sandbox setup is skipped.
+    /// without an OS sandbox.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn persist_sandbox_unsandboxed_permission(fs: Option<Arc<dyn Fs>>, cx: &AsyncApp) {
         let Some(fs) = fs else {
@@ -9834,46 +9755,6 @@ mod tests {
             .unwrap();
         assert_eq!(authorize.await.unwrap(), SandboxFallbackDecision::Deny);
         assert!(!event_stream.sandbox_fallback_granted_for_thread());
-    }
-
-    /// Regression test: the Windows-drive (DrvFs) warning prompt must target
-    /// the ACP-facing *scoped* tool-call id. When it used the raw provider id,
-    /// the update matched no existing tool call, the ACP layer rejected the
-    /// resulting title-less insert ("title is required for a tool call"), the
-    /// event stream was torn down, and every terminal command was auto-declined
-    /// without the user ever seeing a prompt.
-    #[gpui::test]
-    async fn test_windows_fs_warning_targets_scoped_tool_call_id(cx: &mut TestAppContext) {
-        crate::tests::init_test(cx);
-
-        let (event_stream, mut receiver) = ToolCallEventStream::test();
-        let authorize = cx.update(|cx| event_stream.authorize_windows_fs_warning(cx));
-
-        let authorization = receiver.expect_authorization().await;
-        assert_eq!(
-            &authorization.tool_call.tool_call_id.0,
-            &event_stream.tool_call_id().0,
-            "the warning prompt must reference the scoped ACP tool-call id, \
-             not the raw provider id"
-        );
-        assert!(Arc::ptr_eq(
-            &authorization.tool_call.tool_call_id.0,
-            &event_stream.tool_call_id().0,
-        ));
-        let details = acp_thread::sandbox_authorization_details_from_meta(
-            &authorization.tool_call.meta.value().cloned(),
-        )
-        .expect("warning authorization should include sandbox details");
-        assert!(details.warn_windows_fs);
-
-        authorization
-            .response
-            .send(acp_thread::SelectedPermissionOutcome::new(
-                acp_v2::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
-                acp_v2::PermissionOptionKind::AllowOnce,
-            ))
-            .unwrap();
-        authorize.await.unwrap();
     }
 
     #[test]

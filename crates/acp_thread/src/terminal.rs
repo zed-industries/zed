@@ -25,7 +25,7 @@ use util::get_default_system_shell_preferring_bash;
 ///
 /// Passed to [`super::AcpThread::create_terminal`]. The actual sandboxing
 /// mechanism is platform-specific (macOS Seatbelt; Linux Bubblewrap; Windows
-/// via Bubblewrap inside WSL), so callers describe the *intent* with plain data
+/// Process Security Environment), so callers describe the *intent* with plain data
 /// here rather than constructing platform-specific types directly.
 ///
 /// Default is the fully-sandboxed run (no network, project-only writes).
@@ -61,13 +61,6 @@ pub struct SandboxWrap {
     /// enforcing proxy binds a loopback port on this host, so it can only
     /// confine local commands; a remote terminal can't reach it.
     pub is_local: bool,
-    /// Windows/WSL only: `(release channel, version)` of the Linux `zed` to
-    /// provision inside WSL as the sandbox helper (version `latest` for dev
-    /// builds). Resolved by the agent (which can read the running app's release
-    /// info) and forwarded to the sandbox. `None` on other platforms, or when
-    /// the release can't be determined, in which case the WSL backend falls back
-    /// to running bwrap without in-sandbox bind validation.
-    pub wsl_zed_release: Option<(String, String)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -84,7 +77,8 @@ pub enum SandboxNetworkAccess {
 }
 
 /// A structured, serializable reason the OS sandbox could not be created for a
-/// command. Mirrors the Linux/WSL Bubblewrap failure modes; surfaced to the user
+/// command. Mirrors the Linux Bubblewrap failure modes (plus an `Other` catch-all,
+/// which Windows uses); surfaced to the user
 /// (and persisted in tool-call metadata) so the UI can
 /// explain what went wrong.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,7 +142,7 @@ impl LinuxWslSandboxError {
             // A failed probe on Linux is almost always disabled unprivileged
             // user namespaces, which the Ubuntu-specific section covers.
             LinuxWslSandboxError::SandboxProbeFailed => "installing-bubblewrap-ubuntu",
-            // Catch-all (includes WSL/Windows messages): point at the platform
+            // Catch-all (includes Windows messages): point at the platform
             // overview for the current OS.
             LinuxWslSandboxError::Other(_) => {
                 if cfg!(target_os = "windows") {
@@ -329,9 +323,9 @@ impl SandboxWrap {
 ///
 /// This is deliberately platform-agnostic — every variant exists on every
 /// platform — so the serialized form stored in the thread database never
-/// depends on which OS wrote it. Today only Linux/WSL can fail to create a
-/// sandbox (`ErrorLinuxWsl`), but the variant is named so macOS/Windows can
-/// grow their own failure cases later without a migration.
+/// depends on which OS wrote it. Linux and Windows can fail to create a
+/// sandbox (`ErrorLinuxWsl`, named for the retired WSL sandbox), and macOS can
+/// grow its own failure cases later without a migration.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SandboxNotAppliedReason {
     /// The user disabled the sandbox for the rest of this thread, so the command
@@ -341,20 +335,13 @@ pub enum SandboxNotAppliedReason {
     /// failure (in which case a preceding tool call's reason is
     /// [`SandboxNotAppliedReason::ErrorLinuxWsl`]).
     DisabledForThisThread,
-    /// The Linux/WSL (Bubblewrap) sandbox could not be created for this command.
+    /// The Linux or Windows sandbox could not be created for this command.
     ErrorLinuxWsl(LinuxWslSandboxError),
 }
 
 /// The live sandbox kept alive for its per-command resources (the network proxy
 /// and, on macOS, the Seatbelt policy file) until the terminal exits.
 type SandboxConfigHandle = sandbox::Sandbox;
-
-/// Upper bound on preparing a WSL-sandboxed command. Deliberately generous:
-/// the first invocation after the WSL utility VM has shut down (or after boot)
-/// has to start the VM and the distro, which routinely takes 10-30 seconds on
-/// slow disks or under antivirus scanning.
-#[cfg(target_os = "windows")]
-pub(crate) const WSL_SANDBOX_WRAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Wrap `(program, args)` for sandboxed execution, returning the wrapped
 /// invocation (program, argv, env) plus the live [`sandbox::Sandbox`] that must
@@ -382,12 +369,6 @@ pub(crate) async fn prepare_sandbox_wrap(
 
     let mut sandbox =
         sandbox::Sandbox::new(sandbox_wrap.to_policy()?).map_err(anyhow::Error::new)?;
-    // Windows/WSL only: tell the sandbox which Linux `zed` to provision inside
-    // WSL as its `--wsl-sandbox-helper`. A no-op (and a no-op setter) elsewhere.
-    #[cfg(target_os = "windows")]
-    if let Some((channel, version)) = sandbox_wrap.wsl_zed_release.clone() {
-        sandbox.set_wsl_zed_release(channel, version);
-    }
     let command = sandbox::CommandAndArgs {
         program,
         args,

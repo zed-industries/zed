@@ -922,10 +922,6 @@ pub struct GrantedWritePathContent {
     /// The canonical, symlink-resolved target established when the grant was
     /// approved. Absent for a bare-string entry.
     pub resolved: Option<PathBuf>,
-    /// Windows/WSL only: whether the canonical target lives on a Windows-hosted
-    /// (DrvFs) filesystem, whose sandbox-integrity guarantees are weaker. Absent
-    /// (false) on other platforms and for bare-string entries.
-    pub on_windows_fs: bool,
 }
 
 impl GrantedWritePathContent {
@@ -942,14 +938,9 @@ impl Serialize for GrantedWritePathContent {
             None => self.requested.serialize(serializer),
             Some(resolved) => {
                 use serde::ser::SerializeStruct as _;
-                let field_count = if self.on_windows_fs { 3 } else { 2 };
-                let mut state =
-                    serializer.serialize_struct("GrantedWritePathContent", field_count)?;
+                let mut state = serializer.serialize_struct("GrantedWritePathContent", 2)?;
                 state.serialize_field("requested", &self.requested)?;
                 state.serialize_field("resolved", resolved)?;
-                if self.on_windows_fs {
-                    state.serialize_field("on_windows_fs", &self.on_windows_fs)?;
-                }
                 state.end()
             }
         }
@@ -963,8 +954,6 @@ impl<'de> Deserialize<'de> for GrantedWritePathContent {
             requested: PathBuf,
             #[serde(default)]
             resolved: Option<PathBuf>,
-            #[serde(default)]
-            on_windows_fs: bool,
         }
 
         #[derive(Deserialize)]
@@ -978,16 +967,13 @@ impl<'de> Deserialize<'de> for GrantedWritePathContent {
             StringOrObject::String(requested) => Self {
                 requested,
                 resolved: None,
-                on_windows_fs: false,
             },
             StringOrObject::Object(Object {
                 requested,
                 resolved,
-                on_windows_fs,
             }) => Self {
                 requested,
                 resolved,
-                on_windows_fs,
             },
         })
     }
@@ -1006,8 +992,7 @@ impl JsonSchema for GrantedWritePathContent {
                     "type": "object",
                         "properties": {
                         "requested": { "type": "string" },
-                        "resolved": { "type": ["string", "null"] },
-                        "on_windows_fs": { "type": "boolean" }
+                        "resolved": { "type": ["string", "null"] }
                     },
                     "required": ["requested"]
                 }
@@ -1060,14 +1045,6 @@ pub struct SandboxPermissionsContent {
     /// the request can be allowed.
     /// Default: true
     pub warn_confusable_unicode: Option<bool>,
-
-    /// Whether to warn (Windows/WSL only) when a sandbox grant targets a file on
-    /// a Windows-hosted (DrvFs) filesystem. Such grants are enforced inside WSL
-    /// via a translated path, and their sandbox-integrity guarantees are weaker
-    /// than a distro-native filesystem. When enabled, such grants show a warning
-    /// that must be acknowledged before the command runs.
-    /// Default: true
-    pub warn_ntfs_grants: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -1394,7 +1371,6 @@ mod tests {
         settings.add_sandbox_write_path(GrantedWritePathContent {
             requested: PathBuf::from("/tmp/build"),
             resolved: None,
-            on_windows_fs: false,
         });
 
         let sandbox_permissions = settings.sandbox_permissions.as_ref().unwrap();
@@ -1420,7 +1396,6 @@ mod tests {
             &[GrantedWritePathContent {
                 requested: PathBuf::from("/tmp/build"),
                 resolved: None,
-                on_windows_fs: false,
             }]
         );
     }
@@ -1432,17 +1407,14 @@ mod tests {
         settings.add_sandbox_write_path(GrantedWritePathContent {
             requested: PathBuf::from("/tmp/build/cache"),
             resolved: None,
-            on_windows_fs: false,
         });
         settings.add_sandbox_write_path(GrantedWritePathContent {
             requested: PathBuf::from("/tmp/build"),
             resolved: None,
-            on_windows_fs: false,
         });
         settings.add_sandbox_write_path(GrantedWritePathContent {
             requested: PathBuf::from("/tmp/build/output"),
             resolved: None,
-            on_windows_fs: false,
         });
 
         let write_paths = settings
@@ -1459,7 +1431,6 @@ mod tests {
             &[GrantedWritePathContent {
                 requested: PathBuf::from("/tmp/build"),
                 resolved: None,
-                on_windows_fs: false,
             }]
         );
     }
@@ -1473,7 +1444,6 @@ mod tests {
             GrantedWritePathContent {
                 requested: PathBuf::from("/tmp/x"),
                 resolved: None,
-                on_windows_fs: false,
             }
         );
 
@@ -1486,7 +1456,6 @@ mod tests {
             GrantedWritePathContent {
                 requested: PathBuf::from("/tmp/x"),
                 resolved: Some(PathBuf::from("/tmp/real")),
-                on_windows_fs: false,
             }
         );
 
@@ -1498,7 +1467,6 @@ mod tests {
             GrantedWritePathContent {
                 requested: PathBuf::from("/tmp/x"),
                 resolved: None,
-                on_windows_fs: false,
             }
         );
     }
@@ -1510,7 +1478,6 @@ mod tests {
         let bare = GrantedWritePathContent {
             requested: PathBuf::from("/tmp/x"),
             resolved: None,
-            on_windows_fs: false,
         };
         assert_eq!(
             serde_json::to_value(&bare).unwrap(),
@@ -1521,7 +1488,6 @@ mod tests {
         let resolved = GrantedWritePathContent {
             requested: PathBuf::from("/tmp/x"),
             resolved: Some(PathBuf::from("/tmp/real")),
-            on_windows_fs: false,
         };
         assert_eq!(
             serde_json::to_value(&resolved).unwrap(),

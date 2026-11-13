@@ -10317,17 +10317,7 @@ impl ThreadView {
     ) -> AnyElement {
         let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
         let has_write = details.allow_fs_write_all || !details.write_paths.is_empty();
-        // The dedicated Windows-drive warning prompt is only ever sent while the
-        // warning is enabled, so key the banner on the prompt itself. Keeping it
-        // visible even after the "Don't show again" checkbox flips the setting
-        // avoids the card disappearing out from under the user mid-decision.
-        let has_windows_fs_warning = details.warn_windows_fs;
-        if !has_network
-            && !has_write
-            && !details.unsandboxed
-            && details.reason.is_empty()
-            && !has_windows_fs_warning
-        {
+        if !has_network && !has_write && !details.unsandboxed && details.reason.is_empty() {
             return Empty.into_any_element();
         }
 
@@ -10559,9 +10549,6 @@ impl ThreadView {
         v_flex()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .when(has_windows_fs_warning, |this| {
-                this.child(self.render_sandbox_windows_fs_warning(cx))
-            })
             .when(!confusable_findings.is_empty(), |this| {
                 this.child(self.render_sandbox_confusable_warning(
                     tool_call_id,
@@ -10574,20 +10561,16 @@ impl ThreadView {
             .children(write_section)
             .children(unsandboxed_section)
             .children(reason_section)
-            .when(!has_windows_fs_warning, |this| {
-                // The Windows-drive warning banner carries its own docs link, so
-                // skip the default one that every other sandbox prompt appends.
-                this.child(
-                    h_flex()
-                        .px_1()
-                        .py_0p5()
-                        .child(self.render_sandbox_docs_link(
-                            "sandbox-authorization-docs-link",
-                            None,
-                            cx,
-                        )),
-                )
-            })
+            .child(
+                h_flex()
+                    .px_1()
+                    .py_0p5()
+                    .child(self.render_sandbox_docs_link(
+                        "sandbox-authorization-docs-link",
+                        None,
+                        cx,
+                    )),
+            )
             .into_any_element()
     }
 
@@ -10753,107 +10736,6 @@ impl ThreadView {
                         }
                         cx.notify();
                     }
-                })),
-            )
-            .into_any_element()
-    }
-
-    /// Whether the Windows-drive (DrvFs) weaker-guarantee warning is enabled in
-    /// settings (on by default). Windows-only in effect: `warn_windows_fs` is
-    /// never set on other platforms.
-    fn ntfs_warning_enabled(cx: &App) -> bool {
-        AgentSettings::get_global(cx)
-            .sandbox_permissions
-            .warn_ntfs_grants
-    }
-
-    /// Informational banner shown on a sandbox approval prompt when the command
-    /// will write to a file on a Windows drive (reached inside WSL via DrvFs),
-    /// whose sandbox-integrity guarantees are weaker than the distro's native
-    /// filesystem. Unlike the confusable-Unicode banner this does not gate the
-    /// allow buttons: the approval itself is the acknowledgement. A settings gear
-    /// links to where the warning can be suppressed.
-    fn render_sandbox_windows_fs_warning(&self, cx: &Context<Self>) -> AnyElement {
-        v_flex()
-            .w_full()
-            .p_2()
-            .gap_1()
-            .border_t_1()
-            .border_color(cx.theme().status().warning_border)
-            .bg(cx.theme().status().warning_background.opacity(0.15))
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_1p5()
-                    .items_start()
-                    .child(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::Small)
-                            .color(Color::Warning),
-                    )
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .flex_1()
-                            .gap_0p5()
-                            .child(
-                                Label::new("This command can write to a file on a Windows drive")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Warning),
-                            )
-                            .child(
-                                Label::new(
-                                    "Sandboxes with write access to a location on a Windows \
-                                     drive may not provide full filesystem isolation.",
-                                )
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                            )
-                            .child(h_flex().child(self.render_sandbox_docs_link(
-                                "sandbox-windows-fs-docs-link",
-                                Some("windows"),
-                                cx,
-                            ))),
-                    )
-                    .child(
-                        IconButton::new("configure-ntfs-warning", IconName::Settings)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Configure Windows-drive warning"))
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(zed_actions::OpenSettingsAt {
-                                        path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
-                                        target: None,
-                                    }),
-                                    cx,
-                                );
-                            }),
-                    ),
-            )
-            .child(
-                Checkbox::new(
-                    "sandbox-windows-fs-dont-warn",
-                    if Self::ntfs_warning_enabled(cx) {
-                        ToggleState::Unselected
-                    } else {
-                        ToggleState::Selected
-                    },
-                )
-                .label("Don't show this warning again")
-                .label_size(LabelSize::Small)
-                .on_click(cx.listener(|this, state: &ToggleState, _window, cx| {
-                    let disable = *state == ToggleState::Selected;
-                    let fs = this.thread.read(cx).project().read(cx).fs().clone();
-                    update_settings_file(fs, cx, move |settings, _| {
-                        settings
-                            .agent
-                            .get_or_insert_default()
-                            .sandbox_permissions
-                            .get_or_insert_default()
-                            .warn_ntfs_grants = Some(!disable);
-                    });
-                    cx.notify();
                 })),
             )
             .into_any_element()

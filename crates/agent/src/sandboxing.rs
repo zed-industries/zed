@@ -17,7 +17,7 @@
 //! stays exposed and only the individual command runs without a wrap. See
 //! `sandboxing_enabled_for_project` and `ThreadSandboxGrants`.
 //!
-//! macOS (Seatbelt), Linux (Bubblewrap), and Windows (Bubblewrap via WSL)
+//! macOS (Seatbelt), Linux (Bubblewrap), and Windows (Process Security Environment)
 //! have real sandbox integrations; on platforms without one the per-command
 //! wrap is a no-op, so commands run with the agent's ambient permissions even
 //! when the flag is on.
@@ -212,11 +212,10 @@ pub(crate) fn sandboxing_enabled_for_project(project: &Project, cx: &App) -> boo
 pub(crate) fn terminal_shell(project: &Project, cx: &App) -> String {
     #[cfg(target_os = "windows")]
     if sandboxing_enabled_for_project(project, cx) {
-
-        /// Git Bash is not yet compatible with the native Windows sandbox.
-        /// Furthermore, packaged (MSIX) applications are not yet compatible either.
-        /// So, we avoid selecting Git Bash or MSIX versions of PowerShell when the
-        /// native Windows sandbox is enabled.
+        // Git Bash is not yet compatible with the native Windows sandbox.
+        // Furthermore, packaged (MSIX) applications are not yet compatible either.
+        // So, we avoid selecting Git Bash or MSIX versions of PowerShell when the
+        // native Windows sandbox is enabled.
         let shell = util::get_windows_system_shell();
         let is_packaged = shell.to_ascii_lowercase().contains(r"\windowsapps\");
         if !is_packaged || sandbox::can_launch_packaged_apps() {
@@ -442,9 +441,9 @@ impl ThreadSandboxGrants {
     }
 
     /// Record that the user approved running commands unsandboxed for the rest
-    /// of the thread when the sandbox can't be created. Only the Bubblewrap
-    /// sandboxes (Linux directly, Windows via WSL) can fail to create a
-    /// sandbox, so this is gated to those platforms.
+    /// of the thread when the sandbox can't be created. Only the Linux and
+    /// Windows sandboxes can fail to create a sandbox, so this is gated to
+    /// those platforms.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn record_fallback(&mut self) {
         self.sandbox_fallback = true;
