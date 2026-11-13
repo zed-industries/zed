@@ -23,6 +23,10 @@ parts:
       # These renames seem to not be necessary, but it's tidier.
       bin: usr/bin
       libexec: usr/libexec
+      # snapcraft's desktop-file lint resolves a bare Icon=zed against the
+      # hicolor theme only under usr/share/icons, so move the tarball's
+      # icons there.
+      share/icons: usr/share/icons
 
     stage-packages:
       - libasound2t64
@@ -48,10 +52,11 @@ parts:
       - enable-patchelf
 
     prime:
-      # Omit unneeded files from the tarball
+      # Omit unneeded files from the tarball. The tarball's share/ stays: it
+      # holds the desktop entry and hicolor icons used for menu integration
+      # (see the app's desktop key below).
       - -lib
       - -licenses.md
-      - -share
 
       # Omit unneeded files from stage-packages
       - -etc
@@ -63,6 +68,12 @@ apps:
   zed:
     command: usr/bin/zed
     common-id: dev.zed.Zed
+    # Menu integration: snapcraft copies this into meta/gui, rewrites Exec to
+    # the snap command and resolves the bare Icon=zed against the primed
+    # hicolor icons; snapd then exports it to /var/lib/snapd/desktop/
+    # applications on install. The desktop entry in the tarball is generated
+    # for the stable channel, so the id always matches dev.zed.Zed.
+    desktop: share/applications/dev.zed.Zed.desktop
     environment:
       ZED_BUNDLE_TYPE: snap
       # snapcraft sets DF_1_NODEFLIB on all ELFs of classic snaps, which makes
