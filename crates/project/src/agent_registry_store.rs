@@ -588,11 +588,12 @@ fn resolve_icon_url(entry: &RegistryEntry) -> Option<String> {
 pub(crate) async fn current_platform_keys() -> &'static [&'static str] {
     // The probe spawns a process and reads the real filesystem, which the
     // deterministic test scheduler can't drive, so tests assume glibc.
-    #[cfg(target_os = "linux")]
-    let prefers_musl = !cfg!(any(test, feature = "test-support"))
-        && util::libc_type::host_libc_type().await == util::libc_type::LibcType::Musl;
-    #[cfg(not(target_os = "linux"))]
-    let prefers_musl = false;
+    let prefers_musl = cfg_select! {
+        all(target_os = "linux", not(any(test, feature = "test-support"))) => {
+            util::libc_type::host_libc_type().await == util::libc_type::LibcType::Musl
+        }
+        _ => false,
+    };
 
     platform_keys(std::env::consts::OS, std::env::consts::ARCH, prefers_musl)
 }

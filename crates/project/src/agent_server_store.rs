@@ -15,6 +15,7 @@ use gpui::{
     TaskExt,
 };
 use http_client::HttpClient;
+use itertools::Itertools as _;
 use node_runtime::NodeRuntime;
 use percent_encoding::percent_decode_str;
 use remote::RemoteClient;
@@ -1185,11 +1186,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     format!(
                         "no target specified for platform '{}'. Available platforms: {}",
                         platform_keys.join("' or '"),
-                        targets
-                            .keys()
-                            .map(|k| k.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                        targets.keys().join(", ")
                     )
                 })?;
 

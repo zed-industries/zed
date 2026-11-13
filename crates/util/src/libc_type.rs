@@ -27,21 +27,16 @@ async fn detect_host_libc_type() -> LibcType {
         return LibcType::Gnu;
     };
 
-    let mut has_musl = false;
     while let Some(entry) = dir_entries.next().await {
         let Ok(entry) = entry else {
             continue;
         };
         if entry.file_name().to_string_lossy().starts_with("ld-musl-") {
-            has_musl = true;
+            return LibcType::Musl;
         }
     }
 
-    if has_musl {
-        LibcType::Musl
-    } else {
-        LibcType::Gnu
-    }
+    LibcType::Gnu
 }
 
 async fn libc_type_from_ldd() -> Option<LibcType> {
