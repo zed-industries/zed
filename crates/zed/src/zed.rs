@@ -4016,6 +4016,136 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_project_panel_opens_after_remote_root_metadata(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        server_cx.update(|cx| release_channel::init(Version::new(0, 0, 0), cx));
+
+        for (starts_open, is_directory) in [(true, true), (false, true), (true, false)] {
+            cx.update(|cx| {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        let project_panel = settings.project_panel.get_or_insert_default();
+                        project_panel.starts_open = Some(starts_open);
+                        project_panel.dock = Some(settings::DockSide::Left);
+                    });
+                });
+            });
+            let (options, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+            let server_handler = server_cx.new(|_| ());
+            server_session.add_request_handler::<client::proto::Ping, _, _, _>(
+                server_handler.downgrade(),
+                |_, _, _| async { Ok(client::proto::Ack {}) },
+            );
+            server_session.add_request_handler::<client::proto::ShutdownRemoteServer, _, _, _>(
+                server_handler.downgrade(),
+                |_, _, _| async { Ok(client::proto::Ack {}) },
+            );
+            drop(connect_guard);
+            let remote_client = RemoteClient::connect_mock(options, cx).await;
+            let project = cx.update(|cx| {
+                Project::remote(
+                    remote_client,
+                    app_state.client.clone(),
+                    app_state.node_runtime.clone(),
+                    app_state.user_store.clone(),
+                    app_state.languages.clone(),
+                    app_state.fs.clone(),
+                    false,
+                    cx,
+                )
+            });
+            let worktree = project.update(cx, |project, cx| {
+                project.add_test_remote_worktree("/project", cx)
+            });
+            let window = cx.add_window(|window, cx| {
+                let workspace = cx
+                    .new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx));
+                workspace.update(cx, |workspace, cx| {
+                    window.focus(&workspace.active_pane().focus_handle(cx), cx);
+                });
+                MultiWorkspace::new(workspace, window, cx)
+            });
+            let workspace = window
+                .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+                .unwrap();
+            cx.run_until_parked();
+            workspace.read_with(cx, |workspace, cx| {
+                assert!(workspace.panel::<ProjectPanel>(cx).is_some());
+                assert!(!workspace.left_dock().read(cx).is_open());
+            });
+            let initial_focus = window
+                .update(cx, |_, window, cx| window.focused(cx))
+                .unwrap();
+            assert!(initial_focus.is_some());
+
+            let update = worktree.read_with(cx, |worktree, _| client::proto::UpdateWorktree {
+                worktree_id: worktree.id().to_proto(),
+                root_name: "project".into(),
+                abs_path: "/project".into(),
+                updated_entries: vec![client::proto::Entry {
+                    id: 1,
+                    is_dir: is_directory,
+                    ..Default::default()
+                }],
+                scan_id: 1,
+                is_last_update: true,
+                ..Default::default()
+            });
+            worktree.read_with(cx, |worktree, _| {
+                worktree
+                    .as_remote()
+                    .unwrap()
+                    .update_from_remote(update.clone());
+            });
+            cx.run_until_parked();
+            workspace.read_with(cx, |workspace, cx| {
+                assert_eq!(
+                    workspace.left_dock().read(cx).is_open(),
+                    starts_open && is_directory,
+                );
+            });
+            window
+                .update(cx, |_, window, cx| {
+                    assert_eq!(window.focused(cx), initial_focus)
+                })
+                .unwrap();
+
+            if starts_open && is_directory {
+                window
+                    .update(cx, |_, window, cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.close_panel::<ProjectPanel>(window, cx);
+                        });
+                    })
+                    .unwrap();
+            }
+            worktree.read_with(cx, |worktree, _| {
+                let mut update = update;
+                update.scan_id += 1;
+                update
+                    .updated_entries
+                    .iter_mut()
+                    .for_each(|entry| entry.is_dir = true);
+                worktree.as_remote().unwrap().update_from_remote(update);
+            });
+            cx.run_until_parked();
+            workspace.read_with(cx, |workspace, cx| {
+                assert!(!workspace.left_dock().read(cx).is_open());
+            });
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .unwrap();
+            drop(workspace);
+            drop(project);
+            drop(worktree);
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
     async fn test_open_remote_project_readme(
         cx: &mut TestAppContext,
         server_cx: &mut TestAppContext,

@@ -21193,6 +21193,185 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_dock_opens_pending_startup_panel_without_reopening_manual_close(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            panel.update(cx, |panel, _| panel.starts_open_pending = true);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        let initial_focus = cx.update(|window, cx| window.focused(cx));
+        assert!(initial_focus.is_some());
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(!workspace.left_dock().read(cx).is_open());
+        });
+        panel.update(cx, |panel, cx| {
+            panel.starts_open = true;
+            panel.starts_open_pending = false;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.left_dock().read(cx);
+            assert!(dock.is_open());
+            assert_eq!(
+                dock.active_panel().map(|panel| panel.panel_id()),
+                Some(panel.entity_id()),
+            );
+        });
+        cx.update(|window, cx| assert_eq!(window.focused(cx), initial_focus));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .left_dock()
+                .update(cx, |dock, cx| dock.set_open(false, window, cx));
+        });
+        panel.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(!workspace.left_dock().read(cx).is_open());
+        });
+
+        let pending_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 101, cx));
+            panel.update(cx, |panel, _| panel.starts_open_pending = true);
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace
+                .right_dock()
+                .update(cx, |dock, cx| dock.set_open(false, window, cx));
+            panel
+        });
+        pending_panel.update(cx, |panel, cx| {
+            panel.starts_open = true;
+            panel.starts_open_pending = false;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(!workspace.right_dock().read(cx).is_open());
+        });
+
+        let file_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 102, cx));
+            panel.update(cx, |panel, _| panel.starts_open_pending = true);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        file_panel.update(cx, |panel, cx| {
+            panel.starts_open_pending = false;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        file_panel.update(cx, |panel, cx| {
+            panel.starts_open = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(!workspace.bottom_dock().read(cx).is_open());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pending_startup_open_respects_dock_choices(cx: &mut gpui::TestAppContext) {
+        #[derive(Clone, Copy)]
+        enum Choice {
+            Close,
+            SelectOtherPanel,
+            RestoreClosed,
+            RestoreOtherPanel,
+        }
+
+        init_test(cx);
+        for before_registration in [true, false] {
+            for choice in [
+                Choice::Close,
+                Choice::SelectOtherPanel,
+                Choice::RestoreClosed,
+                Choice::RestoreOtherPanel,
+            ] {
+                let fs = FakeFs::new(cx.executor());
+                let project = Project::test(fs, [], cx).await;
+                let (workspace, cx) =
+                    cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+                let other_panel = workspace.update_in(cx, |workspace, window, cx| {
+                    let panel = cx.new(|cx| SecondTestPanel {
+                        focus_handle: cx.focus_handle(),
+                        zoomed: false,
+                    });
+                    workspace.add_panel(panel.clone(), window, cx);
+                    panel
+                });
+                let apply_choice = |workspace: &Entity<Workspace>, cx: &mut VisualTestContext| {
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        workspace.bottom_dock().update(cx, |dock, cx| match choice {
+                            Choice::Close => dock.set_open(false, window, cx),
+                            Choice::SelectOtherPanel => {
+                                let index = dock.panel_index_for_type::<SecondTestPanel>().unwrap();
+                                dock.activate_panel(index, window, cx);
+                                dock.set_open(true, window, cx);
+                            }
+                            Choice::RestoreClosed | Choice::RestoreOtherPanel => {
+                                dock.restore_serialized_state(
+                                    DockData {
+                                        visible: matches!(choice, Choice::RestoreOtherPanel),
+                                        active_panel: Some(
+                                            SecondTestPanel::persistent_name().to_string(),
+                                        ),
+                                        zoom: false,
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            }
+                        });
+                    });
+                };
+                if before_registration {
+                    apply_choice(&workspace, cx);
+                }
+                let panel = workspace.update_in(cx, |workspace, window, cx| {
+                    let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
+                    panel.update(cx, |panel, _| panel.starts_open_pending = true);
+                    workspace.add_panel(panel.clone(), window, cx);
+                    panel
+                });
+                if !before_registration {
+                    apply_choice(&workspace, cx);
+                }
+                workspace.update(cx, |workspace, cx| workspace.finish_dock_restoration(cx));
+                panel.update(cx, |panel, cx| {
+                    panel.starts_open = true;
+                    panel.starts_open_pending = false;
+                    cx.notify();
+                });
+                cx.run_until_parked();
+                workspace.read_with(cx, |workspace, cx| {
+                    let dock = workspace.bottom_dock().read(cx);
+                    assert_eq!(
+                        dock.is_open(),
+                        matches!(choice, Choice::SelectOtherPanel | Choice::RestoreOtherPanel),
+                    );
+                    if dock.is_open() {
+                        assert_eq!(
+                            dock.active_panel().map(|panel| panel.panel_id()),
+                            Some(other_panel.entity_id()),
+                        );
+                    }
+                });
+            }
+        }
+    }
+
+    #[gpui::test]
     async fn test_closed_dock_not_reopened_by_late_serialized_panel(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
