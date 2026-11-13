@@ -1,0 +1,84 @@
+# Promotes snap revisions from latest/edge to a stable risk level (beta,
+# candidate or stable). Run manually from the Actions tab; the "snap"
+# workflow prints the revisions it uploaded to edge in its summary.
+# "latest" promotes the newest revision in latest/edge of every
+# architecture, since amd64 and arm64 revisions are numbered
+# independently.
+
+name: Promote snap
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Revision(s) in latest/edge to promote, comma-separated; or "latest".
+        required: false
+        default: latest
+      channel:
+        description: Target risk level.
+        required: true
+        type: choice
+        options:
+          - beta
+          - candidate
+          - stable
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    if: github.repository_owner == 'zed-industries'
+    steps:
+      - uses: canonical/craft-actions/snapcraft/setup@d6ea10edefd7f895fdc7b74685f2743628d02239 # v1
+      - name: Promote revisions
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          snap_name: zed
+          requested_channel: ${{ inputs.channel }}
+          requested_revision: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+
+          case "$requested_channel" in
+            beta|candidate|stable) channel="latest/$requested_channel" ;;
+            *)
+              echo "::error::'$requested_channel' is not a supported risk level. Use beta, candidate or stable."
+              exit 1
+              ;;
+          esac
+
+          if [[ "$requested_revision" == "latest" ]]; then
+            requested_revision="$(curl -fsSL -H 'Snap-Device-Series: 16' "https://api.snapcraft.io/v2/snaps/info/$snap_name" \
+              | jq -r '[.["channel-map"][] | select(.channel.risk == "edge" and .channel.track == "latest") | [.channel.architecture, .revision]] | group_by(.[0]) | map(map(.[1]) | max | tostring) | join(",")')"
+            if [[ -z "$requested_revision" ]]; then
+              echo "::error::Could not find any revision in the latest/edge channel."
+              exit 1
+            fi
+          fi
+
+          if [[ ! "$requested_revision" =~ ^[0-9]+([,][0-9]+)*$ ]]; then
+            echo "::error::Revision must be a number or a comma-separated list of numbers (or latest), not '$requested_revision'."
+            exit 1
+          fi
+
+          released=""
+          failed=""
+          for revision in ${requested_revision//,/ }; do
+            if snapcraft release "$snap_name" "$revision" "$channel"; then
+              released="${released:+$released,}$revision"
+            else
+              failed="${failed:+$failed,}$revision"
+            fi
+          done
+
+          summary=""
+          if [[ -n "$released" ]]; then
+            summary+="Released revisions \`$released\` to the \`$channel\` channel. "
+          fi
+          if [[ -n "$failed" ]]; then
+            summary+="Could not release revisions \`$failed\`; check the workflow logs for details. "
+          fi
+          echo "$summary" >> "$GITHUB_STEP_SUMMARY"

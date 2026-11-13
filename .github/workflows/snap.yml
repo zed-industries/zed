@@ -1,0 +1,108 @@
+# Builds the Zed snap (amd64 and arm64) from the Linux release tarballs
+# that the `release` workflow attaches to the GitHub release, and uploads
+# the result to the Snap Store's latest/edge channel. Promotion to
+# beta/candidate/stable is a deliberate, manual step: run the
+# "Promote snap" workflow with the revisions printed in the summary.
+
+name: snap
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Git tag to build (e.g. v1.28.1); its GitHub release must already exist.
+        required: true
+
+concurrency:
+  # Serialize runs per ref so that two releases never race to upload to
+  # the same channel. Never cancel an in-progress run, or we could end up
+  # with an uploaded-but-unreleased snap.
+  group: snap-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build-snap-${{ matrix.arch }}
+    if: github.repository_owner == 'zed-industries'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            tarball_arch: x86_64
+            triplet: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            tarball_arch: aarch64
+            triplet: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Download release tarball
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.event.release.tag_name || inputs.tag }}
+        run: gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --pattern "zed-linux-${{ matrix.tarball_arch }}.tar.gz"
+      - name: Render snapcraft.yaml
+        env:
+          VERSION: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          version="${VERSION#v}"
+          # The template hardcodes the x86_64 tarball name and multiarch
+          # triplet; rewrite both for the architecture being built.
+          sed -e "s/\$RELEASE_VERSION/$version/g" \
+              -e "s/x86_64-linux-gnu/${{ matrix.triplet }}-linux-gnu/g" \
+              -e "s|source: .*|source: ./zed-linux-${{ matrix.tarball_arch }}.tar.gz|" \
+              crates/zed/resources/snap/snapcraft.yaml.in > snapcraft.yaml
+      - name: Pack snap
+        id: pack
+        uses: canonical/craft-actions/snapcraft/pack@d6ea10edefd7f895fdc7b74685f2743628d02239 # v1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zed-snap-${{ matrix.arch }}
+          path: ${{ steps.pack.outputs.snaps }}
+
+  release_to_edge:
+    name: Release to latest/edge
+    needs: build
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: canonical/craft-actions/snapcraft/setup@d6ea10edefd7f895fdc7b74685f2743628d02239 # v1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: zed-snap-*
+          merge-multiple: true
+          path: ./snaps
+      - name: Upload and release to latest/edge
+        env:
+          # Create with `snapcraft export-login --snaps=zed --acls=package_upload,package_access -`
+          # and store the result in this repository secret. The `zed` snap
+          # name must be registered to the exporting account.
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+
+          echo "| Architecture | Version | Revision |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ------------ | ------- | -------- |" >> "$GITHUB_STEP_SUMMARY"
+
+          for snap_file in ./snaps/*.snap; do
+            out="$(snapcraft upload "$snap_file" --release=latest/edge)"
+            revision="$(echo "$out" | grep -oP 'Revision \K[0-9]+')"
+
+            # Snap file names look like "zed_<version>_<arch>.snap".
+            version="$(echo "$snap_file" | cut -d_ -f2)"
+            architecture="$(echo "$snap_file" | cut -d_ -f3 | sed 's/\.snap$//')"
+
+            echo "| $architecture | $version | $revision |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          echo "Promote these revisions to beta, candidate or stable via the 'Promote snap' workflow." >> "$GITHUB_STEP_SUMMARY"
