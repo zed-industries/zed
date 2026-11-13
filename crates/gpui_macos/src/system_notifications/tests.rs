@@ -45,7 +45,9 @@ async fn test_notification_commands_do_not_wait_for_the_service(cx: &mut gpui::T
         ]
     );
     for completed in completions {
-        completed.send(()).expect("caller is waiting for completion");
+        completed
+            .send(())
+            .expect("caller is waiting for completion");
     }
     for task in tasks {
         task.await;

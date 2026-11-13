@@ -231,8 +231,10 @@ impl NotificationCenter {
             return identifier.clone();
         }
 
-        let identifier =
-            SharedString::from(format!("gpui-system-notification-{}", self.categories.len()));
+        let identifier = SharedString::from(format!(
+            "gpui-system-notification-{}",
+            self.categories.len()
+        ));
         let platform_actions: Vec<Retained<UNNotificationAction>> = actions
             .iter()
             .map(|action| {
