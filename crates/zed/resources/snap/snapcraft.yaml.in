@@ -32,6 +32,9 @@ parts:
       # snapcraft has a lint that this is unused, but without it Zed exits with
       # "NoWaylandLib" when run with Wayland.
       - libwayland-client0
+      # Zed fails to start with "error while loading shared libraries:
+      # libX11-xcb.so.1" without this.
+      - libx11-xcb1
       - libxcb1
       - libxkbcommon-x11-0
       - libxkbcommon0
@@ -57,3 +60,8 @@ apps:
     common-id: dev.zed.Zed
     environment:
       ZED_BUNDLE_TYPE: snap
+      # snapcraft sets DF_1_NODEFLIB on all ELFs of classic snaps, which makes
+      # the dynamic linker refuse to resolve bare sonames via /etc/ld.so.cache.
+      # The Vulkan loader dlopens ICDs (e.g. Mesa's llvmpipe) by bare soname,
+      # so without this Zed fails with "Failed to create surface".
+      LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu
