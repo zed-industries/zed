@@ -799,9 +799,9 @@ fn assemble_patch_from_edits(
             && let Some(cursor_offset) = cursor_in_new_text
         {
             cursor = Some(HashRegionCursor {
-                path: path.clone(),
+                path,
                 cursor_offset_in_new_text: cursor_offset,
-                new_text: new_text.clone(),
+                new_text,
                 old_text: old_text.to_string(),
                 start_row,
             });

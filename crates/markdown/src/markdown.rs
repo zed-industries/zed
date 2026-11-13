@@ -133,6 +133,7 @@ pub struct MarkdownStyle {
     pub prevent_mouse_interaction: bool,
     pub table_columns_min_size: bool,
     pub soft_break_as_hard_break: bool,
+    pub rounded_images: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -162,6 +163,7 @@ impl Default for MarkdownStyle {
             prevent_mouse_interaction: false,
             table_columns_min_size: false,
             soft_break_as_hard_break: false,
+            rounded_images: true,
         }
     }
 }
@@ -408,6 +410,10 @@ impl MarkdownStyle {
         });
 
         self.heading_border_color = Some(colors.border_variant);
+
+        // The preview should match how GitHub and browsers render images, which
+        // keep their own corners (e.g. shields.io badges).
+        self.rounded_images = false;
 
         self
     }
@@ -1560,6 +1566,36 @@ impl ParsedMarkdown {
         &self.root_block_starts
     }
 
+    /// The source offset of the first block that renders anything. Leading blank lines and
+    /// HTML blocks that render nothing (such as a comment) come before it, so this is the
+    /// block that sits at the top of the rendered markdown.
+    fn first_rendered_block_start(&self) -> usize {
+        let mut in_empty_html_block = false;
+        for (range, event) in self.events.iter() {
+            match event {
+                MarkdownEvent::RootStart | MarkdownEvent::RootEnd(_) => {}
+                MarkdownEvent::Start(MarkdownTag::HtmlBlock) => {
+                    in_empty_html_block = match self.html_blocks.get(&range.start) {
+                        Some(block) => block.children.is_empty(),
+                        None => {
+                            let html = self.source[range.clone()].trim();
+                            html.starts_with("<!--") && html.ends_with("-->")
+                        }
+                    };
+                    if !in_empty_html_block {
+                        return range.start;
+                    }
+                }
+                MarkdownEvent::End(MarkdownTagEnd::HtmlBlock) if in_empty_html_block => {
+                    in_empty_html_block = false;
+                }
+                _ if in_empty_html_block => {}
+                _ => return range.start,
+            }
+        }
+        0
+    }
+
     fn non_rendered_source_ranges(&self) -> Vec<Range<usize>> {
         let mut ranges = Vec::new();
         let mut active_link = None;
@@ -2031,7 +2067,7 @@ impl MarkdownElement {
                     .id(("markdown-image", range.start))
                     .min_w_0()
                     .max_w_full()
-                    .rounded_md()
+                    .when(self.style.rounded_images, |this| this.rounded_md())
                     .mr_1()
                     .mb_1()
                     .when_some(height, |this, height| this.h(height))
@@ -2680,6 +2716,7 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
             highlights,
+            parsed_markdown.first_rendered_block_start(),
         );
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
@@ -2969,16 +3006,14 @@ impl Element for MarkdownElement {
                                 )
                                 .fill();
 
-                                let checkbox = if let Some(on_toggle) =
-                                    self.on_checkbox_toggle.clone()
-                                {
-                                    let task_source_range = task_range.clone();
-                                    checkbox.on_click(move |_state, window, cx| {
-                                        on_toggle(task_source_range.clone(), !checked, window, cx);
-                                    })
-                                } else {
-                                    checkbox.visualization_only(true)
-                                };
+                                let checkbox =
+                                    if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
+                                        checkbox.on_click(move |_state, window, cx| {
+                                            on_toggle(task_range.clone(), !checked, window, cx);
+                                        })
+                                    } else {
+                                        checkbox.visualization_only(true)
+                                    };
 
                                 let line_height = self
                                     .style
@@ -3007,7 +3042,6 @@ impl Element for MarkdownElement {
                         }),
                         MarkdownTag::Strong => builder.push_text_style(TextStyleRefinement {
                             font_weight: Some(FontWeight::BOLD),
-                            color: Some(cx.theme().colors().text),
                             ..Default::default()
                         }),
                         MarkdownTag::Strikethrough => {
@@ -3666,14 +3700,6 @@ fn render_copy_code_block_button(
     })
 }
 
-impl IntoElement for MarkdownElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 pub enum AnyDiv {
     Div(Div),
     Stateful(Stateful<Div>),
@@ -3821,6 +3847,8 @@ struct MarkdownElementBuilder {
     rendered_image_links: Vec<RenderedImageLink>,
     rendered_footnote_refs: Vec<RenderedFootnoteRef>,
     current_source_index: usize,
+    /// The source offset of the first rendered block, whose top margin is removed.
+    first_block_start: usize,
     html_comment: bool,
     rendered_footnote_separator: bool,
     base_text_style: TextStyle,
@@ -3927,6 +3955,7 @@ impl MarkdownElementBuilder {
         base_text_style: TextStyle,
         syntax_theme: Arc<SyntaxTheme>,
         highlights: MarkdownHighlights,
+        first_block_start: usize,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -3940,6 +3969,7 @@ impl MarkdownElementBuilder {
             rendered_image_links: Vec::new(),
             rendered_footnote_refs: Vec::new(),
             current_source_index: 0,
+            first_block_start,
             html_comment: false,
             rendered_footnote_separator: false,
             base_text_style,
@@ -3991,7 +4021,7 @@ impl MarkdownElementBuilder {
         let mut div = div.into();
         self.flush_text();
 
-        if range.start == 0 {
+        if range.start == self.first_block_start {
             // Remove the top margin on the first element.
             div.style().refine(&StyleRefinement {
                 margin: gpui::EdgesRefinement {
@@ -4460,14 +4490,6 @@ impl Element for RenderedLineElement {
         layout.paint_background(window, cx).log_err();
         self.line.paint_highlights(window);
         layout.paint_foreground(window, cx).log_err();
-    }
-}
-
-impl IntoElement for RenderedLineElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
@@ -6854,6 +6876,38 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn test_first_rendered_block_has_no_top_margin(cx: &mut TestAppContext) {
+        let mut heading_top = |source: &'static str| {
+            let mut cx = render_image_layout(source, cx);
+            let selectors = image_selectors(source);
+            let [image] = selectors.as_slice() else {
+                panic!("expected one image, found {}", selectors.len());
+            };
+            cx.debug_bounds(image)
+                .expect("image should be rendered")
+                .top()
+        };
+
+        // Leading blank lines and comments render nothing, so the heading after them is the
+        // first rendered block. Its top margin would otherwise collapse through the empty
+        // blocks before it and push everything below it down.
+        let expected = heading_top("# ![](icon.png)");
+        for source in [
+            "\n# ![](icon.png)",
+            "<!-- comment -->\n\n# ![](icon.png)",
+            "<!--\nmulti-line\ncomment\n-->\n\n# ![](icon.png)",
+            "<!-- one -->\n<!-- two -->\n\n# ![](icon.png)",
+            "[zed]: https://zed.dev\n\n# ![](icon.png)",
+        ] {
+            assert_eq!(
+                heading_top(source),
+                expected,
+                "heading in {source:?} should sit at the top like it does without the leading content"
+            );
+        }
+    }
+
     #[test]
     fn test_collect_image_alt_text() {
         let alt_text = |markdown: &str| {
@@ -8133,37 +8187,43 @@ mod tests {
                 });
                 cx.run_until_parked();
                 cx.update(|window, cx| {
+                    // Quads are drawn in this order: by draw order, then in paint
+                    // order. At an equal draw order, quads are drawn before underlines.
                     let quads = window.painted_quads();
                     let selection_bounds = quads
                         .iter()
                         .find(|quad| quad.background == Background::from(gpui::red()))
                         .expect("selection is painted")
                         .bounds;
-                    let order_for_color = |color| {
-                        let orders = quads
+                    // A quad can be painted as several pieces.
+                    let positions_for_color = |color| {
+                        let positions = quads
                             .iter()
-                            .filter(|quad| {
+                            .enumerate()
+                            .filter(|(_, quad)| {
                                 quad.background == Background::from(color)
                                     && quad.bounds.intersects(&selection_bounds)
                             })
-                            .map(|quad| quad.order)
+                            .map(|(position, _)| position)
                             .collect::<Vec<_>>();
-                        assert_eq!(orders.len(), 1);
-                        orders[0]
+                        let first = *positions.first().expect("quad is painted");
+                        let last = *positions.last().expect("quad is painted");
+                        first..=last
                     };
-                    let chip_order = order_for_color(gpui::green());
-                    let search_order = order_for_color(cx.theme().colors().search_match_background);
-                    let selection_order = order_for_color(gpui::red());
+                    let chip = positions_for_color(gpui::green());
+                    let search = positions_for_color(cx.theme().colors().search_match_background);
+                    let selection = positions_for_color(gpui::red());
+                    let selection_order = quads[*selection.end()].order;
                     let text_order = window
                         .painted_underlines()
                         .iter()
                         .map(|underline| underline.order)
                         .min()
                         .expect("strikethrough is painted");
-                    assert!(chip_order < search_order);
-                    assert!(search_order < selection_order);
+                    assert!(chip.end() < search.start());
+                    assert!(search.end() < selection.start());
                     assert!(
-                        selection_order < text_order,
+                        selection_order <= text_order,
                         "alignment={alignment}, text={text}, selection={selection_order}, glyphs={text_order}",
                     );
                 });
@@ -8203,17 +8263,22 @@ mod tests {
 
         let highlight_color = cx.update(|_, cx| cx.theme().colors().search_match_background);
         cx.update(|window, _| {
+            // Quads are drawn in this order: by draw order, then in paint order.
+            // At an equal draw order, quads are drawn before underlines.
             let quads = window.painted_quads();
-            let order_of_quad_with = |color: Hsla| {
-                quads
-                    .iter()
-                    .find(|quad| quad.background == color.into())
-                    .map(|quad| quad.order)
-            };
-            let run_background_order =
-                order_of_quad_with(run_background_color).expect("link background should be painted");
-            let highlight_order =
-                order_of_quad_with(highlight_color).expect("search highlight should be painted");
+            let has_color = |color: Hsla| move |quad: &gpui::Quad| quad.background == color.into();
+            let last_run_background = quads
+                .iter()
+                .rposition(has_color(run_background_color))
+                .expect("link background should be painted");
+            let first_highlight = quads
+                .iter()
+                .position(has_color(highlight_color))
+                .expect("search highlight should be painted");
+            let last_highlight = quads
+                .iter()
+                .rposition(has_color(highlight_color))
+                .expect("search highlight should be painted");
             // Strikethroughs are painted in the same layer as the glyphs
             let text_order = window
                 .painted_underlines()
@@ -8222,11 +8287,11 @@ mod tests {
                 .min()
                 .expect("strikethrough should be painted");
             assert!(
-                run_background_order < highlight_order,
+                last_run_background < first_highlight,
                 "text run backgrounds must not cover search highlights"
             );
             assert!(
-                highlight_order < text_order,
+                quads[last_highlight].order <= text_order,
                 "search highlight must be drawn below the text, otherwise opaque theme colors hide it"
             );
         });
@@ -8630,14 +8695,6 @@ mod tests {
     struct CapturingMarkdownElement {
         markdown_element: MarkdownElement,
         rendered_text: Rc<RefCell<Option<RenderedText>>>,
-    }
-
-    impl IntoElement for CapturingMarkdownElement {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
-        }
     }
 
     impl Element for CapturingMarkdownElement {

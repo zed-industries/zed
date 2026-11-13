@@ -407,7 +407,7 @@ fn reject_edits_in_ranges(
         let buffer = multibuffer.read(cx).buffer(hunk.buffer_id);
         if let Some(buffer) = buffer {
             ranges_by_buffer
-                .entry(buffer.clone())
+                .entry(buffer)
                 .or_insert_with(Vec::new)
                 .push(hunk.buffer_range.clone());
         }
@@ -1309,6 +1309,19 @@ impl AgentDiff {
         });
     }
 
+    #[cfg(test)]
+    pub(crate) fn reviewed_thread(
+        workspace: &WeakEntity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Entity<AcpThread>> {
+        Self::global(cx)
+            .read(cx)
+            .workspace_threads
+            .get(workspace)?
+            .thread
+            .upgrade()
+    }
+
     fn register_active_thread_impl(
         &mut self,
         workspace: &WeakEntity<Workspace>,
@@ -1477,6 +1490,7 @@ impl AgentDiff {
             | AcpThreadEvent::TokenUsageUpdated(_)
             | AcpThreadEvent::NoticesUpdated
             | AcpThreadEvent::SubagentSpawned(_)
+            | AcpThreadEvent::SubagentAssociationUpdated
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequested(_)
             | AcpThreadEvent::ToolAuthorizationReceived(_)

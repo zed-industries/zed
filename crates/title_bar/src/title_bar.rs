@@ -2,7 +2,6 @@ mod application_menu;
 pub mod collab;
 mod onboarding_banner;
 mod plan_chip;
-mod title_bar_settings;
 mod update_version;
 
 use crate::application_menu::{ApplicationMenu, show_menus};
@@ -10,11 +9,13 @@ use crate::plan_chip::PlanChip;
 use agent_settings::{AgentSettings, WindowLayout};
 use arrayvec::ArrayVec;
 use git_ui_core::worktree_picker::WorktreePicker;
+use path::PathStyle;
 pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
 };
-use project::{linked_worktree_short_name, repo_identity_path, repo_identity_path_if_local};
+use platform_title_bar::{SystemWindowTabs, TitleBarSettings};
+use project::{linked_worktree_short_name, repo_identity_path};
 
 #[cfg(not(target_os = "macos"))]
 use crate::application_menu::{
@@ -27,8 +28,8 @@ use client::{Client, UserStore, zed_urls};
 use command_palette_hooks::CommandPaletteFilter;
 
 use gpui::{
-    Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    Action, Anchor, Animation, AnimationExt, AnyElement, AnyView, App, Context, Element, Entity,
+    Focusable, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Subscription, TaskExt, WeakEntity, Window, actions, div,
     pulsating_between,
 };
@@ -41,11 +42,9 @@ use remote::RemoteConnectionOptions;
 use settings::{Settings as _, SettingsStore};
 
 use std::any::TypeId;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ActiveTheme;
-use title_bar_settings::TitleBarSettings;
 use ui::{
     Avatar, ButtonLike, ContextMenu, ContextMenuEntry, IconWithIndicator, Indicator, PopoverMenu,
     PopoverMenuHandle, TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
@@ -64,18 +63,6 @@ pub use onboarding_banner::restore_banner;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 const MAX_SHORT_SHA_LENGTH: usize = 8;
-
-fn linked_worktree_name_anchor<'a>(
-    main_worktree_path: Option<&'a Path>,
-    repository_identity_path: Option<&'a Path>,
-    is_linked_worktree: bool,
-) -> Option<&'a Path> {
-    main_worktree_path.or_else(|| {
-        is_linked_worktree
-            .then_some(repository_identity_path)
-            .flatten()
-    })
-}
 
 actions!(
     collab,
@@ -113,9 +100,14 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
-        let multi_workspace = workspace.multi_workspace().cloned();
-        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, multi_workspace, window, cx));
-        workspace.set_titlebar_item(item.into(), window, cx);
+        let window_tabs = cx.new(|_| SystemWindowTabs::new());
+        workspace.set_window_tabs_item(AnyView::from(window_tabs), cx);
+        apply_title_bar_visibility(workspace, window, cx);
+
+        cx.observe_global_in::<SettingsStore>(window, apply_title_bar_visibility)
+            .detach();
+        cx.observe_window_bounds(window, apply_title_bar_visibility)
+            .detach();
 
         workspace.register_action(|_workspace, _: &UseClassicLayout, _window, cx| {
             set_window_layout(WindowLayout::Editor(None), cx);
@@ -185,6 +177,25 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+fn apply_title_bar_visibility(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let visible = TitleBarSettings::is_title_bar_visible(window, cx);
+
+    if !visible {
+        workspace.clear_titlebar_item(window, cx);
+    } else if workspace.titlebar_item().is_none() {
+        let multi_workspace = workspace.multi_workspace().cloned();
+        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, multi_workspace, window, cx));
+        workspace.set_titlebar_item(AnyView::from(item), window, cx);
+    }
+
+    #[cfg(target_os = "macos")]
+    window.set_native_titlebar_visibility(visible);
+}
+
 /// Hides or shows the panel layout actions in the command palette based on
 /// whether AI is currently disabled.
 fn update_layout_action_filter(cx: &mut App) {
@@ -249,7 +260,8 @@ impl Render for TitleBar {
         let mut repository = None;
         let mut linked_worktree_name = None;
         if let Some(worktree) = self.effective_active_worktree(cx) {
-            repository = self.get_repository_for_worktree(&worktree, cx);
+            let path_style = worktree.read(cx).path_style();
+            repository = self.get_repository_for_worktree(&worktree, path_style, cx);
             let worktree_abs_path = worktree.read(cx).abs_path();
             project_name = worktree
                 .read(cx)
@@ -258,43 +270,41 @@ impl Render for TitleBar {
                 .map(|name| SharedString::from(name.to_string()));
             if let Some(repo) = &repository {
                 let repo = repo.read(cx);
-                let identity = repo_identity_path(&repo.common_dir_abs_path, repo.path_style);
-                let identity_fallback =
-                    repo_identity_path_if_local(&repo.common_dir_abs_path, repo.path_style);
-                linked_worktree_name = linked_worktree_name_anchor(
-                    repo.main_worktree_abs_path(),
-                    identity_fallback,
-                    repo.is_linked_worktree(),
+                let identity = repo_identity_path(&repo.common_dir_abs_path, path_style);
+                linked_worktree_name = linked_worktree_short_name(
+                    repo.linked_worktree_anchor_path(),
+                    repo.work_directory_abs_path.as_ref(),
+                    path_style,
                 )
-                .and_then(|name_anchor_path| {
-                    linked_worktree_short_name(
-                        name_anchor_path,
-                        repo.work_directory_abs_path.as_ref(),
-                        repo.path_style,
-                    )
-                })
                 .or_else(|| {
                     repo.is_linked_worktree()
                         .then_some(project_name.clone())
                         .flatten()
                 });
 
-                let display_name = if identity.extension() == Some(std::ffi::OsStr::new("git")) {
-                    identity.file_stem()
-                } else {
-                    repo.path_style.file_name(identity)
-                };
+                let display_name =
+                    if path_style.extension(identity) == Some(std::ffi::OsStr::new("git")) {
+                        path_style.file_stem(identity)
+                    } else {
+                        path_style.file_name(identity)
+                    };
 
                 if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
-                    let visible_worktrees_in_repo = self.visible_worktrees_in_repository(repo, cx);
+                    let visible_worktrees_in_repo =
+                        self.visible_worktrees_in_repository(repo, path_style, cx);
                     let name = if visible_worktrees_in_repo == 1 {
-                        if let Ok(relative) =
-                            worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
+                        if let Ok(relative) = path_style
+                            .strip_prefix(&worktree_abs_path, &*repo.work_directory_abs_path)
                         {
                             if relative.as_os_str().is_empty() {
                                 repo_name.to_string()
                             } else {
-                                format!("{}/{}", repo_name, relative.display())
+                                format!(
+                                    "{}{}{}",
+                                    repo_name,
+                                    path_style.primary_separator(),
+                                    relative.display()
+                                )
                             }
                         } else {
                             repo_name.to_string()
@@ -513,7 +523,7 @@ impl TitleBar {
 
         let update_version = cx.new(|cx| UpdateVersion::new(cx));
         let platform_titlebar = cx.new(|cx| {
-            let mut titlebar = PlatformTitleBar::new(id, cx);
+            let mut titlebar = PlatformTitleBar::new(id, cx).without_system_window_tabs();
             if let Some(mw) = multi_workspace.clone() {
                 titlebar = titlebar.with_multi_workspace(mw);
             }
@@ -576,6 +586,7 @@ impl TitleBar {
     fn get_repository_for_worktree(
         &self,
         worktree: &Entity<project::Worktree>,
+        path_style: PathStyle,
         cx: &App,
     ) -> Option<Entity<project::git_store::Repository>> {
         let project = self.project.read(cx);
@@ -587,7 +598,8 @@ impl TitleBar {
             .values()
             .filter(|repo| {
                 let repo_path = &repo.read(cx).work_directory_abs_path;
-                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+                worktree_path == *repo_path
+                    || path_style.starts_with(&worktree_path, repo_path.as_ref())
             })
             .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
             .cloned()
@@ -596,6 +608,7 @@ impl TitleBar {
     fn visible_worktrees_in_repository(
         &self,
         repository: &project::git_store::Repository,
+        path_style: PathStyle,
         cx: &App,
     ) -> usize {
         let repo_path = &repository.work_directory_abs_path;
@@ -604,7 +617,8 @@ impl TitleBar {
             .visible_worktrees(cx)
             .filter(|worktree| {
                 let worktree_path = worktree.read(cx).abs_path();
-                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+                worktree_path == *repo_path
+                    || path_style.starts_with(&worktree_path, repo_path.as_ref())
             })
             .count()
     }
@@ -615,21 +629,15 @@ impl TitleBar {
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
 
-        let (nickname, tooltip_title, icon) = match options {
-            RemoteConnectionOptions::Ssh(options) => (
-                options.nickname.map(|nick| nick.into()),
-                "Remote Project",
-                IconName::Server,
-            ),
-            RemoteConnectionOptions::Wsl(_) => (None, "Remote Project", IconName::Linux),
+        let (tooltip_title, icon) = match options {
+            RemoteConnectionOptions::Ssh(_) => ("Remote Project", IconName::Server),
+            RemoteConnectionOptions::Wsl(_) => ("Remote Project", IconName::Linux),
             RemoteConnectionOptions::Docker(_dev_container_connection) => {
-                (None, "Dev Container", IconName::Box)
+                ("Dev Container", IconName::Box)
             }
             #[cfg(any(test, feature = "test-support"))]
-            RemoteConnectionOptions::Mock(_) => (None, "Mock Remote Project", IconName::Server),
+            RemoteConnectionOptions::Mock(_) => ("Mock Remote Project", IconName::Server),
         };
-
-        let nickname = nickname.unwrap_or_else(|| host.clone());
 
         let (indicator_color, meta) = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
@@ -687,7 +695,7 @@ impl TitleBar {
                                     ))
                                     .into_any_element(),
                                 )
-                                .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+                                .child(Label::new(host).size(LabelSize::Small).truncate()),
                         ),
                     move |_window, cx| {
                         Tooltip::with_meta(
@@ -1371,7 +1379,6 @@ impl TitleBar {
                                 },
                                 {
                                     let user_store = user_store.clone();
-                                    let organization = organization.clone();
                                     let workspace = workspace.clone();
                                     move |window, cx| {
                                         let task = user_store.update(cx, |user_store, cx| {
@@ -1444,48 +1451,181 @@ impl TitleBar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use util::paths::PathStyle;
+    use gpui::{
+        AnyWindowHandle, Empty, EntityId, SystemWindowTab, SystemWindowTabController,
+        TestAppContext, VisualTestContext,
+    };
+    use platform_title_bar::SidebarWindowControls;
+    use settings::{SidebarSide, TitleBarVisibility};
 
-    #[test]
-    fn test_foreign_path_style_does_not_use_repository_identity_as_name_anchor() {
-        let (common_dir, foreign_path_style) = match PathStyle::local() {
-            PathStyle::Unix => (Path::new(r"C:\repos\zed"), PathStyle::Windows),
-            PathStyle::Windows => (Path::new("/repos/zed"), PathStyle::Unix),
-        };
-        let repository_identity_path = repo_identity_path_if_local(common_dir, foreign_path_style);
+    #[gpui::test]
+    async fn test_title_bar_visibility(cx: &mut TestAppContext) {
+        let (workspace, cx) = init_test(TitleBarVisibility::Never, cx).await;
+        assert_eq!(chrome(&workspace, cx), Chrome::HIDDEN);
 
+        set_visibility(Some(TitleBarVisibility::Always), cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::SHOWN);
+        let title_bar = title_bar_id(&workspace, cx);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.title_bar.get_or_insert_default().show_menus = Some(true);
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(title_bar_id(&workspace, cx), title_bar);
+
+        toggle_fullscreen(&workspace, cx);
         assert_eq!(
-            linked_worktree_name_anchor(None, repository_identity_path, true),
-            None
+            chrome(&workspace, cx),
+            Chrome {
+                title_bar: true,
+                ..Chrome::HIDDEN
+            }
         );
+
+        set_visibility(Some(TitleBarVisibility::HideInFullScreen), cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::HIDDEN);
+
+        toggle_fullscreen(&workspace, cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::SHOWN);
+
+        toggle_fullscreen(&workspace, cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::HIDDEN);
+
+        toggle_fullscreen(&workspace, cx);
+        set_visibility(Some(TitleBarVisibility::Never), cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::HIDDEN);
+
+        set_visibility(None, cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::SHOWN);
     }
 
-    #[test]
-    fn test_local_path_style_uses_bare_repository_worktree_name() {
-        let (repository_identity_path, work_directory_path) = match PathStyle::local() {
-            PathStyle::Unix => (
-                Path::new("/repos/zed"),
-                Path::new("/worktrees/zed/plum-warbler/zed"),
-            ),
-            PathStyle::Windows => (
-                Path::new(r"C:\repos\zed"),
-                Path::new(r"C:\worktrees\zed\plum-warbler\zed"),
-            ),
+    #[gpui::test]
+    async fn test_window_tabs_stay_mounted_without_title_bar(cx: &mut TestAppContext) {
+        let other_window = cx.add_window(|_, _| Empty);
+        let (workspace, cx) = init_test(TitleBarVisibility::Never, cx).await;
+        workspace.update_in(cx, |_, window, cx| {
+            let workspace_window = window.window_handle();
+            SystemWindowTabController::add_tab(
+                cx,
+                workspace_window.window_id(),
+                Vec::from([
+                    SystemWindowTab::new(SharedString::from("workspace"), workspace_window),
+                    SystemWindowTab::new(
+                        SharedString::from("other"),
+                        AnyWindowHandle::from(other_window),
+                    ),
+                ]),
+            );
+            SystemWindowTabController::set_visible(cx, true);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(chrome(&workspace, cx), Chrome::HIDDEN);
+        assert!(window_tabs_mounted(cx));
+
+        set_visibility(Some(TitleBarVisibility::HideInFullScreen), cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::SHOWN);
+        assert!(window_tabs_mounted(cx));
+
+        toggle_fullscreen(&workspace, cx);
+        assert_eq!(chrome(&workspace, cx), Chrome::HIDDEN);
+        assert!(window_tabs_mounted(cx));
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct Chrome {
+        title_bar: bool,
+        left_sidebar: SidebarWindowControls,
+        right_sidebar: SidebarWindowControls,
+    }
+
+    impl Chrome {
+        const SHOWN: Self = Self {
+            title_bar: true,
+            left_sidebar: SidebarWindowControls {
+                traffic_lights: cfg!(target_os = "macos"),
+                left: !cfg!(target_os = "macos"),
+                right: false,
+            },
+            right_sidebar: SidebarWindowControls {
+                traffic_lights: false,
+                left: false,
+                right: !cfg!(target_os = "macos"),
+            },
         };
+        const HIDDEN: Self = Self {
+            title_bar: false,
+            left_sidebar: NO_WINDOW_CONTROLS,
+            right_sidebar: NO_WINDOW_CONTROLS,
+        };
+    }
 
-        let repository_identity_path =
-            repo_identity_path_if_local(repository_identity_path, PathStyle::local());
-        let name_anchor_path = linked_worktree_name_anchor(None, repository_identity_path, true);
+    const NO_WINDOW_CONTROLS: SidebarWindowControls = SidebarWindowControls {
+        traffic_lights: false,
+        left: false,
+        right: false,
+    };
 
-        assert_eq!(
-            name_anchor_path.and_then(|name_anchor_path| {
-                linked_worktree_short_name(
-                    name_anchor_path,
-                    work_directory_path,
-                    PathStyle::local(),
-                )
-            }),
-            Some("plum-warbler".into())
-        );
+    async fn init_test(
+        visibility: TitleBarVisibility,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, &mut VisualTestContext) {
+        cx.update(|cx| {
+            let mut settings = SettingsStore::test(cx);
+            settings.update_user_settings(cx, |settings| {
+                settings.title_bar.get_or_insert_default().show = Some(visibility);
+            });
+            cx.set_global(settings);
+            cx.set_global(db::AppDatabase::test_new());
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            command_palette_hooks::init(cx);
+        });
+        let project = Project::test(fs::FakeFs::new(cx.executor()), [], cx).await;
+        cx.update(|cx| {
+            let project = project.read(cx);
+            call::init(project.client(), project.user_store(), cx);
+            init(cx);
+        });
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        cx.run_until_parked();
+        (workspace, cx)
+    }
+
+    fn set_visibility(visibility: Option<TitleBarVisibility>, cx: &mut VisualTestContext) {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.title_bar.get_or_insert_default().show = visibility;
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    fn toggle_fullscreen(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) {
+        workspace.update_in(cx, |_, window, _| window.toggle_fullscreen());
+        cx.run_until_parked();
+    }
+
+    fn chrome(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Chrome {
+        workspace.update_in(cx, |workspace, window, cx| Chrome {
+            title_bar: workspace.titlebar_item().is_some(),
+            left_sidebar: SidebarWindowControls::new(SidebarSide::Left, window, cx),
+            right_sidebar: SidebarWindowControls::new(SidebarSide::Right, window, cx),
+        })
+    }
+
+    fn title_bar_id(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Option<EntityId> {
+        workspace.read_with(cx, |workspace, _| {
+            workspace.titlebar_item().map(|item| item.entity_id())
+        })
+    }
+
+    fn window_tabs_mounted(cx: &mut VisualTestContext) -> bool {
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        cx.debug_bounds("system-window-tabs")
+            .is_some_and(|bounds| bounds.size.height > px(0.))
     }
 }

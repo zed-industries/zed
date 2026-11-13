@@ -1456,7 +1456,7 @@ impl Buffer {
             if is_included {
                 edits.push((
                     edit.old.clone(),
-                    self.text_for_range(edit.new.clone()).collect::<String>(),
+                    self.text_for_range(edit.new).collect::<String>(),
                 ));
             }
         }
@@ -5800,8 +5800,8 @@ impl<'a> BufferChunks<'a> {
             }
 
             highlights.captures.set_byte_range(self.range.clone());
-            self.initialize_diagnostic_endpoints();
         }
+        self.initialize_diagnostic_endpoints();
     }
 
     fn initialize_diagnostic_endpoints(&mut self) {

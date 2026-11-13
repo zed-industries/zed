@@ -38,11 +38,7 @@ impl DownloadFileCapability {
             }
         }
 
-        if self.path.len() < desired_path.len() {
-            return false;
-        }
-
-        true
+        self.path.len() >= desired_path.len()
     }
 }
 
