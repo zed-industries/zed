@@ -233,12 +233,12 @@ pub async fn stream_generate_content(
     // The `model` field is emptied as it is provided as a path parameter.
     let model_id = mem::take(&mut request.model.model_id);
 
-    let uri =
-        format!("{api_url}/v1beta/models/{model_id}:streamGenerateContent?alt=sse&key={api_key}",);
+    let uri = format!("{api_url}/v1beta/models/{model_id}:streamGenerateContent?alt=sse");
 
     let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
+        .header("x-goog-api-key", api_key)
         .header("Content-Type", "application/json")
         .extra_headers(extra_headers)
         .body(AsyncBody::from(serde_json::to_string(&request).map_err(
@@ -1018,7 +1018,15 @@ mod tests {
 
     fn completion_error(read_error: Option<ErrorKind>) -> LanguageModelCompletionError {
         futures::executor::block_on(async {
-            let client = FakeHttpClient::create(move |_| async move {
+            let client = FakeHttpClient::create(move |request| async move {
+                assert!(!request.uri().to_string().contains("key="));
+                assert_eq!(
+                    request
+                        .headers()
+                        .get("x-goog-api-key")
+                        .and_then(|value| value.to_str().ok()),
+                    Some("test-key")
+                );
                 let chunks = vec![
                     Ok(b"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Thinking\"}]}}]}\n\n".to_vec()),
                     match read_error {

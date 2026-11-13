@@ -566,15 +566,26 @@ mod tests {
     async fn test_stream_completion_uses_custom_endpoint_and_provider_attribution(
         cx: &mut TestAppContext,
     ) {
-        let captured_requests: Arc<Mutex<Vec<(String, Option<String>, Value)>>> =
-            Arc::new(Mutex::new(Vec::new()));
+        struct RecordedRequest {
+            uri: String,
+            api_key_header: Option<String>,
+            custom_header: Option<String>,
+            body: Value,
+        }
+
+        let captured_requests: Arc<Mutex<Vec<RecordedRequest>>> = Arc::new(Mutex::new(Vec::new()));
         let return_error = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let http_client = FakeHttpClient::create({
             let captured_requests = captured_requests.clone();
             let return_error = return_error.clone();
             move |request| {
                 let uri = request.uri().to_string();
-                let header = request
+                let api_key_header = request
+                    .headers()
+                    .get("x-goog-api-key")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned);
+                let custom_header = request
                     .headers()
                     .get("x-custom-test")
                     .and_then(|value| value.to_str().ok())
@@ -585,11 +596,13 @@ mod tests {
                 async move {
                     let mut body_text = String::new();
                     body.read_to_string(&mut body_text).await?;
-                    let body_json: Value = serde_json::from_str(&body_text)?;
-                    captured_requests
-                        .lock()
-                        .unwrap()
-                        .push((uri, header, body_json));
+                    let body: Value = serde_json::from_str(&body_text)?;
+                    captured_requests.lock().unwrap().push(RecordedRequest {
+                        uri,
+                        api_key_header,
+                        custom_header,
+                        body,
+                    });
                     if should_error {
                         Ok(Response::builder()
                             .status(StatusCode::UNAUTHORIZED)
@@ -653,7 +666,7 @@ mod tests {
             )
         }));
 
-        cx.update(|cx| provider.set_api_key(Some("secret-key".to_string()), cx))
+        cx.update(|cx| provider.set_api_key(Some("secret+key&1".to_string()), cx))
             .await
             .expect("api key should save");
 
@@ -699,19 +712,20 @@ mod tests {
             let recorded = captured_requests.lock().unwrap();
             assert_eq!(recorded.len(), 1);
             assert_eq!(
-                recorded[0].0,
-                "https://gateway.example.com/v1beta/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse&key=secret-key"
+                recorded[0].uri,
+                "https://gateway.example.com/v1beta/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse"
             );
-            assert_eq!(recorded[0].1.as_deref(), Some("abc"));
+            assert_eq!(recorded[0].api_key_header.as_deref(), Some("secret+key&1"));
+            assert_eq!(recorded[0].custom_header.as_deref(), Some("abc"));
             assert_eq!(
-                recorded[0].2["generationConfig"]["thinkingConfig"],
+                recorded[0].body["generationConfig"]["thinkingConfig"],
                 serde_json::json!({
                     "includeThoughts": true,
                     "thinkingLevel": "MEDIUM"
                 })
             );
             assert!(
-                recorded[0].2["generationConfig"]
+                recorded[0].body["generationConfig"]
                     .get("maxOutputTokens")
                     .is_none()
             );
@@ -736,11 +750,11 @@ mod tests {
             let recorded = captured_requests.lock().unwrap();
             assert_eq!(recorded.len(), 2);
             assert_eq!(
-                recorded[1].0,
-                "https://gateway.example.com/v1beta/models/google/gemini-2.5-flash:streamGenerateContent?alt=sse&key=secret-key"
+                recorded[1].uri,
+                "https://gateway.example.com/v1beta/models/google/gemini-2.5-flash:streamGenerateContent?alt=sse"
             );
             assert_eq!(
-                recorded[1].2["generationConfig"]["thinkingConfig"],
+                recorded[1].body["generationConfig"]["thinkingConfig"],
                 serde_json::json!({ "thinkingBudget": 0 })
             );
         }
@@ -760,7 +774,7 @@ mod tests {
             let recorded = captured_requests.lock().unwrap();
             assert_eq!(recorded.len(), 3);
             assert_eq!(
-                recorded[2].2["generationConfig"]["thinkingConfig"],
+                recorded[2].body["generationConfig"]["thinkingConfig"],
                 serde_json::json!({ "thinkingLevel": "LOW" })
             );
         }
@@ -779,7 +793,7 @@ mod tests {
             let recorded = captured_requests.lock().unwrap();
             assert_eq!(recorded.len(), 4);
             assert!(
-                recorded[3].2["generationConfig"]
+                recorded[3].body["generationConfig"]
                     .get("thinkingConfig")
                     .is_none()
             );
