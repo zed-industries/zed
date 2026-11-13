@@ -1,9 +1,3 @@
-#[cfg(any(test, feature = "test-support"))]
-use crate::DisplayId;
-#[cfg(any(test, feature = "test-support"))]
-use crate::NoopTextSystem;
-#[cfg(any(test, feature = "test-support"))]
-use crate::PathPromptOptions;
 use crate::{
     ActivityGuard, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem,
     CursorStyle, DevicePixels, DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu,
@@ -13,6 +7,8 @@ use crate::{
     SystemNotificationResponse, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance,
     WindowParams, size,
 };
+#[cfg(any(test, feature = "test-support"))]
+use crate::{DisplayId, NoopTextSystem, PathPromptOptions};
 use anyhow::Result;
 #[cfg(any(test, feature = "test-support"))]
 use collections::VecDeque;
