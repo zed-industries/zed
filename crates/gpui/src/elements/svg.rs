@@ -1,5 +1,5 @@
 use std::{
-    f32::consts::TAU,
+    f32::consts::PI,
     fs,
     hash::{Hash, Hasher},
     path::Path,
@@ -401,7 +401,7 @@ impl TimedTransformation {
     pub fn rotation(period: Duration, from: Transformation) -> Self {
         Self::new(period)
             .from(from)
-            .to(from.with_rotation(radians(from.rotate.0 + TAU)))
+            .to(from.with_rotation(radians(from.rotate.0 + 2. * PI)))
     }
 
     fn is_animated(&self) -> bool {
