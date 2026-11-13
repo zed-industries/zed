@@ -5326,6 +5326,8 @@ impl BufferGitState {
 
         let has_conflict = conflict_set.read_with(cx, |conflict_set, _| conflict_set.has_conflict);
         if !has_conflict {
+            self.reparse_conflict_markers_task = None;
+            self.conflict_updated_futures.clear();
             return rx;
         }
 
@@ -5343,7 +5345,9 @@ impl BufferGitState {
                 if let Some(conflict_set) = &this.conflict_set {
                     conflict_set
                         .update(cx, |conflict_set, cx| {
-                            conflict_set.set_snapshot(snapshot, changed_range, cx);
+                            if conflict_set.has_conflict {
+                                conflict_set.set_snapshot(snapshot, changed_range, cx);
+                            }
                         })
                         .ok();
                 }
@@ -11446,6 +11450,39 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[gpui::test]
+    async fn test_conflict_parse_after_status_cleared(cx: &mut TestAppContext) {
+        for cancel_task in [false, true] {
+            let buffer = cx.new(|cx| {
+                Buffer::local("<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\n", cx)
+            });
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let conflict_set = cx.new(|cx| ConflictSet::new(snapshot.remote_id(), true, cx));
+            let state = cx.new(|cx| BufferGitState::new(WeakEntity::new_invalid(), cx));
+            let receiver = state.update(cx, |state, cx| {
+                state.conflict_set = Some(conflict_set.downgrade());
+                state.reparse_conflict_markers(snapshot.clone(), cx)
+            });
+
+            // Clear the status before the queued parse can publish its result.
+            conflict_set.update(cx, |conflict_set, cx| {
+                conflict_set.set_has_conflict(false, cx);
+            });
+            if cancel_task {
+                let receiver =
+                    state.update(cx, |state, cx| state.reparse_conflict_markers(snapshot, cx));
+                assert!(receiver.await.is_err());
+                state.read_with(cx, |state, _| {
+                    assert!(state.reparse_conflict_markers_task.is_none());
+                });
+            }
+            assert_eq!(receiver.await.is_err(), cancel_task);
+            conflict_set.read_with(cx, |conflict_set, _| {
+                assert!(conflict_set.snapshot.conflicts.is_empty());
+            });
+        }
     }
 
     #[gpui::test]
