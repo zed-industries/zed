@@ -4276,6 +4276,59 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_replace_capture_reference_followed_by_non_ascii_text(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("第1回 开端\n第12回 风起\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"第(\d+)回",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "第$1章",
+            replace_all: true,
+            expected_text: "第1章 开端\n第12章 风起\n".to_string(),
+        })
+        .await;
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("第7回 归来\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"第(\d+)回",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "第$1章",
+            replace_all: false,
+            expected_text: "第7章 归来\n".to_string(),
+        })
+        .await;
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("2e étage, 3e étage\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"(\d+)e\b",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "$1ème",
+            replace_all: true,
+            expected_text: "2ème étage, 3ème étage\n".to_string(),
+        })
+        .await;
+    }
+
+    #[gpui::test]
     async fn test_seeded_query_is_escaped_in_regex_mode(cx: &mut TestAppContext) {
         init_globals(cx);
         let buffer = cx.new(|cx| Buffer::local("z.d\nzed\n", cx));
