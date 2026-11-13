@@ -479,7 +479,7 @@ impl TextSystem {
     }
 
     /// Get the recommended distance below the baseline for the given font,
-    /// in single spaced text.
+    /// in single spaced text. Negative, like [`FontMetrics::descent`].
     pub fn descent(&self, font_id: FontId, font_size: Pixels) -> Pixels {
         self.read_metrics(font_id, |metrics| metrics.descent(font_size))
     }
@@ -492,7 +492,9 @@ impl TextSystem {
         line_height: Pixels,
     ) -> Pixels {
         let ascent = self.ascent(font_id, font_size);
-        let descent = self.descent(font_id, font_size);
+        // `FontMetrics::descent` is negative; text painting centers the glyphs
+        // using the positive `LineLayout::descent`.
+        let descent = -self.descent(font_id, font_size);
         let padding_top = (line_height - ascent - descent) / 2.;
         padding_top + ascent
     }
@@ -1197,6 +1199,7 @@ pub struct FontMetrics {
     pub ascent: f32,
 
     /// The vertical distance from the baseline of the font to the bottom of the glyph covers.
+    /// Negative, as it lies below the baseline.
     pub descent: f32,
 
     /// The recommended additional space to add between lines of type.
@@ -1316,6 +1319,30 @@ mod font_resolution_tests {
 
         text_system.fallback_font_stack.clear();
         assert_eq!(text_system.resolve_font(&requested), FontId(42));
+    }
+}
+
+#[cfg(test)]
+mod baseline_offset_tests {
+    use super::*;
+    use crate::NoopTextSystem;
+
+    #[test]
+    fn baseline_offset_centers_glyphs_in_line_height() {
+        let text_system = TextSystem::new(Arc::new(NoopTextSystem::new()));
+        let font_id = text_system.resolve_font(&font(".ZedSans"));
+        let font_size = px(10.);
+        let line_height = px(20.);
+
+        // NoopTextSystem: ascent 1025 and descent -275 per 1000 units.
+        let ascent = text_system.ascent(font_id, font_size);
+        let descent = text_system.descent(font_id, font_size);
+        assert_eq!((ascent, descent), (px(10.25), px(-2.75)));
+
+        let baseline = text_system.baseline_offset(font_id, font_size, line_height);
+        assert_eq!(baseline, px(13.75));
+        // The same space above the ascent as below the descent.
+        assert_eq!(baseline - ascent, line_height - baseline + descent);
     }
 }
 
