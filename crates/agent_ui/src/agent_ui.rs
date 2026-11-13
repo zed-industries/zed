@@ -14,10 +14,8 @@ mod diagnostics;
 pub mod draft_prompt_store;
 mod entry_view_state;
 mod external_source_prompt;
-mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
-mod language_model_selector;
 mod mention_set;
 mod message_editor;
 mod mode_selector;
@@ -57,9 +55,7 @@ use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
 };
-use language_model::{
-    LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
-};
+use language_model::{LanguageModelId, LanguageModelProviderId, LanguageModelRegistry};
 use project::{AgentId, DisableAiSettings, Project, ProjectPath};
 use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
 use rope::Point;
@@ -76,19 +72,20 @@ use workspace::Workspace;
 
 use crate::agent_configuration::ManageProfilesModal;
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
-pub use crate::agent_model_selector::language_model_selector_for;
 pub use crate::agent_panel::{
     AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, TerminalId, ThreadTitleRegenerationResult,
 };
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
-pub use crate::language_model_selector::LanguageModelSelector;
 pub use crate::message_editor::MessageEditorEvent;
 pub use crate::thread_metadata_store::ThreadId;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use conversation_view::open_markdown_in_workspace;
 pub use conversation_view::{ConversationView, StateChange};
 pub use external_source_prompt::ExternalSourcePrompt;
+pub use language_model_selector::{
+    LanguageModelSelector, ModelUsageContext, language_model_selector_for,
+};
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
@@ -97,6 +94,7 @@ pub use thread_import::{
     channels_with_threads, import_threads_from_other_channels,
 };
 use zed_actions;
+pub use zed_actions::agent::CycleFavoriteModels;
 pub use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
 
 pub(crate) fn resolve_agent_image(
@@ -304,8 +302,6 @@ actions!(
         ToggleProfileSelector,
         /// Cycles through available session modes.
         CycleModeSelector,
-        /// Cycles through favorited models in the ACP model selector.
-        CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
         /// Archives the currently selected thread.
@@ -626,23 +622,6 @@ impl ManageProfiles {
     pub fn customize_tools(profile_id: AgentProfileId) -> Self {
         Self {
             customize_tools: Some(profile_id),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub enum ModelUsageContext {
-    InlineAssistant,
-    CommitMessage,
-}
-
-impl ModelUsageContext {
-    pub fn model(&self, cx: &App) -> Option<LanguageModel> {
-        match self {
-            Self::InlineAssistant => {
-                LanguageModelRegistry::read_global(cx).inline_assistant_model()
-            }
-            Self::CommitMessage => LanguageModelRegistry::read_global(cx).commit_message_model(cx),
         }
     }
 }

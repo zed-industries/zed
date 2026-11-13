@@ -1,13 +1,9 @@
-use crate::{
-    ModelUsageContext,
-    language_model_selector::{LanguageModelSelector, language_model_selector},
-    ui::ModelSelectorTooltip,
-};
+use crate::{ModelUsageContext, ui::ModelSelectorTooltip};
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
 use language_model::{IconOrSvg, LanguageModelRegistry};
+use language_model_selector::{LanguageModelSelector, language_model_selector_for};
 use picker::popover_menu::PickerPopoverMenu;
-use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{PopoverMenuHandle, Tooltip, prelude::*};
 
@@ -46,53 +42,6 @@ impl AgentModelSelector {
             selector.delegate.cycle_favorite_models(window, cx);
         });
     }
-}
-
-pub fn language_model_selector_for(
-    fs: Arc<dyn Fs>,
-    model_usage_context: ModelUsageContext,
-    focus_handle: FocusHandle,
-    window: &mut Window,
-    cx: &mut Context<LanguageModelSelector>,
-) -> LanguageModelSelector {
-    language_model_selector(
-        {
-            let model_context = model_usage_context.clone();
-            move |cx| model_context.model(cx)
-        },
-        {
-            let fs = fs.clone();
-            move |model, cx| {
-                let provider = model.provider_id().0.to_string();
-                let model_id = model.id().0.to_string();
-                match &model_usage_context {
-                    ModelUsageContext::InlineAssistant => {
-                        update_settings_file(fs.clone(), cx, move |settings, _cx| {
-                            settings
-                                .agent
-                                .get_or_insert_default()
-                                .set_inline_assistant_model(provider.clone(), model_id);
-                        });
-                    }
-                    ModelUsageContext::CommitMessage => {
-                        update_settings_file(fs.clone(), cx, move |settings, _cx| {
-                            settings
-                                .agent
-                                .get_or_insert_default()
-                                .set_commit_message_model(provider.clone(), model_id);
-                        });
-                    }
-                }
-            }
-        },
-        move |model, should_be_favorite, cx| {
-            crate::favorite_models::toggle_in_settings(model, should_be_favorite, fs.clone(), cx);
-        },
-        true, // Use popover styles for picker
-        focus_handle,
-        window,
-        cx,
-    )
 }
 
 impl Render for AgentModelSelector {

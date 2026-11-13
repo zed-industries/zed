@@ -503,6 +503,7 @@ dependencies = [
  "jsonschema",
  "language",
  "language_model",
+ "language_model_selector",
  "language_models",
  "languages",
  "log",
@@ -7043,7 +7044,6 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "agent_settings",
- "agent_ui",
  "anyhow",
  "askpass",
  "async-channel 2.5.0",
@@ -7068,6 +7068,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
+ "language_model_selector",
  "log",
  "markdown",
  "menu",
@@ -9614,6 +9615,23 @@ dependencies = [
  "serde_json",
  "strum 0.28.0",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "language_model_selector"
+version = "0.1.0"
+dependencies = [
+ "agent_settings",
+ "collections",
+ "fs",
+ "fuzzy",
+ "gpui",
+ "language_model",
+ "ordered-float 5.5.0",
+ "picker",
+ "settings",
+ "ui",
+ "zed_actions",
 ]
 
 [[package]]

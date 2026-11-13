@@ -19,7 +19,6 @@ call = ["dep:call"]
 
 [dependencies]
 agent_settings.workspace = true
-agent_ui.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 async-channel.workspace = true
@@ -40,6 +39,7 @@ gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
+language_model_selector.workspace = true
 log.workspace = true
 markdown.workspace = true
 menu.workspace = true
