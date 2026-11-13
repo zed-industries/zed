@@ -97,6 +97,24 @@ pub(crate) fn lowest_thinking_level(model_id: &str) -> Option<ThinkingLevel> {
     }
 }
 
+pub fn supported_thinking_levels(model_id: &str) -> (Vec<ThinkingLevel>, ThinkingLevel) {
+    let lowest = if supports_minimal_thinking(model_id) {
+        ThinkingLevel::Minimal
+    } else {
+        ThinkingLevel::Low
+    };
+    let levels = [
+        ThinkingLevel::Minimal,
+        ThinkingLevel::Low,
+        ThinkingLevel::Medium,
+        ThinkingLevel::High,
+    ]
+    .into_iter()
+    .skip_while(|level| *level != lowest)
+    .collect();
+    (levels, default_thinking_level(model_id))
+}
+
 /// Whether the ID has a version after `gemini-`, as in `gemini-3.1-pro-preview`.
 ///
 /// Every Gemini text model is versioned. Unversioned IDs such as `gemini-flash-latest` or
@@ -910,21 +928,16 @@ impl Model {
                     Vec::new(),
                     None,
                 ),
-                (true, Some(lowest)) => (
-                    GoogleModelMode::Thinking {
-                        budget_tokens: None,
-                    },
-                    [
-                        ThinkingLevel::Minimal,
-                        ThinkingLevel::Low,
-                        ThinkingLevel::Medium,
-                        ThinkingLevel::High,
-                    ]
-                    .into_iter()
-                    .skip_while(|level| *level != lowest)
-                    .collect(),
-                    Some(default_thinking_level(id)),
-                ),
+                (true, Some(_)) => {
+                    let (levels, default_level) = supported_thinking_levels(id);
+                    (
+                        GoogleModelMode::Thinking {
+                            budget_tokens: None,
+                        },
+                        levels,
+                        Some(default_level),
+                    )
+                }
             };
 
         Some(Self {

@@ -15,6 +15,7 @@ pub struct AllLanguageModelSettingsContent {
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
+    pub google_compatible: Option<HashMap<Arc<str>, GoogleCompatibleSettingsContent>>,
     #[serde(rename = "llama.cpp")]
     pub llama_cpp: Option<LlamaCppSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
@@ -522,6 +523,48 @@ pub struct GoogleAvailableModel {
     pub display_name: Option<String>,
     pub max_tokens: u64,
     pub mode: Option<ModelMode>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct GoogleCompatibleSettingsContent {
+    pub api_url: String,
+    pub available_models: Vec<GoogleCompatibleAvailableModel>,
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct GoogleCompatibleAvailableModel {
+    /// The model's name in the provider's API. e.g. gemini-2.5-pro
+    pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the agent panel.
+    pub display_name: Option<String>,
+    /// The model's context window size.
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
+    #[serde(default)]
+    pub capabilities: GoogleCompatibleModelCapabilities,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct GoogleCompatibleModelCapabilities {
+    #[serde(default = "default_true")]
+    pub tools: bool,
+    #[serde(default = "default_true")]
+    pub images: bool,
+}
+
+impl Default for GoogleCompatibleModelCapabilities {
+    fn default() -> Self {
+        Self {
+            tools: default_true(),
+            images: default_true(),
+        }
+    }
 }
 
 #[with_fallible_options]

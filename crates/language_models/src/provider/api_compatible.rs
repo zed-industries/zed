@@ -192,6 +192,9 @@ impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderConfigurationView<S>
             if let Some(providers) = language_models.anthropic_compatible.as_mut() {
                 providers.remove(id.as_ref());
             }
+            if let Some(providers) = language_models.google_compatible.as_mut() {
+                providers.remove(id.as_ref());
+            }
         });
     }
 
@@ -207,11 +210,18 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
         let env_var_name = state.api_key_state.env_var_name();
         let provider_name = self.provider_name;
 
+        let article =
+            if provider_name.starts_with(['A', 'E', 'I', 'O', 'U', 'a', 'e', 'i', 'o', 'u']) {
+                "an"
+            } else {
+                "a"
+            };
+
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
                 .on_action(cx.listener(Self::save_api_key))
                 .child(Label::new(format!(
-                    "To use Zed's agent with an {provider_name}-compatible provider, you need to add an API key."
+                    "To use Zed's agent with {article} {provider_name}-compatible provider, you need to add an API key."
                 )))
                 .child(
                     div()

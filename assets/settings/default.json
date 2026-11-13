@@ -2728,6 +2728,7 @@
     "google": {
       "api_url": "https://generativelanguage.googleapis.com",
     },
+    "google_compatible": {},
     "ollama": {
       "api_url": "http://localhost:11434",
     },

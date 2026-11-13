@@ -9,8 +9,10 @@ use language_model::{
 
 use settings::{
     AnthropicCompatibleAvailableModel, AnthropicCompatibleModelCapabilities,
-    AnthropicCompatibleSettingsContent, OpenAiCompatibleAvailableModel,
-    OpenAiCompatibleModelCapabilities, OpenAiCompatibleSettingsContent, OpenAiReasoningEffort,
+    AnthropicCompatibleSettingsContent, GoogleCompatibleAvailableModel,
+    GoogleCompatibleModelCapabilities, GoogleCompatibleSettingsContent,
+    OpenAiCompatibleAvailableModel, OpenAiCompatibleModelCapabilities,
+    OpenAiCompatibleSettingsContent, OpenAiReasoningEffort,
 };
 use ui::{
     ButtonLink, Checkbox, ConfiguredApiCard, ContextMenu, Divider, DividerColor, DropdownMenu,
@@ -52,6 +54,7 @@ pub(crate) fn render_llm_providers_page(
 pub(crate) enum CompatibleProviderKind {
     OpenAi,
     Anthropic,
+    Google,
 }
 
 impl CompatibleProviderKind {
@@ -59,6 +62,7 @@ impl CompatibleProviderKind {
         match self {
             Self::OpenAi => "OpenAI",
             Self::Anthropic => "Anthropic",
+            Self::Google => "Google",
         }
     }
 
@@ -66,6 +70,7 @@ impl CompatibleProviderKind {
         match self {
             Self::OpenAi => "https://api.openai.com/v1",
             Self::Anthropic => "https://api.anthropic.com",
+            Self::Google => "https://generativelanguage.googleapis.com",
         }
     }
 }
@@ -120,13 +125,28 @@ pub(crate) fn render_add_llm_provider_popover(
                         }
                     })
                     .entry("Anthropic", None, {
-                        let settings_window = settings_window;
+                        let settings_window = settings_window.clone();
                         move |window, cx| {
                             settings_window
                                 .update(cx, |this, cx| {
                                     open_llm_provider_form(
                                         this,
                                         CompatibleProviderKind::Anthropic,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    })
+                    .entry("Google", None, {
+                        let settings_window = settings_window;
+                        move |window, cx| {
+                            settings_window
+                                .update(cx, |this, cx| {
+                                    open_llm_provider_form(
+                                        this,
+                                        CompatibleProviderKind::Google,
                                         window,
                                         cx,
                                     );
@@ -547,7 +567,7 @@ impl LlmProviderForm {
                 window,
                 cx,
             ),
-            models: vec![ModelInput::new(0, window, cx)],
+            models: vec![ModelInput::new(kind, 0, window, cx)],
             error: None,
         }
     }
@@ -570,7 +590,12 @@ struct ModelInput {
 }
 
 impl ModelInput {
-    fn new(_index: usize, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Self {
+    fn new(
+        kind: CompatibleProviderKind,
+        _index: usize,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> Self {
         let OpenAiCompatibleModelCapabilities {
             tools,
             images,
@@ -580,6 +605,17 @@ impl ModelInput {
             interleaved_reasoning,
             max_tokens_parameter,
         } = OpenAiCompatibleModelCapabilities::default();
+        let (default_tools, default_images) = match kind {
+            CompatibleProviderKind::Google => {
+                let defaults = GoogleCompatibleModelCapabilities::default();
+                (defaults.tools, defaults.images)
+            }
+            CompatibleProviderKind::Anthropic => {
+                let defaults = AnthropicCompatibleModelCapabilities::default();
+                (defaults.tools, defaults.images)
+            }
+            CompatibleProviderKind::OpenAi => (tools, images),
+        };
 
         Self {
             name: new_input(
@@ -593,8 +629,8 @@ impl ModelInput {
             max_output_tokens: new_input("Max Output Tokens", Some("32000"), false, window, cx),
             max_tokens: new_input("Max Tokens", Some("200000"), false, window, cx),
             reasoning_effort: OpenAiReasoningEffort::Medium,
-            supports_tools: tools.into(),
-            supports_images: images.into(),
+            supports_tools: default_tools.into(),
+            supports_images: default_images.into(),
             supports_parallel_tool_calls: parallel_tool_calls.into(),
             supports_prompt_cache_key: prompt_cache_key.into(),
             supports_chat_completions: chat_completions.into(),
@@ -670,6 +706,9 @@ fn render_llm_provider_form_page(
                     }
                     CompatibleProviderKind::Anthropic => {
                         "This provider will use an Anthropic Messages-compatible API."
+                    }
+                    CompatibleProviderKind::Google => {
+                        "This provider will use a Google Gemini-compatible API."
                     }
                 }))
                 .child(Divider::horizontal().flex_shrink_0())
@@ -776,7 +815,8 @@ fn render_models_section(
                         .on_click(cx.listener(|this, _, window, cx| {
                             if let Some(form) = this.llm_provider_form.as_mut() {
                                 let index = form.models.len();
-                                form.models.push(ModelInput::new(index, window, cx));
+                                let kind = form.kind;
+                                form.models.push(ModelInput::new(kind, index, window, cx));
                             }
                             cx.notify();
                         })),
@@ -1071,6 +1111,7 @@ struct ModelValues {
 enum ParsedModels {
     OpenAi(Vec<OpenAiCompatibleAvailableModel>),
     Anthropic(Vec<AnthropicCompatibleAvailableModel>),
+    Google(Vec<GoogleCompatibleAvailableModel>),
 }
 
 fn save_llm_provider_form(
@@ -1148,6 +1189,19 @@ fn save_llm_provider_form(
                                 .insert(
                                     Arc::from(provider_name.as_str()),
                                     AnthropicCompatibleSettingsContent {
+                                        api_url: api_url.clone(),
+                                        available_models,
+                                        custom_headers: None,
+                                    },
+                                );
+                        }
+                        ParsedModels::Google(available_models) => {
+                            language_models
+                                .google_compatible
+                                .get_or_insert_default()
+                                .insert(
+                                    Arc::from(provider_name.as_str()),
+                                    GoogleCompatibleSettingsContent {
                                         api_url: api_url.clone(),
                                         available_models,
                                         custom_headers: None,
@@ -1241,6 +1295,13 @@ fn validate_llm_provider_form(
                 .map(parse_anthropic_model)
                 .collect::<Result<Vec<_>, _>>()?,
         ),
+        CompatibleProviderKind::Google => ParsedModels::Google(
+            values
+                .models
+                .iter()
+                .map(parse_google_model)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
     };
 
     let mut model_names = HashSet::new();
@@ -1249,6 +1310,9 @@ fn validate_llm_provider_form(
             .iter()
             .all(|model| model_names.insert(model.name.clone())),
         ParsedModels::Anthropic(models) => models
+            .iter()
+            .all(|model| model_names.insert(model.name.clone())),
+        ParsedModels::Google(models) => models
             .iter()
             .all(|model| model_names.insert(model.name.clone())),
     };
@@ -1315,6 +1379,23 @@ fn parse_anthropic_model(
             tools: model.supports_tools,
             images: model.supports_images,
             prompt_caching: false,
+        },
+    })
+}
+
+fn parse_google_model(model: &ModelValues) -> Result<GoogleCompatibleAvailableModel, SharedString> {
+    Ok(GoogleCompatibleAvailableModel {
+        name: parse_model_name(model)?,
+        display_name: None,
+        max_tokens: parse_u64_field(&model.max_tokens, "Max Tokens")?,
+        max_output_tokens: Some(parse_u64_field(
+            &model.max_output_tokens,
+            "Max Output Tokens",
+        )?),
+        mode: None,
+        capabilities: GoogleCompatibleModelCapabilities {
+            tools: model.supports_tools,
+            images: model.supports_images,
         },
     })
 }
@@ -1393,5 +1474,48 @@ mod tests {
                 "provider description collapsed at {width}px"
             );
         }
+    }
+
+    #[test]
+    fn google_compatible_model_parsing_and_defaults() {
+        assert_eq!(
+            CompatibleProviderKind::Google.default_api_url(),
+            "https://generativelanguage.googleapis.com"
+        );
+        let default_capabilities = GoogleCompatibleModelCapabilities::default();
+        assert!(default_capabilities.tools);
+        assert!(default_capabilities.images);
+
+        let parsed = parse_google_model(&ModelValues {
+            name: "gemini-2.5-pro".to_string(),
+            max_completion_tokens: "200000".to_string(),
+            max_output_tokens: "65536".to_string(),
+            max_tokens: "1000000".to_string(),
+            reasoning_effort: OpenAiReasoningEffort::Medium,
+            supports_tools: true,
+            supports_images: false,
+            supports_parallel_tool_calls: false,
+            supports_prompt_cache_key: false,
+            supports_chat_completions: true,
+            supports_thinking: false,
+            interleaved_reasoning: false,
+            max_tokens_parameter: false,
+        })
+        .expect("valid Google model values should parse");
+
+        assert_eq!(
+            parsed,
+            GoogleCompatibleAvailableModel {
+                name: "gemini-2.5-pro".to_string(),
+                display_name: None,
+                max_tokens: 1_000_000,
+                max_output_tokens: Some(65_536),
+                mode: None,
+                capabilities: GoogleCompatibleModelCapabilities {
+                    tools: true,
+                    images: false,
+                },
+            }
+        );
     }
 }
