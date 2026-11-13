@@ -6,7 +6,8 @@ mod which_key_modal;
 mod which_key_settings;
 
 use gpui::{
-    Action, App, KeybindingKeystroke, Keystroke, PlatformKeyboardMapper, SharedString, Window,
+    Action, App, AppContext as _, DismissEvent, KeybindingKeystroke, Keystroke,
+    PlatformKeyboardMapper, SharedString, Window,
 };
 pub use pending_keystrokes_indicator::PendingKeystrokesIndicator;
 use settings::Settings;
@@ -14,7 +15,7 @@ use std::{sync::LazyLock, time::Duration};
 use util::ResultExt;
 use which_key_modal::WhichKeyModal;
 use which_key_settings::WhichKeySettings;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 gpui::actions!(
     which_key,
@@ -101,16 +102,14 @@ fn binding_label(action: &dyn Action) -> SharedString {
 pub fn init(cx: &mut App) {
     WhichKeySettings::register(cx);
 
-    cx.observe_new(|_: &mut Workspace, window, cx| {
+    cx.observe_new(|_: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
         };
         let mut timer = None;
-        cx.observe_pending_input(window, move |workspace, window, cx| {
+        cx.observe_pending_input(window, move |multi_workspace, window, cx| {
             if window.pending_input_keystrokes().is_none() {
-                if let Some(modal) = workspace.active_modal::<WhichKeyModal>(cx) {
-                    modal.update(cx, |modal, cx| modal.dismiss(cx));
-                };
+                multi_workspace.set_pending_bindings_popup(None, cx);
                 timer.take();
                 return;
             }
@@ -122,21 +121,23 @@ pub fn init(cx: &mut App) {
 
             let delay_ms = which_key_settings.delay_ms;
 
-            timer.replace(cx.spawn_in(window, async move |workspace_handle, cx| {
+            timer.replace(cx.spawn_in(window, async move |multi_workspace, cx| {
                 cx.background_executor()
                     .timer(Duration::from_millis(delay_ms))
                     .await;
-                workspace_handle
-                    .update_in(cx, |workspace, window, cx| {
-                        // The modal layer holds one modal at a time, so showing which-key
-                        // would dismiss an open modal such as the commit editor or a picker.
-                        if workspace.has_active_modal(window, cx) {
+                multi_workspace
+                    .update_in(cx, |multi_workspace, window, cx| {
+                        if multi_workspace.pending_bindings_popup().is_some() {
                             return;
-                        };
+                        }
 
-                        workspace.toggle_modal(window, cx, |window, cx| {
-                            WhichKeyModal::new(workspace_handle.clone(), window, cx)
-                        });
+                        let workspace = multi_workspace.workspace().downgrade();
+                        let popup = cx.new(|cx| WhichKeyModal::new(workspace, window, cx));
+                        cx.subscribe(&popup, |multi_workspace, _, _: &DismissEvent, cx| {
+                            multi_workspace.set_pending_bindings_popup(None, cx);
+                        })
+                        .detach();
+                        multi_workspace.set_pending_bindings_popup(Some(popup.into()), cx);
                     })
                     .log_err();
             }));
@@ -188,11 +189,11 @@ mod tests {
 
     use collections::HashMap;
     use gpui::{
-        BorrowAppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+        BorrowAppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
         InteractiveElement, IntoElement, KeyBinding, PlatformKeyboardMapper, Render,
         TestAppContext, VisualTestContext, actions, div,
     };
-    use workspace::{AppState, ModalView, MultiWorkspace};
+    use workspace::{AppState, ModalView};
 
     use super::*;
 
@@ -312,7 +313,7 @@ mod tests {
 
     async fn init_workspace_test(
         cx: &mut TestAppContext,
-    ) -> (Entity<Workspace>, &mut VisualTestContext) {
+    ) -> (Entity<MultiWorkspace>, &mut VisualTestContext) {
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
@@ -327,28 +328,31 @@ mod tests {
             app_state
         });
         let project = project::Project::test(app_state.fs.clone(), [], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
-        (workspace, cx)
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx))
     }
 
     #[gpui::test]
     async fn test_which_key_shows_for_pending_chord(cx: &mut TestAppContext) {
-        let (workspace, cx) = init_workspace_test(cx).await;
+        let (multi_workspace, cx) = init_workspace_test(cx).await;
 
         cx.simulate_keystrokes("ctrl-k");
         cx.run_until_parked();
+        multi_workspace.read_with(cx, |multi_workspace, _| {
+            assert!(multi_workspace.pending_bindings_popup().is_some());
+        });
 
-        workspace.read_with(cx, |workspace, cx| {
-            assert!(workspace.active_modal::<WhichKeyModal>(cx).is_some());
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        multi_workspace.read_with(cx, |multi_workspace, _| {
+            assert!(multi_workspace.pending_bindings_popup().is_none());
         });
     }
 
     #[gpui::test]
-    async fn test_which_key_does_not_replace_open_modal(cx: &mut TestAppContext) {
-        let (workspace, cx) = init_workspace_test(cx).await;
+    async fn test_which_key_shows_above_open_modal(cx: &mut TestAppContext) {
+        let (multi_workspace, cx) = init_workspace_test(cx).await;
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.toggle_modal(window, cx, TestModal::new);
         });
@@ -357,11 +361,14 @@ mod tests {
         cx.simulate_keystrokes("ctrl-k");
         cx.run_until_parked();
 
-        workspace.read_with(cx, |workspace, cx| {
-            assert!(
-                workspace.active_modal::<TestModal>(cx).is_some(),
-                "which-key should not dismiss the open modal"
-            );
+        assert!(
+            workspace.read_with(cx, |workspace, cx| workspace
+                .active_modal::<TestModal>(cx)
+                .is_some()),
+            "which-key should not dismiss the open modal"
+        );
+        multi_workspace.read_with(cx, |multi_workspace, _| {
+            assert!(multi_workspace.pending_bindings_popup().is_some());
         });
 
         cx.simulate_keystrokes("ctrl-x");
@@ -373,5 +380,25 @@ mod tests {
                 .expect("modal should still be open");
             assert_eq!(modal.read(cx).chord_action_count, 1);
         });
+        multi_workspace.read_with(cx, |multi_workspace, _| {
+            assert!(multi_workspace.pending_bindings_popup().is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_keystroke_without_pending_chord_does_not_notify(cx: &mut TestAppContext) {
+        let (multi_workspace, cx) = init_workspace_test(cx).await;
+        let notify_count = std::rc::Rc::new(Cell::new(0));
+        let _subscription = cx.update(|_, cx| {
+            let notify_count = notify_count.clone();
+            cx.observe(&multi_workspace, move |_, _| {
+                notify_count.set(notify_count.get() + 1);
+            })
+        });
+
+        cx.simulate_keystrokes("a");
+        cx.run_until_parked();
+
+        assert_eq!(notify_count.get(), 0);
     }
 }
