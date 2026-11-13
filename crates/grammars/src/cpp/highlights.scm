@@ -95,7 +95,7 @@
 
 (type_identifier) @type
 
-type: (primitive_type) @type.builtin
+(primitive_type) @type.builtin
 
 (sized_type_specifier) @type.builtin
 
