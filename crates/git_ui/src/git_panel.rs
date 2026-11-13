@@ -10,6 +10,7 @@ use crate::commit_context_menu::{
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::{CommitAvatar, CommitTooltip};
 use crate::commit_view::CommitView;
+use crate::emoji_shortcode::render_commit_text;
 use crate::git_panel_settings::GitPanelScrollbarAccessor;
 use crate::project_diff::{Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
@@ -7649,7 +7650,7 @@ impl GitPanel {
                         .line_clamp(1)
                         .hover(|s| s.bg(cx.theme().colors().element_hover))
                         .child(
-                            Label::new(commit.subject.clone())
+                            Label::new(render_commit_text(commit.subject.clone()))
                                 .size(LabelSize::Small)
                                 .truncate(),
                         )
@@ -8190,7 +8191,7 @@ impl GitPanel {
                                         Option<i64>,
                                     ) = match &data {
                                         Some(data) => (
-                                            data.subject.clone(),
+                                            render_commit_text(data.subject.clone()),
                                             data.author_name.clone(),
                                             Some(data.author_email.clone()),
                                             Some(data.commit_timestamp),

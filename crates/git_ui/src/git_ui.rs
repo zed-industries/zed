@@ -44,6 +44,7 @@ pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
 mod diff_multibuffer;
+mod emoji_shortcode;
 pub mod git_graph;
 pub mod git_panel;
 mod git_panel_settings;
