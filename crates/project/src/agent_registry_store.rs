@@ -586,8 +586,11 @@ fn resolve_icon_url(entry: &RegistryEntry) -> Option<String> {
 
 /// Registry platform keys for the current host, in order of preference.
 pub(crate) async fn current_platform_keys() -> &'static [&'static str] {
+    // The probe spawns a process and reads the real filesystem, which the
+    // deterministic test scheduler can't drive, so tests assume glibc.
     #[cfg(target_os = "linux")]
-    let prefers_musl = util::libc_type::host_libc_type().await == util::libc_type::LibcType::Musl;
+    let prefers_musl = !cfg!(any(test, feature = "test-support"))
+        && util::libc_type::host_libc_type().await == util::libc_type::LibcType::Musl;
     #[cfg(not(target_os = "linux"))]
     let prefers_musl = false;
 
